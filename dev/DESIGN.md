@@ -49,13 +49,15 @@ The user's request after the first fights in play: a stun, measured in seconds, 
 - **It costs the creature its turns.** At the start of each of its turns while it lasts, a disabled creature (stunned, paralysed, asleep: `GetEffectsFlags` has `EFFECT_FLAG_DISABLE_COMBAT`) loses the turn at once, with "Stunned" over it and on its card, and the world does not run for it.
 - **A save at the start of the turn** can end it early: a roll against the creature's physical or mental resistance (the attributes the game rolls its own resistances with; which one by the effect's kind), as BG3 rolls a save at the end of each turn.
 - **It ends on the creature's own turn.** When its turns are spent, or the save succeeds, the mod removes the effect (`RemoveEffect`, wrapped) at the start of the creature's turn, so it acts that turn. The engine's own timer no longer matters.
-- **Knockdowns** keep the engine's handling: getting up takes the turn it happens in (already so: `busy with an execute effect`).
+- **Knockdowns and pins** are conditions like the rest (below).
 
 Built with `condition_turns` turns per condition (1), the fallback while each disabling effect's full duration is out of reach (`dev/DAOLIB_NEEDS.md`, "Rules", item 2); saves are still to build. As built:
 
-- a stun, paralysis or sleep is seen at the next status read, every half second and at every turn start, and the creature owes that many turns; each is taken at its start, "Name is stunned" floating, the world still;
+- a stun, paralysis, sleep, pin (Pinning Shot's root) or knockdown is seen at the next status read, every half second and at every turn start, and the creature owes that many turns; each is taken at its start, "Name loses the turn" floating, the world still;
 - a creature stunned in its own turn loses the rest of it at once, and whatever was queued for it since is cleared;
-- a pin (Pinning Shot's root) takes the movement of as many turns, the action kept;
+- a pin was first built to take only the movement, the action kept, as the root's script reads (`effect_root_h`: the AI's stationary flag). In play (2026-09-30, 13:25) the engine held the pinned creature in the effect's command (`ExecuteEffect`, queued at the front as the pin landed: DAOLib's probe log); its attack queued behind and never ran, and with effects' time held the command outlasted the turn, which ended on the 12 s limit. So a pin costs the turn, as the user had put it ("turns of no action"); a knockdown too, which the engine handles the same way (not yet seen). Daze is only a penalty (`effect_daze_h`) and costs nothing; a grab (`EFFECT_TYPE_GRABBED`, ogres) is not handled yet;
+- End pressed while the engine holds the creature in something the gate did not see (an effect's command) ends the turn at once; its own action it still finishes first;
+- at `condition_turns` 0 the condition keeps its own seconds, spent a round at a time while effects count rounds, and every turn that comes while it lasts is lost: the creature could not act, and its command would not end within the turn;
 - when the turns are spent and the engine still holds the condition, the mod removes it at the start of the creature's turn (`EndConditions`), before its AI is told or the player handed the turn.
 
 ### Cooldowns in turns (built 2026-09-30)

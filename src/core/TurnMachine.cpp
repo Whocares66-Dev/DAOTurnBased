@@ -598,26 +598,38 @@ void TurnMachine::ResumeTurn(const Combatant &who, std::vector<Effect> &fx)
 bool TurnMachine::LoseTurn(const Combatant &who, std::vector<Effect> &fx)
 {
     const auto found = held_.find(who.id);
-    if (found == held_.end() || found->second.kind != Condition::Disabled || found->second.turns <= 0)
+    if (found == held_.end())
     {
         return false;
     }
     Held &held = found->second;
-    --held.turns;
+    // Owed turns; or, the condition on the game's clock (condition_turns 0),
+    // every turn it still holds the creature: it cannot act, and with
+    // effects' time held its command cannot end within the turn.
+    const bool owes = held.kind == Condition::Disabled && held.turns > 0;
+    const bool holds = settings_.conditionTurns == 0 && held.seen == Condition::Disabled;
+    if (!owes && !holds)
+    {
+        return false;
+    }
+    if (owes)
+    {
+        --held.turns;
+    }
     budget_ = Budget{};
     budget_.actions = 0;
-    Log(LogLevel::Info,
-        std::format("round {}: {}'s turn is lost to a stun ({} more)", order_.Round(), Utf8(who.name), held.turns));
+    Log(LogLevel::Info, std::format("round {}: {}'s turn is lost to its condition ({} more)", order_.Round(),
+                                    Utf8(who.name), held.turns));
     Signal(fx, events::kTurnStart, who.id, order_.Round(), static_cast<std::int32_t>(who.side));
     TickCooldowns(who, fx);
-    Floaty(fx, who.id, who.name + L" is stunned", kGrey);
-    EndTurn(fx, "stunned");
+    Floaty(fx, who.id, who.name + L" loses the turn", kGrey);
+    EndTurn(fx, "held by its condition");
     return true;
 }
 
-// At the start of a turn that is taken: a pin that still owes turns takes
-// the movement; a condition whose turns are spent but that the engine still
-// holds is ended now, before the creature is told its turn has come.
+// At the start of a turn that is taken: a condition whose turns are spent
+// but that the engine still holds is ended now, before the creature is told
+// its turn has come.
 void TurnMachine::HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx)
 {
     const auto found = held_.find(who.id);
@@ -626,14 +638,6 @@ void TurnMachine::HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx)
         return;
     }
     Held &held = found->second;
-    if (held.kind == Condition::Rooted && held.turns > 0)
-    {
-        --held.turns;
-        budget_.movementMax = 0.0f;
-        Log(LogLevel::Info, std::format("{} is pinned: no movement this turn ({} more)", Utf8(who.name), held.turns));
-        Floaty(fx, who.id, L"Pinned", kGrey);
-        return;
-    }
     if (held.turns <= 0 && held.seen != Condition::None)
     {
         Log(LogLevel::Info, std::format("{}'s condition has had its turns: ended", Utf8(who.name)));
@@ -879,6 +883,14 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     if (actor.busy)
     {
         idleTicks_ = 0;
+        // End pressed while something the engine put there holds the
+        // creature (an effect's command, say): the turn ends now, not when
+        // it does. Its own action it finishes first.
+        if (endTurnRequested_ && Classify(actor.current) == CommandKind::Involuntary)
+        {
+            EndTurn(fx, "ended by the player");
+            return;
+        }
         if (clock_ - executingSince_ > static_cast<std::uint32_t>(settings_.maxActionMs))
         {
             fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
@@ -1090,18 +1102,24 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
         }
         c->health = status.health;
         Held &held = held_[status.id];
-        if (status.condition != Condition::None && status.condition != held.seen && settings_.conditionTurns > 0)
+        if (status.condition != Condition::None && status.condition != held.seen)
         {
-            // Newly held (or held worse): it owes that many of its turns,
-            // whatever the condition's timer in seconds says.
-            if (status.condition > held.kind || held.turns == 0)
+            // Newly held: it owes that many of its turns, whatever the
+            // condition's timer in seconds says; or, on the game's clock,
+            // it loses each turn that comes while it lasts.
+            if (settings_.conditionTurns > 0)
             {
                 held.kind = status.condition;
+                held.turns = std::max(held.turns, settings_.conditionTurns);
+                Log(LogLevel::Info, std::format("{} is held (stunned, pinned, knocked down): {} of its turns lost",
+                                                Utf8(c->name), held.turns));
             }
-            held.turns = std::max(held.turns, settings_.conditionTurns);
-            Log(LogLevel::Info, std::format("{} is {}: {} of its turns {}", Utf8(c->name),
-                                            status.condition == Condition::Disabled ? "stunned" : "pinned", held.turns,
-                                            status.condition == Condition::Disabled ? "lost" : "without movement"));
+            else
+            {
+                Log(LogLevel::Info, std::format("{} is held (stunned, pinned, knocked down): its turns lost while it "
+                                                "lasts",
+                                                Utf8(c->name)));
+            }
             const Combatant *current = order_.Current();
             if (status.condition == Condition::Disabled && current != nullptr && current->id == status.id)
             {

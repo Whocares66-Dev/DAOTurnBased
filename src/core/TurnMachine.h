@@ -83,12 +83,14 @@ struct ActorObservation
     Vec3 position;
 };
 
-// What holds a creature, as far as turns go: rooted (pinned, it cannot
-// move) or disabled (stunned, paralysed, asleep: it cannot act).
+// What holds a creature, as far as turns go: disabled, it cannot act
+// (stunned, paralysed, asleep, knocked down, pinned). A pin is one: the
+// engine holds its creature in an effect command, as a stun does, and with
+// effects' time held that command outlasts any turn (seen 2026-09-30,
+// 13:25: a pinned character's attack queued behind it and never ran).
 enum class Condition : std::uint8_t
 {
     None,
-    Rooted,
     Disabled,
 };
 

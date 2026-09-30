@@ -387,11 +387,12 @@ max_commands_per_turn = 6
 ; nothing (an ability picked before its target) would run the world for
 ; nothing: 0, off.
 order_run_ms = 0
-; Conditions count in turns, not seconds. A stun, paralysis or sleep costs
-; the creature this many of its turns, the world still while it loses them;
-; a pin, its movement for as many. When they are spent the mod ends the
-; condition at the start of the creature's turn, and it acts. 0 leaves the
-; game's timers in seconds, which run only while someone acts.
+; Conditions count in turns, not seconds. A stun, paralysis, sleep, pin or
+; knockdown costs the creature this many of its turns, the world still while
+; it loses them. When they are spent the mod ends the condition at the start
+; of the creature's turn, and it acts. 0 leaves each condition its own time
+; in seconds (spent a round at a time while effects count rounds), the
+; creature losing every turn that comes while it lasts.
 condition_turns = 1
 ; Cooldowns count in turns: an ability used is held until the start of its
 ; user's turn this many seconds of its cooldown later, rounded up (at 10,

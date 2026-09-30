@@ -24,16 +24,17 @@ What the first session in play found (2026-09-30), now fixed and held by scripte
 - every enemy chose nothing on its turn once camera follow was on: centring the camera on an enemy just before its AI was poked left the poke unanswered (with it off, the next enemy attacked at once); the camera now moves after the AI has chosen, and an AI that chooses nothing has what it saw logged (`chose nothing: combat state ...`);
 - a stunned or pinned enemy's turn waited the condition out and then acted (the machine took the stun for an action under way): conditions now cost turns;
 - cooldowns ran in real time while the game was paused for a turn: they are held for turns;
+- a pinned character's turn waited 12 s on the pin's command, End pressed or not, and the attack the player gave it never ran: the engine holds a pinned creature in the effect's command, which effects' time being held no longer lets end. The arena's stunned and pinned creatures idled; they are held in the effect's command now, as the engine does, and an invariant says a held creature's turn never waits on its condition;
 - a character the player controls carried on attacking by itself (its own AI), spending the player's turn before they chose; on the player's turns only the player's orders spend it now (the user: "turn off party AI in turn-based");
 - the turn bar's portraits drew grey, since the movie asked for `img://portrait_player0` where the game's loader wants `portrait_player0.dds` (`TextureName`; `dev/images/turnorder-ingame-grey.jpg` is the bar before the fix).
 
 ```powershell
 .\tools\build.ps1 -Preset core -Test          # src/core and the tests only: no DAOLib, no plugin
 .\tools\build.ps1 -Preset core-cov -Coverage  # 64-bit clang-cl; per-file coverage, HTML in build\core-cov\coverage\html
-python tools\mutants.py                        # break the core 55 ways, one at a time; each must fail a test
+python tools\mutants.py                        # break the core 56 ways, one at a time; each must fail a test
 ```
 
-**Coverage** (2026-09-30): 90% of `src/core`'s regions, 89% of its lines, before the tests coverage prompted; what it showed unrun led to the arena's knockdowns, deaths mid-turn and vanishing creatures, and to a key-formatting bug (a key with no name was written `0x` and its decimal code). **Mutants** (`tools/mutants.py`): each breaks one promise (the gate letting anyone act, an action never spent, the pause never taken, the turn never passing on, a joiner's place ignored, ...), builds, and runs the suite; a survivor is a promise no test holds. 55 of 55 caught (2026-09-30). A new promise gets a mutant of its own.
+**Coverage** (2026-09-30): 90% of `src/core`'s regions, 89% of its lines, before the tests coverage prompted; what it showed unrun led to the arena's knockdowns, deaths mid-turn and vanishing creatures, and to a key-formatting bug (a key with no name was written `0x` and its decimal code). **Mutants** (`tools/mutants.py`): each breaks one promise (the gate letting anyone act, an action never spent, the pause never taken, the turn never passing on, a joiner's place ignored, ...), builds, and runs the suite; a survivor is a promise no test holds. 56 of 56 caught (2026-09-30). A new promise gets a mutant of its own.
 
 A lesson from the second pass: the reach check changed the arena's random draws, and two mutants that the fights had caught survived. The refund limit and a joiner being stopped had been held only by rare sequences, which the new streams no longer reached in seeds 1-80. So a promise the random fights happen to hold gets a scripted test as well (`test_machine.cpp`: "an action stopped short is given back once a turn", "a creature that joins the fight stops what it was doing"), and the mutants are run after any change to the arena, not only to the core.
 

@@ -764,7 +764,7 @@ TEST_CASE("a creature stunned between its turns loses the next one, the world st
     // The genlock's turn is taken at once: no AI told to act, nothing run.
     CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
     CHECK_FALSE(w.Did(EffectKind::Unpause));
-    CHECK(w.Said(L"Genlock is stunned"));
+    CHECK(w.Said(L"Genlock loses the turn"));
     CHECK(w.Current() == kCompanion);
 }
 
@@ -806,15 +806,81 @@ TEST_CASE("a condition that has had its turns is ended at the start of the creat
     CHECK(w.Get(kGenlock).condition == Condition::None);
 }
 
-TEST_CASE("a pinned creature keeps its action but has no movement", "[machine][conditions]")
+TEST_CASE("a creature held as the fight begins loses its first turn", "[machine][conditions]")
 {
+    // Pinning Shot or a howl before the fight's first turn: its statuses are
+    // read before anyone's turn starts.
     World w;
-    w.Get(kHero).condition = Condition::Rooted; // Pinning Shot, before the fight
+    w.Get(kHero).condition = Condition::Disabled;
+    w.StartFight();
+    CHECK(w.Said(L"Hero loses the turn"));
+    CHECK(w.Current() != kHero);
+    CHECK_FALSE(w.Did(EffectKind::Select, kHero));
+}
+
+TEST_CASE("End pressed while something the engine put there holds the creature ends the turn at once",
+          "[machine][conditions]")
+{
+    // Seen in play (2026-09-30, 13:25): a pinned character, End pressed,
+    // and the turn waited 12 s for the pin's command to end.
+    World w;
     w.StartFight();
     REQUIRE(w.Current() == kHero);
-    CHECK(w.Said(L"Pinned"));
-    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Block);
+    CHECK(w.Order(kHero, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    w.RunFor(100);
+    REQUIRE(w.machine.GetPhase() == Phase::Executing);
+    CHECK(w.machine.OnPauseKey());
+    w.Frame();
+    CHECK(w.Current() != kHero);
+}
+
+TEST_CASE("End pressed during the creature's own action waits for it", "[machine]")
+{
+    World w;
+    w.StartFight();
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
+    w.RunFor(100);
+    REQUIRE(w.machine.GetPhase() == Phase::Executing);
+    CHECK(w.machine.OnPauseKey());
+    w.RunFor(200);
+    CHECK(w.Current() == kHero); // still swinging
+    w.Finish(kHero);
+    w.RunFor(600);
+    CHECK(w.Current() != kHero);
+}
+
+TEST_CASE("on the game's clock a held creature loses each turn while its condition lasts", "[machine][conditions]")
+{
+    // condition_turns 0: the condition lasts its own seconds (spent a round
+    // at a time while effects' time is held), and every turn that comes
+    // while it holds its creature is lost: the creature cannot act, and the
+    // effect's command would not end within the turn.
+    Settings s = Fixed();
+    s.conditionTurns = 0;
+    World w{s};
+    w.StartFight();
+    w.Get(kGenlock).condition = Condition::Disabled;
+    const auto lost = [&] {
+        return std::ranges::count_if(w.applied, [](const Effect &e) {
+            return e.kind == EffectKind::Floaty && e.text == L"Genlock loses the turn";
+        });
+    };
+    for (int i = 0; i < 40 && lost() < 2; ++i)
+    {
+        (void)w.machine.OnPauseKey();
+        w.RunFor(100);
+    }
+    CHECK(lost() == 2);
+    CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
+    CHECK_FALSE(w.Did(EffectKind::EndConditions, kGenlock)); // the clock ends it, not the machine
+    // Worn off: its turn is its own again.
+    w.Get(kGenlock).condition = Condition::None;
+    for (int i = 0; i < 40 && !w.Did(EffectKind::PokeAi, kGenlock); ++i)
+    {
+        (void)w.machine.OnPauseKey();
+        w.RunFor(100);
+    }
+    CHECK(w.Did(EffectKind::PokeAi, kGenlock));
 }
 
 TEST_CASE("a creature stunned in its own turn loses the rest of it at once, and what it had queued",
@@ -829,21 +895,6 @@ TEST_CASE("a creature stunned in its own turn loses the rest of it at once, and 
     w.RunFor(600);
     CHECK(w.Did(EffectKind::ClearCommands, kHero));
     CHECK(w.Current() == kGenlock);
-}
-
-TEST_CASE("with condition_turns 0 the game's timers hold as before", "[machine][conditions]")
-{
-    Settings s = Fixed();
-    s.conditionTurns = 0;
-    World w(s);
-    w.StartFight();
-    w.Get(kGenlock).condition = Condition::Disabled;
-    w.RunFor(600);
-    CHECK(w.machine.OnPauseKey());
-    w.Frame();
-    w.Frame();
-    CHECK(w.Current() == kGenlock);
-    CHECK_FALSE(w.Said(L"Genlock is stunned"));
 }
 
 namespace

@@ -205,8 +205,8 @@ MUTANTS = [
     Mutant(
         "a stun costs no turn",
         MACHINE,
-        "found->second.kind != Condition::Disabled || found->second.turns <= 0)",
-        "found->second.kind != Condition::Disabled || found->second.turns <= 99)",
+        "    const bool owes = held.kind == Condition::Disabled && held.turns > 0;",
+        "    const bool owes = held.kind == Condition::Disabled && held.turns > 99;",
     ),
     Mutant(
         "a condition that has had its turns is never ended",
@@ -215,10 +215,16 @@ MUTANTS = [
         "if (held.turns < 0 && held.seen != Condition::None)",
     ),
     Mutant(
-        "a pin takes no movement",
+        "End waits out what the engine holds the creature in",
         MACHINE,
-        "        budget_.movementMax = 0.0f;\n",
-        "",
+        "        if (endTurnRequested_ && Classify(actor.current) == CommandKind::Involuntary)",
+        "        if (endTurnRequested_ && Classify(actor.current) == CommandKind::Pass)",
+    ),
+    Mutant(
+        "a condition on the game's clock costs no turn",
+        MACHINE,
+        "    const bool holds = settings_.conditionTurns == 0 && held.seen == Condition::Disabled;",
+        "    const bool holds = false;",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",

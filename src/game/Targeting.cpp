@@ -19,7 +19,18 @@ void Targeting::Install(const TurnMachine &machine, std::mutex &mutex)
     installed_ = true;
     dao::messages::InterceptMessage<dao::messages::PerformAbilityMessage>(
         [this, &machine, &mutex](void *, const dao::messages::PerformAbilityMessage &message) {
-            if (!enabled_ || message.target == dao::kInvalidObject || message.target == message.caster)
+            // The quickbar's "no target" is 0 (seen 2026-09-30, 13:24, three
+            // talents; the game then asked for the target as it should).
+            // What arrives when a talent goes straight to the selected
+            // target is not seen yet: the first few are logged.
+            if (seen_ < 8)
+            {
+                ++seen_;
+                spdlog::info("ability message: {} for {:#010x} on {:#010x}", message.ability, message.caster,
+                             message.target);
+            }
+            if (!enabled_ || message.target == 0 || message.target == dao::kInvalidObject ||
+                message.target == message.caster)
             {
                 return false; // no target named, or the caster itself: as the game has it
             }

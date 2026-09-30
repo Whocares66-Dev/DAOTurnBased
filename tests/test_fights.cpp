@@ -78,6 +78,7 @@ struct Task
     std::int32_t workMs = 0;
     ObjectId target = kNoObject;
     bool story = false; // given during a conversation: the cutscene's, not a turn's
+    bool held = false;  // a condition's command: it lasts as long as the condition
 };
 
 // Counts over every fight, so a run shows the generator reached the states
@@ -101,8 +102,8 @@ struct Coverage
     int tooFar = 0;
     int vanished = 0;
     int stunned = 0;     // creatures stunned or pinned
-    int lostTurns = 0;   // turns taken by a stun
-    int pinnedTurns = 0; // turns taken without movement by a pin
+    int lostTurns = 0;   // turns taken by a condition
+    int lostOnClock = 0; // of them, with conditions on the game's clock
     int conditionsEnded = 0;
     int cooldownsHeld = 0;
     int cooldownsReleased = 0;
@@ -185,6 +186,7 @@ class Arena
         s.orderRunMs = Chance(rng, 0.5) ? 500 : 0;
         s.pauseOnPlayerTurn = Chance(rng, 0.5);
         s.effectSecondsPerRound = Chance(rng, 0.2) ? 0.0f : 6.0f;
+        s.conditionTurns = Chance(rng, 0.2) ? 0 : (Chance(rng, 0.7) ? 1 : 2);
         return s;
     }
 
@@ -435,6 +437,11 @@ class Arena
             Must(timeHeld_, "effects aged by the fight while their time runs anyway");
             Must(e.b == static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f), "a round aged wrong");
             ++coverage_.roundsAged;
+            // A round's worth off every condition's own timer.
+            for (auto &[id, left] : conditionLeftMs_)
+            {
+                left -= e.b;
+            }
             break;
         case EffectKind::Cooldown:
             Must(e.target != kNoObject && e.a >= 0 && e.b >= 0, "a cooldown for nobody, or for no ability");
@@ -451,21 +458,20 @@ class Arena
             break;
         case EffectKind::EndConditions:
             Must(e.target == world_.Current(), "a condition ended out of its creature's turn");
+            Must(settings_.conditionTurns > 0, "a condition on the game's clock ended by the machine");
             ++coverage_.conditionsEnded;
             conditionLeftMs_.erase(e.target);
+            Release(e.target);
             break;
         case EffectKind::ClearCommands:
         case EffectKind::Floaty:
         case EffectKind::CenterCamera:
         case EffectKind::Explain:
             Must(e.target != kNoObject, "an effect for nobody");
-            if (e.kind == EffectKind::Floaty && e.text.ends_with(L" is stunned"))
+            if (e.kind == EffectKind::Floaty && e.text.ends_with(L" loses the turn"))
             {
                 ++coverage_.lostTurns;
-            }
-            if (e.kind == EffectKind::Floaty && e.text == L"Pinned")
-            {
-                ++coverage_.pinnedTurns;
+                coverage_.lostOnClock += settings_.conditionTurns == 0 ? 1 : 0;
             }
             if (e.kind == EffectKind::ClearCommands)
             {
@@ -532,6 +538,14 @@ class Arena
         if (world_.machine.Active() && world_.Current() != kNoObject)
         {
             turnRunMs_ += kFrameMs;
+            // Seen in play (2026-09-30, 13:25): a pinned character's turn
+            // waited 12 s on the pin's command.
+            const Phase phase = world_.machine.GetPhase();
+            const bool turn = phase == Phase::AwaitingOrder || phase == Phase::Dispatching ||
+                              phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling;
+            heldInTurnMs_ =
+                turn && world_.Get(world_.Current()).condition == Condition::Disabled ? heldInTurnMs_ + kFrameMs : 0;
+            Must(heldInTurnMs_ <= kHeldTurnMs, "a held creature's turn waited on its condition");
         }
         for (const ObjectId id : ids)
         {
@@ -563,6 +577,10 @@ class Arena
                 continue;
             }
             c.moving = false;
+            if (task.held)
+            {
+                continue;
+            }
             task.workMs -= static_cast<std::int32_t>(kFrameMs);
             if (task.workMs > 0)
             {
@@ -592,17 +610,25 @@ class Arena
         }
     }
 
-    // Stuns and pins land (a howl, Pinning Shot), and wear off on the
-    // engine's timer in running time, unless the machine ends them first.
+    // Stuns and pins land (a howl, Pinning Shot) and hold their creature in
+    // the effect's command, at the front of its queue, while they last (seen
+    // in play, 2026-09-30: a pinned character's attack queued behind it and
+    // never ran). They wear off on the effects' timer, which runs only while
+    // effects' time does and moves on a round's worth as a round ages it,
+    // unless the machine ends them first.
     void Conditions()
     {
         for (auto it = conditionLeftMs_.begin(); it != conditionLeftMs_.end();)
         {
-            it->second -= 16;
+            if (!world_.timeHeld)
+            {
+                it->second -= static_cast<std::int32_t>(kFrameMs);
+            }
             if (it->second <= 0)
             {
-                world_.Get(it->first).condition = Condition::None;
+                const ObjectId id = it->first;
                 it = conditionLeftMs_.erase(it);
+                Release(id);
             }
             else
             {
@@ -615,16 +641,36 @@ class Arena
             if (!fighting.empty())
             {
                 const ObjectId id = Pick(rng_, fighting);
-                world_.Get(id).condition = Chance(rng_, 0.7) ? Condition::Disabled : Condition::Rooted;
-                if (world_.Get(id).condition == Condition::Disabled)
+                // It interrupts what its victim was doing.
+                tasks_.erase(id);
+                world_.Finish(id);
+                world_.Get(id).condition = Condition::Disabled;
+                Try(id, CommandType::ExecuteEffect, Source::Engine);
+                if (const auto found = tasks_.find(id); found != tasks_.end())
                 {
-                    // A stun interrupts what its victim was doing.
-                    tasks_.erase(id);
-                    world_.Finish(id);
+                    found->second.held = true;
                 }
                 conditionLeftMs_[id] = static_cast<std::int32_t>(Between(rng_, 2000.0f, 10000.0f));
                 ++coverage_.stunned;
             }
+        }
+    }
+
+    // A condition ends (worn off, or ended by the machine): its command
+    // with it, and its creature's AI chooses again (COMMAND_COMPLETE).
+    void Release(ObjectId id)
+    {
+        world_.Get(id).condition = Condition::None;
+        const auto found = tasks_.find(id);
+        if (found == tasks_.end() || !found->second.held)
+        {
+            return;
+        }
+        tasks_.erase(found);
+        world_.Finish(id);
+        if (world_.machine.Order().Find(id) != nullptr)
+        {
+            Decide(id, true);
         }
     }
 
@@ -883,6 +929,8 @@ class Arena
     int clears_ = 0;
     int interruptions_ = 0; // conversations during this turn
     std::uint32_t turnRunMs_ = 0;
+    std::uint32_t heldInTurnMs_ = 0; // the current creature held by a condition, running
+    static constexpr std::uint32_t kHeldTurnMs = 1000;
     int interlude_ = 0;
     int menu_ = 0;
     int joiners_ = 0;
@@ -934,11 +982,11 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     CHECK(coverage.bledOut > 60);
     CHECK(coverage.vanished > 25);
     CHECK(coverage.tooFar > 30);
-    // Conditions in turns (2026-09-30: 803 stuns and pins landed, 200 turns
-    // lost, 91 pinned, 136 conditions ended by the machine).
+    // Conditions in turns (2026-09-30, before a pin was one: 803 landed,
+    // 200 turns lost, 136 conditions ended by the machine).
     CHECK(coverage.stunned > 260);
     CHECK(coverage.lostTurns > 65);
-    CHECK(coverage.pinnedTurns > 30);
+    CHECK(coverage.lostOnClock > 5);
     CHECK(coverage.conditionsEnded > 45);
     // Cooldowns in turns (2026-09-30: 142 held, 68 released on their
     // users' turns).

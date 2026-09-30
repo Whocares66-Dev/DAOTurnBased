@@ -16,6 +16,7 @@
 #include "dao/generated/ScriptConstants.h"
 
 #include <algorithm>
+#include <array>
 #include <unordered_set>
 
 namespace tb::game
@@ -302,6 +303,14 @@ ActorObservation Bridge::Actor(ObjectId id)
     return actor;
 }
 
+namespace
+{
+// The effects that hold a creature for turns, and that the machine ends
+// once their turns are spent (Status, EndConditions).
+constexpr std::array kHolding{k::EFFECT_TYPE_STUN, k::EFFECT_TYPE_PARALYZE, k::EFFECT_TYPE_SLEEP, k::EFFECT_TYPE_ROOT,
+                              k::EFFECT_TYPE_KNOCKDOWN};
+} // namespace
+
 CombatantStatus Bridge::Status(ObjectId id)
 {
     CombatantStatus status;
@@ -311,17 +320,19 @@ CombatantStatus Bridge::Status(ObjectId id)
     {
         status.down = api::IsDead(id) != 0;
         status.health = Health(id);
-        // The conditions that hold a creature for turns: the effects the
-        // game's stuns, holds and sleeps apply (EffectStun, effect_stun_h;
-        // Pinning Shot's EffectRoot, talent_singletarget.nss).
-        if (api::GetHasEffects(id, k::EFFECT_TYPE_STUN) != 0 || api::GetHasEffects(id, k::EFFECT_TYPE_PARALYZE) != 0 ||
-            api::GetHasEffects(id, k::EFFECT_TYPE_SLEEP) != 0)
+        // The conditions that hold a creature for turns: the effects whose
+        // command the engine keeps at the front of its queue while they
+        // last (EffectStun, effect_stun_h; Pinning Shot's EffectRoot,
+        // talent_singletarget.nss; Shield Bash's EffectKnockdown). Daze is
+        // only a penalty (effect_daze_h). Seen for stuns and pins
+        // 2026-09-30; knockdowns not yet.
+        for (const std::int32_t type : kHolding)
         {
-            status.condition = Condition::Disabled;
-        }
-        else if (api::GetHasEffects(id, k::EFFECT_TYPE_ROOT) != 0)
-        {
-            status.condition = Condition::Rooted;
+            if (api::GetHasEffects(id, type) != 0)
+            {
+                status.condition = Condition::Disabled;
+                break;
+            }
         }
     }
     return status;
@@ -371,8 +382,7 @@ void Bridge::Apply(const std::vector<Effect> &effects)
         case EffectKind::EndConditions:
             // Their turns are spent (core: "Conditions in turns"): the
             // engine's own timers are not waited for.
-            for (const std::int32_t type :
-                 {k::EFFECT_TYPE_STUN, k::EFFECT_TYPE_PARALYZE, k::EFFECT_TYPE_SLEEP, k::EFFECT_TYPE_ROOT})
+            for (const std::int32_t type : kHolding)
             {
                 api::RemoveEffectsByParameters(e.target, type);
             }
