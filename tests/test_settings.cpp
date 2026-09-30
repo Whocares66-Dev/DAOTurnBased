@@ -141,7 +141,7 @@ TEST_CASE("a file from an older build gets the settings it lacks, with their com
     CHECK(parsed.settings.settleMs == 250);                                               // the player's
     CHECK(parsed.settings.effectSecondsPerRound == tb::Settings{}.effectSecondsPerRound); // added
     CHECK(whole.find("effect_seconds_per_round = ") != std::string::npos);
-    CHECK(whole.find("; Effects count rounds") != std::string::npos); // with its comment
+    CHECK(whole.find("; Effects and regeneration count rounds") != std::string::npos); // with its comment
     // Added once: a whole file is left as it is.
     CHECK(tb::WithMissingSettings(whole) == whole);
     CHECK(tb::WithMissingSettings(tb::DefaultSettingsFile()) == tb::DefaultSettingsFile());

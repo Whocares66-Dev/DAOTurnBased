@@ -410,11 +410,12 @@ pause_on_player_turn = false
 ; even with one selected. Off, the game uses it on the selected target at
 ; once, as in real time (a character keeps its target from turn to turn).
 pick_targets = true
-; Effects count rounds: through a fight their clock is held, and at each new
-; round every temporary effect (buffs, debuffs, damage and healing over
-; time, timed summons, lasting areas) ages this many seconds. At 6, a 30 s
-; buff lasts five rounds, whoever is thinking how long. 0 leaves them on
-; the game's clock. Regeneration is not an effect and still runs on it.
+; Effects and regeneration count rounds: through a fight their clock is
+; held, and at each new round every temporary effect (buffs, debuffs, damage
+; and healing over time, timed summons, lasting areas) and every creature's
+; regeneration of health, mana and stamina runs this many seconds. At 6, a
+; 30 s buff lasts five rounds, whoever is thinking how long. 0 leaves them
+; on the game's clock.
 effect_seconds_per_round = 6
 ; Creatures fighting within this many meters of the party leader take turns.
 combat_radius = 50

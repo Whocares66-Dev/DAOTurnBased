@@ -74,8 +74,8 @@ struct Settings
     // A talent chosen on the quickbar asks for its target, even with one
     // selected (otherwise the game uses it on the selected one at once).
     bool pickTargets = true;
-    // Effects' time in rounds: held through a fight, and this many seconds
-    // spent on every temporary effect at each new round (0: the game's clock).
+    // Effects' and regeneration's time in rounds: held through a fight, and
+    // this many seconds spent on them at each new round (0: the game's clock).
     float effectSecondsPerRound = 6.0f;
     float combatRadius = 50.0f; // meters from the party leader a creature may fight from and take turns
     AiPoke aiPoke = AiPoke::CommandComplete;

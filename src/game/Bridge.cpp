@@ -6,7 +6,7 @@
 #include "core/Text.h"
 
 #include "dao/ClientExoApp.h"
-#include "dao/Effects.h"
+#include "dao/Clock.h"
 #include "dao/GameModes.h"
 #include "dao/Gda.h"
 #include "dao/Log.h"
@@ -356,12 +356,13 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             Explain(e.target);
             break;
         case EffectKind::HoldTime:
-            // Every temporary effect's clock (DAOLib's dao/Effects.h): held
-            // through a fight, moved on a round's worth at a time.
-            dao::effects::Hold(e.a != 0);
+            // The clock temporary effects wear off on and regeneration ticks
+            // on (DAOLib's dao/Clock.h, a42be67): held through a fight,
+            // moved on a round's worth at a time.
+            dao::clock::Hold(e.a != 0);
             break;
         case EffectKind::AgeTime:
-            dao::effects::Advance(static_cast<float>(e.b) / 1000.0f);
+            dao::clock::Advance(static_cast<float>(e.b) / 1000.0f);
             break;
         case EffectKind::Cooldown:
             // Held, released, or back to seconds (core: "Cooldowns in turns").
