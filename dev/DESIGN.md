@@ -170,7 +170,7 @@ Filling in what a turn-based mode usually has, by how much it matters:
 - **An end-turn control.** Built as the pause key, and as a button on the turn bar.
 - **Knowing it is your turn.** Built as floating text and selection. The bar and a sound would be better; the game's GUI sounds are reachable from a movie (`FSCommand:PlayGUISound`).
 - **Seeing what is left.** Action and movement remaining, under the bar or on the portrait. The data is in `TurnView`.
-- **The camera going to whoever acts.** Experimental (`camera_follow`), through the game's own centring handler, not yet seen in play.
+- **The camera going to whoever acts.** `camera_follow`, through DAOLib's camera (`src/game/Camera.cpp`, `src/core/Easing.h`). In the tactical view it pans to whoever acts, eased, and never turns: only the player turns it. Close in, it stays with the player's character through others' turns (following an enemy put the camera 3.8 m behind it) and comes round behind each party member as their turn begins. Not yet seen in play.
 - **Fast enemy turns.** A big fight is long when every enemy animates in full. BG3 lets you speed them up. The GUI can set the game's time scale (`FSCommand:SetTimeScale` is in `portraits.gfx`), so DAOLib can likely reach it: speed up AI turns and round padding.
 - **Delay.** Moving one's turn later in the round, to act after an ally. Easy in `TurnOrder`; needs a key and a place in the bar.
 - **Surprise.** A party that starts a fight from stealth might get a free round, as in D&D; enemies who ambush likewise. Stealth is readable from the scripts.

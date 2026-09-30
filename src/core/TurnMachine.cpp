@@ -540,7 +540,9 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     // choosing nothing, every turn, in play (2026-09-30).
     if (settings_.cameraFollow && PlayerControls(who))
     {
-        fx.push_back(Effect::Of(EffectKind::CenterCamera, who.id));
+        Effect camera = Effect::Of(EffectKind::CenterCamera, who.id);
+        camera.a = 1; // the party's: close in, the camera comes round behind
+        fx.push_back(camera);
     }
     if (PlayerControls(who))
     {
@@ -1290,7 +1292,9 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     {
         // Applied with the next frame's effects, after the AI's call into
         // the gate has returned.
-        pending_.push_back(Effect::Of(EffectKind::CenterCamera, who->id));
+        Effect camera = Effect::Of(EffectKind::CenterCamera, who->id);
+        camera.a = who->side == Side::Party ? 1 : 0;
+        pending_.push_back(camera);
     }
     ++budget_.commands;
     budget_.lastKind = kind;

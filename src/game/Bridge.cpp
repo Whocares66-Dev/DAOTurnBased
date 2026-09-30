@@ -374,10 +374,7 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             Signal(e);
             break;
         case EffectKind::CenterCamera:
-            if (!FollowWithCamera(e.target))
-            {
-                spdlog::debug("could not centre the camera on {:#010x}", e.target);
-            }
+            camera_.TurnTo(e.target, e.a != 0);
             break;
         }
     }
