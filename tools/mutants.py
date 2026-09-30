@@ -69,8 +69,14 @@ MUTANTS = [
     Mutant(
         "the game is never paused for a turn",
         MACHINE,
-        "return phase == Phase::Starting || phase == Phase::TurnStart || phase == Phase::AwaitingOrder;",
-        "(void)phase;\n    return false;",
+        "return phase == Phase::Starting || phase == Phase::TurnStart ||",
+        "(void)settings;\n    return phase == Phase::Idle &&",
+    ),
+    Mutant(
+        "the world idles on the player's turn though pause_on_player_turn says hold it",
+        MACHINE,
+        "(phase == Phase::AwaitingOrder && settings.pauseOnPlayerTurn);",
+        "(phase == Phase::AwaitingOrder && !settings.pauseOnPlayerTurn);",
     ),
     Mutant(
         "an action is given back every time",

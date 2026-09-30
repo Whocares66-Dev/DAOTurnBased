@@ -64,6 +64,24 @@ DAO's cooldowns run in real time, paused or not: passing turns quickly left a ta
 
 **Sustained abilities** (the ability table's `UseType` 2: Shield Wall, Powerful Swings, Flaming Weapons, Rock Armor, Stealth) cost nothing to turn on or off, and do not end the turn; turned off, one waits for its user's next turn, so it cannot be turned on, off and on again in one turn (the user's rule). Action points will put a price on them.
 
+
+### Everything in turns: the overhaul still to do
+
+The user's rule (2026-09-30): in turn-based mode everything runs on turns (or, later, action points), nothing on time. Built so far: conditions (stun, paralysis, sleep, pins) and cooldowns. Still on the game's clock, running whenever the world runs:
+
+- **Effect durations**: buffs, debuffs, damage and healing over time (burning, poison, bleeding, regeneration potions, auras), each a duration in seconds on a `CGameEffect`.
+- **Regeneration**: stamina, mana and health coming back each second, in and out of combat.
+- **Sustained abilities' upkeep**: their drain, if any, per second, and their stamina or mana reserved.
+- **Areas that last**: spell areas on the ground (Grease, Blizzard, Inferno), traps' areas and lures, a duration each.
+- **Summons and transformations** with a duration.
+- **Casting and attack timing**: an action's own animation time, which is fine as it is (the world runs while an action plays).
+
+The direction: the world's clock stops being the fight's clock. A round (or each creature's turn) advances what belongs to its creatures by a fixed amount, as conditions and cooldowns do now: durations counted in turns and ended at the start of the owner's turn; regeneration given per turn; areas lasting so many rounds. Two ways to get there, which the DAOLib work decides between:
+
+- **Hold the clock and step it**: the game's time scale, or its effect timers, frozen outside actions, and advanced by a round's worth at each round (`dev/DAOLIB_NEEDS.md`, "Time and input": the time scale, advancing game time without running the world).
+- **Own each timer**: read and set an effect's remaining duration (`dev/DAOLIB_NEEDS.md`, "Rules": an effect's duration and remaining time), hold it as cooldowns are held, and count it down per turn; set regeneration to nothing in fights and give it per turn.
+
+Until then, `pause_on_player_turn = true` keeps what ticks from ticking while the player chooses; off (the default, the user's choice), the world idles on and those timers run.
 ## The AI's turn
 
 The game's AI is event-driven (DAOLib's `dev/TURN_BASED.md`). When a creature's command completes, the engine sends it `EVENT_TYPE_COMMAND_COMPLETE`; `rules_core.nss` runs `AI_DetermineCombatRound`, which picks the next command and queues it with `AddCommand`. There is no round. The mod turns that loop on and off:

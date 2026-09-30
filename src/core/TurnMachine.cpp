@@ -28,9 +28,12 @@ bool Interlude(Mode mode)
            mode == Mode::Fixed || mode == Mode::PartyPicker;
 }
 
-bool WantsPaused(Phase phase)
+// Between turns the world holds still; while the player chooses, only with
+// pause_on_player_turn (the user asked for the world to idle on, 2026-09-30).
+bool WantsPaused(Phase phase, const Settings &settings)
 {
-    return phase == Phase::Starting || phase == Phase::TurnStart || phase == Phase::AwaitingOrder;
+    return phase == Phase::Starting || phase == Phase::TurnStart ||
+           (phase == Phase::AwaitingOrder && settings.pauseOnPlayerTurn);
 }
 
 const char *ModeName(Mode mode)
@@ -1079,7 +1082,7 @@ void TurnMachine::EnforcePause(const Observation &obs, std::vector<Effect> &fx) 
     {
         return;
     }
-    const bool want = WantsPaused(phase_);
+    const bool want = WantsPaused(phase_, settings_);
     if (want != obs.paused)
     {
         fx.push_back(Effect::Of(want ? EffectKind::Pause : EffectKind::Unpause));

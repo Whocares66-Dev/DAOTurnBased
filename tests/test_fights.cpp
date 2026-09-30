@@ -182,6 +182,7 @@ class Arena
         s.scriptEvents = true; // the round check reads the turn-start events
         s.cameraFollow = Chance(rng, 0.2);
         s.orderRunMs = Chance(rng, 0.5) ? 500 : 0;
+        s.pauseOnPlayerTurn = Chance(rng, 0.5);
         return s;
     }
 
@@ -773,10 +774,12 @@ class Arena
         const Phase phase = world_.machine.GetPhase();
         if (world_.mode == Mode::Combat)
         {
+            const bool choosing = phase == Phase::AwaitingOrder;
             const bool wantsPause =
-                phase == Phase::Starting || phase == Phase::TurnStart || phase == Phase::AwaitingOrder;
+                phase == Phase::Starting || phase == Phase::TurnStart || (choosing && settings_.pauseOnPlayerTurn);
             const bool wantsRun = phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling ||
-                                  phase == Phase::RoundPadding || phase == Phase::Dispatching;
+                                  phase == Phase::RoundPadding || phase == Phase::Dispatching ||
+                                  (choosing && !settings_.pauseOnPlayerTurn);
             Must(!wantsPause || world_.paused, "the game running while it should wait");
             Must(!wantsRun || !world_.paused, "the game paused while a turn plays out");
         }

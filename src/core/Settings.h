@@ -67,8 +67,10 @@ struct Settings
     int maxCommandsPerTurn = 6;        // commands an AI creature may start in one turn
     int orderRunMs = 0;                // an order that queued nothing while paused: run the world this long (0: off)
     int conditionTurns = 1;            // turns a stun costs, a pin's turns without movement (0: the game's timers)
-    float cooldownSecondsPerTurn =
-        10.0f;                  // an ability's cooldown in turns: its seconds over this (0: the game's timers)
+    // An ability's cooldown in turns: its seconds over this (0: the game's timers).
+    float cooldownSecondsPerTurn = 10.0f;
+    // The world holds still while the player chooses (otherwise it idles on).
+    bool pauseOnPlayerTurn = false;
     float combatRadius = 50.0f; // meters from the party leader a creature may fight from and take turns
     AiPoke aiPoke = AiPoke::CommandComplete;
 

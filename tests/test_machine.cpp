@@ -998,3 +998,20 @@ TEST_CASE("a refusal repeated every frame is logged once a second", "[machine]")
     CHECK(w.Order(kCompanion, CommandType::Drive, Source::Player) == Verdict::Block);
     CHECK(lines == 2);
 }
+
+TEST_CASE("by default the world idles on while the player chooses, and nobody else acts", "[machine]")
+{
+    // The user: not pausing on a party member's turn lets the others idle.
+    Settings s = Fixed();
+    s.pauseOnPlayerTurn = Settings{}.pauseOnPlayerTurn;
+    REQUIRE_FALSE(s.pauseOnPlayerTurn);
+    World w(s);
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    w.RunFor(500);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK_FALSE(w.paused);
+    // The enemies are still held.
+    CHECK(w.Order(kGenlock, CommandType::Attack, Source::Script) == Verdict::Block);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
+}

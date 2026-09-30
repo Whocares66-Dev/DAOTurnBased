@@ -65,6 +65,9 @@ inline Settings Fixed()
     // The scripted cases walk after an action; one of their own has the
     // default, which ends the turn there.
     s.endTurnWhenActionUsed = false;
+    // And hold the world still while the player chooses, which they check;
+    // one of their own has the default, the world idling on.
+    s.pauseOnPlayerTurn = true;
     return s;
 }
 

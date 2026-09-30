@@ -186,6 +186,7 @@ const std::vector<Entry> &Entries()
         {"turns", "order_run_ms", Int(&Settings::orderRunMs, 0, 2000)},
         {"turns", "condition_turns", Int(&Settings::conditionTurns, 0, 5)},
         {"turns", "cooldown_seconds_per_turn", Float(&Settings::cooldownSecondsPerTurn, 0.0f, 60.0f)},
+        {"turns", "pause_on_player_turn", Bool(&Settings::pauseOnPlayerTurn)},
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
         {"turns", "ai_poke",
          [](Settings &s, std::string_view text) -> std::string {
@@ -397,6 +398,12 @@ condition_turns = 1
 ; on, and turned off it waits for its user's next turn. 0 leaves the game's
 ; timers in seconds, which run in real time, paused or not.
 cooldown_seconds_per_turn = 10
+; Pause the game while a party member's turn waits on your order. Off, the
+; world idles on (breathing, torches, creatures shifting on their feet) and
+; nobody acts out of turn, but what runs on the game's clock runs: damage
+; over time and buffs tick, and stamina, mana and health come back, while
+; you choose. Stuns, pins and cooldowns count turns either way.
+pause_on_player_turn = false
 ; Creatures fighting within this many meters of the party leader take turns.
 combat_radius = 50
 ; How an AI creature is told its turn has come: command_complete or kickstart.
