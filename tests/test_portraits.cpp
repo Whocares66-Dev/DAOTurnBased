@@ -66,7 +66,7 @@ TEST_CASE("portraits are asked for in the order of the turns, each combatant onc
     CHECK(asked == std::vector<ObjectId>{kHero, kGenlock, kCompanion, kHurlock});
     CHECK(book.Tried() == 4);
     CHECK(book.Found() == 4);
-    CHECK(book.Of(kGenlock) == L"img://portrait_" + std::to_wstring(kGenlock));
+    CHECK(std::wstring{book.Of(kGenlock)} == L"img://portrait_" + std::to_wstring(kGenlock));
 }
 
 TEST_CASE("a combatant the engine made no portrait for is not asked again", "[portraits]")
