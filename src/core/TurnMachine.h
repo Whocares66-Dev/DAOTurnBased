@@ -302,6 +302,9 @@ class TurnMachine
     // turn waits in real time. Released on its user's turn, or turned back
     // into seconds when the fight ends.
     static constexpr std::int32_t kCooldownHoldSeconds = 3600;
+    // How long a turn waits on an effect's command it found its creature
+    // in before the turn is lost (heldByEffect_).
+    static constexpr std::uint32_t kEffectGraceMs = 2000;
 
   private:
     struct Budget
@@ -377,7 +380,18 @@ class TurnMachine
     };
     std::unordered_map<ObjectId, Held> held_;
     bool currentStunned_ = false; // the current combatant was stunned in its own turn
-    std::string lastRefusal_;     // the last refusal logged, and when: repeats within a second are not
+    // The current combatant was found in an effect's command it did not
+    // choose, before acting: a condition the statuses do not name (a grab,
+    // say) holds it as a stun does, and with effects' time held its command
+    // may outlast the turn (a pin's did, 2026-09-30).
+    bool heldByEffect_ = false;
+    // The current creature as the frame saw it: at a turn's start, the one
+    // whose turn begins (the turn-start frame observes it). An AI held by
+    // an effect is not told its turn has come, since it would choose at
+    // once and queue behind the effect (the arena, seed 127 of the long
+    // run, 2026-09-30).
+    std::optional<ActorObservation> seenActor_;
+    std::string lastRefusal_; // the last refusal logged, and when: repeats within a second are not
     std::uint32_t lastRefusalLogNow_ = 0;
     bool turnBegun_ = false; // an interlude came in the middle of a turn, not between two
     // Cooldowns in turns (dev/DESIGN.md): the abilities used in the action

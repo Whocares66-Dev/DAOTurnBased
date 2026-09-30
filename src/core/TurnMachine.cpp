@@ -229,6 +229,7 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
 {
     std::vector<Effect> fx;
     fx.swap(pending_);
+    seenActor_ = obs.actor;
     const std::uint32_t dt = Delta(obs.nowMs);
     lastMode_ = obs.mode;
 
@@ -548,6 +549,7 @@ void TurnMachine::StepPadding(std::vector<Effect> &fx)
 void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
 {
     budget_ = Budget{};
+    heldByEffect_ = false;
     budget_.movementMax = MovementBudget(settings_, who.speed, who.dexterity);
     idleTicks_ = 0;
     lastPosition_.reset();
@@ -754,6 +756,14 @@ void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
     {
         fx.push_back(Effect::Of(EffectKind::Select, hero_));
     }
+    if (seenActor_ && seenActor_->id == who.id && seenActor_->busy && seenActor_->current == CommandType::ExecuteEffect)
+    {
+        heldByEffect_ = true;
+        phase_ = Phase::Executing;
+        executingSince_ = clock_;
+        idleTicks_ = 0;
+        return;
+    }
     fx.push_back(Effect::Of(EffectKind::PokeAi, who.id));
     deadline_ = clock_ + static_cast<std::uint32_t>(settings_.aiThinkMs);
     phase_ = Phase::AiThinking;
@@ -797,6 +807,7 @@ void TurnMachine::StepAwaiting(const Observation &obs, std::vector<Effect> &fx)
             Log(LogLevel::Debug,
                 std::format("busy with a {} the gate did not see; letting it run", Name(obs.actor->current)));
         }
+        heldByEffect_ = obs.actor->current == CommandType::ExecuteEffect;
         phase_ = Phase::Executing;
         executingSince_ = clock_;
         idleTicks_ = 0;
@@ -845,6 +856,9 @@ void TurnMachine::StepThinking(const Observation &obs, std::vector<Effect> &fx)
     }
     if (obs.actor && obs.actor->busy)
     {
+        // Its choice would have come through the gate, which moves on to
+        // executing: busy here is something else's.
+        heldByEffect_ = obs.actor->current == CommandType::ExecuteEffect;
         phase_ = Phase::Executing;
         executingSince_ = clock_;
         idleTicks_ = 0;
@@ -880,6 +894,19 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     {
         return;
     }
+    if (heldByEffect_ && (!actor.busy || actor.current != CommandType::ExecuteEffect))
+    {
+        heldByEffect_ = false; // let go within the grace: the turn is its own again
+        const Combatant *current = order_.Current();
+        if (!actor.busy && current != nullptr && !PlayerControls(*current))
+        {
+            // Its AI was not told, or told while it could not choose.
+            fx.push_back(Effect::Of(EffectKind::PokeAi, current->id));
+            deadline_ = clock_ + static_cast<std::uint32_t>(settings_.aiThinkMs);
+            phase_ = Phase::AiThinking;
+            return;
+        }
+    }
     if (actor.busy)
     {
         idleTicks_ = 0;
@@ -889,6 +916,19 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         if (endTurnRequested_ && Classify(actor.current) == CommandKind::Involuntary)
         {
             EndTurn(fx, "ended by the player");
+            return;
+        }
+        // Held in an effect's command past the grace: the turn is lost, as
+        // to a stun, and the effect left to the engine (its time, spent a
+        // round at a time, frees the creature).
+        if (heldByEffect_ && actor.current == CommandType::ExecuteEffect && clock_ - executingSince_ >= kEffectGraceMs)
+        {
+            if (const Combatant *current = order_.Current())
+            {
+                Log(LogLevel::Info, std::format("{} is held by an effect: its turn is lost", Utf8(current->name)));
+                Floaty(fx, current->id, current->name + L" loses the turn", kGrey);
+            }
+            EndTurn(fx, "held by an effect");
             return;
         }
         if (clock_ - executingSince_ > static_cast<std::uint32_t>(settings_.maxActionMs))
@@ -1020,6 +1060,7 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
         roundPending_ = true;
     }
     budget_ = Budget{};
+    heldByEffect_ = false;
     budget_.actions = 0;
     phase_ = Phase::TurnStart;
     wantScan_ = true;
@@ -1288,6 +1329,20 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     }
     const bool player = PlayerControls(*current);
     const bool asked = request.source == Source::Player; // the player's own order
+    // Held in an effect's command: an order would queue behind it and run
+    // in someone else's turn (Eleanor's ability, pinned, 2026-09-30).
+    if (heldByEffect_ && kind != CommandKind::Free)
+    {
+        if (player && asked)
+        {
+            Refuse(who->id, L"Held");
+        }
+        if (Logs(refusals))
+        {
+            Refused(refusals, std::format("{}: {} held, it is held by an effect", Utf8(who->name), Name(request.type)));
+        }
+        return Verdict::Block;
+    }
     // On a turn the player plays, the character's own AI does not spend it:
     // a controlled character carries on attacking by itself (in real time,
     // AI_DetermineCombatRound_Partial), and in play that ended a pinned

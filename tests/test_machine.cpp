@@ -506,6 +506,64 @@ TEST_CASE("a conversation in the middle of a fight stands the gate aside, then t
           }) == turnStarts);
 }
 
+TEST_CASE("after a conversation between two turns the next one begins afresh", "[machine]")
+{
+    // Nothing had begun to go on with: the genlock's turn starts with its
+    // own movement and its turn-start event, not as a resumed one. The
+    // random fights held this only by a rare sequence (TESTING.md).
+    World w;
+    w.StartFight();
+    CHECK(w.machine.OnPauseKey());
+    w.Frame();
+    REQUIRE(w.machine.GetPhase() == Phase::TurnStart);
+    w.mode = Mode::Dialog;
+    w.Frame();
+    REQUIRE(w.machine.GetPhase() == Phase::Suspended);
+    w.applied.clear();
+    w.mode = Mode::Combat;
+    for (int i = 0; i < 10 && w.Current() == kGenlock && !w.Did(EffectKind::PokeAi, kGenlock); ++i)
+    {
+        w.Frame();
+    }
+    CHECK(w.Current() == kGenlock);
+    CHECK(std::ranges::any_of(w.applied, [](const Effect &e) {
+        return e.kind == EffectKind::Signal && e.event == events::kTurnStart && e.target == kGenlock;
+    }));
+    CHECK(w.machine.View().movementLeft > 0.0f);
+}
+
+TEST_CASE("an AI an effect holds as its turn comes is not told until it is let go", "[machine][conditions]")
+{
+    World w;
+    w.StartFight();
+    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    CHECK(w.machine.OnPauseKey());
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock)); // it would choose and queue behind the effect
+    w.RunFor(500);
+    w.Finish(kGenlock); // up again within the grace
+    w.RunFor(100);
+    CHECK(w.Did(EffectKind::PokeAi, kGenlock));
+    CHECK(w.Current() == kGenlock);
+}
+
+TEST_CASE("an AI an effect holds past the grace loses its turn", "[machine][conditions]")
+{
+    World w;
+    w.StartFight();
+    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    CHECK(w.machine.OnPauseKey());
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    w.RunFor(static_cast<int>(TurnMachine::kEffectGraceMs) + 200);
+    CHECK(w.Current() != kGenlock);
+    CHECK(w.Said(L"Genlock loses the turn"));
+    CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
+}
+
 TEST_CASE("a menu over the fight holds everything as it is", "[machine]")
 {
     World w;
@@ -832,6 +890,59 @@ TEST_CASE("End pressed while something the engine put there holds the creature e
     CHECK(w.machine.OnPauseKey());
     w.Frame();
     CHECK(w.Current() != kHero);
+}
+
+TEST_CASE("a creature an effect holds as its turn comes loses the turn after a grace, and no order queues behind it",
+          "[machine][conditions]")
+{
+    // A condition the statuses do not name (a grab, say): the engine keeps
+    // its creature in the effect's command, and with effects' time held
+    // that command outlasts any turn.
+    World w;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.machine.OnPauseKey());
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    w.RunFor(100);
+    // Its companion's turn comes with the companion held.
+    CHECK(w.Order(kCompanion, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    w.Finish(kGenlock);
+    for (int i = 0; i < 100 && w.Current() != kCompanion; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kCompanion);
+    w.RunFor(100);
+    w.applied.clear();
+    CHECK(w.Order(kCompanion, CommandType::Attack, Source::Player, 0.0f) == Verdict::Block);
+    w.RunFor(static_cast<int>(TurnMachine::kEffectGraceMs) + 200);
+    CHECK(w.Said(L"Held"));
+    CHECK(w.Current() != kCompanion);
+    CHECK(w.Said(L"Alistair loses the turn"));
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kCompanion)); // the effect is the engine's
+}
+
+TEST_CASE("a creature an effect lets go within the grace keeps its turn", "[machine][conditions]")
+{
+    World w;
+    w.StartFight();
+    CHECK(w.machine.OnPauseKey());
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    CHECK(w.Order(kCompanion, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    w.Finish(kGenlock);
+    for (int i = 0; i < 100 && w.Current() != kCompanion; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kCompanion);
+    w.RunFor(500);
+    w.Finish(kCompanion); // up again
+    w.RunFor(1000);
+    CHECK(w.Current() == kCompanion);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(w.Order(kCompanion, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
 }
 
 TEST_CASE("End pressed during the creature's own action waits for it", "[machine]")

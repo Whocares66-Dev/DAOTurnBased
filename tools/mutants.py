@@ -227,6 +227,36 @@ MUTANTS = [
         "    const bool holds = false;",
     ),
     Mutant(
+        "a turn waits out an effect no condition names",
+        MACHINE,
+        "            clock_ - executingSince_ >= kEffectGraceMs)",
+        "            clock_ - executingSince_ >= kEffectGraceMs * 10)",
+    ),
+    Mutant(
+        "an order queues behind the effect that holds its creature",
+        MACHINE,
+        "    if (heldByEffect_ && kind != CommandKind::Free)",
+        "    if (heldByEffect_ && kind == CommandKind::Free)",
+    ),
+    Mutant(
+        "a creature an effect let go stays held",
+        MACHINE,
+        "        heldByEffect_ = false; // let go within the grace: the turn is its own again",
+        "        // let go",
+    ),
+    Mutant(
+        "an AI held by an effect is told its turn has come",
+        MACHINE,
+        "        seenActor_->current == CommandType::ExecuteEffect)",
+        "        seenActor_->current == CommandType::Invalid)",
+    ),
+    Mutant(
+        "an AI an effect let go within the grace is never told again",
+        MACHINE,
+        "            // Its AI was not told, or told while it could not choose.\n            fx.push_back(Effect::Of(EffectKind::PokeAi, current->id));",
+        "            // Its AI was not told, or told while it could not choose.\n",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",

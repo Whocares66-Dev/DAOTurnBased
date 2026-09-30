@@ -101,9 +101,10 @@ struct Coverage
     int bledOut = 0;
     int tooFar = 0;
     int vanished = 0;
-    int stunned = 0;     // creatures stunned or pinned
-    int lostTurns = 0;   // turns taken by a condition
-    int lostOnClock = 0; // of them, with conditions on the game's clock
+    int stunned = 0;      // creatures stunned or pinned
+    int lostTurns = 0;    // turns taken by a condition
+    int lostOnClock = 0;  // of them, with conditions on the game's clock
+    int heldByEffect = 0; // turns lost to an effect's command no condition named
     int conditionsEnded = 0;
     int cooldownsHeld = 0;
     int cooldownsReleased = 0;
@@ -129,6 +130,20 @@ class Arena
             if (line.find("took too long") != std::string_view::npos)
             {
                 ++coverage_.timeouts;
+            }
+            if (line.find("is held by an effect: its turn is lost") != std::string_view::npos)
+            {
+                ++coverage_.heldByEffect;
+            }
+            // Held in an effect's command no condition names as the machine
+            // begins its turn: it gives the grace, then the turn is lost.
+            if (line.starts_with("round ") && line.find("'s turn (") != std::string_view::npos)
+            {
+                FollowTurn();
+                const auto found = tasks_.find(world_.Current());
+                heldAtStart_ = found != tasks_.end() && found->second.held &&
+                               world_.Get(world_.Current()).condition == Condition::None;
+                turnBeganAtMs_ = turnRunMs_; // a padded round's wait came before
             }
             if (line.find(" m to walk with ") != std::string_view::npos)
             {
@@ -266,6 +281,8 @@ class Arena
             clears_ = 0;
             interruptions_ = 0;
             turnRunMs_ = 0;
+            heldAtStart_ = false; // judged as the machine begins the turn (onLog)
+            turnBeganAtMs_ = 0;
         }
     }
 
@@ -546,6 +563,12 @@ class Arena
             heldInTurnMs_ =
                 turn && world_.Get(world_.Current()).condition == Condition::Disabled ? heldInTurnMs_ + kFrameMs : 0;
             Must(heldInTurnMs_ <= kHeldTurnMs, "a held creature's turn waited on its condition");
+            FollowTurn();
+            const auto found = tasks_.find(world_.Current());
+            const bool stillHeld = found != tasks_.end() && found->second.held;
+            Must(!(turn && heldAtStart_ && stillHeld &&
+                   turnRunMs_ - turnBeganAtMs_ > TurnMachine::kEffectGraceMs + kEffectGraceSlackMs),
+                 "a turn waited past the grace on an effect no condition named");
         }
         for (const ObjectId id : ids)
         {
@@ -641,10 +664,12 @@ class Arena
             if (!fighting.empty())
             {
                 const ObjectId id = Pick(rng_, fighting);
-                // It interrupts what its victim was doing.
+                // It interrupts what its victim was doing. Now and then one
+                // the statuses do not name (an ogre's grab, say): the
+                // creature is held all the same.
                 tasks_.erase(id);
                 world_.Finish(id);
-                world_.Get(id).condition = Condition::Disabled;
+                world_.Get(id).condition = Chance(rng_, 0.2) ? Condition::None : Condition::Disabled;
                 Try(id, CommandType::ExecuteEffect, Source::Engine);
                 if (const auto found = tasks_.find(id); found != tasks_.end())
                 {
@@ -661,6 +686,10 @@ class Arena
     void Release(ObjectId id)
     {
         world_.Get(id).condition = Condition::None;
+        if (id == world_.Current())
+        {
+            heldAtStart_ = false; // a hold after this one is another's
+        }
         const auto found = tasks_.find(id);
         if (found == tasks_.end() || !found->second.held)
         {
@@ -931,6 +960,9 @@ class Arena
     std::uint32_t turnRunMs_ = 0;
     std::uint32_t heldInTurnMs_ = 0; // the current creature held by a condition, running
     static constexpr std::uint32_t kHeldTurnMs = 1000;
+    bool heldAtStart_ = false;        // the current creature was held by an unnamed effect as its turn came
+    std::uint32_t turnBeganAtMs_ = 0; // turnRunMs_ as the machine began the turn
+    static constexpr std::uint32_t kEffectGraceSlackMs = 600;
     int interlude_ = 0;
     int menu_ = 0;
     int joiners_ = 0;
@@ -979,6 +1011,8 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     CHECK(coverage.partyWipes > 7);
     CHECK(coverage.refunds > 85);
     CHECK(coverage.timeouts > 30);
+    // Turns lost to an effect no condition named (2026-09-30: 17).
+    CHECK(coverage.heldByEffect > 8);
     CHECK(coverage.bledOut > 60);
     CHECK(coverage.vanished > 25);
     CHECK(coverage.tooFar > 30);
