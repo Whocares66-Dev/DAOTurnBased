@@ -473,6 +473,18 @@ function build(state)
     var half = middle + 60;
     var high = CARD_H + 58;
     var overlap = 16;
+    // Under it, a black fading out to both ends: the strip's own dark was
+    // thin over a bright scene in play (12:25), its light edges showing more.
+    var shade = plate.createEmptyMovieClip("shade", 0);
+    var across = {matrixType: "box", x: middle - half, y: 0, w: 2 * half, h: high, r: 0};
+    shade.beginGradientFill("linear", [0x000000, 0x000000, 0x000000, 0x000000], [0, 62, 62, 0], [0, 64, 191, 255],
+                            across);
+    shade.moveTo(middle - half, TOP - 6);
+    shade.lineTo(middle + half, TOP - 6);
+    shade.lineTo(middle + half, TOP - 14 + high);
+    shade.lineTo(middle - half, TOP - 14 + high);
+    shade.lineTo(middle - half, TOP - 6);
+    shade.endFill();
     var right = plate.createEmptyMovieClip("right", 1);
     art(right, "Notifications_IB", 1, middle - overlap, TOP - 10, half + overlap, high);
     var rightMask = plate.createEmptyMovieClip("rightMask", 2);
