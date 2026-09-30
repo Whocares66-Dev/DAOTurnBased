@@ -16,7 +16,6 @@
 #include "game/Camera.h"
 #include "game/Gate.h"
 #include "game/SettingsFile.h"
-#include "game/Targeting.h"
 
 #include "dao/Frame.h"
 #include "dao/Log.h"
@@ -44,7 +43,6 @@ struct State
     bool toggleWasDown = false;
     std::uint32_t lastSettingsCheck = 0;
     tb::game::BarLink bar;
-    tb::game::Targeting targeting;
     bool turnBar = false;
     bool portraits = true;
     std::uint32_t lastBarPublish = 0;
@@ -108,7 +106,6 @@ void UseTurnBar(const tb::Settings &settings)
 {
     g.turnBar = settings.turnBar;
     g.portraits = settings.portraits;
-    g.targeting.SetEnabled(settings.pickTargets);
     if (g.turnBar)
     {
         g.bar.Install();
@@ -197,7 +194,6 @@ void Tick()
     // Unlocked: applying an effect can queue a command, which the gate
     // puts to the machine.
     g.bridge->Apply(effects);
-    g.targeting.Serve();
     ServeBar(now);
 }
 
@@ -246,7 +242,6 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     g.toggleKey = settings.toggleKey;
     UseTurnBar(settings);
 
-    g.targeting.Install(*g.machine, g.mutex);
     if (!tb::game::InstallGate(*g.machine, g.mutex))
     {
         // Without every hook a turn-based fight cannot hold: nobody runs the
