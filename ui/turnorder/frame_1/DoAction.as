@@ -463,41 +463,47 @@ function build(state)
         x += END_W + 2 * GAP;
     }
     bar._x = Math.round((Stage.width - x) / 2);
-    // Behind it all, the game's translucent black, its notifications' strip
-    // (Notifications_IB, dark at one end and fading out at the other),
-    // twice from the middle, so the bar fades out at both ends as the
-    // game's banners do. Each strip starts a little past the middle, under
-    // a mask: its dark end is rounded, and the two ends met in a seam.
-    var plate = bar.createEmptyMovieClip("plate", 5);
+    // Behind the medallions, centred on them, the game's translucent black;
+    // under it a slimmer one for the lines of text (the user: the backing
+    // sat low, the portraits not centred in it).
     var middle = (x - GAP) / 2;
-    var half = middle + 60;
-    var high = CARD_H + 58;
+    banner(bar, "plate", 3, middle, middle + 60, TOP - 16, CARD_H + 32);
+    banner(bar, "caption", 4, middle, 250, TOP + CARD_H + 18, 38);
+    label(bar, "status", 6, 0, TOP + CARD_H + 20, x, 20, 13, PARCHMENT, "center", false);
+    label(bar, "hover", 7, 0, TOP + CARD_H + 36, x, 20, 12, GOLD, "center", false);
+}
+
+// The game's translucent black, as its banners have it: its notifications'
+// strip (Notifications_IB, dark at one end and fading out at the other)
+// twice from the middle, so it fades out at both ends, over a drawn black
+// fading the same way (the strip's own dark was thin over a bright scene
+// in play, 12:25). Each strip starts a little past the middle, under a
+// mask: its dark end is rounded, and the two ends met in a seam.
+function banner(bar, name, depth, middle, half, top, high)
+{
+    var plate = bar.createEmptyMovieClip(name, depth);
     var overlap = 16;
-    // Under it, a black fading out to both ends: the strip's own dark was
-    // thin over a bright scene in play (12:25), its light edges showing more.
     var shade = plate.createEmptyMovieClip("shade", 0);
     var across = {matrixType: "box", x: middle - half, y: 0, w: 2 * half, h: high, r: 0};
     shade.beginGradientFill("linear", [0x000000, 0x000000, 0x000000, 0x000000], [0, 62, 62, 0], [0, 64, 191, 255],
                             across);
-    shade.moveTo(middle - half, TOP - 6);
-    shade.lineTo(middle + half, TOP - 6);
-    shade.lineTo(middle + half, TOP - 14 + high);
-    shade.lineTo(middle - half, TOP - 14 + high);
-    shade.lineTo(middle - half, TOP - 6);
+    shade.moveTo(middle - half, top + 4);
+    shade.lineTo(middle + half, top + 4);
+    shade.lineTo(middle + half, top + high - 4);
+    shade.lineTo(middle - half, top + high - 4);
+    shade.lineTo(middle - half, top + 4);
     shade.endFill();
     var right = plate.createEmptyMovieClip("right", 1);
-    art(right, "Notifications_IB", 1, middle - overlap, TOP - 10, half + overlap, high);
+    art(right, "Notifications_IB", 1, middle - overlap, top, half + overlap, high);
     var rightMask = plate.createEmptyMovieClip("rightMask", 2);
-    box(rightMask, middle, TOP - 20, half + 20, high + 20, 0xFFFFFF, 100);
+    box(rightMask, middle, top - 10, half + 20, high + 20, 0xFFFFFF, 100);
     right.setMask(rightMask);
     var left = plate.createEmptyMovieClip("left", 3);
-    var mirrored = art(left, "Notifications_IB", 1, middle + overlap, TOP - 10, half + overlap, high);
+    var mirrored = art(left, "Notifications_IB", 1, middle + overlap, top, half + overlap, high);
     mirrored._xscale = -100;
     var leftMask = plate.createEmptyMovieClip("leftMask", 4);
-    box(leftMask, middle - half - 20, TOP - 20, half + 20, high + 20, 0xFFFFFF, 100);
+    box(leftMask, middle - half - 20, top - 10, half + 20, high + 20, 0xFFFFFF, 100);
     left.setMask(leftMask);
-    label(bar, "status", 6, 0, TOP + CARD_H + 16, x, 20, 13, PARCHMENT, "center", false);
-    label(bar, "hover", 7, 0, TOP + CARD_H + 30, x, 20, 12, GOLD, "center", false);
 }
 
 // Whose turn, and on the player's what is left.
