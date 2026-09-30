@@ -30,8 +30,37 @@ dao::CameraController *Camera()
 
 } // namespace
 
+// Half a second after a swing: is the yaw still where it was left? The
+// user saw the camera not come round once they had turned it themselves;
+// if the game keeps the player's turning and puts it back, this says so.
+void CameraDirector::Watch(float dtSeconds)
+{
+    settledSeconds_ += dtSeconds;
+    if (settledSeconds_ < 0.5f)
+    {
+        return;
+    }
+    const float left = *settled_;
+    settled_.reset();
+    dao::CameraController *camera = Camera();
+    dao::SceneCamera *scene = camera != nullptr ? camera->Scene() : nullptr;
+    if (scene == nullptr || driftLogged_ >= 6)
+    {
+        return;
+    }
+    const float drift = TurnBetween(left, scene->Yaw());
+    if (std::fabs(drift) > 0.05f)
+    {
+        ++driftLogged_;
+        spdlog::info("the camera's yaw was left at {:.2f} and half a second later is {:.2f}: something turned it "
+                     "{:.2f} back",
+                     left, scene->Yaw(), drift);
+    }
+}
+
 void CameraDirector::TurnTo(ObjectId id)
 {
+    settled_.reset();
     dao::CameraController *camera = Camera();
     if (camera == nullptr)
     {
@@ -72,6 +101,10 @@ void CameraDirector::TurnTo(ObjectId id)
 
 void CameraDirector::Update(float dtSeconds)
 {
+    if (settled_)
+    {
+        Watch(dtSeconds);
+    }
     if (!panning_ && !behind_)
     {
         return;
@@ -109,6 +142,8 @@ void CameraDirector::Update(float dtSeconds)
         const float yaw = scene->Yaw();
         if (std::fabs(TurnBetween(yaw, *behind_)) < 0.005f)
         {
+            settled_ = *behind_;
+            settledSeconds_ = 0.0f;
             behind_.reset();
             return;
         }

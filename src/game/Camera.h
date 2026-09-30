@@ -34,9 +34,14 @@ class CameraDirector
     void Update(float dtSeconds);
 
   private:
-    bool panning_ = false;        // tactical: the offset eased to nothing
-    std::optional<float> behind_; // close in: the yaw eased round to this
-    float easingSeconds_ = 0.0f;  // given up after a while: the player may be turning it
+    void Watch(float dtSeconds);
+
+    bool panning_ = false;         // tactical: the offset eased to nothing
+    std::optional<float> behind_;  // close in: the yaw eased round to this
+    std::optional<float> settled_; // where the last swing left the yaw, watched a while
+    float settledSeconds_ = 0.0f;
+    int driftLogged_ = 0;
+    float easingSeconds_ = 0.0f; // given up after a while: the player may be turning it
     int behindLogged_ = 0;
 };
 
