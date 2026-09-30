@@ -187,6 +187,7 @@ const std::vector<Entry> &Entries()
         {"turns", "condition_turns", Int(&Settings::conditionTurns, 0, 5)},
         {"turns", "cooldown_seconds_per_turn", Float(&Settings::cooldownSecondsPerTurn, 0.0f, 60.0f)},
         {"turns", "pause_on_player_turn", Bool(&Settings::pauseOnPlayerTurn)},
+        {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
         {"turns", "ai_poke",
          [](Settings &s, std::string_view text) -> std::string {
@@ -404,6 +405,12 @@ cooldown_seconds_per_turn = 10
 ; over time and buffs tick, and stamina, mana and health come back, while
 ; you choose. Stuns, pins and cooldowns count turns either way.
 pause_on_player_turn = false
+; Effects count rounds: through a fight their clock is held, and at each new
+; round every temporary effect (buffs, debuffs, damage and healing over
+; time, timed summons, lasting areas) ages this many seconds. At 6, a 30 s
+; buff lasts five rounds, whoever is thinking how long. 0 leaves them on
+; the game's clock. Regeneration is not an effect and still runs on it.
+effect_seconds_per_round = 6
 ; Creatures fighting within this many meters of the party leader take turns.
 combat_radius = 50
 ; How an AI creature is told its turn has come: command_complete or kickstart.

@@ -76,6 +76,8 @@ The user's rule (2026-09-30): in turn-based mode everything runs on turns (or, l
 - **Summons and transformations** with a duration.
 - **Casting and attack timing**: an action's own animation time, which is fine as it is (the world runs while an action plays).
 
+**Built for effects (2026-09-30, DAOLib `4fee0fa`):** every temporary effect ages through one engine function, which DAOLib hooks (`dao/Effects.h`). A fight holds that clock from its start (`HoldTime`), spends `effect_seconds_per_round` on every effect at each new round (`AgeTime`), and lets it go when the fight ends or is dropped: buffs, debuffs, damage and healing over time, timed summons and, it is thought, lasting areas count rounds. Regeneration is not an effect and still runs on the game's clock. Not yet seen in play.
+
 The direction: the world's clock stops being the fight's clock. A round (or each creature's turn) advances what belongs to its creatures by a fixed amount, as conditions and cooldowns do now: durations counted in turns and ended at the start of the owner's turn; regeneration given per turn; areas lasting so many rounds. Two ways to get there, which the DAOLib work decides between:
 
 - **Hold the clock and step it**: the game's time scale, or its effect timers, frozen outside actions, and advanced by a round's worth at each round (`dev/DAOLIB_NEEDS.md`, "Time and input": the time scale, advancing game time without running the world).

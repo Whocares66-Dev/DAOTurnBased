@@ -71,6 +71,9 @@ struct Settings
     float cooldownSecondsPerTurn = 10.0f;
     // The world holds still while the player chooses (otherwise it idles on).
     bool pauseOnPlayerTurn = false;
+    // Effects' time in rounds: held through a fight, and this many seconds
+    // spent on every temporary effect at each new round (0: the game's clock).
+    float effectSecondsPerRound = 6.0f;
     float combatRadius = 50.0f; // meters from the party leader a creature may fight from and take turns
     AiPoke aiPoke = AiPoke::CommandComplete;
 

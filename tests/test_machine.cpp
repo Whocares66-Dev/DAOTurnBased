@@ -530,7 +530,8 @@ TEST_CASE("loading a game drops the fight without touching its objects", "[machi
     w.mode = Mode::Loading;
     w.Frame();
     CHECK(w.machine.GetPhase() == Phase::Idle);
-    CHECK(w.applied.empty());
+    // Only the clock, which is no object's, let go.
+    CHECK(std::ranges::all_of(w.applied, [](const Effect &e) { return e.kind == EffectKind::HoldTime && e.a == 0; }));
 }
 
 TEST_CASE("combat with no enemy in reach stays real-time until one fights", "[machine]")
@@ -673,9 +674,10 @@ TEST_CASE("every phase and effect has a name of its own", "[machine]")
     {
         names.emplace_back(Name(phase));
     }
-    for (const EffectKind kind : {EffectKind::Pause, EffectKind::Unpause, EffectKind::ClearCommands, EffectKind::Select,
-                                  EffectKind::PokeAi, EffectKind::Floaty, EffectKind::Signal, EffectKind::CenterCamera,
-                                  EffectKind::Explain, EffectKind::EndConditions, EffectKind::Cooldown})
+    for (const EffectKind kind :
+         {EffectKind::Pause, EffectKind::Unpause, EffectKind::ClearCommands, EffectKind::Select, EffectKind::PokeAi,
+          EffectKind::Floaty, EffectKind::Signal, EffectKind::CenterCamera, EffectKind::Explain,
+          EffectKind::EndConditions, EffectKind::Cooldown, EffectKind::HoldTime, EffectKind::AgeTime})
     {
         names.emplace_back(Name(kind));
     }
@@ -1014,4 +1016,54 @@ TEST_CASE("by default the world idles on while the player chooses, and nobody el
     // The enemies are still held.
     CHECK(w.Order(kGenlock, CommandType::Attack, Source::Script) == Verdict::Block);
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
+}
+
+TEST_CASE("a fight holds effects' time, spends a round's worth each round, and lets it go at its end", "[machine]")
+{
+    World w;
+    w.StartFight();
+    CHECK(w.timeHeld);
+    CHECK(w.agedMs == 0); // the first round has not been spent
+    // A round passes: everyone's turn.
+    for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            CHECK(w.machine.OnPauseKey());
+        }
+        w.Frame();
+    }
+    REQUIRE(w.machine.Order().Round() == 2);
+    w.Frame(); // the new round begins with the next turn
+    w.Frame();
+    CHECK(w.agedMs == 6000);
+    CHECK(w.timeHeld);
+    w.Get(kGenlock).down = true;
+    w.Get(kHurlock).down = true;
+    CHECK(w.machine.OnPauseKey());
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.machine.GetPhase() == Phase::Idle);
+    CHECK_FALSE(w.timeHeld);
+}
+
+TEST_CASE("a fight dropped by a load lets effects' time go", "[machine]")
+{
+    World w;
+    w.StartFight();
+    REQUIRE(w.timeHeld);
+    w.mode = Mode::Loading;
+    w.Frame();
+    CHECK(w.machine.GetPhase() == Phase::Idle);
+    CHECK_FALSE(w.timeHeld);
+}
+
+TEST_CASE("with effect_seconds_per_round 0 effects keep the game's clock", "[machine]")
+{
+    Settings s = Fixed();
+    s.effectSecondsPerRound = 0.0f;
+    World w(s);
+    w.StartFight();
+    CHECK_FALSE(w.timeHeld);
+    CHECK_FALSE(w.Did(EffectKind::HoldTime));
 }

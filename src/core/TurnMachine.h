@@ -124,6 +124,8 @@ enum class EffectKind : std::uint8_t
     Explain,       // log what target's AI sees: it chose nothing on its turn
     EndConditions, // take target's stuns, paralysis, sleep and pins off: their turns are spent
     Cooldown,      // target's ability a gets b seconds of cooldown (held, released, or back to seconds)
+    HoldTime,      // every temporary effect's time held still (a 1) or let run (a 0)
+    AgeTime,       // every temporary effect aged b milliseconds, once
 };
 
 [[nodiscard]] const char *Name(EffectKind kind);
@@ -332,6 +334,8 @@ class TurnMachine
     void HoldUsed(std::vector<Effect> &fx);
     void TickCooldowns(const Combatant &who, std::vector<Effect> &fx);
     void ReleaseCooldowns(std::vector<Effect> &fx);
+    void HoldTime(bool held, std::vector<Effect> &fx);
+    void SpendRound(std::vector<Effect> &fx);
     void HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx);
 
     void StartFight(std::vector<Combatant> roster, std::vector<Effect> &fx);
@@ -385,6 +389,9 @@ class TurnMachine
     };
     std::vector<Hold> usedNow_;
     std::vector<Hold> holds_;
+    // Effects' time in rounds (dev/DESIGN.md, "Everything in turns"):
+    // whether the fight holds it.
+    bool timeHeld_ = false;
     Rng rng_;
     LogSink log_;
     LogLevel logLevel_ = LogLevel::Debug;

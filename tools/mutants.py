@@ -274,6 +274,18 @@ MUTANTS = [
         "if (player && request.source == Source::Unknown && (kind == CommandKind::Action",
     ),
     Mutant(
+        "effects are never aged a round",
+        MACHINE,
+        "    e.b = static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f);\n    fx.push_back(e);",
+        "    e.b = static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f);",
+    ),
+    Mutant(
+        "effects' time stays held after the fight",
+        MACHINE,
+        "    ReleaseCooldowns(fx);\n    HoldTime(false, fx);",
+        "    ReleaseCooldowns(fx);",
+    ),
+    Mutant(
         "a refused order still runs the world",
         MACHINE,
         "        orderPending_ = false;\n        if (verdict == Verdict::Block && phase_ == Phase::Dispatching)",

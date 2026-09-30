@@ -106,6 +106,7 @@ struct Coverage
     int conditionsEnded = 0;
     int cooldownsHeld = 0;
     int cooldownsReleased = 0;
+    int roundsAged = 0;
 };
 
 class Arena
@@ -183,6 +184,7 @@ class Arena
         s.cameraFollow = Chance(rng, 0.2);
         s.orderRunMs = Chance(rng, 0.5) ? 500 : 0;
         s.pauseOnPlayerTurn = Chance(rng, 0.5);
+        s.effectSecondsPerRound = Chance(rng, 0.2) ? 0.0f : 6.0f;
         return s;
     }
 
@@ -424,6 +426,15 @@ class Arena
             Must(world_.Get(e.target).side == Side::Party, "a creature not in the party selected");
             Must(e.target != world_.Current() || world_.Get(e.target).condition != Condition::Disabled,
                  "a stunned party member handed its turn");
+            break;
+        case EffectKind::HoldTime:
+            Must((e.a != 0) != timeHeld_, "effects' time held twice, or let go twice");
+            timeHeld_ = e.a != 0;
+            break;
+        case EffectKind::AgeTime:
+            Must(timeHeld_, "effects aged by the fight while their time runs anyway");
+            Must(e.b == static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f), "a round aged wrong");
+            ++coverage_.roundsAged;
             break;
         case EffectKind::Cooldown:
             Must(e.target != kNoObject && e.a >= 0 && e.b >= 0, "a cooldown for nobody, or for no ability");
@@ -772,6 +783,16 @@ class Arena
     {
         FollowTurn();
         const Phase phase = world_.machine.GetPhase();
+        // Effects' time is held exactly while a fight is on (and the setting
+        // asks for it): never left held once the fight is over or dropped.
+        if (phase == Phase::Idle)
+        {
+            Must(!timeHeld_, "effects' time left held with no fight on");
+        }
+        else if (settings_.effectSecondsPerRound > 0.0f && phase != Phase::Starting)
+        {
+            Must(timeHeld_, "effects' time running in a fight");
+        }
         if (world_.mode == Mode::Combat)
         {
             const bool choosing = phase == Phase::AwaitingOrder;
@@ -851,6 +872,7 @@ class Arena
     Settings settings_;
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
     ObjectId lastTurnStart_ = kNoObject;                         // whose turn began last (its event)
+    bool timeHeld_ = false;                                      // effects' time, as the machine left it
     World world_;
     Coverage &coverage_;
     std::map<ObjectId, Task> tasks_;

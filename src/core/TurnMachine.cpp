@@ -128,6 +128,10 @@ const char *Name(EffectKind kind)
         return "end conditions";
     case EffectKind::Cooldown:
         return "cooldown";
+    case EffectKind::HoldTime:
+        return "hold time";
+    case EffectKind::AgeTime:
+        return "age time";
     }
     return "?";
 }
@@ -241,6 +245,8 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         latch_ = false;
         wantScan_ = false;
         fx.clear(); // their objects may be gone with the world
+        // Not the clock, which is no object's: it must not stay held.
+        HoldTime(false, fx);
         return fx;
     }
     if (phase_ == Phase::Idle)
@@ -444,6 +450,7 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     }
     Signal(fx, events::kCombatStart, kNoObject, static_cast<std::int32_t>(order_.All().size()), 0);
     Signal(fx, events::kRoundStart, kNoObject, 1, 0);
+    HoldTime(settings_.effectSecondsPerRound > 0.0f, fx);
     Floaty(fx, hero_, L"Turn-based combat", kGold);
     roundRunMs_ = 0;
     roundPending_ = false;
@@ -487,6 +494,7 @@ void TurnMachine::StartNextTurn(std::vector<Effect> &fx)
             return;
         }
         roundRunMs_ = 0;
+        SpendRound(fx);
         Signal(fx, events::kRoundStart, kNoObject, order_.Round(), 0);
         Log(LogLevel::Info, std::format("round {}: {}", order_.Round(), DescribeOrder()));
     }
@@ -530,6 +538,7 @@ void TurnMachine::StepPadding(std::vector<Effect> &fx)
         return;
     }
     roundRunMs_ = 0;
+    SpendRound(fx);
     Signal(fx, events::kRoundStart, kNoObject, order_.Round(), 0);
     Log(LogLevel::Info, std::format("round {}: {}", order_.Round(), DescribeOrder()));
     phase_ = Phase::TurnStart;
@@ -690,6 +699,40 @@ void TurnMachine::ReleaseCooldowns(std::vector<Effect> &fx)
             static_cast<std::int32_t>(std::ceil(static_cast<float>(h.turns) * settings_.cooldownSecondsPerTurn))));
     }
     holds_.clear();
+}
+
+// Effects' time in rounds: the clock every temporary effect ages on (DAOLib's
+// dao/Effects.h) held through a fight, so none wears off while someone
+// thinks or the world idles, and moved on a round's worth at each new round.
+void TurnMachine::HoldTime(bool held, std::vector<Effect> &fx)
+{
+    if (held == timeHeld_)
+    {
+        return;
+    }
+    timeHeld_ = held;
+    Effect e = Effect::Of(EffectKind::HoldTime);
+    e.a = held ? 1 : 0;
+    fx.push_back(e);
+    Log(LogLevel::Info, held
+                            ? std::format("effects' time held: {:.0f} s of it a round", settings_.effectSecondsPerRound)
+                            : std::string{"effects' time runs again"});
+}
+
+void TurnMachine::SpendRound(std::vector<Effect> &fx)
+{
+    if (!timeHeld_)
+    {
+        return;
+    }
+    if (!(settings_.effectSecondsPerRound > 0.0f))
+    {
+        HoldTime(false, fx); // turned off in the settings mid-fight
+        return;
+    }
+    Effect e = Effect::Of(EffectKind::AgeTime);
+    e.b = static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f);
+    fx.push_back(e);
 }
 
 void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
@@ -975,6 +1018,7 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
     Log(LogLevel::Info, std::format("the turn-based fight is over after {} rounds: {}", order_.Round(), why));
     HoldUsed(fx);
     ReleaseCooldowns(fx);
+    HoldTime(false, fx);
     resume_ = false;
     Signal(fx, events::kCombatEnd, kNoObject, order_.Round(), 0);
     fx.push_back(Effect::Of(EffectKind::Unpause));

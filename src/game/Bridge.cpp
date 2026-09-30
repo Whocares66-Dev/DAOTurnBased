@@ -6,6 +6,7 @@
 #include "core/Text.h"
 
 #include "dao/ClientExoApp.h"
+#include "dao/Effects.h"
 #include "dao/GameModes.h"
 #include "dao/Gda.h"
 #include "dao/Log.h"
@@ -353,6 +354,14 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             break;
         case EffectKind::Explain:
             Explain(e.target);
+            break;
+        case EffectKind::HoldTime:
+            // Every temporary effect's clock (DAOLib's dao/Effects.h): held
+            // through a fight, moved on a round's worth at a time.
+            dao::effects::Hold(e.a != 0);
+            break;
+        case EffectKind::AgeTime:
+            dao::effects::Advance(static_cast<float>(e.b) / 1000.0f);
             break;
         case EffectKind::Cooldown:
             // Held, released, or back to seconds (core: "Cooldowns in turns").
