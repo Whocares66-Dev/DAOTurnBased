@@ -253,7 +253,8 @@ class World
     std::vector<Creature> creatures;
     std::vector<Effect> applied;
     std::vector<std::string> log;
-    bool timeHeld = false; // effects' time, as DAOLib's dao::effects::Hold leaves it
+    bool timeHeld = false;     // effects' time, as DAOLib's dao::effects::Hold leaves it
+    std::int32_t speed = 1000; // the game's, in thousandths
     std::int64_t agedMs = 0;
     std::function<void(ObjectId)> onPoke;         // what an AI does when told to choose
     std::function<void(const Effect &)> onEffect; // sees every effect as it is applied
@@ -294,6 +295,9 @@ class World
                 break;
             case EffectKind::HoldTime:
                 timeHeld = e.a != 0;
+                break;
+            case EffectKind::GameSpeed:
+                speed = e.b;
                 break;
             case EffectKind::AgeTime:
                 agedMs += e.b;

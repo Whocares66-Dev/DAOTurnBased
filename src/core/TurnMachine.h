@@ -128,6 +128,7 @@ enum class EffectKind : std::uint8_t
     Cooldown,      // target's ability a gets b seconds of cooldown (held, released, or back to seconds)
     HoldTime,      // every temporary effect's time held still (a 1) or let run (a 0)
     AgeTime,       // every temporary effect aged b milliseconds, once
+    GameSpeed,     // the game runs at b thousandths of its speed (1000: as ever)
 };
 
 [[nodiscard]] const char *Name(EffectKind kind);
@@ -340,6 +341,7 @@ class TurnMachine
     void TickCooldowns(const Combatant &who, std::vector<Effect> &fx);
     void ReleaseCooldowns(std::vector<Effect> &fx);
     void HoldTime(bool held, std::vector<Effect> &fx);
+    void SetSpeed(float speed, std::vector<Effect> &fx);
     void SpendRound(std::vector<Effect> &fx);
     void HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx);
 
@@ -393,7 +395,8 @@ class TurnMachine
     std::optional<ActorObservation> seenActor_;
     std::string lastRefusal_; // the last refusal logged, and when: repeats within a second are not
     std::uint32_t lastRefusalLogNow_ = 0;
-    bool turnBegun_ = false; // an interlude came in the middle of a turn, not between two
+    bool turnBegun_ = false;        // an interlude came in the middle of a turn, not between two
+    bool startInterrupted_ = false; // an interlude came before the fight had started
     // Cooldowns in turns (dev/DESIGN.md): the abilities used in the action
     // under way, held once it has run; and those held, with the turns of
     // their user each still waits.
@@ -408,6 +411,7 @@ class TurnMachine
     // Effects' time in rounds (dev/DESIGN.md, "Everything in turns"):
     // whether the fight holds it.
     bool timeHeld_ = false;
+    float speedSet_ = 1.0f; // the game's speed as the machine last set it
     Rng rng_;
     LogSink log_;
     LogLevel logLevel_ = LogLevel::Debug;

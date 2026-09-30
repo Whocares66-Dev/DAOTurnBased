@@ -151,8 +151,8 @@ MUTANTS = [
     Mutant(
         "a conversation does not stand the gate aside",
         MACHINE,
-        "        phase_ = Phase::Suspended;\n        return fx;",
-        "        return fx;",
+        "        phase_ = Phase::Suspended;\n        SetSpeed(1.0f, fx);\n        return fx;",
+        "        SetSpeed(1.0f, fx);\n        return fx;",
     ),
     Mutant(
         "fallen enemies stay in the order",
@@ -229,8 +229,8 @@ MUTANTS = [
     Mutant(
         "a turn waits out an effect no condition names",
         MACHINE,
-        "            clock_ - executingSince_ >= kEffectGraceMs)",
-        "            clock_ - executingSince_ >= kEffectGraceMs * 10)",
+        " && clock_ - executingSince_ >= kEffectGraceMs)",
+        " && clock_ - executingSince_ >= kEffectGraceMs * 10)",
     ),
     Mutant(
         "an order queues behind the effect that holds its creature",
@@ -247,14 +247,44 @@ MUTANTS = [
     Mutant(
         "an AI held by an effect is told its turn has come",
         MACHINE,
-        "        seenActor_->current == CommandType::ExecuteEffect)",
-        "        seenActor_->current == CommandType::Invalid)",
+        " && seenActor_->current == CommandType::ExecuteEffect)",
+        " && seenActor_->current == CommandType::Invalid)",
     ),
     Mutant(
         "an AI an effect let go within the grace is never told again",
         MACHINE,
         "            // Its AI was not told, or told while it could not choose.\n            fx.push_back(Effect::Of(EffectKind::PokeAi, current->id));",
         "            // Its AI was not told, or told while it could not choose.\n",
+    ),
+    Mutant(
+        "a conversation before the fight has started skips its start",
+        MACHINE,
+        "        phase_ = std::exchange(startInterrupted_, false) ? Phase::Starting : Phase::TurnStart;",
+        "        phase_ = std::exchange(startInterrupted_, false) ? Phase::TurnStart : Phase::TurnStart;",
+    ),
+    Mutant(
+        "an enemy's turn runs at the game's own speed",
+        MACHINE,
+        "    SetSpeed(PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed, fx);",
+        "    SetSpeed(PlayerControls(who) ? 1.0f : 1.0f, fx);",
+    ),
+    Mutant(
+        "the player's turn runs at the enemies' speed",
+        MACHINE,
+        "    SetSpeed(PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed, fx);",
+        "    SetSpeed(settings_.aiTurnSpeed, fx);",
+    ),
+    Mutant(
+        "a conversation plays at the enemies' speed",
+        MACHINE,
+        "        phase_ = Phase::Suspended;\n        SetSpeed(1.0f, fx);",
+        "        phase_ = Phase::Suspended;",
+    ),
+    Mutant(
+        "the speed is written though it has not changed",
+        MACHINE,
+        "    if (speed == speedSet_)\n    {\n        return;\n    }\n    speedSet_ = speed;",
+        "    speedSet_ = speed;",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",

@@ -104,6 +104,14 @@ constexpr std::int32_t kMaxCreaturesInCombat = 24;
 // AI_DetermineCombatRound on it.
 constexpr std::int32_t kKickstartAi = 9998;
 
+// The game's mode as the core names it; none yet (no game modes) is
+// Unknown, as before the world (DAOLib 3c8cccf made it an optional).
+Mode ModeOf(const dao::CClientExoApp &app)
+{
+    const auto mode = app.Mode();
+    return mode ? static_cast<Mode>(*mode) : Mode::Unknown;
+}
+
 bool OutOfWorld(Mode mode)
 {
     return mode == Mode::Loading || mode == Mode::Pregame || mode == Mode::CharGen || mode == Mode::Unknown;
@@ -127,7 +135,7 @@ Observation Bridge::Observe(const Needs &needs, std::uint32_t nowMs)
     {
         return obs; // Mode::Unknown: no world yet
     }
-    obs.mode = static_cast<Mode>(app->Mode());
+    obs.mode = ModeOf(*app);
     obs.paused = app->IsPaused();
     if (OutOfWorld(obs.mode))
     {
@@ -372,6 +380,11 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             // moved on a round's worth at a time.
             dao::clock::Hold(e.a != 0);
             break;
+        case EffectKind::GameSpeed:
+            // Game logic and animation together (DAOLib's dao/Clock.h,
+            // 4e0032e); the Flash UI keeps its own clock.
+            dao::clock::SetSpeed(static_cast<float>(e.b) / 1000.0f);
+            break;
         case EffectKind::AgeTime:
             dao::clock::Advance(static_cast<float>(e.b) / 1000.0f);
             break;
@@ -488,7 +501,7 @@ bool Bridge::PartyInCombat()
     {
         return false;
     }
-    const auto mode = static_cast<Mode>(app->Mode());
+    const auto mode = ModeOf(*app);
     if (mode == Mode::Combat)
     {
         return true;
@@ -506,8 +519,7 @@ bool Bridge::PartyInCombat()
 void Bridge::Say(const std::wstring &text, std::uint32_t colour)
 {
     auto *app = dao::CClientExoApp::Get();
-    if (app == nullptr || app->GameModes() == nullptr || !dao::script::CommandsReady() ||
-        OutOfWorld(static_cast<Mode>(app->Mode())))
+    if (app == nullptr || app->GameModes() == nullptr || !dao::script::CommandsReady() || OutOfWorld(ModeOf(*app)))
     {
         return;
     }

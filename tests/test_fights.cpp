@@ -105,6 +105,7 @@ struct Coverage
     int lostTurns = 0;    // turns taken by a condition
     int lostOnClock = 0;  // of them, with conditions on the game's clock
     int heldByEffect = 0; // turns lost to an effect's command no condition named
+    int speedChanges = 0; // the game's speed set for an AI's turn and back
     int conditionsEnded = 0;
     int cooldownsHeld = 0;
     int cooldownsReleased = 0;
@@ -202,6 +203,7 @@ class Arena
         s.pauseOnPlayerTurn = Chance(rng, 0.5);
         s.effectSecondsPerRound = Chance(rng, 0.2) ? 0.0f : 6.0f;
         s.conditionTurns = Chance(rng, 0.2) ? 0 : (Chance(rng, 0.7) ? 1 : 2);
+        s.aiTurnSpeed = Chance(rng, 0.3) ? 2.0f : 1.0f;
         return s;
     }
 
@@ -450,6 +452,10 @@ class Arena
             Must((e.a != 0) != timeHeld_, "effects' time held twice, or let go twice");
             timeHeld_ = e.a != 0;
             break;
+        case EffectKind::GameSpeed:
+            Must(settings_.aiTurnSpeed != 1.0f, "the game's speed written at ai_turn_speed 1");
+            ++coverage_.speedChanges;
+            break;
         case EffectKind::AgeTime:
             Must(timeHeld_, "effects aged by the fight while their time runs anyway");
             Must(e.b == static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f), "a round aged wrong");
@@ -566,6 +572,10 @@ class Arena
             FollowTurn();
             const auto found = tasks_.find(world_.Current());
             const bool stillHeld = found != tasks_.end() && found->second.held;
+            if (!stillHeld)
+            {
+                heldAtStart_ = false; // let go (a hold after is another's)
+            }
             Must(!(turn && heldAtStart_ && stillHeld &&
                    turnRunMs_ - turnBeganAtMs_ > TurnMachine::kEffectGraceMs + kEffectGraceSlackMs),
                  "a turn waited past the grace on an effect no condition named");
@@ -864,9 +874,27 @@ class Arena
         {
             Must(!timeHeld_, "effects' time left held with no fight on");
         }
-        else if (settings_.effectSecondsPerRound > 0.0f && phase != Phase::Starting)
+        else if (settings_.effectSecondsPerRound > 0.0f && phase != Phase::Starting &&
+                 !(phase == Phase::Suspended && world_.machine.Order().Round() == 0))
         {
             Must(timeHeld_, "effects' time running in a fight");
+        }
+        // The game runs at ai_turn_speed through an AI's turn, and at its own
+        // speed through the player's, a conversation, and with no fight on.
+        const bool aiTurn = (phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling) &&
+                            world_.Current() != kNoObject && !PlayerControls(world_.Current());
+        const bool ownSpeed = phase == Phase::Idle || phase == Phase::Suspended || phase == Phase::AwaitingOrder ||
+                              phase == Phase::Dispatching ||
+                              (world_.Current() != kNoObject && PlayerControls(world_.Current()) &&
+                               (phase == Phase::Executing || phase == Phase::Settling));
+        if (aiTurn)
+        {
+            Must(world_.speed == static_cast<std::int32_t>(std::lround(settings_.aiTurnSpeed * 1000.0f)),
+                 "an AI's turn not at ai_turn_speed");
+        }
+        else if (ownSpeed)
+        {
+            Must(world_.speed == 1000, "the game not at its own speed outside an AI's turn");
         }
         if (world_.mode == Mode::Combat)
         {
@@ -1013,6 +1041,8 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     CHECK(coverage.timeouts > 30);
     // Turns lost to an effect no condition named (2026-09-30: 17).
     CHECK(coverage.heldByEffect > 8);
+    // The game's speed set for an AI's turn and back (2026-09-30: 398).
+    CHECK(coverage.speedChanges > 150);
     CHECK(coverage.bledOut > 60);
     CHECK(coverage.vanished > 25);
     CHECK(coverage.tooFar > 30);

@@ -188,6 +188,7 @@ const std::vector<Entry> &Entries()
         {"turns", "cooldown_seconds_per_turn", Float(&Settings::cooldownSecondsPerTurn, 0.0f, 60.0f)},
         {"turns", "pause_on_player_turn", Bool(&Settings::pauseOnPlayerTurn)},
         {"turns", "pick_targets", Bool(&Settings::pickTargets)},
+        {"turns", "ai_turn_speed", Float(&Settings::aiTurnSpeed, 0.25f, 4.0f)},
         {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
         {"turns", "ai_poke",
@@ -412,6 +413,11 @@ pause_on_player_turn = false
 ; once, as in real time (a character keeps its target from turn to turn).
 ; Talents for their user alone, and modes, are used as ever.
 pick_targets = true
+; How fast the game runs during an enemy's (or an AI companion's) turn, as
+; BG3 speeds them up: 1 as ever, 2 twice as fast (0.25 to 4). The player's
+; turns, conversations and the world outside a fight run as ever. At 1 the
+; mod leaves the game's speed alone.
+ai_turn_speed = 1
 ; Effects and regeneration count rounds: through a fight their clock is
 ; held, and at each new round every temporary effect (buffs, debuffs, damage
 ; and healing over time, timed summons, lasting areas) and every creature's

@@ -132,6 +132,8 @@ const char *Name(EffectKind kind)
         return "hold time";
     case EffectKind::AgeTime:
         return "age time";
+    case EffectKind::GameSpeed:
+        return "game speed";
     }
     return "?";
 }
@@ -246,8 +248,10 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         latch_ = false;
         wantScan_ = false;
         fx.clear(); // their objects may be gone with the world
-        // Not the clock, which is no object's: it must not stay held.
+        // Not the clock, which is no object's: it must not stay held, nor
+        // the game at an enemy's speed.
         HoldTime(false, fx);
+        SetSpeed(1.0f, fx);
         return fx;
     }
     if (phase_ == Phase::Idle)
@@ -278,7 +282,12 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         // A resume still pending (two in a row) is a turn begun.
         turnBegun_ =
             resume_ || (phase_ != Phase::TurnStart && phase_ != Phase::Starting && phase_ != Phase::RoundPadding);
+        // Before the fight had started: it starts afresh after (the arena,
+        // seed 256 of the long run, 2026-09-30: a conversation in combat's
+        // first frame skipped the fight's start, effects' time never held).
+        startInterrupted_ = startInterrupted_ || phase_ == Phase::Starting;
         phase_ = Phase::Suspended;
+        SetSpeed(1.0f, fx);
         return fx;
     }
     if (obs.mode == Mode::Gui)
@@ -394,7 +403,7 @@ void TurnMachine::StepSuspended(const Observation &obs, std::vector<Effect> &fx)
             }
         }
         resume_ = turnBegun_;
-        phase_ = Phase::TurnStart;
+        phase_ = std::exchange(startInterrupted_, false) ? Phase::Starting : Phase::TurnStart;
         wantScan_ = true;
         fx.push_back(Effect::Of(EffectKind::Pause));
     }
@@ -710,6 +719,22 @@ void TurnMachine::ReleaseCooldowns(std::vector<Effect> &fx)
 // Effects' time in rounds: the clock every temporary effect ages on (DAOLib's
 // dao/Effects.h) held through a fight, so none wears off while someone
 // thinks or the world idles, and moved on a round's worth at each new round.
+// The game's speed (DAOLib's dao::clock::SetSpeed): an AI's turn at
+// ai_turn_speed, as BG3 speeds enemies' turns up; everything else at 1.
+// Written only when it changes, so at the default of 1 never: another
+// plugin setting it (DAOLib's examples/speed) is left alone.
+void TurnMachine::SetSpeed(float speed, std::vector<Effect> &fx)
+{
+    if (speed == speedSet_)
+    {
+        return;
+    }
+    speedSet_ = speed;
+    Effect e = Effect::Of(EffectKind::GameSpeed);
+    e.b = static_cast<std::int32_t>(std::lround(speed * 1000.0f));
+    fx.push_back(e);
+}
+
 void TurnMachine::HoldTime(bool held, std::vector<Effect> &fx)
 {
     if (held == timeHeld_)
@@ -743,6 +768,7 @@ void TurnMachine::SpendRound(std::vector<Effect> &fx)
 
 void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
 {
+    SetSpeed(PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed, fx);
     if (PlayerControls(who))
     {
         fx.push_back(Effect::Of(EffectKind::Select, who.id));
@@ -1072,6 +1098,7 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
     HoldUsed(fx);
     ReleaseCooldowns(fx);
     HoldTime(false, fx);
+    SetSpeed(1.0f, fx);
     resume_ = false;
     Signal(fx, events::kCombatEnd, kNoObject, order_.Round(), 0);
     fx.push_back(Effect::Of(EffectKind::Unpause));

@@ -75,6 +75,8 @@ struct Settings
     // selected (otherwise the game uses it on the selected or attack target
     // at once); not one for its user alone, nor a mode (AsksForTarget).
     bool pickTargets = true;
+    // The game's speed during an AI's turn (1: as ever; 2: twice as fast).
+    float aiTurnSpeed = 1.0f;
     // Effects' and regeneration's time in rounds: held through a fight, and
     // this many seconds spent on them at each new round (0: the game's clock).
     float effectSecondsPerRound = 6.0f;

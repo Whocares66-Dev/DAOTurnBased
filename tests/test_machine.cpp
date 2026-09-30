@@ -1229,3 +1229,74 @@ TEST_CASE("with effect_seconds_per_round 0 effects keep the game's clock", "[mac
     CHECK_FALSE(w.timeHeld);
     CHECK_FALSE(w.Did(EffectKind::HoldTime));
 }
+
+TEST_CASE("an AI's turn runs at ai_turn_speed, the player's turns and the rest at the game's own", "[machine][speed]")
+{
+    Settings s = Fixed();
+    s.aiTurnSpeed = 2.0f;
+    World w{s};
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.speed == 1000);
+    CHECK(w.machine.OnPauseKey());
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    CHECK(w.speed == 2000);
+    w.RunFor(3000); // it chooses nothing, and the companion's turn comes
+    REQUIRE(w.Current() == kCompanion);
+    CHECK(w.speed == 1000);
+    // A conversation plays at the game's own speed.
+    CHECK(w.machine.OnPauseKey());
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kHurlock);
+    CHECK(w.speed == 2000);
+    w.mode = Mode::Dialog;
+    w.Frame();
+    CHECK(w.speed == 1000);
+    // Back to the hurlock's turn, fast again; and the fight's end, not.
+    w.mode = Mode::Combat;
+    w.RunFor(100);
+    CHECK(w.speed == 2000);
+    for (const ObjectId id : {kGenlock, kHurlock})
+    {
+        w.Get(id).down = true;
+    }
+    w.RunFor(1000);
+    CHECK_FALSE(w.machine.Active());
+    CHECK(w.speed == 1000);
+}
+
+TEST_CASE("at ai_turn_speed 1 the game's speed is never written", "[machine][speed]")
+{
+    // Another plugin may be setting it (DAOLib's examples/speed).
+    World w;
+    w.StartFight();
+    CHECK(w.machine.OnPauseKey());
+    w.RunFor(3000);
+    CHECK_FALSE(w.Did(EffectKind::GameSpeed));
+}
+
+TEST_CASE("a conversation as combat begins: the fight starts afresh after it", "[machine]")
+{
+    // Seen in the long run of random fights (seed 256): the fight's start
+    // was skipped, and effects' time never held.
+    World w;
+    w.mode = Mode::Combat;
+    w.Frame();
+    REQUIRE(w.machine.GetPhase() == Phase::Starting);
+    w.mode = Mode::Dialog;
+    w.Frame();
+    REQUIRE(w.machine.GetPhase() == Phase::Suspended);
+    w.mode = Mode::Combat;
+    for (int i = 0; i < 10 && w.Current() == kNoObject; ++i)
+    {
+        w.Frame();
+    }
+    w.Frame();
+    CHECK(w.timeHeld);
+    CHECK(w.machine.Order().Round() == 1);
+    CHECK(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+}
