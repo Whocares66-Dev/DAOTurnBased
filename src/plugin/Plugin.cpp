@@ -42,7 +42,6 @@ struct State
     tb::KeyChord toggleKey;
     bool toggleWasDown = false;
     std::uint32_t lastSettingsCheck = 0;
-    std::uint32_t lastTick = 0;
     tb::game::BarLink bar;
     bool turnBar = false;
     bool portraits = true;
@@ -179,9 +178,6 @@ void ServeBar(std::uint32_t now)
 void Tick()
 {
     const auto now = static_cast<std::uint32_t>(GetTickCount64());
-    // Real time, not the fight's: the camera eases while the world is paused.
-    const float dt = g.lastTick == 0 ? 0.0f : static_cast<float>(now - g.lastTick) / 1000.0f;
-    g.lastTick = now;
     ReloadIfChanged(now);
     PollToggle();
     tb::Needs needs;
@@ -198,7 +194,6 @@ void Tick()
     // Unlocked: applying an effect can queue a command, which the gate
     // puts to the machine.
     g.bridge->Apply(effects);
-    g.bridge->UpdateCamera(dt);
     ServeBar(now);
 }
 

@@ -48,12 +48,7 @@ class Bridge
     // over the hero if there is one.
     void Say(const std::wstring &text, std::uint32_t colour);
 
-    // The camera's move a turn set going, a frame further (game/Camera.h);
-    // and a look at a combatant the player asked for (a card clicked).
-    void UpdateCamera(float dtSeconds)
-    {
-        camera_.Update(dtSeconds);
-    }
+    // A look at a combatant the player asked for (a card clicked).
     void LookAt(ObjectId id)
     {
         camera_.TurnTo(id);

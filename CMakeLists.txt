@@ -109,7 +109,6 @@ add_library(
     tb_core
     STATIC
     src/core/Bar.cpp
-    src/core/Easing.cpp
     src/core/Keys.cpp
     src/core/Portraits.cpp
     src/core/Rules.cpp

@@ -43,7 +43,6 @@ ORDER = "src/core/TurnOrder.cpp"
 RULES = "src/core/Rules.cpp"
 BAR = "src/core/Bar.cpp"
 PORTRAITS = "src/core/Portraits.cpp"
-EASING = "src/core/Easing.cpp"
 
 MUTANTS = [
     Mutant(
@@ -261,24 +260,6 @@ MUTANTS = [
         MACHINE,
         "    HoldUsed(fx);\n    ReleaseCooldowns(fx);",
         "    HoldUsed(fx);",
-    ),
-    Mutant(
-        "the camera comes round in front of the creature",
-        EASING,
-        "return std::atan2(-forward.y, -forward.x);",
-        "return std::atan2(forward.y, forward.x);",
-    ),
-    Mutant(
-        "the camera turns the long way round",
-        EASING,
-        "float turn = std::remainder(toRadians - fromRadians, 2.0f * kPi);",
-        "float turn = toRadians - fromRadians;",
-    ),
-    Mutant(
-        "an eased move goes at a rate of its own, whatever the frame rate",
-        EASING,
-        "return std::exp2(-dtSeconds / halfLifeSeconds);",
-        "return 1.0f - 0.5f * dtSeconds / halfLifeSeconds;",
     ),
     Mutant(
         "a character's own AI spends the player's turn",

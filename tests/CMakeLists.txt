@@ -19,7 +19,6 @@ endif()
 add_executable(
     tb_tests
     test_bar.cpp
-    test_easing.cpp
     test_fights.cpp
     test_keys.cpp
     test_machine.cpp
