@@ -149,6 +149,26 @@ void DescribeAbility(const dao::CCObject &self, const dao::Command &command, Com
     }
 }
 
+// The engine's frames have no unwind data, so no exception may leave a hook
+// of ours into them (DAOLib's advice, 2026-09-30): each hook's own work is
+// guarded, and on a failure the game carries on as if the mod were not
+// there. Called inside a catch-all: which exception it was, for the log.
+void Report(const char *where)
+{
+    try
+    {
+        throw;
+    }
+    catch (const std::exception &e)
+    {
+        spdlog::error("{}: {}; the game carries on without the mod here", where, e.what());
+    }
+    catch (...)
+    {
+        spdlog::error("{}: an exception of no known kind; the game carries on without the mod here", where);
+    }
+}
+
 // CCObject::QueueCommand: __thiscall, the command, add-to-front and the
 // override behaviour, `ret 0xC` (DAOLib's dao/Objects.h).
 using QueueCommandFn = int(__fastcall *)(dao::CCObject *self, int edx, dao::Command *command, int addToFront,
@@ -159,49 +179,54 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
 {
     const std::uint32_t caller = dao::Module::Preferred(reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
     if (self != nullptr && command != nullptr)
-    {
-        const auto type = static_cast<CommandType>(static_cast<int>(command->Type()));
-        const Source source = SourceOf(*command, caller);
-        NoteCaller(caller, type);
-        const dao::CCCreature *creature = self->AsCreature();
-        const std::optional<Reached> reached =
-            source == Source::Player && type == CommandType::Attack ? WalkToTarget(*self, *command) : std::nullopt;
-        const std::optional<float> walk = reached ? std::optional<float>{reached->walk} : std::nullopt;
-        CommandRequest request;
-        request.object = self->Id();
-        request.type = type;
-        request.source = source;
-        request.inCombat = creature != nullptr && creature->CombatState() != 0;
-        request.walk = walk;
-        if (type == CommandType::UseAbility)
+        try
         {
-            DescribeAbility(*self, *command, request);
+            const auto type = static_cast<CommandType>(static_cast<int>(command->Type()));
+            const Source source = SourceOf(*command, caller);
+            NoteCaller(caller, type);
+            const dao::CCCreature *creature = self->AsCreature();
+            const std::optional<Reached> reached =
+                source == Source::Player && type == CommandType::Attack ? WalkToTarget(*self, *command) : std::nullopt;
+            const std::optional<float> walk = reached ? std::optional<float>{reached->walk} : std::nullopt;
+            CommandRequest request;
+            request.object = self->Id();
+            request.type = type;
+            request.source = source;
+            request.inCombat = creature != nullptr && creature->CombatState() != 0;
+            request.walk = walk;
+            if (type == CommandType::UseAbility)
+            {
+                DescribeAbility(*self, *command, request);
+            }
+            Verdict verdict = Verdict::Allow;
+            {
+                const std::lock_guard lock(*g_mutex);
+                verdict = g_machine->OnCommand(request);
+            }
+            if (verdict == Verdict::Block && reached && reached->walk > 0.0f)
+            {
+                // Why an attack was too far, at info: whether a bow was read
+                // as one is what the first refusals in play left open.
+                spdlog::info("the refused attack: {:.1f} m away, reach {:.1f} m, main hand base item {} (bitm_base)",
+                             reached->distance, reached->reach, reached->weaponType);
+            }
+            if (verdict == Verdict::Block)
+            {
+                // The queue always takes a command it is given, and no caller
+                // frees one after (DAOLib's reading of all ten, 2026-09-30), so
+                // a refused one is the gate's to free: back to the commands'
+                // pool, as a script's dropped command goes (0x0066DE30). A
+                // player's refused order also never raises
+                // EVENT_TYPE_PLAYER_COMMAND_ADDED, which the queue signals
+                // before it adds one.
+                dao::script::DestroyStructure(dao::EngineStructure::Command, command);
+                return 0;
+            }
         }
-        Verdict verdict = Verdict::Allow;
+        catch (...)
         {
-            const std::lock_guard lock(*g_mutex);
-            verdict = g_machine->OnCommand(request);
+            Report("the gate, on a command"); // let through, as with no fight
         }
-        if (verdict == Verdict::Block && reached && reached->walk > 0.0f)
-        {
-            // Why an attack was too far, at info: whether a bow was read
-            // as one is what the first refusals in play left open.
-            spdlog::info("the refused attack: {:.1f} m away, reach {:.1f} m, main hand base item {} (bitm_base)",
-                         reached->distance, reached->reach, reached->weaponType);
-        }
-        if (verdict == Verdict::Block)
-        {
-            // The queue always takes a command it is given, and no caller
-            // frees one after (DAOLib's reading of all ten, 2026-09-30), so
-            // a refused one is the gate's to free: back to the commands'
-            // pool, as a script's dropped command goes (0x0066DE30). A
-            // player's refused order also never raises
-            // EVENT_TYPE_PLAYER_COMMAND_ADDED, which the queue signals
-            // before it adds one.
-            dao::script::DestroyStructure(dao::EngineStructure::Command, command);
-            return 0;
-        }
-    }
     return g_queue.Original()(self, edx, command, addToFront, overrideBehaviour);
 }
 
@@ -211,9 +236,14 @@ dao::Detour<PauseKeyFn> g_pauseKey;
 bool __fastcall PauseKey(void *controller, int edx, const dao::messages::UserTogglePauseMessage *message)
 {
     bool taken = false;
+    try
     {
         const std::lock_guard lock(*g_mutex);
         taken = g_machine->OnPauseKey();
+    }
+    catch (...)
+    {
+        Report("the pause key"); // the game's own pause
     }
     if (taken)
     {
@@ -227,9 +257,14 @@ bool __fastcall PauseKey(void *controller, int edx, const dao::messages::UserTog
 int ToggleGamePause(dao::script::CommandCall &call)
 {
     bool active = false;
+    try
     {
         const std::lock_guard lock(*g_mutex);
         active = g_machine->Active();
+    }
+    catch (...)
+    {
+        Report("ToggleGamePause");
     }
     if (!active)
     {
@@ -278,9 +313,14 @@ template <std::size_t I> struct OrderWatch
 
     static bool __fastcall Hook(void *mode, int edx, const void *message)
     {
+        try
         {
             const std::lock_guard lock(*g_mutex);
             g_machine->OnPlayerOrder(kOrders[I].what);
+        }
+        catch (...)
+        {
+            Report("an order");
         }
         spdlog::debug("order: {}", kOrders[I].what);
         return detour.Original()(mode, edx, message);

@@ -26,13 +26,21 @@ void BarLink::Install()
     }
     installed_ = true;
     dao::gui::OnExternalInterface("TB_GetView", [this](const dao::gui::Call &call) {
-        std::wstring view;
+        // Called from the game's UI code, which cannot take an exception.
+        try
         {
-            const std::lock_guard lock(mutex_);
-            view = encoded_;
+            std::wstring view;
+            {
+                const std::lock_guard lock(mutex_);
+                view = encoded_;
+            }
+            // GFx copies the text as the call returns, so a local will do.
+            call.Return(dao::gui::Value::WString(view.c_str()));
         }
-        // GFx copies the text as the call returns, so a local will do.
-        call.Return(dao::gui::Value::WString(view.c_str()));
+        catch (const std::exception &e)
+        {
+            spdlog::error("TB_GetView: {}", e.what());
+        }
     });
     dao::gui::OnFSCommand("TB_EndTurn", [this](void *, std::string_view) {
         const std::lock_guard lock(mutex_);

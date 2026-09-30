@@ -266,6 +266,10 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         {
             spdlog::error("frame: {}", e.what());
         }
+        catch (...)
+        {
+            spdlog::error("frame: an exception of no known kind");
+        }
     });
     spdlog::info("ready; turn-based fights begin when combat does");
     return true;
