@@ -410,7 +410,7 @@ pause_on_player_turn = false
 ; A talent chosen on the quickbar in a turn-based fight asks for its target,
 ; even with one selected. Off, the game uses it on the selected target at
 ; once, as in real time (a character keeps its target from turn to turn).
-; Not yet in effect: it waits on a way to ask for an ability's target.
+; Talents for their user alone, and modes, are used as ever.
 pick_targets = true
 ; Effects and regeneration count rounds: through a fight their clock is
 ; held, and at each new round every temporary effect (buffs, debuffs, damage

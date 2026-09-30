@@ -72,8 +72,8 @@ struct Settings
     // The world holds still while the player chooses (otherwise it idles on).
     bool pauseOnPlayerTurn = false;
     // A talent chosen on the quickbar asks for its target, even with one
-    // selected. Not yet in effect: it waits on DAOLib (a way to ask for an
-    // ability's target; dev/DAOLIB_NEEDS.md, "Rules", item 1).
+    // selected (otherwise the game uses it on the selected or attack target
+    // at once); not one for its user alone, nor a mode (AsksForTarget).
     bool pickTargets = true;
     // Effects' and regeneration's time in rounds: held through a fight, and
     // this many seconds spent on them at each new round (0: the game's clock).

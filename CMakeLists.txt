@@ -183,6 +183,7 @@ add_daolib_plugin(
         src/game/Camera.cpp
         src/game/Gate.cpp
         src/game/SettingsFile.cpp
+        src/game/Targeting.cpp
         src/plugin/Plugin.cpp
 )
 tb_apply_warnings(turnbased)

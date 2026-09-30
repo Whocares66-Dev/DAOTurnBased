@@ -95,6 +95,20 @@ inline constexpr float kPersonCombatSpeed = 4.66f;
 // out. 1 with none.
 [[nodiscard]] float MovementRate(std::span<const float> potencies);
 
+// The ability table's TargetType is a mask (TARGET_TYPE_*, the scripts'
+// constants): self 1, friendly 2, hostile 4, placeable 8, area 16, ground
+// 32, body 64. UseType 2 is a mode (Shield Wall), turned on and off.
+inline constexpr std::int32_t kTargetSelf = 1;
+inline constexpr std::int32_t kUseTypeMode = 2;
+
+// Whether a talent chosen on the quickbar in a fight asks the player for
+// its target rather than going straight to the selected target or the
+// caster's attack target (the quickbar's handler, read by DAOLib: a
+// character keeps its attack target from turn to turn, so a talent asked
+// or not by chance). Not one that can target only its user, nor a mode:
+// the game uses those on the caster, and so do they here.
+[[nodiscard]] bool AsksForTarget(std::int32_t targetType, std::int32_t useType);
+
 // How far a creature strikes from, as the game's AI judges it
 // (_AI_IsTargetInMeleeRange, ai_main_h_2.nss): AI_MELEE_RANGE, 3.5 m
 // (core_h.nss), and for a big target half its personal space more (the

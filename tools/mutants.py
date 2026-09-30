@@ -305,6 +305,18 @@ MUTANTS = [
         "            break;",
     ),
     Mutant(
+        "a talent for its user alone asks for a target",
+        RULES,
+        "    return useType != kUseTypeMode && (targetType & ~kTargetSelf) != 0;",
+        "    return useType != kUseTypeMode && targetType != 0;",
+    ),
+    Mutant(
+        "a mode asks for a target",
+        RULES,
+        "    return useType != kUseTypeMode && (targetType & ~kTargetSelf) != 0;",
+        "    return useType != kUseTypeMode + 99 && (targetType & ~kTargetSelf) != 0;",
+    ),
+    Mutant(
         "a refused order still runs the world",
         MACHINE,
         "        orderPending_ = false;\n        if (verdict == Verdict::Block && phase_ == Phase::Dispatching)",

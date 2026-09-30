@@ -281,6 +281,11 @@ float MovementRate(std::span<const float> potencies)
     return rate;
 }
 
+bool AsksForTarget(std::int32_t targetType, std::int32_t useType)
+{
+    return useType != kUseTypeMode && (targetType & ~kTargetSelf) != 0;
+}
+
 float SpeedFactor(float combatSpeed)
 {
     if (!std::isfinite(combatSpeed) || combatSpeed <= 0.0f)

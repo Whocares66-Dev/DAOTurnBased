@@ -60,7 +60,7 @@ The machine is not thread-safe by itself: `src/plugin/Plugin.cpp` holds a mutex 
 
 A change to `src/core`'s logic also runs `build\core\tests\tb_tests.exe "[fights-long]"` (a thousand random fights, half a minute) and `python tools\mutants.py` (each mutant must be caught; a new promise gets a mutant). `-Preset core-cov -Coverage` shows what the tests never run. `dev/TESTING.md` has what each found.
 
-Last green 2026-09-30, all of it, against DAOLib `a42be67`: 102 tests (the Python tools' among them), 1,000 fights, 56 of 56 mutants caught, ASan clean, clang-tidy clean, /analyze clean; the movie built and its sample seen in Ruffle. Run the mutants after a change to the random fights' arena too: a change to its draws can stop the default seeds reaching a rare case (`dev/TESTING.md`).
+Last green 2026-09-30, all of it, against DAOLib `1090803`: 103 tests (the Python tools' among them), 1,000 fights, 58 of 58 mutants caught, ASan clean, clang-tidy clean, /analyze clean; the movie built and its sample seen in Ruffle. Run the mutants after a change to the random fights' arena too: a change to its draws can stop the default seeds reaching a rare case (`dev/TESTING.md`).
 
 ## Writing files from the shell
 

@@ -60,6 +60,10 @@ Built with `condition_turns` turns per condition (1), the fallback while each di
 - at `condition_turns` 0 the condition keeps its own seconds, spent a round at a time while effects count rounds, and every turn that comes while it lasts is lost: the creature could not act, and its command would not end within the turn;
 - when the turns are spent and the engine still holds the condition, the mod removes it at the start of the creature's turn (`EndConditions`), before its AI is told or the player handed the turn.
 
+### Talents ask for their target (built 2026-09-30)
+
+The user: with a target selected, a talent chosen on the quickbar went to it at once, "sometimes it allows targeting and sometimes it doesn't". The quickbar's handler uses a talent on the selected target or, for one marked `AutoTarget`, on the caster's attack target, and asks only when there is neither (DAOLib read it); a character keeps its attack target from turn to turn. In a fight the mod takes the current creature's talent and asks for its target (`GameModeExplore::RequestTarget`), as BG3 does, unless it can target only its user or is a mode (`AsksForTarget`: the ability table's `TargetType` mask and `UseType`), which the game uses on the caster. The click uses it, through the gate as any order. `pick_targets` turns it off. Not yet seen in play.
+
 ### Cooldowns in turns (built 2026-09-30)
 
 DAO's cooldowns run in real time, paused or not: passing turns quickly left a talent cooling, and waiting brought it back (the user). An ability used is held on cooldown in the engine (3600 s, where waiting cannot reach) once its action has run, and released at the start of its user's turn that many turns later: its cooldown in the ability table over `cooldown_seconds_per_turn` (10), rounded up. At 10: Shield Bash 2, Pinning Shot 2, Dirty Fighting 3, the mabari howl 4, Overwhelm 6. A lost turn counts. At the fight's end what still waits goes back to seconds.

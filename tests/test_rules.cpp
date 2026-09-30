@@ -167,3 +167,14 @@ TEST_CASE("haste and slows multiply a creature's pace", "[rules]")
     CHECK(tb::MovementBudget(settings, tb::SpeedFactor(4.66f) * tb::MovementRate(haste), 10.0f) == Approx(13.5f));
     CHECK(tb::MovementBudget(settings, tb::SpeedFactor(7.35f) * tb::MovementRate(haste), 10.0f) == Approx(20.0f));
 }
+
+TEST_CASE("a talent in a fight asks for its target unless it is for its user alone, or a mode", "[rules]")
+{
+    CHECK(tb::AsksForTarget(4, 4));       // Shield Bash: a hostile creature
+    CHECK(tb::AsksForTarget(2 | 1, 4));   // Heal: a friend or oneself
+    CHECK(tb::AsksForTarget(16 | 32, 4)); // an area on the ground
+    CHECK_FALSE(tb::AsksForTarget(1, 4)); // the mabari howl: its user
+    CHECK_FALSE(tb::AsksForTarget(1, 2)); // Shield Wall, a mode
+    CHECK_FALSE(tb::AsksForTarget(4, 2)); // a mode whatever its mask says
+    CHECK_FALSE(tb::AsksForTarget(0, 4)); // no target at all
+}
