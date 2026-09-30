@@ -1,7 +1,8 @@
 // The camera through the turns (core/Easing.h has the why and the numbers):
 // in the tactical view it pans to whoever acts and never turns; close in,
 // it stays with the player's character through others' turns and comes
-// round behind each party member as their turn begins.
+// round behind each party member as their turn begins; on an enemy's turn
+// it turns to watch the enemy from behind the player's character.
 //
 // Through DAOLib's camera (dao/Camera.h, a24efda to 6c26174): Follow is the
 // engine's own SetTarget, which in the tactical view keeps the old focus's
@@ -9,8 +10,8 @@
 // each frame; close in, Follow pans by itself within 15 m, and the yaw is
 // eased round. Following an enemy close in put the camera 3.8 m behind the
 // enemy, zooming in and back (the user, 2026-09-30): close in, enemies are
-// not followed. Follow, SetFocusOffset and SetYaw are not yet seen in
-// play; the yaw's reading is.
+// not followed. Seen in play (11:29): SetYaw and the yaw behind a party
+// member; the tactical pan (Follow, SetFocusOffset) still to see.
 //
 // Behind Settings::cameraFollow. On the scripts' thread: from the frame
 // callback and the effects it applies.

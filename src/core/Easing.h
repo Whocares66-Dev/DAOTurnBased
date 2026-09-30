@@ -30,9 +30,14 @@ namespace tb
 
 // The camera's yaw to sit behind a creature facing so (GetFacing's
 // degrees). The yaw is the direction from the focus to the camera (DAOLib's
-// dao/Camera.h), so behind is the facing turned half round. That GetFacing
-// measures from the same axis, the same way round, is DAOLib's reading,
-// not yet seen in play.
+// dao/Camera.h), so behind is the facing turned half round. GetFacing
+// measures from the same axis, the same way round: seen in play
+// (2026-09-30, 11:29), the camera came round behind Teyrna Eleanor.
 [[nodiscard]] float YawBehind(float facingDegrees);
+
+// The camera's yaw to look from one point past it at another: behind the
+// player's character, watching an enemy's turn (the user's ask: close in,
+// the camera follows the enemy's turn without leaving the party).
+[[nodiscard]] float YawWatching(const Vec3 &from, const Vec3 &at);
 
 } // namespace tb

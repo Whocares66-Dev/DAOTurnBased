@@ -52,7 +52,18 @@ void CameraDirector::TurnTo(ObjectId id, bool party)
     behind_.reset();
     if (!party)
     {
-        return; // close in, the player's character stays in view
+        // Close in, the camera stays with the player's character and turns
+        // to watch the enemy's turn from behind it: following the enemy put
+        // the camera 3.8 m behind the enemy, zooming in and out.
+        const ObjectId watcher = camera->Target();
+        if (watcher == kNoObject || watcher == id)
+        {
+            return;
+        }
+        const dao::Vector from = dao::script::api::GetPosition(watcher);
+        const dao::Vector at = dao::script::api::GetPosition(id);
+        behind_ = YawWatching({from.x, from.y, from.z}, {at.x, at.y, at.z});
+        return;
     }
     if (camera->Target() != id)
     {
