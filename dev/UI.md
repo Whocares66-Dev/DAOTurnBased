@@ -84,9 +84,9 @@ The user asked for the game's own portrait backgrounds and skeuomorphic frames i
 - the red health arc, `Portraits_I41`, filled from the foot to the share of health left;
 - the gold ring, `Portraits_I3C`;
 - for the current turn, the party bar's glow ring, `Portraits_I60`, behind, and the card larger;
-- a rim of the side's colour outside the gold for enemies and allies, and a gem of the rank's colour for lieutenants and bosses.
+- a gem of the rank's colour for lieutenants and bosses. (A rim of the side's colour outside the gold read as stray orange circles to the user, and went.)
 
-End turn stands on the game's popups' gold-edged panel, `PopupLayer_I70`. Seen in play at 12:07 (`dev/images/turnorder-ingame-medallions.jpg`): every texture drew from the atlases by name, the party's orbs matching the game's own party bar. Outside the game the movie loads the same art from the research's PNGs, so `tools/snapshot.ps1` shows the real look (the portraits in the sample are two of the game's summon portraits).
+"End" is the inventory's leather button (its sort picker's `inventory_I2EC`, lighter under the pointer, `I2EE`, darker pressed, `I2F4`), as the user asked: like the game's other buttons. The bar stands on the game's translucent black, its notifications' strip `Notifications_IB` (dark at one end, fading out at the other) placed twice from the middle, so it fades out at both ends like the game's banners. Seen in play at 12:07 (`dev/images/turnorder-ingame-medallions.jpg`): every texture drew from the atlases by name, the party's orbs matching the game's own party bar. Outside the game the movie loads the same art from the research's PNGs, so `tools/snapshot.ps1` shows the real look (the portraits in the sample are two of the game's summon portraits).
 
 ### The protocol, built 2026-09-30
 

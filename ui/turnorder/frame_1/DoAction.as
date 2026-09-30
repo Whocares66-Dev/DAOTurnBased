@@ -26,7 +26,8 @@ var CARD_W = 60;
 var CARD_H = 60;
 var GAP = 5;
 var ART = CARD_W / 114;
-var END_W = 74; // End turn in the game's title font, on its panel
+var END_W = 78; // End, on the inventory's leather button (190 x 32 at full size)
+var END_H = 30;
 var DIVIDER = 22;
 var TOP = 14;
 var CURRENT_SCALE = 118;
@@ -341,11 +342,6 @@ function drawCard(bar, card, index, x)
     box(level, 0, CARD_H * (1 - share), CARD_W, CARD_H * share + 1, 0xFFFFFF, 100);
     health.setMask(level);
     art(clip, "Portraits_I3C", 8, 0, 0, CARD_W, CARD_H);
-    // Whose side: a rim of colour outside the gold for those not the party's.
-    if (card.side != 0)
-    {
-        ring(clip, mid, mid, mid + 1.5, 2, SIDE_COLOURS[card.side], 85);
-    }
     // A lieutenant's or a boss's gem, at the foot.
     if (RANK_COLOURS[card.rank])
     {
@@ -398,17 +394,45 @@ function drawDivider(bar, round, index, x)
     text.text = String(round);
 }
 
+// End, on the inventory's leather button (its sort picker, inventory.gfx):
+// its face, lighter under the pointer, darker pressed, as the game's own
+// buttons go (inventory_I2EC, I2EE, I2F4).
 function drawEndTurn(bar, x)
 {
     var clip = bar.createEmptyMovieClip("endTurn", 500);
     clip._x = x;
-    clip._y = TOP + 8;
-    // The game's popups' gold-edged panel (PopupLayer_I70).
-    art(clip, "PopupLayer_I70", 1, 0, 0, END_W, 44);
-    var text = label(clip, "caption", 2, 0, 11, END_W, 24, 13, GOLD, "center", true);
-    text.text = "End turn";
+    clip._y = TOP + (CARD_H - END_H) / 2;
+    var faces = ["inventory_I2EC", "inventory_I2EE", "inventory_I2F4"];
+    for (var i = 0; i < faces.length; i++)
+    {
+        art(clip, faces[i], 1 + i, 0, 0, END_W, END_H);
+    }
+    clip.face = function(n)
+    {
+        for (var f = 0; f < 3; f++)
+        {
+            this["art" + (1 + f)]._visible = f == n;
+        }
+    };
+    clip.face(0);
+    var text = label(clip, "caption", 5, 0, (END_H - 22) / 2, END_W, 22, 15, GOLD, "center", true);
+    text.text = "End";
+    clip.onRollOver = function()
+    {
+        this.face(1);
+    };
+    clip.onRollOut = function()
+    {
+        this.face(0);
+    };
+    clip.onDragOut = clip.onRollOut;
+    clip.onPress = function()
+    {
+        this.face(2);
+    };
     clip.onRelease = function()
     {
+        this.face(1);
         fscommand("TB_EndTurn", "");
     };
 }
@@ -439,15 +463,27 @@ function build(state)
         x += END_W + 2 * GAP;
     }
     bar._x = Math.round((Stage.width - x) / 2);
-    // A dark plate behind it all, edged in gold, so the bar reads over a
-    // bright scene as the game's own panels do.
+    // Behind it all, the game's translucent black, its notifications' strip
+    // (Notifications_IB, dark at one end and fading out at the other),
+    // twice from the middle, so the bar fades out at both ends as the
+    // game's banners do. Each strip starts a little past the middle, under
+    // a mask: its dark end is rounded, and the two ends met in a seam.
     var plate = bar.createEmptyMovieClip("plate", 5);
-    box(plate, -12, TOP - 10, x + 24 - GAP, CARD_H + 58, INK, 60);
-    plate.lineStyle(1, GOLD, 70);
-    plate.moveTo(-12, TOP - 10);
-    plate.lineTo(x + 12 - GAP, TOP - 10);
-    plate.moveTo(-12, TOP + CARD_H + 48);
-    plate.lineTo(x + 12 - GAP, TOP + CARD_H + 48);
+    var middle = (x - GAP) / 2;
+    var half = middle + 60;
+    var high = CARD_H + 58;
+    var overlap = 16;
+    var right = plate.createEmptyMovieClip("right", 1);
+    art(right, "Notifications_IB", 1, middle - overlap, TOP - 10, half + overlap, high);
+    var rightMask = plate.createEmptyMovieClip("rightMask", 2);
+    box(rightMask, middle, TOP - 20, half + 20, high + 20, 0xFFFFFF, 100);
+    right.setMask(rightMask);
+    var left = plate.createEmptyMovieClip("left", 3);
+    var mirrored = art(left, "Notifications_IB", 1, middle + overlap, TOP - 10, half + overlap, high);
+    mirrored._xscale = -100;
+    var leftMask = plate.createEmptyMovieClip("leftMask", 4);
+    box(leftMask, middle - half - 20, TOP - 20, half + 20, high + 20, 0xFFFFFF, 100);
+    left.setMask(leftMask);
     label(bar, "status", 6, 0, TOP + CARD_H + 16, x, 20, 13, PARCHMENT, "center", false);
     label(bar, "hover", 7, 0, TOP + CARD_H + 30, x, 20, 12, GOLD, "center", false);
 }
@@ -475,8 +511,28 @@ function describe(state)
 // The bar is built again only when its cards change: a walk changes the
 // meters left several times a second, and building again would load every
 // portrait again with it. The status line is set in place.
+// Outside the game: a dark, uneven backdrop like a scene's, so the bar's
+// translucent black can be judged in a snapshot.
+function drawBackdrop()
+{
+    if (inGame || _root.backdrop != undefined)
+    {
+        return;
+    }
+    var backdrop = _root.createEmptyMovieClip("backdrop", 1);
+    var matrix = {matrixType: "box", x: 0, y: 0, w: Stage.width, h: 300, r: Math.PI / 3};
+    backdrop.beginGradientFill("linear", [0x5A4A3A, 0x2A3444, 0x6A5A40], [100, 100, 100], [0, 128, 255], matrix);
+    backdrop.moveTo(0, 0);
+    backdrop.lineTo(Stage.width, 0);
+    backdrop.lineTo(Stage.width, 300);
+    backdrop.lineTo(0, 300);
+    backdrop.lineTo(0, 0);
+    backdrop.endFill();
+}
+
 function draw(view)
 {
+    drawBackdrop();
     if (view == lastView)
     {
         return;
