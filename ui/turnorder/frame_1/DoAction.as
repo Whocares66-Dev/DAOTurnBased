@@ -14,7 +14,7 @@
 // Outside the game there is no plugin to ask, and it draws a sample fight,
 // so the look can be checked in any Flash player.
 
-var BAR_VERSION = 2;
+var BAR_VERSION = 3;
 var CARD = String.fromCharCode(30);
 var FIELD = String.fromCharCode(31);
 
@@ -55,16 +55,16 @@ function sampleView()
 {
     var head = [BAR_VERSION, 1, 2, 256, 1, 1, "6.5", "9.0"].join(FIELD);
     var cards = [
-        [256, 0, 100, 100, 0, 1, 1, 2, "Warden", "player", "gui_portrait_09"],
-        [512, 2, 4, 80, 0, 0, 0, 2, "Hurlock Emissary", "e", "gui_portrait_49"],
-        [257, 0, 0, 65, 0, 0, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09"],
-        [513, 2, 2, 40, 0, 0, 0, 2, "Genlock", "g", ""],
-        [258, 0, 0, 0, 1, 0, 1, 2, "Morrigan", "gen00fl_morrigan", "gui_portrait_49"],
-        [768, 1, 2, 90, 0, 0, 0, 2, "Soldier", "s", "gui_portrait_09"],
-        [514, 2, 3, 100, 0, 0, 0, 2, "Genlock Alpha", "a", "gui_portrait_49"],
-        [256, 0, 100, 100, 0, 0, 1, 3, "Warden", "player", "gui_portrait_09"],
-        [512, 2, 4, 80, 0, 0, 0, 3, "Hurlock Emissary", "e", "gui_portrait_49"],
-        [257, 0, 0, 65, 0, 0, 1, 3, "Alistair", "gen00fl_alistair", "gui_portrait_09"]
+        [256, 0, 100, 100, 0, 1, 1, 2, "Warden", "player", "gui_portrait_09", 70, 0],
+        [512, 2, 4, 80, 0, 0, 0, 2, "Hurlock Emissary", "e", "gui_portrait_49", 55, 1],
+        [257, 0, 0, 65, 0, 0, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0],
+        [513, 2, 2, 40, 0, 0, 0, 2, "Genlock", "g", "", 100, 0],
+        [258, 0, 0, 0, 1, 0, 1, 2, "Morrigan", "gen00fl_morrigan", "gui_portrait_49", 30, 1],
+        [768, 1, 2, 90, 0, 0, 0, 2, "Soldier", "s", "gui_portrait_09", 80, 0],
+        [514, 2, 3, 100, 0, 0, 0, 2, "Genlock Alpha", "a", "gui_portrait_49", 45, 0],
+        [256, 0, 100, 100, 0, 0, 1, 3, "Warden", "player", "gui_portrait_09", 70, 0],
+        [512, 2, 4, 80, 0, 0, 0, 3, "Hurlock Emissary", "e", "gui_portrait_49", 55, 1],
+        [257, 0, 0, 65, 0, 0, 1, 3, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0]
     ];
     var text = head;
     for (var i = 0; i < cards.length; i++)
@@ -95,7 +95,8 @@ function parse(text)
         var f = records[i].split(FIELD);
         cards.push({id: f[0], side: Number(f[1]), rank: Number(f[2]), health: Number(f[3]),
                     down: f[4] == "1", current: f[5] == "1", yours: f[6] == "1", round: Number(f[7]),
-                    name: f[8], tag: f[9], portrait: f[10] == undefined ? "" : f[10]});
+                    name: f[8], tag: f[9], portrait: f[10] == undefined ? "" : f[10],
+                    energy: Number(f[11]), mana: f[12] == "1"});
     }
     return {version: Number(head[0]), active: head[1] == "1", round: Number(head[2]), current: head[3],
             playerTurn: head[4] == "1", actions: Number(head[5]), movementLeft: head[6], movementMax: head[7],
@@ -343,11 +344,18 @@ function drawCard(bar, card, index, x)
     var share = Math.max(0, Math.min(100, card.health)) / 100;
     box(level, 0, CARD_H * (1 - share), CARD_W, CARD_H * share + 1, 0xFFFFFF, 100);
     health.setMask(level);
-    art(clip, "Portraits_I3C", 8, 0, 0, CARD_W, CARD_H);
+    // Mana (a mage's, blue) or stamina (gold): the party bar's right arc,
+    // filled the same way (Portraits_I52 and I5B, portraits.gfx's ManaBar).
+    var energy = art(clip, card.mana ? "Portraits_I52" : "Portraits_I5B", 11, 0, 0, CARD_W, CARD_H);
+    var energyLevel = clip.createEmptyMovieClip("energyLevel", 12);
+    var energyShare = Math.max(0, Math.min(100, card.energy)) / 100;
+    box(energyLevel, 0, CARD_H * (1 - energyShare), CARD_W, CARD_H * energyShare + 1, 0xFFFFFF, 100);
+    energy.setMask(energyLevel);
+    art(clip, "Portraits_I3C", 16, 0, 0, CARD_W, CARD_H);
     // A lieutenant's or a boss's gem, at the foot.
     if (RANK_COLOURS[card.rank])
     {
-        var gem = clip.createEmptyMovieClip("gem", 9);
+        var gem = clip.createEmptyMovieClip("gem", 17);
         circle(gem, mid, CARD_H - 3, 4, RANK_COLOURS[card.rank], 100);
         ring(gem, mid, CARD_H - 3, 4, 1, INK, 100);
     }
@@ -355,7 +363,7 @@ function drawCard(bar, card, index, x)
     {
         // The game's gold arrow (the inventory's sort button's, inventory_I2F1),
         // turned to point up at the card.
-        var pointer = art(clip, "inventory_I2F1", 10, mid - 7, CARD_H + 11, 14, 8);
+        var pointer = art(clip, "inventory_I2F1", 18, mid - 7, CARD_H + 11, 14, 8);
         pointer._yscale = -100;
     }
     if (card.down)

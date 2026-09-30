@@ -11,7 +11,8 @@
 //   each card: id, side (0 party, 1 ally, 2 enemy), rank, health (0-100),
 //              down, current, yours (the player commands it), round, name,
 //              tag, portrait (its texture's name, "portrait_player0.dds",
-//              core/Portraits.h; empty for none yet)
+//              core/Portraits.h; empty for none yet), mana or stamina
+//              (0-100), mana (1 for a mage's, 0 for stamina)
 //
 // Flags are 0 or 1, movement is meters with one decimal. The version goes up
 // when the fields change, and a movie that sees another stays blank.
@@ -27,7 +28,7 @@ namespace tb
 
 inline constexpr wchar_t kBarCard = 0x1E;
 inline constexpr wchar_t kBarField = 0x1F;
-inline constexpr int kBarVersion = 2;
+inline constexpr int kBarVersion = 3;
 
 // The portraits come from the game's side, the rest from the machine.
 [[nodiscard]] std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits);

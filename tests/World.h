@@ -33,6 +33,8 @@ struct Creature
     bool fighting = true; // in combat: the game's scan finds it (party members always)
     bool busy = false;
     Condition condition = Condition::None; // stunned or pinned, as the game side reads it
+    float energy = 1.0f;                   // mana or stamina
+    bool mana = false;                     // a mage's
     bool moving = false;
     CommandType current = CommandType::Invalid;
     Vec3 position;
@@ -151,7 +153,7 @@ class World
         for (const ObjectId id : needs.statuses)
         {
             const Creature &c = Get(id);
-            obs.statuses.push_back({id, c.exists, c.down, c.down ? 0.0f : 1.0f, c.condition});
+            obs.statuses.push_back({id, c.exists, c.down, c.down ? 0.0f : 1.0f, c.condition, c.energy, c.mana});
         }
         Apply(machine.Step(obs));
     }

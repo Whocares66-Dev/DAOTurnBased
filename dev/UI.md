@@ -82,6 +82,7 @@ The user asked for the game's own portrait backgrounds and skeuomorphic frames i
 - a painted background orb, one of the twenty frames of the party bar's `Portrait2_back` (`levelUp_I158` and every third texture after, patch003's names). A party member's is its `PortraitProperties.PortraitTint` from the data tree (the portraits table's, by tag: Alistair 17, the dog 18, Morrigan 16); an enemy's or ally's is one of the twenty, fixed by its id;
 - the portrait, masked round;
 - the red health arc, `Portraits_I41`, filled from the foot to the share of health left;
+- on the right, mana (a mage's, blue, `Portraits_I52`) or stamina (gold, `Portraits_I5B`), the party bar's `ManaBar`, filled the same way (the user, 2026-09-30: the party's full portraits showed stamina, the turn bar's did not). A mage is a creature whose core class is `CLASS_WIZARD` (core_h's `GetCreatureCoreClass`: the current class, or the classes table's `BaseClass`); the share is `PROPERTY_DEPLETABLE_MANA_STAMINA`. The party bar's darker arcs (`Portraits_I55`, `I58`, `ManaStaminaBarReserve`) show what sustained abilities hold back, which the bar does not show yet;
 - the gold ring, `Portraits_I3C`;
 - for the current turn, the party bar's glow ring, `Portraits_I60`, behind, and the card larger;
 - a gem of the rank's colour for lieutenants and bosses. (A rim of the side's colour outside the gold read as stray orange circles to the user, and went.)

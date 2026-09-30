@@ -28,6 +28,8 @@ struct Combatant
     float dexterity = 10.0f;
     float speed = 1.0f;  // the engine's movement speed multiplier
     float health = 1.0f; // current over maximum
+    float energy = 1.0f; // mana or stamina, the same
+    bool mana = false;   // a mage's
     bool down = false;   // dead, dying, or gone from the fight
     int initiative = 0;
 };

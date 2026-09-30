@@ -101,6 +101,8 @@ struct CombatantStatus
     bool down = false;
     float health = 1.0f;
     Condition condition = Condition::None;
+    float energy = 1.0f; // mana or stamina, current over maximum
+    bool mana = false;   // a mage's is mana, anyone else's stamina
 };
 
 struct Observation
@@ -206,6 +208,8 @@ struct CardView
     bool current = false;
     bool yours = false; // the player commands it on its turns
     int round = 0;
+    float energy = 1.0f; // mana or stamina
+    bool mana = false;
 };
 
 struct TurnView

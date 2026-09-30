@@ -72,6 +72,8 @@ std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits)
         Field(out, std::wstring_view{card.name});
         Field(out, std::wstring_view{card.tag});
         Field(out, std::wstring_view{TextureName(portraits.Of(card.id))});
+        Field(out, static_cast<long long>(std::lround(std::clamp(card.energy, 0.0f, 1.0f) * 100.0f)));
+        Field(out, card.mana);
     }
     return out;
 }

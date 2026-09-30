@@ -117,6 +117,28 @@ bool OutOfWorld(Mode mode)
     return mode == Mode::Loading || mode == Mode::Pregame || mode == Mode::CharGen || mode == Mode::Unknown;
 }
 
+// Mana or stamina, as the party bar's right arc shows it: the one
+// depletable property both are (PROPERTY_DEPLETABLE_MANA_STAMINA).
+float Energy(ObjectId id)
+{
+    const float current = api::GetCreatureProperty(id, k::PROPERTY_DEPLETABLE_MANA_STAMINA, k::PROPERTY_VALUE_CURRENT);
+    const float total = api::GetCreatureProperty(id, k::PROPERTY_DEPLETABLE_MANA_STAMINA, k::PROPERTY_VALUE_TOTAL);
+    return total > 0.0f ? std::clamp(current / total, 0.0f, 1.0f) : 0.0f;
+}
+
+// A mage's is mana: its core class, as core_h's GetCreatureCoreClass reads
+// it (the current class, or the classes table's BaseClass for a
+// specialisation's), is CLASS_WIZARD.
+bool Mage(ObjectId id)
+{
+    constexpr std::int32_t kPropertyCurrentClass = 27; // PROPERTY_SIMPLE_CURRENT_CLASS
+    constexpr std::int32_t kClassWizard = 2;           // CLASS_WIZARD
+    const auto current =
+        static_cast<std::int32_t>(api::GetCreatureProperty(id, kPropertyCurrentClass, k::PROPERTY_VALUE_TOTAL));
+    const std::int32_t base = dao::gda::GetInt(dao::script::Table::RulesClasses, current, "BaseClass").value_or(0);
+    return (base != 0 ? base : current) == kClassWizard;
+}
+
 float Health(ObjectId id)
 {
     const float current = api::GetCreatureProperty(id, k::PROPERTY_DEPLETABLE_HEALTH, k::PROPERTY_VALUE_CURRENT);
@@ -328,6 +350,8 @@ CombatantStatus Bridge::Status(ObjectId id)
     {
         status.down = api::IsDead(id) != 0;
         status.health = Health(id);
+        status.energy = Energy(id);
+        status.mana = Mage(id);
         // The conditions that hold a creature for turns: the effects whose
         // command the engine keeps at the front of its queue while they
         // last (EffectStun, effect_stun_h; Pinning Shot's EffectRoot,

@@ -6,6 +6,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -72,7 +73,7 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     REQUIRE(bar.cards.size() >= 5);
     for (const auto &card : bar.cards)
     {
-        REQUIRE(card.size() == 11);
+        REQUIRE(card.size() == 13);
     }
     CHECK(bar.cards[0][0] == std::to_wstring(kHero));
     CHECK(bar.cards[0][1] == L"0");   // the party
@@ -80,6 +81,8 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     CHECK(bar.cards[0][5] == L"1");   // current
     CHECK(bar.cards[0][6] == L"1");   // the player's
     CHECK(bar.cards[0][8] == L"Hero");
+    CHECK(bar.cards[0][11] == L"100"); // full stamina
+    CHECK(bar.cards[0][12] == L"0");   // stamina, not mana
     CHECK(bar.cards[1][0] == std::to_wstring(kGenlock));
     CHECK(bar.cards[1][1] == L"2"); // an enemy
     CHECK(bar.cards[1][6] == L"0"); // the AI's
@@ -93,13 +96,17 @@ TEST_CASE("a name cannot break the bar's string apart", "[bar]")
     card.id = 7;
     card.name = std::wstring{L"Bad"} + kBarCard + L"Name" + kBarField + L"\n!";
     card.tag = L"tag";
-    card.health = 1.7f; // out of range: clamped
+    card.health = 1.7f;  // out of range: clamped
+    card.energy = -0.5f; // the same
+    card.mana = true;
     view.upcoming.push_back(card);
     const Decoded bar = Decode(EncodeBar(view));
     REQUIRE(bar.cards.size() == 1);
-    REQUIRE(bar.cards[0].size() == 11);
+    REQUIRE(bar.cards[0].size() == 13);
     CHECK(bar.cards[0][8] == L"BadName!");
     CHECK(bar.cards[0][3] == L"100");
+    CHECK(bar.cards[0][11] == L"0");
+    CHECK(bar.cards[0][12] == L"1");
 }
 
 TEST_CASE("outside a fight the bar's string says so and has no cards", "[bar]")
@@ -108,4 +115,21 @@ TEST_CASE("outside a fight the bar's string says so and has no cards", "[bar]")
     REQUIRE(bar.head.size() == 8);
     CHECK(bar.head[1] == L"0");
     CHECK(bar.cards.empty());
+}
+
+TEST_CASE("a creature's mana or stamina reaches its card as the statuses read it", "[bar]")
+{
+    // The user: the turn bar's portraits showed health, the party bar's
+    // stamina too (2026-09-30).
+    World w;
+    w.Get(kGenlock).energy = 0.4f;
+    w.Get(kGenlock).mana = true; // a genlock emissary, say
+    w.StartFight();
+    w.RunFor(600); // a status read
+    const Decoded bar = Decode(EncodeBar(w.machine.View()));
+    const auto genlock =
+        std::ranges::find_if(bar.cards, [](const auto &card) { return card[0] == std::to_wstring(kGenlock); });
+    REQUIRE(genlock != bar.cards.end());
+    CHECK((*genlock)[11] == L"40");
+    CHECK((*genlock)[12] == L"1");
 }

@@ -1169,6 +1169,8 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
             continue;
         }
         c->health = status.health;
+        c->energy = status.energy;
+        c->mana = status.mana;
         Held &held = held_[status.id];
         if (status.condition != Condition::None && status.condition != held.seen)
         {
@@ -1541,8 +1543,8 @@ TurnView TurnMachine::View() const
     for (const TurnOrder::Slot &slot : order_.Upcoming(12))
     {
         const Combatant &c = *slot.who;
-        view.upcoming.push_back(
-            {c.id, c.name, c.tag, c.side, c.rank, c.health, c.down, slot.current, PlayerControls(c), slot.round});
+        view.upcoming.push_back({c.id, c.name, c.tag, c.side, c.rank, c.health, c.down, slot.current, PlayerControls(c),
+                                 slot.round, c.energy, c.mana});
     }
     return view;
 }

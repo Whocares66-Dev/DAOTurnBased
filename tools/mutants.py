@@ -287,6 +287,18 @@ MUTANTS = [
         "    speedSet_ = speed;",
     ),
     Mutant(
+        "a creature's mana or stamina never reaches the bar",
+        MACHINE,
+        "        c->energy = status.energy;",
+        "",
+    ),
+    Mutant(
+        "the bar's string leaves out whether it is mana",
+        BAR,
+        "        Field(out, card.mana);",
+        "        Field(out, false);",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",
