@@ -74,6 +74,20 @@ What the movie needs from the plugin:
 3. A portrait per card: built, the party's from the game's data tree or the engine, everyone else's rendered by the engine (above).
 4. Its clicks heard: built (below).
 
+### The cards: the party bar's medallions (2026-09-30)
+
+The user asked for the game's own portrait backgrounds and skeuomorphic frames in place of drawn boxes. The research (`build/research/portrait_art/README.md`, not in the repository) found every picture in the game's movies is an atlas texture named by a `DefineExternalImage`, which `img://<name>.dds` draws by name (the image loader looks names up in the UI atlases first, 0x516A20). So each card is the party bar's own stack (`portraits.gfx`, `Portrait1_mc`), scaled from 114 px to 60:
+
+- the backplate, `Portraits_IC2`;
+- a painted background orb, one of the twenty frames of the party bar's `Portrait2_back` (`levelUp_I158` and every third texture after, patch003's names). A party member's is its `PortraitProperties.PortraitTint` from the data tree (the portraits table's, by tag: Alistair 17, the dog 18, Morrigan 16); an enemy's or ally's is one of the twenty, fixed by its id;
+- the portrait, masked round;
+- the red health arc, `Portraits_I41`, filled from the foot to the share of health left;
+- the gold ring, `Portraits_I3C`;
+- for the current turn, the party bar's glow ring, `Portraits_I60`, behind, and the card larger;
+- a rim of the side's colour outside the gold for enemies and allies, and a gem of the rank's colour for lieutenants and bosses.
+
+End turn stands on the game's popups' gold-edged panel, `PopupLayer_I70`. Outside the game the movie loads the same art from the research's PNGs, so `tools/snapshot.ps1` shows the real look (the portraits in the sample are two of the game's summon portraits).
+
 ### The protocol, built 2026-09-30
 
 The movie pulls; the plugin never calls into it. A movie's calls come on its own thread, which may not be the scripts', and pulling makes that not matter: the handlers only read what the frame callback last published, and leave requests for it (`src/game/Bar.h`). They are installed with `[feedback] turn_bar = true`, off until there is a movie.

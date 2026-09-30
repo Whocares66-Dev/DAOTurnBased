@@ -74,7 +74,8 @@ function Test-Blank([System.Drawing.Bitmap] $Image) {
 }
 
 $process = Start-Process -FilePath $Ruffle -PassThru -ArgumentList @(
-    '--width', $Width, '--height', $Height, '--storage', 'memory', '-Psample=1', $Movie)
+    '--width', $Width, '--height', $Height, '--storage', 'memory', '--filesystem-access-mode', 'allow',
+    '-Psample=1', $Movie)
 try {
     $title = "Ruffle - $(Split-Path -Leaf $Movie)"
     $window = [IntPtr]::Zero

@@ -18,9 +18,14 @@ var BAR_VERSION = 2;
 var CARD = String.fromCharCode(30);
 var FIELD = String.fromCharCode(31);
 
-var CARD_W = 52;
-var CARD_H = 64;
-var GAP = 6;
+// A card is a medallion, the party bar's own (portraits.gfx, Portrait1_mc,
+// drawn at 114 px; here at CARD_W): its backplate, a painted background, the
+// portrait, the red health arc and the gold ring, all the game's textures
+// by name (build/research/portrait_art/README.md, 2026-09-30).
+var CARD_W = 60;
+var CARD_H = 60;
+var GAP = 5;
+var ART = CARD_W / 114;
 var DIVIDER = 22;
 var TOP = 14;
 var CURRENT_SCALE = 118;
@@ -46,16 +51,16 @@ function sampleView()
 {
     var head = [BAR_VERSION, 1, 2, 256, 1, 1, "6.5", "9.0"].join(FIELD);
     var cards = [
-        [256, 0, 100, 100, 0, 1, 1, 2, "Warden", "player", ""],
-        [512, 2, 4, 80, 0, 0, 0, 2, "Hurlock Emissary", "e", ""],
-        [257, 0, 0, 65, 0, 0, 1, 2, "Alistair", "gen00fl_alistair", ""],
+        [256, 0, 100, 100, 0, 1, 1, 2, "Warden", "player", "gui_portrait_09"],
+        [512, 2, 4, 80, 0, 0, 0, 2, "Hurlock Emissary", "e", "gui_portrait_49"],
+        [257, 0, 0, 65, 0, 0, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09"],
         [513, 2, 2, 40, 0, 0, 0, 2, "Genlock", "g", ""],
-        [258, 0, 0, 0, 1, 0, 1, 2, "Morrigan", "gen00fl_morrigan", ""],
-        [768, 1, 2, 90, 0, 0, 0, 2, "Soldier", "s", ""],
-        [514, 2, 3, 100, 0, 0, 0, 2, "Genlock Alpha", "a", ""],
-        [256, 0, 100, 100, 0, 0, 1, 3, "Warden", "player", ""],
-        [512, 2, 4, 80, 0, 0, 0, 3, "Hurlock Emissary", "e", ""],
-        [257, 0, 0, 65, 0, 0, 1, 3, "Alistair", "gen00fl_alistair", ""]
+        [258, 0, 0, 0, 1, 0, 1, 2, "Morrigan", "gen00fl_morrigan", "gui_portrait_49"],
+        [768, 1, 2, 90, 0, 0, 0, 2, "Soldier", "s", "gui_portrait_09"],
+        [514, 2, 3, 100, 0, 0, 0, 2, "Genlock Alpha", "a", "gui_portrait_49"],
+        [256, 0, 100, 100, 0, 0, 1, 3, "Warden", "player", "gui_portrait_09"],
+        [512, 2, 4, 80, 0, 0, 0, 3, "Hurlock Emissary", "e", "gui_portrait_49"],
+        [257, 0, 0, 65, 0, 0, 1, 3, "Alistair", "gen00fl_alistair", "gui_portrait_09"]
     ];
     var text = head;
     for (var i = 0; i < cards.length; i++)
@@ -148,65 +153,152 @@ function initials(name)
 // A card's portrait, a texture's name, or null. The plugin sends one for
 // every combatant it could get one for: the engine renders enemies' as it
 // renders the party's (core/Portraits.h). Until it has, a party member's is
-// found as the game's party bar finds it (portraits.gfx:
-// SharedLibrary.Portrait): the members are the data tree's
-// Party.Members.0-3 and Party.Summons.0-3, each with its ID and its
-// Portrait, an image's name.
+// found as the game's party bar finds it (partyMember, below).
 function portraitOf(card)
 {
     if (card.portrait.length > 0)
     {
         return card.portrait;
     }
-    return card.side == 0 ? partyPortrait(card.id) : null;
+    return card.side == 0 ? partyMember(card.id).portrait : null;
 }
 
-// An image's URL as the game's own movies make it (portraits.gfx:
-// MovieUtils.GetImageUrl): "img://", the texture's name with ".dds" added
-// when it has none, and the size wanted. Without the extension the loader
-// finds nothing and draws grey (seen in play, 2026-09-30).
+// A texture's URL as the game's own movies make it (portraits.gfx:
+// MovieUtils.GetImageUrl): "img://", the name with ".dds" added when it has
+// none, and the size wanted. Without the extension the loader finds nothing
+// and draws grey (seen in play, 2026-09-30). The game's image loader looks
+// the name up among its UI atlases first, then its textures (0x516A20).
+// Outside the game, the same art as extracted to PNGs, for a look in a
+// Flash player (tools/snapshot.ps1).
 function imageUrl(name, width, height)
 {
     if (name.indexOf("img://") == 0)
     {
         name = name.substr(6);
     }
+    if (!inGame)
+    {
+        var dot = name.lastIndexOf(".");
+        return "../research/portrait_art/png/" + (dot == -1 ? name : name.substr(0, dot)) + ".png";
+    }
     if (name.lastIndexOf(".") == -1)
     {
         name += ".dds";
     }
-    return "img://" + name + "?Width=" + width + "&Height=" + height;
+    return "img://" + name + "?Width=" + Math.round(width) + "&Height=" + Math.round(height);
 }
 
-var portraitNames = {};
-function partyPortrait(id)
+// The party bar's backgrounds, a painted orb per character: the frames of
+// its Portrait2_back, 1 to 20, chosen by a member's PortraitTint (the
+// portraits table's, by tag: Alistair 17, the dog 18, Morrigan 16, the rest
+// 1 unless named). The textures are the atlas's levelUp_I158 and every third
+// after (patch003's names; the unpatched game's differ).
+function backgroundTexture(tint)
 {
-    if (!inGame)
+    return "levelUp_I" + (0x158 + 3 * (tint - 1)).toString(16).toUpperCase();
+}
+
+// An enemy's or ally's background: one of the twenty, the same for it every
+// time the bar is drawn.
+function strangerTint(id)
+{
+    return (Number(id) * 7) % 20 + 1;
+}
+
+// A party member as the game's party bar finds it (portraits.gfx:
+// SharedLibrary.Portrait): the members are the data tree's Party.Members.0-3
+// and Party.Summons.0-3, each with its ID, its Portrait (an image's name)
+// and its PortraitProperties.PortraitTint.
+var members = {};
+function partyMember(id)
+{
+    if (members[id] != undefined)
     {
-        return null;
+        return members[id];
     }
-    if (portraitNames[id] != undefined)
+    var found = {portrait: null, tint: 1};
+    if (inGame)
     {
-        return portraitNames[id];
-    }
-    var groups = ["Party.Members.", "Party.Summons."];
-    for (var g = 0; g < groups.length; g++)
-    {
-        for (var n = 0; n < 4; n++)
+        var groups = ["Party.Members.", "Party.Summons."];
+        for (var g = 0; g < groups.length; g++)
         {
-            var token = groups[g] + n;
-            if (String(flash.external.ExternalInterface.call("GetValue", token + ".ID")) == String(id))
+            for (var n = 0; n < 4; n++)
             {
-                var name = flash.external.ExternalInterface.call("GetValue", token + ".Portrait");
-                if (name != null && name != undefined && String(name).length > 0 && String(name).charAt(String(name).length - 1) != "?")
+                var token = groups[g] + n;
+                if (String(flash.external.ExternalInterface.call("GetValue", token + ".ID")) == String(id))
                 {
-                    portraitNames[id] = String(name);
-                    return portraitNames[id];
+                    var name = flash.external.ExternalInterface.call("GetValue", token + ".Portrait");
+                    if (name != null && name != undefined && String(name).length > 0 && String(name).charAt(String(name).length - 1) != "?")
+                    {
+                        found.portrait = String(name);
+                    }
+                    var tint = Number(flash.external.ExternalInterface.call("GetValue", token + ".PortraitProperties.PortraitTint"));
+                    if (tint >= 1 && tint <= 20)
+                    {
+                        found.tint = tint;
+                    }
                 }
             }
         }
     }
-    return null;
+    else
+    {
+        // The sample's: the Warden 1, Alistair 17, Morrigan 16.
+        found.tint = id == 257 ? 17 : id == 258 ? 16 : 1;
+    }
+    if (found.portrait != null || !inGame)
+    {
+        members[id] = found;
+    }
+    return found;
+}
+
+// A texture into a new clip, placed and sized.
+function art(clip, name, depth, x, y, w, h)
+{
+    var holder = clip.createEmptyMovieClip("art" + depth, depth);
+    holder._x = x;
+    holder._y = y;
+    var image = holder.createEmptyMovieClip("image", 1);
+    image.loadMovie(imageUrl(name, w, h));
+    if (!inGame)
+    {
+        // A PNG comes at its own size: scaled to fit once it has loaded.
+        holder.onEnterFrame = function()
+        {
+            if (this.image._width > 0)
+            {
+                this.image._width = w;
+                this.image._height = h;
+                delete this.onEnterFrame;
+            }
+        };
+    }
+    return holder;
+}
+
+function circle(clip, cx, cy, r, fill, alpha)
+{
+    var k = 0.4142 * r;
+    var d = 0.7071 * r;
+    clip.beginFill(fill, alpha);
+    clip.moveTo(cx + r, cy);
+    clip.curveTo(cx + r, cy + k, cx + d, cy + d);
+    clip.curveTo(cx + k, cy + r, cx, cy + r);
+    clip.curveTo(cx - k, cy + r, cx - d, cy + d);
+    clip.curveTo(cx - r, cy + k, cx - r, cy);
+    clip.curveTo(cx - r, cy - k, cx - d, cy - d);
+    clip.curveTo(cx - k, cy - r, cx, cy - r);
+    clip.curveTo(cx + k, cy - r, cx + d, cy - d);
+    clip.curveTo(cx + r, cy - k, cx + r, cy);
+    clip.endFill();
+}
+
+function ring(clip, cx, cy, r, thickness, colour, alpha)
+{
+    clip.lineStyle(thickness, colour, alpha);
+    circle(clip, cx, cy, r, 0, 0);
+    clip.lineStyle();
 }
 
 function drawCard(bar, card, index, x)
@@ -216,41 +308,56 @@ function drawCard(bar, card, index, x)
     clip._y = TOP;
     clip.id = card.id;
     clip.fullName = card.name;
-    var colour = SIDE_COLOURS[card.side];
-    box(clip, 0, 0, CARD_W, CARD_H, INK, 85);
-    box(clip, 3, 3, CARD_W - 6, CARD_H - 16, colour, 35);
-    outline(clip, 0, 0, CARD_W, CARD_H, 2, colour);
-    if (RANK_COLOURS[card.rank])
-    {
-        outline(clip, 3, 3, CARD_W - 6, CARD_H - 16, 1, RANK_COLOURS[card.rank]);
-    }
+    var mid = CARD_W / 2;
+    var orb = 74 * ART;
+    var orbAt = 20 * ART;
+    // The current turn's: the party bar's glow ring, behind.
     if (card.current)
     {
-        outline(clip, -3, -3, CARD_W + 6, CARD_H + 6, 3, GOLD);
+        art(clip, "Portraits_I60", 1, -CARD_W * 0.12, -CARD_H * 0.12, CARD_W * 1.24, CARD_H * 1.24);
     }
-    var portrait = inGame ? portraitOf(card) : null;
+    art(clip, "Portraits_IC2", 2, 0, 0, CARD_W, CARD_H);
+    var tint = card.side == 0 ? partyMember(card.id).tint : strangerTint(card.id);
+    art(clip, backgroundTexture(tint), 3, orbAt, orbAt, orb, orb);
+    var portrait = portraitOf(card);
     if (portrait != null)
     {
-        var picture = clip.createEmptyMovieClip("picture", 2);
-        picture._x = 3;
-        picture._y = 3;
-        picture.loadMovie(imageUrl(portrait, CARD_W - 6, CARD_H - 16));
+        // Round, as the party bar shows it.
+        var picture = art(clip, portrait, 4, 22 * ART, orbAt, 72 * ART, 72 * ART);
+        var round = clip.createEmptyMovieClip("round", 5);
+        circle(round, mid, orbAt + orb / 2, orb / 2, 0xFFFFFF, 100);
+        picture.setMask(round);
     }
     else
     {
-        var text = label(clip, "initials", 1, 0, 12, CARD_W, 28, 18, PARCHMENT, "center", true);
+        var text = label(clip, "initials", 5, 0, mid - 13, CARD_W, 26, 17, PARCHMENT, "center", true);
         text.text = initials(card.name);
     }
-    // Health, in the card's foot.
-    box(clip, 4, CARD_H - 9, CARD_W - 8, 5, 0x000000, 100);
-    var healthColour = card.health > 50 ? 0x4CB84C : card.health > 25 ? 0xE0B030 : 0xD03020;
-    box(clip, 4, CARD_H - 9, (CARD_W - 8) * card.health / 100, 5, healthColour, 100);
+    // Health: the party bar's red arc, filled from the foot to the share left.
+    var health = art(clip, "Portraits_I41", 6, 0, 0, CARD_W, CARD_H);
+    var level = clip.createEmptyMovieClip("level", 7);
+    var share = Math.max(0, Math.min(100, card.health)) / 100;
+    box(level, 0, CARD_H * (1 - share), CARD_W, CARD_H * share + 1, 0xFFFFFF, 100);
+    health.setMask(level);
+    art(clip, "Portraits_I3C", 8, 0, 0, CARD_W, CARD_H);
+    // Whose side: a rim of colour outside the gold for those not the party's.
+    if (card.side != 0)
+    {
+        ring(clip, mid, mid, mid + 1.5, 2, SIDE_COLOURS[card.side], 85);
+    }
+    // A lieutenant's or a boss's gem, at the foot.
+    if (RANK_COLOURS[card.rank])
+    {
+        var gem = clip.createEmptyMovieClip("gem", 9);
+        circle(gem, mid, CARD_H - 3, 4, RANK_COLOURS[card.rank], 100);
+        ring(gem, mid, CARD_H - 3, 4, 1, INK, 100);
+    }
     if (card.yours)
     {
         clip.beginFill(PARCHMENT, 100);
-        clip.moveTo(CARD_W / 2 - 5, CARD_H + 9);
-        clip.lineTo(CARD_W / 2 + 5, CARD_H + 9);
-        clip.lineTo(CARD_W / 2, CARD_H + 3);
+        clip.moveTo(mid - 5, CARD_H + 9);
+        clip.lineTo(mid + 5, CARD_H + 9);
+        clip.lineTo(mid, CARD_H + 3);
         clip.endFill();
     }
     if (card.down)
@@ -295,9 +402,9 @@ function drawEndTurn(bar, x)
     var clip = bar.createEmptyMovieClip("endTurn", 500);
     clip._x = x;
     clip._y = TOP + 8;
-    box(clip, 0, 0, 58, 44, INK, 85);
-    outline(clip, 0, 0, 58, 44, 2, GOLD);
-    var text = label(clip, "caption", 1, 0, 11, 58, 24, 13, GOLD, "center", true);
+    // The game's popups' gold-edged panel (PopupLayer_I70).
+    art(clip, "PopupLayer_I70", 1, 0, 0, 58, 44);
+    var text = label(clip, "caption", 2, 0, 11, 58, 24, 13, GOLD, "center", true);
     text.text = "End turn";
     clip.onRelease = function()
     {
