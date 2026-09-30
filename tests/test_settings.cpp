@@ -34,6 +34,7 @@ TEST_CASE("the default file parses to the defaults, with nothing to warn of", "[
     CHECK(parsed.settings.cameraFollow == defaults.cameraFollow);
     CHECK(parsed.settings.turnBar == defaults.turnBar);
     CHECK(parsed.settings.portraits == defaults.portraits);
+    CHECK(parsed.settings.pickTargets == defaults.pickTargets);
     CHECK(parsed.settings.toggleKey == defaults.toggleKey);
 }
 

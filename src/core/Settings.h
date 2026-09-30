@@ -71,6 +71,9 @@ struct Settings
     float cooldownSecondsPerTurn = 10.0f;
     // The world holds still while the player chooses (otherwise it idles on).
     bool pauseOnPlayerTurn = false;
+    // A talent chosen on the quickbar asks for its target, even with one
+    // selected (otherwise the game uses it on the selected one at once).
+    bool pickTargets = true;
     // Effects' time in rounds: held through a fight, and this many seconds
     // spent on every temporary effect at each new round (0: the game's clock).
     float effectSecondsPerRound = 6.0f;

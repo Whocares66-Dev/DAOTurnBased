@@ -187,6 +187,7 @@ const std::vector<Entry> &Entries()
         {"turns", "condition_turns", Int(&Settings::conditionTurns, 0, 5)},
         {"turns", "cooldown_seconds_per_turn", Float(&Settings::cooldownSecondsPerTurn, 0.0f, 60.0f)},
         {"turns", "pause_on_player_turn", Bool(&Settings::pauseOnPlayerTurn)},
+        {"turns", "pick_targets", Bool(&Settings::pickTargets)},
         {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
         {"turns", "ai_poke",
@@ -405,6 +406,10 @@ cooldown_seconds_per_turn = 10
 ; over time and buffs tick, and stamina, mana and health come back, while
 ; you choose. Stuns, pins and cooldowns count turns either way.
 pause_on_player_turn = false
+; A talent chosen on the quickbar in a turn-based fight asks for its target,
+; even with one selected. Off, the game uses it on the selected target at
+; once, as in real time (a character keeps its target from turn to turn).
+pick_targets = true
 ; Effects count rounds: through a fight their clock is held, and at each new
 ; round every temporary effect (buffs, debuffs, damage and healing over
 ; time, timed summons, lasting areas) ages this many seconds. At 6, a 30 s
