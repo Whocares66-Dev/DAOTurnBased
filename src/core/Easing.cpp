@@ -42,17 +42,9 @@ float EaseAngle(float fromRadians, float toRadians, float dtSeconds, float halfL
     return fromRadians + TurnBetween(fromRadians, toRadians) * (1.0f - Remaining(dtSeconds, halfLifeSeconds));
 }
 
-float YawWatching(const Vec3 &from, const Vec3 &at)
+float YawBehind(const Vec3 &forward)
 {
-    // The yaw is the direction from the focus to the camera: away from what
-    // is watched.
-    return std::atan2(from.y - at.y, from.x - at.x);
-}
-
-float YawBehind(float facingDegrees)
-{
-    constexpr float kPi = std::numbers::pi_v<float>;
-    return facingDegrees * kPi / 180.0f + kPi;
+    return std::atan2(-forward.y, -forward.x);
 }
 
 } // namespace tb

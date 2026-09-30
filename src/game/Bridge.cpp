@@ -374,7 +374,7 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             Signal(e);
             break;
         case EffectKind::CenterCamera:
-            camera_.TurnTo(e.target, e.a != 0);
+            camera_.TurnTo(e.target);
             break;
         }
     }

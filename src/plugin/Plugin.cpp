@@ -172,8 +172,7 @@ void ServeBar(std::uint32_t now)
     }
     if (const auto focus = g.bar.TakeFocus())
     {
-        const auto card = std::ranges::find(view.upcoming, *focus, &tb::CardView::id);
-        g.bridge->LookAt(*focus, card != view.upcoming.end() && card->side == tb::Side::Party);
+        g.bridge->LookAt(*focus);
     }
 }
 

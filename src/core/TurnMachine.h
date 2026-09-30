@@ -120,7 +120,7 @@ enum class EffectKind : std::uint8_t
     PokeAi,        // target's AI chooses its next command now (Settings::aiPoke says how)
     Floaty,        // text over target, in colour
     Signal,        // event to the module, target as its object 0, a and b as its ints 0 and 1
-    CenterCamera,  // the camera turns to target: a 1 for a party member
+    CenterCamera,  // the camera turns to target (game/Camera.h)
     Explain,       // log what target's AI sees: it chose nothing on its turn
     EndConditions, // take target's stuns, paralysis, sleep and pins off: their turns are spent
     Cooldown,      // target's ability a gets b seconds of cooldown (held, released, or back to seconds)

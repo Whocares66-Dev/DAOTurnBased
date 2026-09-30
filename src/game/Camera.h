@@ -1,8 +1,7 @@
 // The camera through the turns (core/Easing.h has the why and the numbers):
 // in the tactical view it pans to whoever acts and never turns; close in,
 // it stays with the player's character through others' turns and comes
-// round behind each party member as their turn begins; on an enemy's turn
-// it turns to watch the enemy from behind the player's character.
+// round behind whoever acts as their turn begins, enemies included.
 //
 // Through DAOLib's camera (dao/Camera.h, a24efda to 6c26174): Follow is the
 // engine's own SetTarget, which in the tactical view keeps the old focus's
@@ -27,9 +26,9 @@ namespace tb::game
 class CameraDirector
 {
   public:
-    // The turn is now `id`'s, a party member's or not (or the player asked
-    // to look at it, clicking its card).
-    void TurnTo(ObjectId id, bool party);
+    // The turn is now `id`'s (or the player asked to look at it, clicking
+    // its card).
+    void TurnTo(ObjectId id);
 
     // Each frame: the move a turn set going, eased a frame further.
     void Update(float dtSeconds);

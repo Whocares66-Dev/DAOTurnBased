@@ -30,7 +30,7 @@ dao::CameraController *Camera()
 
 } // namespace
 
-void CameraDirector::TurnTo(ObjectId id, bool party)
+void CameraDirector::TurnTo(ObjectId id)
 {
     dao::CameraController *camera = Camera();
     if (camera == nullptr)
@@ -50,34 +50,23 @@ void CameraDirector::TurnTo(ObjectId id, bool party)
     }
     panning_ = false;
     behind_.reset();
-    if (!party)
-    {
-        // Close in, the camera stays with the player's character and turns
-        // to watch the enemy's turn from behind it: following the enemy put
-        // the camera 3.8 m behind the enemy, zooming in and out.
-        const ObjectId watcher = camera->Target();
-        if (watcher == kNoObject || watcher == id)
-        {
-            return;
-        }
-        const dao::Vector from = dao::script::api::GetPosition(watcher);
-        const dao::Vector at = dao::script::api::GetPosition(id);
-        behind_ = YawWatching({from.x, from.y, from.z}, {at.x, at.y, at.z});
-        return;
-    }
+    // Close in, whoever acts, enemies too (the user: the camera should
+    // follow the enemy's turn), from behind them, seeing what they see.
     if (camera->Target() != id)
     {
         camera->Follow(id);
     }
-    const float facing = dao::script::api::GetFacing(id);
-    behind_ = YawBehind(facing);
-    if (dao::SceneCamera *scene = camera->Scene(); scene != nullptr && behindLogged_ < 3)
+    const dao::Vector forward = dao::script::api::GetOrientation(id);
+    behind_ = YawBehind({forward.x, forward.y, forward.z});
+    if (dao::SceneCamera *scene = camera->Scene(); scene != nullptr && behindLogged_ < 6)
     {
-        // To check in play that behind is behind: the facing, the yaw it
-        // gives, and where the camera was.
+        // To check in play, and to learn GetFacing's measure against the
+        // yaw's: the forward vector, the facing, the yaw it gives, and where
+        // the camera was.
         ++behindLogged_;
-        spdlog::info("the camera comes round behind {:#010x}: facing {:.0f} degrees, yaw {:.2f} (it was {:.2f})", id,
-                     facing, *behind_, scene->Yaw());
+        spdlog::info("the camera comes round behind {:#010x}: forward ({:.2f}, {:.2f}), facing {:.0f} degrees, "
+                     "yaw {:.2f} (it was {:.2f})",
+                     id, forward.x, forward.y, dao::script::api::GetFacing(id), *behind_, scene->Yaw());
     }
 }
 

@@ -54,9 +54,9 @@ class Bridge
     {
         camera_.Update(dtSeconds);
     }
-    void LookAt(ObjectId id, bool party)
+    void LookAt(ObjectId id)
     {
-        camera_.TurnTo(id, party);
+        camera_.TurnTo(id);
     }
 
   private:

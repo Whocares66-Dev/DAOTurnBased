@@ -28,16 +28,13 @@ namespace tb
 // An angle turned towards another the short way, eased.
 [[nodiscard]] float EaseAngle(float fromRadians, float toRadians, float dtSeconds, float halfLifeSeconds);
 
-// The camera's yaw to sit behind a creature facing so (GetFacing's
-// degrees). The yaw is the direction from the focus to the camera (DAOLib's
-// dao/Camera.h), so behind is the facing turned half round. GetFacing
-// measures from the same axis, the same way round: seen in play
-// (2026-09-30, 11:29), the camera came round behind Teyrna Eleanor.
-[[nodiscard]] float YawBehind(float facingDegrees);
-
-// The camera's yaw to look from one point past it at another: behind the
-// player's character, watching an enemy's turn (the user's ask: close in,
-// the camera follows the enemy's turn without leaving the party).
-[[nodiscard]] float YawWatching(const Vec3 &from, const Vec3 &at);
+// The camera's yaw to sit behind a creature whose forward direction is so
+// (GetOrientation's world vector, as scripts step in front of a creature:
+// position plus distance times it, utility_h.nss). The yaw is the direction
+// from the focus to the camera (DAOLib's dao/Camera.h): the backward one.
+// Not GetFacing's degrees: their axis and turn are the scripts' own (it
+// takes a bMirrorYAxis), and taken as the yaw's they put the camera at the
+// creature's side (the user, 2026-09-30).
+[[nodiscard]] float YawBehind(const Vec3 &forward);
 
 } // namespace tb

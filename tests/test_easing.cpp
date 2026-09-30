@@ -43,16 +43,12 @@ TEST_CASE("the camera turns the short way round, from a yaw that is not wrapped"
     CHECK(eased == Approx(9.29f + 0.15f));
 }
 
-TEST_CASE("behind a creature is its facing turned half round", "[easing]")
+TEST_CASE("behind a creature is the way it faces, turned round", "[easing]")
 {
-    CHECK(tb::TurnBetween(tb::YawBehind(0.0f), kPi) == Approx(0.0f).margin(1e-5));
-    CHECK(tb::TurnBetween(tb::YawBehind(90.0f), -kPi / 2) == Approx(0.0f).margin(1e-5));
-}
-
-TEST_CASE("watching an enemy from behind a character puts the camera on the far side of the character", "[easing]")
-{
-    // The enemy east of the character: the camera west of the character.
-    CHECK(tb::TurnBetween(tb::YawWatching({0, 0, 0}, {5, 0, 0}), kPi) == Approx(0.0f).margin(1e-5));
-    // The enemy north: the camera south.
-    CHECK(tb::TurnBetween(tb::YawWatching({0, 0, 0}, {0, 5, 0}), -kPi / 2) == Approx(0.0f).margin(1e-5));
+    // Facing east (+x): the camera west of it, a yaw of pi.
+    CHECK(tb::TurnBetween(tb::YawBehind({1, 0, 0}), kPi) == Approx(0.0f).margin(1e-5));
+    // Facing north (+y): the camera south, -pi/2.
+    CHECK(tb::TurnBetween(tb::YawBehind({0, 1, 0}), -kPi / 2) == Approx(0.0f).margin(1e-5));
+    // Its height does not matter.
+    CHECK(tb::TurnBetween(tb::YawBehind({0, 1, 0.5f}), -kPi / 2) == Approx(0.0f).margin(1e-5));
 }

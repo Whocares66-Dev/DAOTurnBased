@@ -263,6 +263,12 @@ MUTANTS = [
         "    HoldUsed(fx);",
     ),
     Mutant(
+        "the camera comes round in front of the creature",
+        EASING,
+        "return std::atan2(-forward.y, -forward.x);",
+        "return std::atan2(forward.y, forward.x);",
+    ),
+    Mutant(
         "the camera turns the long way round",
         EASING,
         "float turn = std::remainder(toRadians - fromRadians, 2.0f * kPi);",
