@@ -75,6 +75,8 @@ The game's AI is event-driven (DAOLib's `dev/TURN_BASED.md`). When a creature's 
 
 ## The party's turn
 
+Only the player's orders spend a party member's turn. A controlled character's own AI carries on attacking by itself in real time (`AI_DetermineCombatRound_Partial`); on the player's turns its attacks and moves are refused, so the party's AI is off in turn-based fights except under `party = tactics` (the user, 2026-09-30).
+
 The mod selects the party member (`SetPrimaryControlled`) and waits, paused. An order arrives at the queue as the base game gives it, is checked against the turn's action and movement, and runs. Whether the engine queues an order given while paused at once, or only once the game runs, has not been seen. So the mod also watches explore mode's order handlers: if an order comes and no command follows within a tenth of a second, it runs the world for up to half a second, everyone else still held, until the command arrives. When the character is idle again, the world settles for `turns.settle_ms` (arrows land, bodies fall) and pauses for the next order. A controlled character's automatic "keep attacking" is a second action and is refused.
 
 With `turns.party = tactics`, the companions play their turns through their tactics like the AI, and only the hero waits for the player. The hero is kept selected on the companions' turns, since the game gives a controlled character only its "keep attacking" AI (`AI_DetermineCombatRound_Partial`).

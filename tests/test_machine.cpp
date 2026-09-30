@@ -958,3 +958,43 @@ TEST_CASE("with cooldown_seconds_per_turn 0 the game's timers hold", "[machine][
     w.RunFor(600);
     CHECK(std::ranges::none_of(w.applied, [](const Effect &e) { return e.kind == EffectKind::Cooldown; }));
 }
+
+TEST_CASE("on the player's turn the character's own AI does not spend it", "[machine]")
+{
+    // Seen in play: a pinned character's AI carried on attacking its last
+    // target and ended the turn before the player had chosen.
+    World w;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Script) == Verdict::Block);
+    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Script) == Verdict::Block);
+    w.RunFor(500);
+    CHECK(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    // The player's own order still goes through.
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
+}
+
+TEST_CASE("a refusal repeated every frame is logged once a second", "[machine]")
+{
+    // The player steering with the keys out of turn: a drive a frame.
+    World w;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    int lines = 0;
+    w.onLog = [&](std::string_view line) {
+        if (line.find("Alistair: drive from player held, not its turn") != std::string_view::npos)
+        {
+            ++lines;
+        }
+    };
+    for (int i = 0; i < 60; ++i) // a second of frames
+    {
+        CHECK(w.Order(kCompanion, CommandType::Drive, Source::Player) == Verdict::Block);
+        w.Frame();
+    }
+    CHECK(lines == 1);
+    w.RunFor(1100);
+    CHECK(w.Order(kCompanion, CommandType::Drive, Source::Player) == Verdict::Block);
+    CHECK(lines == 2);
+}

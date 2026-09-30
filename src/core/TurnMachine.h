@@ -352,6 +352,7 @@ class TurnMachine
     void Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId object, std::int32_t a, std::int32_t b) const;
     void Refuse(ObjectId target, std::wstring text);
     void Log(LogLevel level, std::string_view text) const;
+    void Refused(LogLevel level, std::string text);
     [[nodiscard]] bool Logs(LogLevel level) const
     {
         return log_ && level >= logLevel_;
@@ -370,7 +371,9 @@ class TurnMachine
     };
     std::unordered_map<ObjectId, Held> held_;
     bool currentStunned_ = false; // the current combatant was stunned in its own turn
-    bool turnBegun_ = false;      // an interlude came in the middle of a turn, not between two
+    std::string lastRefusal_;     // the last refusal logged, and when: repeats within a second are not
+    std::uint32_t lastRefusalLogNow_ = 0;
+    bool turnBegun_ = false; // an interlude came in the middle of a turn, not between two
     // Cooldowns in turns (dev/DESIGN.md): the abilities used in the action
     // under way, held once it has run; and those held, with the turns of
     // their user each still waits.

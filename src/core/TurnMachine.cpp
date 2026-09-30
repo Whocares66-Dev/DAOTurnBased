@@ -144,6 +144,20 @@ bool TurnMachine::Active() const
     return phase_ != Phase::Idle && phase_ != Phase::Suspended;
 }
 
+// The same refusal again within a second is not logged again: the player
+// steering with the keys out of turn is refused every frame (sixty lines a
+// second in play, 2026-09-30).
+void TurnMachine::Refused(LogLevel level, std::string text)
+{
+    if (text == lastRefusal_ && lastNow_ - lastRefusalLogNow_ < 1000)
+    {
+        return;
+    }
+    lastRefusalLogNow_ = lastNow_;
+    Log(level, text);
+    lastRefusal_ = std::move(text);
+}
+
 void TurnMachine::Log(LogLevel level, std::string_view text) const
 {
     if (Logs(level))
@@ -1194,8 +1208,8 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         }
         if (Logs(refusals))
         {
-            Log(refusals, std::format("{}: {} from {} held, not its turn", Utf8(who->name), Name(request.type),
-                                      Name(request.source)));
+            Refused(refusals, std::format("{}: {} from {} held, not its turn", Utf8(who->name), Name(request.type),
+                                          Name(request.source)));
         }
         return Verdict::Block;
     }
@@ -1204,13 +1218,27 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     {
         if (Logs(refusals))
         {
-            Log(refusals,
-                std::format("{}: {} held, between turns ({})", Utf8(who->name), Name(request.type), Name(phase_)));
+            Refused(refusals,
+                    std::format("{}: {} held, between turns ({})", Utf8(who->name), Name(request.type), Name(phase_)));
         }
         return Verdict::Block;
     }
     const bool player = PlayerControls(*current);
     const bool asked = request.source == Source::Player; // the player's own order
+    // On a turn the player plays, the character's own AI does not spend it:
+    // a controlled character carries on attacking by itself (in real time,
+    // AI_DetermineCombatRound_Partial), and in play that ended a pinned
+    // character's turn before the player had chosen (2026-09-30, 11:30).
+    if (player && request.source == Source::Script && (kind == CommandKind::Action || kind == CommandKind::Move))
+    {
+        // At debug: the AI tries again each time a command of its ends.
+        if (Logs(LogLevel::Debug))
+        {
+            Log(LogLevel::Debug, std::format("{}: {} from its own AI held: its turn is the player's", Utf8(who->name),
+                                             Name(request.type)));
+        }
+        return Verdict::Block;
+    }
     // A guard against an AI that loops; the player steering with the keys
     // starts a command a step.
     if (!player && budget_.commands >= settings_.maxCommandsPerTurn)
@@ -1231,7 +1259,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
             }
             if (Logs(refusals))
             {
-                Log(refusals, std::format("{}: {} held, no action left", Utf8(who->name), Name(request.type)));
+                Refused(refusals, std::format("{}: {} held, no action left", Utf8(who->name), Name(request.type)));
             }
             return Verdict::Block;
         }
@@ -1256,7 +1284,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
             }
             if (Logs(refusals))
             {
-                Log(refusals, std::format("{}: {} held, no movement left", Utf8(who->name), Name(request.type)));
+                Refused(refusals, std::format("{}: {} held, no movement left", Utf8(who->name), Name(request.type)));
             }
             return Verdict::Block;
         }

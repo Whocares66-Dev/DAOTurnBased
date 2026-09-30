@@ -275,6 +275,12 @@ MUTANTS = [
         "return 1.0f - 0.5f * dtSeconds / halfLifeSeconds;",
     ),
     Mutant(
+        "a character's own AI spends the player's turn",
+        MACHINE,
+        "if (player && request.source == Source::Script && (kind == CommandKind::Action",
+        "if (player && request.source == Source::Unknown && (kind == CommandKind::Action",
+    ),
+    Mutant(
         "a refused order still runs the world",
         MACHINE,
         "        orderPending_ = false;\n        if (verdict == Verdict::Block && phase_ == Phase::Dispatching)",
