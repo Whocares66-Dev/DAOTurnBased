@@ -474,16 +474,48 @@ function build(state)
         x += END_W + 2 * GAP;
     }
     bar._x = Math.round((Stage.width - x) / 2);
-    // Behind the medallions, centred on them: the game's top menu's own
-    // translucent bar (NavBar_I71), its shaped ends and all, as the user
-    // asked; under it a small one of the same for the caption.
+    // Behind the medallions, centred on them, a translucent black panel,
+    // square with rounded corners and edges that fade out (the user: no
+    // tapering ends, as the top menu's bar had); a small one of the same
+    // under it for the caption.
     var width = x - GAP;
-    art(bar, "NavBar_I71", 3, -40, TOP - 16, width + 80, CARD_H + 32);
+    panel(bar.createEmptyMovieClip("plate", 3), -16, TOP - 14, width + 32, CARD_H + 28, 10);
     var strip = bar.createEmptyMovieClip("strip", 4);
-    art(strip, "NavBar_I71", 1, width / 2 - CAPTION_W / 2, TOP + CARD_H + 20, CAPTION_W, CAPTION_H);
+    panel(strip.createEmptyMovieClip("plate", 1), width / 2 - CAPTION_W / 2, TOP + CARD_H + 20, CAPTION_W, CAPTION_H,
+          8);
     var text = label(strip, "text", 2, width / 2 - CAPTION_W / 2, TOP + CARD_H + 20, CAPTION_W, CAPTION_H, 14,
                      PARCHMENT, "center", false);
     strip._visible = false;
+}
+
+// A translucent black panel with rounded corners, its edges fading out: a
+// rounded rectangle a little smaller each layer, the layers' black adding
+// up towards the middle, so the rim is feathered, not a line.
+var PANEL_ALPHA = 7; // each layer's black, percent
+var PANEL_LAYERS = 9;
+function panel(clip, x, y, w, h, radius)
+{
+    for (var i = 0; i < PANEL_LAYERS; i++)
+    {
+        var inset = i * 1.2;
+        roundedBox(clip, x + inset, y + inset, w - 2 * inset, h - 2 * inset, Math.max(2, radius - inset), 0x000000,
+                   PANEL_ALPHA);
+    }
+}
+
+function roundedBox(clip, x, y, w, h, r, fill, alpha)
+{
+    clip.beginFill(fill, alpha);
+    clip.moveTo(x + r, y);
+    clip.lineTo(x + w - r, y);
+    clip.curveTo(x + w, y, x + w, y + r);
+    clip.lineTo(x + w, y + h - r);
+    clip.curveTo(x + w, y + h, x + w - r, y + h);
+    clip.lineTo(x + r, y + h);
+    clip.curveTo(x, y + h, x, y + h - r);
+    clip.lineTo(x, y + r);
+    clip.curveTo(x, y, x + r, y);
+    clip.endFill();
 }
 
 // The caption under the bar: a card's name while the pointer is on it,
