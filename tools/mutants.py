@@ -41,6 +41,7 @@ class Mutant:
 MACHINE = "src/core/TurnMachine.cpp"
 ORDER = "src/core/TurnOrder.cpp"
 RULES = "src/core/Rules.cpp"
+SETTINGS = "src/core/Settings.cpp"
 BAR = "src/core/Bar.cpp"
 PORTRAITS = "src/core/Portraits.cpp"
 
@@ -284,6 +285,18 @@ MUTANTS = [
         MACHINE,
         "    ReleaseCooldowns(fx);\n    HoldTime(false, fx);",
         "    ReleaseCooldowns(fx);",
+    ),
+    Mutant(
+        "a file from an older build never gets the newer settings",
+        SETTINGS,
+        "        if (!HasKey(out, entry.section, entry.key))",
+        "        if (!HasKey(out, entry.section, entry.key) && entry.key.empty())",
+    ),
+    Mutant(
+        "a setting the player commented out is added back",
+        SETTINGS,
+        "            trimmed = Trim(trimmed.substr(1));",
+        "            break;",
     ),
     Mutant(
         "a refused order still runs the world",

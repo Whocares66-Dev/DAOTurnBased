@@ -70,6 +70,16 @@ Settings LoadSettings()
             spdlog::warn("could not write the default settings to {}; the defaults are used", path.string());
         }
     }
+    else if (const std::string whole = WithMissingSettings(*text); whole != *text)
+    {
+        // Written by an older build: the newer settings are added, each at
+        // its default with its comment, the player's own values kept.
+        if (WriteAll(path, whole))
+        {
+            spdlog::info("added the settings this build has and {} lacked", path.filename().string());
+            text = whole;
+        }
+    }
     const ParsedSettings parsed = ParseSettings(*text);
     for (const std::string &warning : parsed.warnings)
     {

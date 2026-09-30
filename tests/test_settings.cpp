@@ -128,3 +128,32 @@ TEST_CASE("WithValue adds a missing key under its section, or the section at the
           "[keys]\ntoggle = F9\n\n[turnbased]\nenabled = false\n");
     CHECK(WithValue("", "turnbased", "enabled", "true") == "[turnbased]\nenabled = true\n");
 }
+
+TEST_CASE("a file from an older build gets the settings it lacks, with their comments, its own values kept",
+          "[settings]")
+{
+    const std::string older = "[turnbased]\nenabled = false\n\n[turns]\nsettle_ms = 250\n";
+    const std::string whole = tb::WithMissingSettings(older);
+    const auto parsed = tb::ParseSettings(whole);
+    CHECK(parsed.warnings.empty());
+    CHECK_FALSE(parsed.settings.enabled);                                                 // the player's
+    CHECK(parsed.settings.settleMs == 250);                                               // the player's
+    CHECK(parsed.settings.effectSecondsPerRound == tb::Settings{}.effectSecondsPerRound); // added
+    CHECK(whole.find("effect_seconds_per_round = ") != std::string::npos);
+    CHECK(whole.find("; Effects count rounds") != std::string::npos); // with its comment
+    // Added once: a whole file is left as it is.
+    CHECK(tb::WithMissingSettings(whole) == whole);
+    CHECK(tb::WithMissingSettings(tb::DefaultSettingsFile()) == tb::DefaultSettingsFile());
+}
+
+TEST_CASE("a setting the player commented out is left commented out", "[settings]")
+{
+    std::string text = tb::DefaultSettingsFile();
+    const auto at = text.find("turn_bar = ");
+    REQUIRE(at != std::string::npos);
+    text.insert(at, "; ");
+    const std::string whole = tb::WithMissingSettings(text);
+    // The player's choice: not added back.
+    CHECK(whole == text);
+    CHECK(tb::WithMissingSettings(whole) == whole);
+}

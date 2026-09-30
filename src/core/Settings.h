@@ -107,4 +107,10 @@ struct ParsedSettings
 [[nodiscard]] std::string WithValue(std::string_view ini, std::string_view section, std::string_view key,
                                     std::string_view value);
 
+// The player's file with every setting it lacks added, at its default and
+// with the comment that explains it, under its section (or the section
+// added at the end): a file written by an older build shows the newer
+// settings. Everything the player has is kept as it is.
+[[nodiscard]] std::string WithMissingSettings(std::string_view ini);
+
 } // namespace tb

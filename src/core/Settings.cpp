@@ -439,6 +439,146 @@ toggle = Ctrl+T
 )";
 }
 
+namespace
+{
+
+// A setting as the default file has it: its section, its key, and its
+// lines (the comment above it and the key's own).
+struct DefaultEntry
+{
+    std::string section;
+    std::string key;
+    std::vector<std::string> lines;
+};
+
+std::vector<DefaultEntry> DefaultEntries()
+{
+    std::vector<DefaultEntry> entries;
+    const std::string text = DefaultSettingsFile();
+    std::string section;
+    std::vector<std::string> comment;
+    for (const std::string_view line : Lines(text))
+    {
+        if (const auto header = Header(line))
+        {
+            section = *header;
+            comment.clear();
+            continue;
+        }
+        const std::string_view trimmed = Trim(line);
+        if (trimmed.starts_with(';'))
+        {
+            comment.emplace_back(line);
+            continue;
+        }
+        const auto equals = trimmed.find('=');
+        if (equals == std::string_view::npos)
+        {
+            comment.clear();
+            continue;
+        }
+        DefaultEntry entry{section, Lower(Trim(trimmed.substr(0, equals))), comment};
+        entry.lines.emplace_back(line);
+        entries.push_back(std::move(entry));
+        comment.clear();
+    }
+    return entries;
+}
+
+bool HasKey(std::string_view ini, std::string_view section, std::string_view key)
+{
+    std::string current;
+    for (const std::string_view line : Lines(ini))
+    {
+        if (const auto header = Header(line))
+        {
+            current = *header;
+            continue;
+        }
+        // A key the player commented out counts: leaving it out is theirs.
+        std::string_view trimmed = Trim(line);
+        while (trimmed.starts_with(';'))
+        {
+            trimmed = Trim(trimmed.substr(1));
+        }
+        const auto equals = trimmed.find('=');
+        if (current == section && equals != std::string_view::npos && Lower(Trim(trimmed.substr(0, equals))) == key)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The lines inserted after the last line of a section (or a new section
+// at the end).
+std::string Inserted(std::string_view ini, std::string_view section, const std::vector<std::string> &add)
+{
+    const std::string eol = ini.find("\r\n") != std::string_view::npos ? "\r\n" : "\n";
+    std::vector<std::string> lines;
+    for (const std::string_view line : Lines(ini))
+    {
+        lines.emplace_back(line);
+    }
+    if (!lines.empty() && lines.back().empty())
+    {
+        lines.pop_back();
+    }
+    std::string current;
+    std::optional<std::size_t> last;
+    for (std::size_t i = 0; i < lines.size(); ++i)
+    {
+        if (const auto header = Header(lines[i]))
+        {
+            current = *header;
+            if (current == section)
+            {
+                last = i;
+            }
+            continue;
+        }
+        if (current == section && !Trim(lines[i]).empty())
+        {
+            last = i;
+        }
+    }
+    if (last)
+    {
+        lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(*last + 1), add.begin(), add.end());
+    }
+    else
+    {
+        if (!lines.empty())
+        {
+            lines.emplace_back();
+        }
+        lines.push_back("[" + std::string{section} + "]");
+        lines.insert(lines.end(), add.begin(), add.end());
+    }
+    std::string out;
+    for (const std::string &line : lines)
+    {
+        out += line;
+        out += eol;
+    }
+    return out;
+}
+
+} // namespace
+
+std::string WithMissingSettings(std::string_view ini)
+{
+    std::string out{ini};
+    for (const DefaultEntry &entry : DefaultEntries())
+    {
+        if (!HasKey(out, entry.section, entry.key))
+        {
+            out = Inserted(out, entry.section, entry.lines);
+        }
+    }
+    return out;
+}
+
 std::string WithValue(std::string_view ini, std::string_view section, std::string_view key, std::string_view value)
 {
     const std::string eol = ini.find("\r\n") != std::string_view::npos ? "\r\n" : "\n";
