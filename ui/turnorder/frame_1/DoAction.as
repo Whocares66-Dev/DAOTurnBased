@@ -26,6 +26,7 @@ var CARD_W = 60;
 var CARD_H = 60;
 var GAP = 5;
 var ART = CARD_W / 114;
+var END_W = 74; // End turn in the game's title font, on its panel
 var DIVIDER = 22;
 var TOP = 14;
 var CURRENT_SCALE = 118;
@@ -403,8 +404,8 @@ function drawEndTurn(bar, x)
     clip._x = x;
     clip._y = TOP + 8;
     // The game's popups' gold-edged panel (PopupLayer_I70).
-    art(clip, "PopupLayer_I70", 1, 0, 0, 58, 44);
-    var text = label(clip, "caption", 2, 0, 11, 58, 24, 13, GOLD, "center", true);
+    art(clip, "PopupLayer_I70", 1, 0, 0, END_W, 44);
+    var text = label(clip, "caption", 2, 0, 11, END_W, 24, 13, GOLD, "center", true);
     text.text = "End turn";
     clip.onRelease = function()
     {
@@ -435,7 +436,7 @@ function build(state)
     if (state.playerTurn)
     {
         drawEndTurn(bar, x + GAP);
-        x += 58 + 2 * GAP;
+        x += END_W + 2 * GAP;
     }
     bar._x = Math.round((Stage.width - x) / 2);
     // A dark plate behind it all, edged in gold, so the bar reads over a

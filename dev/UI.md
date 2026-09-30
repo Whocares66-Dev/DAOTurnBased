@@ -86,7 +86,7 @@ The user asked for the game's own portrait backgrounds and skeuomorphic frames i
 - for the current turn, the party bar's glow ring, `Portraits_I60`, behind, and the card larger;
 - a rim of the side's colour outside the gold for enemies and allies, and a gem of the rank's colour for lieutenants and bosses.
 
-End turn stands on the game's popups' gold-edged panel, `PopupLayer_I70`. Outside the game the movie loads the same art from the research's PNGs, so `tools/snapshot.ps1` shows the real look (the portraits in the sample are two of the game's summon portraits).
+End turn stands on the game's popups' gold-edged panel, `PopupLayer_I70`. Seen in play at 12:07 (`dev/images/turnorder-ingame-medallions.jpg`): every texture drew from the atlases by name, the party's orbs matching the game's own party bar. Outside the game the movie loads the same art from the research's PNGs, so `tools/snapshot.ps1` shows the real look (the portraits in the sample are two of the game's summon portraits).
 
 ### The protocol, built 2026-09-30
 
