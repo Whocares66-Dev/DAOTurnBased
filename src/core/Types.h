@@ -15,8 +15,11 @@ namespace tb
 // An engine object id, as the scripts pass it (dao::ObjectId).
 using ObjectId = std::uint32_t;
 
-// OBJECT_INVALID, dao::kInvalidObject.
-inline constexpr ObjectId kNoObject = 0x7F000000;
+// OBJECT_INVALID, dao::kInvalidObject: 0xFFFFFFFF in DAO. It was taken as
+// NWN's 0x7F000000 until DAOLib 703bc92 (2026-09-30): the generated script
+// calls' default "any creator" then named no object, and ending a pin
+// removed nothing (the desktop play test's dog).
+inline constexpr ObjectId kNoObject = 0xFFFFFFFF;
 
 struct Vec3
 {
