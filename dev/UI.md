@@ -141,6 +141,8 @@ On a party member's turn, while the game waits for its order and the cursor is o
 
 **Still to do:**
 
+- after a click that is refused, the preview is sometimes gone until the mouse moves (play test 17). The mode re-takes its pick fifteen times a second whatever the mouse does, so a ground that stays nothing is the interface's answer staying yes: the mouse over a movie, or a movie holding a mouse press, both changed by mouse events only (lib-agent's reading, `0x00712F90`, `0x00511420`). Not found which: something of a movie under the cursor at the refusal (the floating text), or a press taken on the button's way down and not let go;
+
 - the same for an attack: the walk to a target under the cursor, gold if it can be reached this turn, red if not;
 - a ring around the character, its radius the movement left;
 - the line on the ground itself rather than over everything, as the marker is; for the line, `dao/Vfx.h` could place a row at each waypoint, as dots, and a continuous line on the ground would be real work in DAOLib.
