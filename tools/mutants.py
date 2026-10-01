@@ -335,8 +335,8 @@ MUTANTS = [
         "(status.exists ? EventKind::Gone : EventKind::Gone)",
     ),
     Mutant(
-        "an event's string is not escaped",
-        "src/core/Events.cpp",
+        "a JSON string is not escaped",
+        "src/core/Json.cpp",
         "        case '\"':",
         "        case '~':",
     ),
@@ -345,6 +345,18 @@ MUTANTS = [
         MACHINE,
         "where it ran out.\n        if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + kReachSlack)",
         "where it ran out.\n        if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + 999.0f)",
+    ),
+    Mutant(
+        "a tool's argument is read from the wrong field",
+        "src/core/Json.cpp",
+        "        if (*name == key)",
+        "        if (*name != key)",
+    ),
+    Mutant(
+        "the state leaves out the conditions held",
+        "src/core/TurnMachine.cpp",
+        "        if (held.seen == Condition::None && held.turns == 0)",
+        "        if (held.seen == Condition::None || held.turns >= 0)",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",

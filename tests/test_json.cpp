@@ -1,0 +1,75 @@
+// The little JSON the machine speaks to a test server (core/Json.h,
+// core/State.h): fields read out of a tool's flat arguments, and the
+// machine's whole state written.
+
+#include "World.h"
+
+#include "core/Json.h"
+#include "core/State.h"
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <string>
+
+using namespace tb;
+using namespace tb::test;
+
+TEST_CASE("a flat object's fields are read, strings unescaped", "[json]")
+{
+    const std::string args = R"( { "section" : "turns", "key":"ai_turn_speed", "value": 2.5, "on": true,
+                                   "text": "a \"quote\"\nA" } )";
+    CHECK(JsonField(args, "section") == "turns");
+    CHECK(JsonField(args, "key") == "ai_turn_speed");
+    CHECK(JsonField(args, "value") == "2.5");
+    CHECK(JsonField(args, "on") == "true");
+    CHECK(JsonField(args, "text") == "a \"quote\"\nA");
+    CHECK_FALSE(JsonField(args, "missing"));
+}
+
+TEST_CASE("what is not a flat object reads as nothing", "[json]")
+{
+    CHECK_FALSE(JsonField("", "a"));
+    CHECK_FALSE(JsonField("[1, 2]", "a"));
+    CHECK_FALSE(JsonField(R"({"a": {"b": 1}})", "a"));
+    CHECK_FALSE(JsonField(R"({"a": "unterminated)", "a"));
+    CHECK_FALSE(JsonField(R"({"a": "\uZZZZ"})", "a"));
+    CHECK(JsonField("{}", "a") == std::nullopt);
+}
+
+TEST_CASE("a string is escaped as JSON wants", "[json]")
+{
+    std::string out;
+    AppendJsonString(out, "a\"b\\c\n\t\x01"
+                          "é");
+    CHECK(out == "a\\\"b\\\\c\\n\\t\\u0001"
+                 "é");
+}
+
+TEST_CASE("the machine's state says whose turn, what is held and what cools down", "[json]")
+{
+    World w;
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.UseAbility(kHero, Source::Player, 617, 20.0f, false, false) == Verdict::Allow);
+    w.Finish(kHero);
+    w.RunFor(600);
+    const MachineState state = w.machine.State();
+    const std::string json = ToJson(state);
+    CHECK(json.starts_with(R"({"active":true,)"));
+    CHECK(json.find(R"("current":"0x00000100")") != std::string::npos);
+    CHECK(json.find(R"("player_turn":true)") != std::string::npos);
+    CHECK(json.find(R"({"id":"0x00000100","name":"Hero","side":"party")") != std::string::npos);
+    CHECK(json.find(R"("held":[{"id":"0x00000200","name":"Genlock","condition":"disabled","turns_owed":1)") !=
+          std::string::npos);
+    CHECK(json.find(R"("cooldowns":[{"id":"0x00000100","ability":617,"turns":2}])") != std::string::npos);
+    CHECK(json.ends_with("]}"));
+}
+
+TEST_CASE("outside a fight the state says so", "[json]")
+{
+    World w;
+    const std::string json = ToJson(w.machine.State());
+    CHECK(json.starts_with(R"({"active":false,"phase":"idle","round":0,"world_ms":0,"current":null,)"));
+    CHECK(json.find(R"("order":[],"held":[],"cooldowns":[]})") != std::string::npos);
+}

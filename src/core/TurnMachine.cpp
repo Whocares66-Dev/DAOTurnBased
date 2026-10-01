@@ -145,7 +145,24 @@ TurnMachine::TurnMachine(Settings settings, std::uint64_t seed, LogSink log)
 
 void TurnMachine::SetSettings(const Settings &settings)
 {
+    const Combatant *current = order_.Current();
+    const bool playerBefore = current != nullptr && PlayerControls(*current);
     settings_ = settings;
+    if (current == nullptr || !Active() || PlayerControls(*current) == playerBefore)
+    {
+        return;
+    }
+    // Who plays the current turn changed with the settings (party manual to
+    // tactics in a companion's turn): it goes to whoever plays it now, with
+    // what it has left. Waiting on the player's order for a companion its AI
+    // now played stalled the fight, End gone from the bar and Space doing
+    // nothing (the second play test, 2026-09-30).
+    if (phase_ == Phase::AwaitingOrder || phase_ == Phase::Dispatching || phase_ == Phase::AiThinking)
+    {
+        Log(LogLevel::Info, std::format("{}'s turn is {} now", Utf8(current->name),
+                                        PlayerControls(*current) ? "the player's" : "its AI's"));
+        Handover(*current, pending_);
+    }
 }
 
 bool TurnMachine::Active() const
@@ -1606,6 +1623,36 @@ ToggleResult TurnMachine::RequestToggle(bool partyInCombat)
     settings_.enabled = !settings_.enabled;
     Log(LogLevel::Info, std::format("turn-based combat {}", settings_.enabled ? "on" : "off"));
     return settings_.enabled ? ToggleResult::Enabled : ToggleResult::Disabled;
+}
+
+MachineState TurnMachine::State() const
+{
+    MachineState state;
+    state.view = View();
+    state.worldMs = clock_;
+    for (const auto &[id, held] : held_)
+    {
+        if (held.seen == Condition::None && held.turns == 0)
+        {
+            continue;
+        }
+        const Combatant *c = order_.Find(id);
+        state.held.push_back({id, c != nullptr ? c->name : std::wstring{}, held.seen, held.turns, held.onClock});
+    }
+    for (const Hold &h : holds_)
+    {
+        state.cooldowns.push_back({h.creature, h.ability, h.turns});
+    }
+    state.lastRefusal = lastRefusal_;
+    state.speed = speedSet_;
+    state.heldByEffect = heldByEffect_;
+    return state;
+}
+
+void TurnMachine::Reseed(std::uint64_t seed)
+{
+    rng_ = Rng{seed};
+    Log(LogLevel::Info, std::format("initiative reseeded: {}", seed));
 }
 
 TurnView TurnMachine::View() const

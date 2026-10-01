@@ -226,6 +226,35 @@ struct TurnView
     std::vector<CardView> upcoming; // the current turn first
 };
 
+// The machine's whole state, as a test server reads it (eluvian-agent's
+// inspect kind turnbased.state; its JSON is core/State.h's).
+struct HeldView
+{
+    ObjectId id = kNoObject;
+    std::wstring name;
+    Condition seen = Condition::None;
+    int turnsOwed = 0;
+    bool onClock = false; // ended, and the engine held it still: it runs out on the clock
+};
+
+struct CooldownView
+{
+    ObjectId id = kNoObject;
+    std::int32_t ability = -1;
+    int turns = 0; // its user's turns still to wait
+};
+
+struct MachineState
+{
+    TurnView view;
+    std::uint32_t worldMs = 0;
+    std::vector<HeldView> held;
+    std::vector<CooldownView> cooldowns;
+    std::string lastRefusal;
+    float speed = 1.0f;
+    bool heldByEffect = false;
+};
+
 enum class LogLevel : std::uint8_t
 {
     Debug,
@@ -288,6 +317,11 @@ class TurnMachine
         return order_;
     }
     [[nodiscard]] TurnView View() const;
+    [[nodiscard]] MachineState State() const;
+
+    // Initiative's rolls from now on (a joiner's, the next fight's): a test
+    // run repeats with the same seed.
+    void Reseed(std::uint64_t seed);
 
     // Typed events, as they happen (core/Events.h): called under the same
     // lock as everything else, from inside Step and the gate's calls.

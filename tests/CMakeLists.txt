@@ -22,6 +22,7 @@ add_executable(
     test_bar.cpp
     test_events.cpp
     test_fights.cpp
+    test_json.cpp
     test_keys.cpp
     test_machine.cpp
     test_portraits.cpp

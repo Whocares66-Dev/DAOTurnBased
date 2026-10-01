@@ -1416,3 +1416,35 @@ TEST_CASE("a move its path cannot finish this turn is refused before a step", "[
     w.RunFor(600);
     CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Allow);
 }
+
+TEST_CASE("party control changed in a companion's turn hands the turn to whoever plays it now", "[machine]")
+{
+    // The second play test (2026-09-30): manual to tactics in Eleanor's
+    // turn, and the fight stood waiting on an order the player could no
+    // longer give.
+    World w;
+    w.StartFight();
+    CHECK(w.machine.OnPauseKey()); // the hero's
+    for (int i = 0; i < 80 && w.Current() != kCompanion; ++i)
+    {
+        w.RunFor(100);
+    }
+    REQUIRE(w.Current() == kCompanion);
+    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+    Settings tactics = Fixed();
+    tactics.partyControl = PartyControl::Tactics;
+    w.applied.clear();
+    w.machine.SetSettings(tactics);
+    w.Frame();
+    CHECK(w.Did(EffectKind::PokeAi, kCompanion));
+    CHECK(w.machine.GetPhase() == Phase::AiThinking);
+    // And back: the player's again, selected.
+    Settings manual = tactics;
+    manual.partyControl = PartyControl::Manual;
+    w.applied.clear();
+    w.machine.SetSettings(manual);
+    w.Frame();
+    CHECK(w.Did(EffectKind::Select, kCompanion));
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(w.machine.OnPauseKey());
+}

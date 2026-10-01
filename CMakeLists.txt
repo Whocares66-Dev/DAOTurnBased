@@ -110,10 +110,12 @@ add_library(
     STATIC
     src/core/Bar.cpp
     src/core/Events.cpp
+    src/core/Json.cpp
     src/core/Keys.cpp
     src/core/Portraits.cpp
     src/core/Rules.cpp
     src/core/Settings.cpp
+    src/core/State.cpp
     src/core/TurnMachine.cpp
     src/core/TurnOrder.cpp
 )
