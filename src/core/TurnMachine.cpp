@@ -1131,11 +1131,12 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
             EndTurn(fx, "held by an effect");
             return;
         }
-        if (clock_ - executingSince_ > static_cast<std::uint32_t>(settings_.maxActionMs))
+        const std::uint32_t limit =
+            static_cast<std::uint32_t>(settings_.maxActionMs) * (ownEffectSince_ ? kOwnEffectPatience : 1);
+        if (clock_ - executingSince_ > limit)
         {
             fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
-            Log(LogLevel::Warn,
-                std::format("still at a {} after {} ms: stopped", Name(actor.current), settings_.maxActionMs));
+            Log(LogLevel::Warn, std::format("still at a {} after {} ms: stopped", Name(actor.current), limit));
             EndTurn(fx, "took too long");
         }
         return;

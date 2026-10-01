@@ -119,8 +119,8 @@ MUTANTS = [
     Mutant(
         "an action may run forever",
         MACHINE,
-        "if (clock_ - executingSince_ > static_cast<std::uint32_t>(settings_.maxActionMs))",
-        "if (false)",
+        "        if (clock_ - executingSince_ > limit)",
+        "        if (false)",
     ),
     Mutant(
         "an AI may think forever",
@@ -568,6 +568,18 @@ MUTANTS = [
         MACHINE,
         "!heldByEffect_ && timeHeld_ &&",
         "timeHeld_ &&",
+    ),
+    Mutant(
+        "an action on its own effect's time is stopped at max_action_ms",
+        MACHINE,
+        "(ownEffectSince_ ? kOwnEffectPatience : 1);",
+        "(ownEffectSince_ ? 1 : 1);",
+    ),
+    Mutant(
+        "an action on its own effect's time is never stopped",
+        MACHINE,
+        "(ownEffectSince_ ? kOwnEffectPatience : 1);",
+        "(ownEffectSince_ ? 1000 : 1);",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",

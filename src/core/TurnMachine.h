@@ -594,6 +594,11 @@ class TurnMachine
     std::uint32_t roundAgedMs_ = 0;
     std::optional<std::uint32_t> ownEffectSince_; // the world's clock as the action's own effect was last aged
     static constexpr std::uint32_t kOwnEffectStepMs = 250;
+    // An action running on its own effect's time ends when that time has
+    // run, and has this many times max_action_ms to do it in: the pounce
+    // took 9.7 s of the 12 (seen in play, 2026-10-01), and a longer one
+    // would have been cut short.
+    static constexpr std::uint32_t kOwnEffectPatience = 3;
     std::uint32_t lastStatusNow_ = 0;
     std::uint32_t lastLatchScanNow_ = 0;
     std::uint32_t lastRefusalNow_ = 0;
