@@ -8,8 +8,10 @@
 //
 // dev/DESIGN.md is the design, dev/TESTING.md what to check in play and
 // read in turnbased.log (Documents\BioWare\Dragon Age\daolib\).
+#include "core/Json.h"
 #include "core/Keys.h"
 #include "core/Settings.h"
+#include "core/State.h"
 #include "core/TurnMachine.h"
 #include "game/Bar.h"
 #include "game/Bridge.h"
@@ -17,6 +19,7 @@
 #include "game/Gate.h"
 #include "game/SettingsFile.h"
 #include "game/Targeting.h"
+#include "plugin/EluvianAPI.h"
 
 #include "dao/Frame.h"
 #include "dao/Log.h"
@@ -25,6 +28,7 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
@@ -51,6 +55,10 @@ struct State
     bool portraits = true;
     std::uint32_t lastBarPublish = 0;
     std::ofstream events; // turnbased.events.jsonl: the machine's events, a JSON line each
+    // Eluvian, the development bench's MCP server, when installed: looked
+    // for once, on the first frame.
+    const EluvianInterface1 *eluvian = nullptr;
+    bool eluvianLooked = false;
 };
 State g;
 
@@ -182,8 +190,14 @@ void ServeBar(std::uint32_t now)
     }
 }
 
+void LookForEluvian();
+
 void Tick()
 {
+    if (!g.eluvianLooked)
+    {
+        LookForEluvian();
+    }
     const auto now = static_cast<std::uint32_t>(GetTickCount64());
     ReloadIfChanged(now);
     PollToggle();
@@ -227,9 +241,136 @@ void OpenEvents()
              << '\n'
              << std::flush;
     g.machine->SetEventSink([](const tb::TurnEvent &event) {
-        g.events << tb::ToJson(event, GetTickCount64()) << '\n' << std::flush;
+        const std::string json = tb::ToJson(event, GetTickCount64());
+        g.events << json << '\n' << std::flush;
+        if (g.eluvian != nullptr)
+        {
+            g.eluvian->EmitEvent((std::string{"turnbased."} + tb::Name(event.kind)).c_str(), json.c_str());
+        }
     });
     spdlog::info("the machine's events go to {}", path.string());
+}
+
+// Eluvian's tools (C:\project\DAOEluvianMCP; eluvian-agent, 2026-09-30): an
+// agent reads the machine's state, ends the player's turn, sets settings
+// and reseeds initiative, and hears the events above as turnbased.<kind>.
+// Handlers come on the frame thread, as the hooks do: the machine's lock.
+void InspectState(void * /*context*/, const char * /*args*/, EluvianReply *reply)
+{
+    std::string json;
+    {
+        const std::lock_guard lock(g.mutex);
+        json = tb::ToJson(g.machine->State());
+    }
+    reply->ok(reply, json.c_str());
+}
+
+void EndTurnTool(void * /*context*/, const char * /*args*/, EluvianReply *reply)
+{
+    bool ended = false;
+    {
+        const std::lock_guard lock(g.mutex);
+        ended = g.machine->OnPauseKey();
+    }
+    if (ended)
+    {
+        reply->ok(reply, R"({"ended":true})");
+        return;
+    }
+    reply->error(reply, "There is no turn of the player's to end: this ends a party member's turn the player plays. "
+                        "Wait for turnbased.turn_started with detail \"yours\", or read inspect turnbased.state.");
+}
+
+void SeedTool(void * /*context*/, const char *args, EluvianReply *reply)
+{
+    const std::optional<std::string> seed = tb::JsonField(args != nullptr ? args : "", "seed");
+    std::uint64_t value = 0;
+    if (!seed || std::from_chars(seed->data(), seed->data() + seed->size(), value).ec != std::errc{})
+    {
+        reply->error(reply, R"(Give the seed as a whole number: {"seed": 42}.)");
+        return;
+    }
+    {
+        const std::lock_guard lock(g.mutex);
+        g.machine->Reseed(value);
+    }
+    reply->ok(reply, std::format(R"({{"seed":{}}})", value).c_str());
+}
+
+void SettingsTool(void * /*context*/, const char *args, EluvianReply *reply)
+{
+    const std::string text = args != nullptr ? args : "{}";
+    const auto section = tb::JsonField(text, "section");
+    const auto key = tb::JsonField(text, "key");
+    const auto value = tb::JsonField(text, "value");
+    if (!section && !key && !value)
+    {
+        std::string out = R"({"ini":")";
+        tb::AppendJsonString(out, tb::game::SettingsText());
+        out += R"("})";
+        reply->ok(reply, out.c_str());
+        return;
+    }
+    if (!section || !key || !value)
+    {
+        reply->error(reply, R"(Give section, key and value, e.g. {"section": "turns", "key": "ai_turn_speed", )"
+                            R"("value": "2"}; or nothing, to read turnbased.ini.)");
+        return;
+    }
+    const std::vector<std::string> warnings = tb::game::SaveSetting(*section, *key, *value);
+    g.lastSettingsCheck = 0;
+    ReloadIfChanged(static_cast<std::uint32_t>(GetTickCount64()) + 2000);
+    std::string out = R"({"set":")";
+    tb::AppendJsonString(out, std::format("[{}] {} = {}", *section, *key, *value));
+    out += R"(","warnings":[)";
+    for (std::size_t i = 0; i < warnings.size(); ++i)
+    {
+        out += i == 0 ? "\"" : ",\"";
+        tb::AppendJsonString(out, warnings[i]);
+        out += '"';
+    }
+    out += "]}";
+    reply->ok(reply, out.c_str());
+}
+
+// Once, on the first frame: the loader loads plugins by name, so eluvian.dll
+// comes after this one and is not there yet in DAOLib_Load. Absent from a
+// player's install, and then nothing is registered.
+void LookForEluvian()
+{
+    g.eluvianLooked = true;
+    g.eluvian = EluvianFind();
+    if (g.eluvian == nullptr)
+    {
+        return;
+    }
+    const EluvianInterface1 &e = *g.eluvian;
+    e.RegisterInspectKind(
+        "turnbased.state",
+        R"({"description": "The turn-based fight now: whether one is on, its phase and round, whose turn and what )"
+        R"(that creature has left (action, meters), the order to come with each card's health, mana or stamina, )"
+        R"(side and whether the player commands it, the conditions holding creatures and the turns they owe, the )"
+        R"(cooldowns held for turns, the player's last refusal, and the game's speed. Ids as "0x..."."})",
+        &InspectState, nullptr, ELUVIAN_READ_ONLY);
+    e.RegisterTool("turnbased_end_turn",
+                   R"({"description": "End the current party member's turn, as Space or the bar's End does. Only )"
+                   R"(on a turn the player plays.", "inputSchema": {"type": "object", "properties": {}}})",
+                   &EndTurnTool, nullptr, 0);
+    e.RegisterTool("turnbased_seed",
+                   R"({"description": "Seed initiative's rolls from now on (a joiner's, the next fight's), so a )"
+                   R"(test repeats.", "inputSchema": {"type": "object", "properties": {"seed": {"type": "integer"}}, )"
+                   R"("required": ["seed"]}})",
+                   &SeedTool, nullptr, 0);
+    e.RegisterTool(
+        "turnbased_settings",
+        R"({"description": "Read turnbased.ini (no arguments), or set one setting in it and apply it now: section, )"
+        R"(key and value as the ini has them, e.g. turns / ai_turn_speed / 2. Answers the parse's warnings.", )"
+        R"("inputSchema": {"type": "object", "properties": {"section": {"type": "string"}, "key": {"type": )"
+        R"("string"}, "value": {"type": "string"}}}})",
+        &SettingsTool, nullptr, 0);
+    spdlog::info("registered with Eluvian (build {}): inspect turnbased.state; turnbased_end_turn, turnbased_seed, "
+                 "turnbased_settings; events turnbased.<kind>",
+                 e.build);
 }
 
 void Log(tb::LogLevel level, std::string_view line)

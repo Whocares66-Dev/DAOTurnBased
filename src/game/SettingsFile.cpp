@@ -101,6 +101,22 @@ void SaveEnabled(bool enabled)
     g_stamp = Stamp();
 }
 
+std::string SettingsText()
+{
+    return ReadAll(SettingsPath()).value_or(DefaultSettingsFile());
+}
+
+std::vector<std::string> SaveSetting(std::string_view section, std::string_view key, std::string_view value)
+{
+    const auto path = SettingsPath();
+    const std::string text = WithValue(SettingsText(), section, key, value);
+    if (!WriteAll(path, text))
+    {
+        return {std::format("could not write {}", path.string())};
+    }
+    return ParseSettings(text).warnings;
+}
+
 bool SettingsFileChanged()
 {
     const auto stamp = Stamp();
