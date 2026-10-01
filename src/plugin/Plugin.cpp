@@ -156,12 +156,18 @@ void ReloadIfChanged(std::uint32_t now)
 // second, the current turn's first.
 void ServeBar(std::uint32_t now)
 {
-    if (!g.turnBar)
+    if (!g.bar.Installed())
     {
-        return;
+        return; // never on this session: nothing shown, nothing rendered
     }
+    // Turned off, the bar is served as between fights: an empty view, so the
+    // movie lets its portraits go, they are released and the screen is taken
+    // down, as at a fight's end. Returning here instead left the screen up
+    // and the fight's rendered portraits unreleased (the review's TB-1,
+    // 2026-09-30).
     bool fighting = false;
     tb::TurnView view;
+    if (g.turnBar)
     {
         const std::lock_guard lock(g.mutex);
         fighting = g.machine->Active();
@@ -192,6 +198,32 @@ void ServeBar(std::uint32_t now)
 }
 
 void LookForEluvian();
+
+// A frame threw. The machine may have stepped and its effects not reached
+// the game (Bridge::Apply stopped part-way, or never ran), which the
+// machine, believing them said, would not say again: the game left paused,
+// its effects' clock held, at an enemy's speed. The machine stands down
+// (core's StandDown) and what lets the game go is applied, itself guarded;
+// turns begin again with the next fight (the review's TB-3, 2026-09-30).
+void StandDown(const char *what) noexcept
+{
+    try
+    {
+        spdlog::error("frame: {}", what);
+        std::vector<tb::Effect> effects;
+        {
+            const std::lock_guard lock(g.mutex);
+            effects = g.machine->StandDown(std::string{"an error in the frame: "} + what);
+        }
+        g.bridge->Apply(effects);
+    }
+    catch (...)
+    {
+        // Nothing more to try, and the log may be what threw: the next
+        // frame's error comes here again.
+        OutputDebugStringA("turnbased: standing down after a frame's error failed\n");
+    }
+}
 
 void Tick()
 {
@@ -288,18 +320,20 @@ void EndTurnTool(void * /*context*/, const char * /*args*/, EluvianReply *reply)
 
 void SeedTool(void * /*context*/, const char *args, EluvianReply *reply)
 {
+    // All of it a whole number: 42.5 or 42e2 taken as 42 would answer with
+    // a seed that was not the one asked for (the review's TB-4).
     const std::optional<std::string> seed = tb::JsonField(args != nullptr ? args : "", "seed");
-    std::uint64_t value = 0;
-    if (!seed || std::from_chars(seed->data(), seed->data() + seed->size(), value).ec != std::errc{})
+    const std::optional<std::uint64_t> value = seed ? tb::WholeNumber(*seed) : std::nullopt;
+    if (!value)
     {
-        reply->error(reply, R"(Give the seed as a whole number: {"seed": 42}.)");
+        reply->error(reply, R"(Give the seed as a whole number from 0 to 18446744073709551615: {"seed": 42}.)");
         return;
     }
     {
         const std::lock_guard lock(g.mutex);
-        g.machine->Reseed(value);
+        g.machine->Reseed(*value);
     }
-    reply->ok(reply, std::format(R"({{"seed":{}}})", value).c_str());
+    reply->ok(reply, std::format(R"({{"seed":{}}})", *value).c_str());
 }
 
 void SettingsTool(void * /*context*/, const char *args, EluvianReply *reply)
@@ -510,11 +544,11 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         }
         catch (const std::exception &e)
         {
-            spdlog::error("frame: {}", e.what());
+            StandDown(e.what());
         }
         catch (...)
         {
-            spdlog::error("frame: an exception of no known kind");
+            StandDown("an exception of no known kind");
         }
     });
     spdlog::info("ready; turn-based fights begin when combat does");

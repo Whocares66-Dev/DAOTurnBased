@@ -192,6 +192,7 @@ const std::vector<Entry> &Entries()
         {"movement", "path_check", Bool(&Settings::pathCheck)},
         {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
+        {"turns", "join_by_sight", Bool(&Settings::joinBySight)},
         {"turns", "ai_poke",
          [](Settings &s, std::string_view text) -> std::string {
              const std::string v = Lower(text);
@@ -437,6 +438,13 @@ ai_turn_speed = 1
 effect_seconds_per_round = 6
 ; Creatures fighting within this many meters of the party leader take turns.
 combat_radius = 50
+; Of those, only the ones fighting the party: an enemy or ally joins the
+; turns once it and a party member can see each other, or one attacks the
+; other. Until then it waits where it is, outside the fight, so a battle
+; rooms away (Howe's men and the castle's guards) neither fills the turn
+; order nor takes the camera to rooms that are not drawn. Once in, it stays
+; in. false: everyone in combat within combat_radius takes turns.
+join_by_sight = true
 ; How an AI creature is told its turn has come: command_complete or kickstart.
 ai_poke = command_complete
 

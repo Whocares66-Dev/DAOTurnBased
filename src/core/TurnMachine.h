@@ -29,6 +29,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace tb
@@ -326,6 +327,13 @@ class TurnMachine
     // run repeats with the same seed.
     void Reseed(std::uint64_t seed);
 
+    // After an error between the machine's step and the engine's taking its
+    // effects: the effects that let the game go (unpaused, its clock and
+    // speed its own, cooldowns released), said whatever the machine believes
+    // it said before, and no turns until the next fight. Nothing if it
+    // stood down already.
+    [[nodiscard]] std::vector<Effect> StandDown(std::string_view why);
+
     // From the game (DAOLib's command events): a creature's command ended
     // in a failure that did nothing, `why` the failure's name. The current
     // creature's action, spent when the gate let it through, is given back
@@ -363,6 +371,13 @@ class TurnMachine
     // How long a turn waits on an effect's command it found its creature
     // in before the turn is lost (heldByEffect_).
     static constexpr std::uint32_t kEffectGraceMs = 2000;
+    // The same order again this soon after it was taken is the game's own
+    // repeat of it, not the player's: Eleanor's attack, and the dog's, came
+    // a second time 31 to 78 ms after the first, was refused for want of an
+    // action and said so over her head, though she attacked (the user,
+    // 2026-09-30; twelve times in that session's log). A second click is
+    // slower than this.
+    static constexpr std::uint32_t kEchoMs = 250;
 
   private:
     struct Budget
@@ -374,6 +389,9 @@ class TurnMachine
         bool outOfMovement = false;
         bool refunded = false; // an action given back once already this turn
         CommandKind lastKind = CommandKind::Involuntary;
+        std::int32_t lastAbility = -1; // the ability the last command was to use; -1 for any other command
+        CommandType lastType = CommandType::Invalid; // the last command let through, and when
+        std::uint32_t lastAt = 0;
 
         [[nodiscard]] float MovementLeft() const
         {
@@ -494,7 +512,26 @@ class TurnMachine
     Budget budget_;
     ObjectId hero_ = kNoObject;
 
-    bool latch_ = false; // a fight ended while the game still says combat: no new one until hostiles are seen
+    bool latch_ = false;     // a fight ended while the game still says combat: no new one until hostiles are seen
+    bool stoodDown_ = false; // after an error (StandDown): no turns until the game has left combat
+    // Combatants a scan did not find, and since when: one is out of the
+    // fight only after kAbsentMs of it. In the user's eight fights a guard
+    // and a soldier were gone from one scan and back in the next every three
+    // seconds for ten minutes (311 "up again" against 39 falls, read off
+    // Eluvian's bus, 2026-09-30), losing whatever turn came while gone.
+    std::unordered_map<ObjectId, std::uint32_t> absentSince_;
+    static constexpr std::uint32_t kAbsentMs = 4000;
+    // Those that left the fight alive (missing from the scans for
+    // kAbsentMs): down in the order, and only a scan that finds one again
+    // brings it back. Its status, read every frame, said "alive", which
+    // brought it up again until the next scan put it down: the flapping.
+    std::unordered_set<ObjectId> left_;
+    // Fighting near, but not the party (Combatant::engaged): said once each.
+    std::unordered_set<ObjectId> outside_;
+    // A scan asked for by a creature outside the order, and when: one
+    // waiting outside the fight asks with every command it tries.
+    std::optional<std::uint32_t> outsiderScanNow_;
+    static constexpr std::uint32_t kOutsiderScanMs = 500;
     bool wantScan_ = false;
     bool roundPending_ = false; // the order wrapped: the round's start is handled at the next turn's
     bool endTurnRequested_ = false;

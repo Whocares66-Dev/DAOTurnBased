@@ -243,3 +243,31 @@ TEST_CASE("nothing waits for release when nothing was rendered", "[portraits]")
     CHECK_FALSE(book.AwaitingMovie());
     CHECK(book.TakeReleases(100000).empty());
 }
+
+TEST_CASE("a bar turned off mid-fight lets its portraits go as a fight's end does", "[portraits]")
+{
+    // The review's TB-1: turned off, the plugin stopped serving the bar,
+    // the screen stayed up and the rendered portraits were never released.
+    // It now serves an empty view, the fight still on.
+    World w;
+    w.StartFight();
+    PortraitBook book;
+    FillBook(book, w.machine.View());
+    REQUIRE(w.machine.Active());
+    const TurnView off; // what the plugin serves with turn_bar = false
+    book.Follow(off, 1000);
+    CHECK(book.Tried() == 0);
+    CHECK(book.AwaitingMovie()); // the screen stays up until the movie has let go
+    CHECK(book.TakeReleases(1100).empty());
+    book.Follow(off, 1200); // served every frame; nothing new
+    book.MovieLetGo();
+    CHECK_FALSE(book.AwaitingMovie());
+    auto released = book.TakeReleases(1300);
+    std::ranges::sort(released);
+    CHECK(released == std::vector<ObjectId>{kGenlock, kHurlock});
+    // Turned on again in the same fight: asked for anew, nothing released
+    // under the cards.
+    FillBook(book, w.machine.View());
+    CHECK(book.Tried() > 0);
+    CHECK(book.TakeReleases(9000).empty());
+}

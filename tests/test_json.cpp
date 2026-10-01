@@ -77,3 +77,22 @@ TEST_CASE("outside a fight the state says so", "[json]")
     taken.speedTook = false;
     CHECK(ToJson(taken).find(R"("speed_took":false,)") != std::string::npos);
 }
+
+TEST_CASE("a whole number is all of its text or nothing", "[json]")
+{
+    CHECK(WholeNumber("42") == std::uint64_t{42});
+    CHECK(WholeNumber("0") == std::uint64_t{0});
+    CHECK(WholeNumber("18446744073709551615") == std::uint64_t{18446744073709551615ULL});
+    CHECK_FALSE(WholeNumber("18446744073709551616")); // one past what fits
+    CHECK_FALSE(WholeNumber("42.5"));
+    CHECK_FALSE(WholeNumber("42e2"));
+    CHECK_FALSE(WholeNumber("42 or so"));
+    CHECK_FALSE(WholeNumber("-1"));
+    CHECK_FALSE(WholeNumber("+1"));
+    CHECK_FALSE(WholeNumber(" 1"));
+    CHECK_FALSE(WholeNumber(""));
+    CHECK_FALSE(WholeNumber("true"));
+    // As a tool's argument arrives: a number's own text, or a string's.
+    CHECK(WholeNumber(*JsonField(R"({"seed": 7})", "seed")) == std::uint64_t{7});
+    CHECK_FALSE(WholeNumber(*JsonField(R"({"seed": 7.5})", "seed")));
+}

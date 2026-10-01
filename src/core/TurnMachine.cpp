@@ -410,9 +410,10 @@ void TurnMachine::StepIdle(const Observation &obs, std::vector<Effect> &fx)
     if (obs.mode != Mode::Combat)
     {
         latch_ = false;
+        stoodDown_ = false;
         return;
     }
-    if (!settings_.enabled)
+    if (!settings_.enabled || stoodDown_)
     {
         return;
     }
@@ -427,7 +428,8 @@ void TurnMachine::StepIdle(const Observation &obs, std::vector<Effect> &fx)
         fx.push_back(Effect::Of(EffectKind::Pause));
         return;
     }
-    if (obs.scan && std::ranges::any_of(*obs.scan, [](const Combatant &c) { return c.side == Side::Enemy && !c.down; }))
+    if (obs.scan && std::ranges::any_of(
+                        *obs.scan, [](const Combatant &c) { return c.side == Side::Enemy && !c.down && c.engaged; }))
     {
         Log(LogLevel::Info, "hostiles are fighting again: turn-based");
         latch_ = false;
@@ -482,10 +484,28 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     currentStunned_ = false;
     usedNow_.clear();
     holds_.clear();
+    absentSince_.clear();
+    outside_.clear();
+    left_.clear();
+    // Only who is fighting the party (Combatant::engaged): the rest wait
+    // outside the order, and join when they are.
+    for (const Combatant &c : roster)
+    {
+        if (c.side != Side::Party && !c.engaged && !c.down)
+        {
+            outside_.insert(c.id);
+        }
+    }
+    std::erase_if(roster, [](const Combatant &c) { return c.side != Side::Party && !c.engaged; });
     if (std::ranges::none_of(roster, [](const Combatant &c) { return c.side == Side::Enemy && !c.down; }))
     {
-        Log(LogLevel::Info, std::format("combat, but no enemy fighting within {:.0f} m: real-time until one is",
-                                        settings_.combatRadius));
+        Log(LogLevel::Info,
+            std::format("combat, but no enemy fighting the party within {:.0f} m{}: real-time until "
+                        "one is",
+                        settings_.combatRadius,
+                        outside_.empty() ? std::string{}
+                                         : std::format(" ({} fighting out of its sight)", outside_.size())));
+        outside_.clear();
         phase_ = Phase::Idle;
         latch_ = true;
         fx.push_back(Effect::Of(EffectKind::Unpause));
@@ -501,6 +521,12 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     }
     order_.Begin(std::move(roster));
     Log(LogLevel::Info, std::format("the fight: {} combatants; {}", order_.All().size(), DescribeOrder()));
+    if (!outside_.empty())
+    {
+        Log(LogLevel::Info, std::format("{} more fighting near, but not the party: they wait outside the fight until "
+                                        "they see it or attack it",
+                                        outside_.size()));
+    }
 
     // Whatever anyone was doing in real time stops: the first turn starts
     // from a still world.
@@ -823,13 +849,17 @@ void TurnMachine::HoldTime(bool held, std::vector<Effect> &fx)
 
 void TurnMachine::SpendRound(std::vector<Effect> &fx)
 {
-    if (!timeHeld_)
-    {
-        return;
-    }
     if (!(settings_.effectSecondsPerRound > 0.0f))
     {
         HoldTime(false, fx); // turned off in the settings mid-fight
+        return;
+    }
+    if (!timeHeld_)
+    {
+        // Turned on mid-fight: held from here. The round just played ran on
+        // the game's clock, so it is not aged again. Before, a fight begun
+        // at 0 never took the setting up (the review's TB-2, 2026-09-30).
+        HoldTime(true, fx);
         return;
     }
     Effect e = Effect::Of(EffectKind::AgeTime);
@@ -1154,12 +1184,22 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
         budget_.actions = 1;
         budget_.refunded = true;
     }
+    // Nor is the talent it was on its way to use held on cooldown: chosen,
+    // walked towards and never reached, it was wasted (the user,
+    // 2026-09-30). Given back or not, the command never ran.
+    const bool unused = budget_.lastKind == CommandKind::Action && budget_.lastAbility >= 0 &&
+                        std::erase_if(usedNow_, [&](const Hold &h) {
+                            return h.creature == actor.id && h.ability == budget_.lastAbility;
+                        }) > 0;
     budget_.outOfMovement = true;
     const Combatant *current = order_.Current();
     Floaty(fx, actor.id, L"Out of movement", kGrey);
-    Log(LogLevel::Info, std::format("{} is out of movement ({:.1f} of {:.1f} m){}",
-                                    current != nullptr ? Utf8(current->name) : std::string{"?"}, budget_.movementUsed,
-                                    budget_.movementMax, refund ? "; the action it was moving for is kept" : ""));
+    Log(LogLevel::Info,
+        std::format("{} is out of movement ({:.1f} of {:.1f} m){}",
+                    current != nullptr ? Utf8(current->name) : std::string{"?"}, budget_.movementUsed,
+                    budget_.movementMax, refund ? "; the action it was moving for is kept" : "") +
+            (unused ? std::format("; ability {}, not reached, is not held on cooldown", budget_.lastAbility)
+                    : std::string{}));
     if (current != nullptr && !PlayerControls(*current))
     {
         EndTurn(fx, "out of movement");
@@ -1213,6 +1253,37 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
     wantScan_ = false;
 }
 
+// A frame threw between the machine's step and the engine's taking its
+// effects (the review's TB-3, 2026-09-30): the machine is ahead of the
+// game, which may be left paused, its effects' clock held, at an enemy's
+// speed, its cooldowns held for an hour, and the machine, believing it said
+// so already, would not say again. Everything is let go, said whatever the
+// machine believes, and this fight is left to the game: turns begin again
+// with the next one.
+std::vector<Effect> TurnMachine::StandDown(std::string_view why)
+{
+    std::vector<Effect> fx;
+    if (stoodDown_ && phase_ == Phase::Idle)
+    {
+        return fx; // already, and nothing since
+    }
+    Log(LogLevel::Warn, std::format("standing down until the next fight: {}", why));
+    pending_.clear();
+    timeHeld_ = true;
+    speedSet_ = 0.0f;
+    if (phase_ != Phase::Idle)
+    {
+        End(fx, why);
+    }
+    else
+    {
+        HoldTime(false, fx);
+        SetSpeed(1.0f, fx);
+    }
+    stoodDown_ = true;
+    return fx;
+}
+
 void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> &fx)
 {
     for (const Combatant &seen : scan)
@@ -1226,9 +1297,25 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
             const int initiative = known->initiative;
             *known = seen;
             known->initiative = initiative;
+            absentSince_.erase(seen.id);
+            if (left_.erase(seen.id) > 0 && !seen.down)
+            {
+                Log(LogLevel::Info, std::format("{} is fighting again", Utf8(seen.name)));
+                Emit(EventKind::UpAgain, seen.id, "fighting again");
+            }
+        }
+        else if (!seen.down && !seen.engaged)
+        {
+            if (outside_.insert(seen.id).second)
+            {
+                Log(LogLevel::Info,
+                    std::format("{} is fighting near, but not the party: it waits outside the fight", Utf8(seen.name)));
+            }
         }
         else if (!seen.down)
         {
+            outside_.erase(seen.id);
+            left_.erase(seen.id); // dropped from the order since it left: back as one that joins
             Combatant joining = seen;
             joining.initiative = RollInitiative(rng_, seen.dexterity, settings_);
             Log(LogLevel::Info, std::format("{} joins the fight ({}, initiative {})", Utf8(joining.name),
@@ -1244,24 +1331,29 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
         }
     }
     // An enemy or ally no longer seen fighting has left it: dead and gone,
-    // fled out of range, or out of combat.
+    // fled out of range, or out of combat. Once it has been missing a
+    // while: one scan without it is not that (absentSince_).
     std::vector<ObjectId> absent;
     for (const Combatant &c : order_.All())
     {
         if (c.side != Side::Party && !c.down &&
             std::ranges::none_of(scan, [&](const Combatant &s) { return s.id == c.id; }))
         {
-            absent.push_back(c.id);
+            const std::uint32_t since = absentSince_.try_emplace(c.id, lastNow_).first->second;
+            if (lastNow_ - since >= kAbsentMs)
+            {
+                absent.push_back(c.id);
+            }
         }
     }
     for (const ObjectId id : absent)
     {
         Combatant *c = order_.Find(id);
         c->down = true;
-        if (Logs(LogLevel::Debug))
-        {
-            Log(LogLevel::Debug, std::format("{} is no longer fighting", Utf8(c->name)));
-        }
+        absentSince_.erase(id);
+        left_.insert(id);
+        Log(LogLevel::Info, std::format("{} is no longer fighting", Utf8(c->name)));
+        Emit(EventKind::Gone, id, "no longer fighting");
     }
 }
 
@@ -1345,8 +1437,10 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
         {
             c->down = c->down || c->side != Side::Party;
         }
-        else
+        else if (!left_.contains(c->id) || status.down)
         {
+            // One that left the fight alive stays out until a scan finds it
+            // fighting again (Merge), whatever its health says.
             c->down = status.down;
         }
         // Said, not only seen as a gap in the next round's order (the desktop
@@ -1481,7 +1575,13 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         if (request.inCombat && kind != CommandKind::Free)
         {
             // A creature joining the fight: it waits for its first turn.
-            wantScan_ = true;
+            // One waiting outside the fight (Combatant::engaged) tries a
+            // command every frame: looked at again twice a second.
+            if (!outsiderScanNow_ || lastNow_ - *outsiderScanNow_ >= kOutsiderScanMs)
+            {
+                outsiderScanNow_ = lastNow_;
+                wantScan_ = true;
+            }
             if (Logs(LogLevel::Debug))
             {
                 Log(LogLevel::Debug, std::format("{:#010x}, fighting but not yet in the order: its {} waits",
@@ -1559,13 +1659,19 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     case CommandKind::Action:
         if (budget_.actions <= 0)
         {
-            if (player && asked)
+            // The order just taken, come again (kEchoMs): held like any
+            // other, but not the player's to be told about.
+            const bool echo = budget_.commands > 0 && request.type == budget_.lastType &&
+                              (request.type != CommandType::UseAbility || request.ability == budget_.lastAbility) &&
+                              lastNow_ - budget_.lastAt < kEchoMs;
+            if (player && asked && !echo)
             {
                 Refuse(who->id, L"No action left", request.type);
             }
-            if (Logs(refusals))
+            if (const LogLevel level = echo ? LogLevel::Debug : refusals; Logs(level))
             {
-                Refused(refusals, std::format("{}: {} held, no action left", Utf8(who->name), Name(request.type)));
+                Refused(level, std::format("{}: {} held, no action left{}", Utf8(who->name), Name(request.type),
+                                           echo ? " (the order just taken, again)" : ""));
             }
             return Verdict::Block;
         }
@@ -1644,6 +1750,9 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     }
     ++budget_.commands;
     budget_.lastKind = kind;
+    budget_.lastAbility = request.type == CommandType::UseAbility ? request.ability : -1;
+    budget_.lastType = request.type;
+    budget_.lastAt = lastNow_;
     orderPending_ = false;
     Log(LogLevel::Info,
         std::format("{}: {} ({}, from {}); {} action and {:.1f} m left", Utf8(who->name), Name(request.type),

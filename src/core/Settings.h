@@ -87,6 +87,13 @@ struct Settings
     // this many seconds spent on them at each new round (0: the game's clock).
     float effectSecondsPerRound = 6.0f;
     float combatRadius = 50.0f; // meters from the party leader a creature may fight from and take turns
+    // Of those, only who is fighting the party takes turns: in sight of a
+    // party member, or attacking or attacked by one. In Castle Cousland a
+    // fight took in nine of Howe's men, most fighting guards rooms away, and
+    // the camera went to rooms not drawn (the user, 2026-09-30, who did not
+    // want a rule of distance alone). Off: everyone in combat within the
+    // radius, as before.
+    bool joinBySight = true;
     AiPoke aiPoke = AiPoke::CommandComplete;
 
     // [feedback]

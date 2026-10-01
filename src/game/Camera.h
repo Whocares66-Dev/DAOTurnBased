@@ -38,13 +38,24 @@ class CameraDirector
     // arrives; either is logged, with how far short and why.
     void Watch();
 
+    // The game's speed (ai_turn_speed on an AI's turn): the camera's moves
+    // are as much quicker. At 2 a swing was over in under a second and the
+    // pan took about one, so the view never reached the dog on its turns
+    // (the sixth play test, 2026-09-30).
+    void SetSpeed(float speed)
+    {
+        speed_ = speed;
+    }
+
   private:
     void Pan(ObjectId id, std::uint64_t nowMs);
+    [[nodiscard]] float MoveSeconds() const;
 
     int logged_ = 0;
     ObjectId panning_ = kNoObject;
     std::uint64_t panAt_ = 0;
     bool again_ = false;
+    float speed_ = 1.0f;
 };
 
 } // namespace tb::game

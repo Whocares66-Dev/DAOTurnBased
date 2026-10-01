@@ -7,6 +7,7 @@
 #include "dao/Log.h"
 #include "dao/generated/ScriptApi.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <optional>
@@ -49,7 +50,15 @@ void CameraDirector::TurnTo(ObjectId id)
     {
         dao::camera::Stop();
     }
-    Pan(id, NowMs());
+    const std::uint64_t nowMs = NowMs();
+    if (panning_ != kNoObject && panning_ != id)
+    {
+        // The turn was over before the camera was there: said, since no
+        // other line would (two of 38 pans in the sixth play test).
+        spdlog::debug("the camera's pan to {:#010x} was {} ms on its way when the next began", panning_,
+                      nowMs - panAt_);
+    }
+    Pan(id, nowMs);
     again_ = false;
     spdlog::debug("camera to {:#010x}: following {:#010x}{}", id, camera->Target(),
                   camera->Tactical() ? ", tactical" : "");
@@ -62,7 +71,7 @@ void CameraDirector::TurnTo(ObjectId id)
     {
         return;
     }
-    dao::camera::EaseYaw(*behind, kMoveSeconds);
+    dao::camera::EaseYaw(*behind, MoveSeconds());
     if (dao::SceneCamera *scene = camera->Scene(); scene != nullptr && logged_ < 3)
     {
         ++logged_;
@@ -70,9 +79,14 @@ void CameraDirector::TurnTo(ObjectId id)
     }
 }
 
+float CameraDirector::MoveSeconds() const
+{
+    return kMoveSeconds / std::max(1.0f, speed_);
+}
+
 void CameraDirector::Pan(ObjectId id, std::uint64_t nowMs)
 {
-    dao::camera::PanTo(id, kMoveSeconds);
+    dao::camera::PanTo(id, MoveSeconds());
     panning_ = id;
     panAt_ = nowMs;
 }

@@ -125,9 +125,19 @@ EventDescription Describe(EventKind kind)
     case EventKind::Fell:
         return {"A combatant fell (died, or a party member down).", true, nullptr, nullptr, nullptr, nullptr};
     case EventKind::Gone:
-        return {"A combatant left the world (destroyed, vanished).", true, nullptr, nullptr, nullptr, nullptr};
+        return {"A combatant left the world (destroyed, vanished) or the fight.",
+                true,
+                "no longer fighting, for one that left the fight alive (out of combat, or out of range)",
+                nullptr,
+                nullptr,
+                nullptr};
     case EventKind::UpAgain:
-        return {"A fallen party member is up again.", true, nullptr, nullptr, nullptr, nullptr};
+        return {"A fallen party member is up again, or one that left the fight is back.",
+                true,
+                "fighting again, for one that had left the fight",
+                nullptr,
+                nullptr,
+                nullptr};
     case EventKind::ConditionHeld:
         return {"A stun, pin, knockdown, paralysis or sleep holds a creature: it loses turns.",
                 true,

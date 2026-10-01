@@ -4,7 +4,7 @@ Turn-based combat for **Dragon Age: Origins** (GOG Ultimate Edition, `DAOrigins.
 
 When a fight starts, the world freezes and every combatant rolls initiative. Then each takes a turn in order, while everyone else waits. A turn is one action (attack, ability, spell, potion) and up to 9 m of movement, scaled by the creature's speed, in either order. On the party's turns the game stays paused until you give an order, as you always would. It plays out, then waits for the next. The pause key ends your turn. Enemies and allies take their turns through the game's own AI, one at a time. When the last enemy falls, real time resumes. `Ctrl+T` switches turn-based combat on or off outside fights.
 
-`dev/DESIGN.md` has the rules and why, and `dev/UI.md` the turn order bar and movement preview, which will be built from the game's own UI. `dev/TESTING.md` is how to try it and what to report. It has not been played yet.
+`dev/DESIGN.md` has the rules and why, and `dev/UI.md` the turn order bar, built from the game's own UI, and the movement preview still to come. `dev/TESTING.md` is how to try it and what to report. It has been played through Castle Cousland's fights (`dev/PLAYTEST-*.md`, 2026-09-30) and is still rough: expect bugs.
 
 ## Building
 

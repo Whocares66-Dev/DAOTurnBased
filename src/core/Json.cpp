@@ -175,4 +175,19 @@ std::optional<std::string> JsonField(std::string_view json, std::string_view key
     }
 }
 
+std::optional<std::uint64_t> WholeNumber(std::string_view text)
+{
+    if (text.empty())
+    {
+        return std::nullopt;
+    }
+    std::uint64_t value = 0;
+    const std::from_chars_result got = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (got.ec != std::errc{} || got.ptr != text.data() + text.size())
+    {
+        return std::nullopt;
+    }
+    return value;
+}
+
 } // namespace tb

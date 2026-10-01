@@ -1666,3 +1666,392 @@ TEST_CASE("the game's speed is set for a turn before its camera moves", "[machin
     CHECK(std::none_of(camera, w.applied.end(), [](const Effect &e) { return e.kind == EffectKind::GameSpeed; }));
     CHECK(w.machine.State().speed == 1.0f);
 }
+
+namespace
+{
+void PlayARound(World &w)
+{
+    const int round = w.machine.Order().Round();
+    for (int i = 0; i < 4000 && w.machine.Order().Round() == round; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnPauseKey();
+        }
+        w.Frame();
+    }
+    REQUIRE(w.machine.Order().Round() == round + 1);
+    w.Frame(); // the new round begins with the next turn
+    w.Frame();
+}
+} // namespace
+
+TEST_CASE("effects' time turned on mid-fight is held from the round's end, turned off let go", "[machine]")
+{
+    // The review's TB-2: a fight begun at 0 never took the setting up.
+    Settings s = Fixed();
+    s.effectSecondsPerRound = 0.0f;
+    World w(s);
+    w.StartFight();
+    REQUIRE_FALSE(w.timeHeld);
+    s.effectSecondsPerRound = 6.0f;
+    w.machine.SetSettings(s);
+    PlayARound(w);
+    CHECK(w.timeHeld);
+    CHECK(w.agedMs == 0); // that round ran on the game's clock
+    PlayARound(w);
+    CHECK(w.agedMs == 6000);
+    s.effectSecondsPerRound = 0.0f;
+    w.machine.SetSettings(s);
+    PlayARound(w);
+    CHECK_FALSE(w.timeHeld);
+    CHECK(w.agedMs == 6000);
+    s.effectSecondsPerRound = 6.0f;
+    w.machine.SetSettings(s);
+    PlayARound(w);
+    CHECK(w.timeHeld);
+    CHECK(w.agedMs == 6000);
+    PlayARound(w);
+    CHECK(w.agedMs == 12000);
+}
+
+TEST_CASE("an error in a frame stands the fight down: the game let go, no turns until the next fight", "[machine]")
+{
+    // The review's TB-3: effects lost to an exception left the machine
+    // ahead of the game.
+    Settings s = Fixed();
+    s.aiTurnSpeed = 2.0f;
+    World w{s};
+    w.StartFight();
+    CHECK(w.UseAbility(kHero, Source::Player, 617, 20.0f) == Verdict::Allow);
+    w.RunFor(200);
+    w.Finish(kHero);
+    (void)w.machine.OnPauseKey();
+    for (int i = 0; i < 200 && w.Current() != kGenlock; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kGenlock);
+    w.Frame();
+    REQUIRE(w.timeHeld);
+    REQUIRE(w.speed == 2000);
+    // The engine as a lost batch could leave it, the machine none the wiser.
+    w.applied.clear();
+    w.StandDown("frame: a test's error");
+    CHECK_FALSE(w.machine.Active());
+    CHECK_FALSE(w.timeHeld);
+    CHECK(w.speed == 1000);
+    CHECK_FALSE(w.paused);
+    CHECK(w.Did(EffectKind::Unpause));
+    CHECK(std::ranges::any_of(w.applied, [](const Effect &e) {
+        return e.kind == EffectKind::Cooldown && e.target == kHero && e.a == 617 && e.b < 3600;
+    }));
+    // The game still says combat, the enemies stand: no turns, every order
+    // allowed, and standing down again says nothing.
+    w.applied.clear();
+    w.RunFor(3000);
+    CHECK_FALSE(w.machine.Active());
+    CHECK(w.Order(kGenlock, CommandType::Attack, Source::Script) == Verdict::Allow);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 30.0f) == Verdict::Allow);
+    CHECK(w.machine.StandDown("again").empty());
+    // The next fight is in turns again.
+    w.mode = Mode::Explore;
+    w.Frame();
+    w.StartFight();
+    CHECK(w.machine.Active());
+}
+
+TEST_CASE("standing down says the clock and the speed again, whatever the machine believes", "[machine]")
+{
+    // On the player's turn the machine has the speed at 1 and, with effects
+    // on the game's clock, nothing held: a lost batch may have left either
+    // otherwise.
+    Settings s = Fixed();
+    s.effectSecondsPerRound = 0.0f;
+    World w{s};
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    w.timeHeld = true;
+    w.speed = 2000;
+    w.StandDown("frame: a test's error");
+    CHECK_FALSE(w.timeHeld);
+    CHECK(w.speed == 1000);
+    // Outside a fight too.
+    World idle;
+    idle.timeHeld = true;
+    idle.speed = 2000;
+    idle.StandDown("frame: a test's error");
+    CHECK_FALSE(idle.timeHeld);
+    CHECK(idle.speed == 1000);
+}
+
+TEST_CASE("a talent its user ran out of movement before reaching is not held on cooldown", "[machine][cooldowns]")
+{
+    // The user, 2026-09-30: a skill chosen, the walk to its target using
+    // the movement up, the turn over: it went on cooldown unused.
+    World w;
+    w.StartFight();
+    CHECK(w.machine.OnPauseKey()); // the hero passes
+    w.onPoke = [&](ObjectId id) { w.UseAbility(id, Source::Script, 603, 20.0f); };
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    w.applied.clear();
+    w.Get(kGenlock).moving = true;
+    for (int i = 0; i < 15 && w.Current() == kGenlock; ++i)
+    {
+        w.Get(kGenlock).position.x += 1.0f;
+        w.Frame();
+    }
+    REQUIRE(w.Current() != kGenlock);
+    CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
+    CHECK_FALSE(w.Did(EffectKind::Cooldown, kGenlock));
+    CHECK(w.machine.State().cooldowns.empty());
+}
+
+TEST_CASE("the player's talent cut short by movement is not held; the next one used is", "[machine][cooldowns]")
+{
+    World w;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.UseAbility(kHero, Source::Player, 617, 20.0f) == Verdict::Allow);
+    w.applied.clear();
+    w.Get(kHero).moving = true;
+    for (int i = 0; i < 15 && !w.Did(EffectKind::ClearCommands, kHero); ++i)
+    {
+        w.Get(kHero).position.x += 1.0f;
+        w.Frame();
+    }
+    REQUIRE(w.Did(EffectKind::ClearCommands, kHero));
+    w.Get(kHero).moving = false;
+    w.Frame();
+    REQUIRE(w.Current() == kHero); // the player's turn goes on, the action kept
+    // Another talent, in reach, runs: it alone is held.
+    CHECK(w.UseAbility(kHero, Source::Player, 618, 20.0f) == Verdict::Allow);
+    w.RunFor(200);
+    w.Finish(kHero);
+    w.RunFor(2000);
+    (void)w.machine.OnPauseKey();
+    w.RunFor(200);
+    const auto held = [&](std::int32_t ability) {
+        return std::ranges::any_of(w.applied, [&](const Effect &e) {
+            return e.kind == EffectKind::Cooldown && e.target == kHero && e.a == ability;
+        });
+    };
+    CHECK(held(618));
+    CHECK_FALSE(held(617));
+}
+
+namespace
+{
+// The standard fight and a third enemy, fighting near but not the party:
+// a soldier at a guard's throat rooms away.
+World WithOutsider()
+{
+    auto fight = StandardFight();
+    Creature far = Make(0x202, Side::Enemy, false, L"Shriek", 12.0f);
+    far.engaged = false;
+    fight.push_back(far);
+    return World(Fixed(), fight);
+}
+
+void PassTurns(World &w, int frames)
+{
+    for (int i = 0; i < frames; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnPauseKey();
+        }
+        w.Frame();
+    }
+}
+} // namespace
+
+TEST_CASE("an enemy fighting near, but not the party, waits outside the fight until it is", "[machine][engaged]")
+{
+    // The user, 2026-09-30: fights took in Howe's men rooms away, and the
+    // camera went to rooms not drawn.
+    World w = WithOutsider();
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    REQUIRE(w.machine.Active());
+    CHECK(w.machine.Order().All().size() == 4);
+    CHECK(w.machine.Order().Find(0x202) == nullptr);
+    // It is held where it stands: its commands wait, as a joiner's do.
+    CHECK(w.Order(0x202, CommandType::Attack, Source::Script) == Verdict::Block);
+    PassTurns(w, 600); // rounds go by without it
+    CHECK(w.machine.Order().Find(0x202) == nullptr);
+    CHECK(std::ranges::none_of(events, [](const TurnEvent &e) { return e.who == 0x202; }));
+    // The party comes into its sight: it joins, and waits for its turn.
+    w.Get(0x202).engaged = true;
+    PassTurns(w, 200);
+    REQUIRE(w.machine.Order().Find(0x202) != nullptr);
+    CHECK(
+        std::ranges::any_of(events, [](const TurnEvent &e) { return e.kind == EventKind::Joined && e.who == 0x202; }));
+}
+
+TEST_CASE("once in the fight, an enemy out of the party's sight again stays in it", "[machine][engaged]")
+{
+    World w;
+    w.StartFight();
+    w.Get(kGenlock).engaged = false; // behind a pillar
+    bool genlockPlayed = false;
+    for (int i = 0; i < 2000 && w.machine.Order().Round() < 4; ++i)
+    {
+        genlockPlayed = genlockPlayed || (w.Current() == kGenlock && w.machine.Order().Round() >= 2);
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnPauseKey();
+        }
+        w.Frame();
+    }
+    REQUIRE(w.machine.Order().Find(kGenlock) != nullptr);
+    CHECK_FALSE(w.machine.Order().Find(kGenlock)->down);
+    CHECK(genlockPlayed);
+}
+
+TEST_CASE("with no enemy fighting the party there are no turns, until one is", "[machine][engaged]")
+{
+    auto fight = StandardFight();
+    for (Creature &c : fight)
+    {
+        c.engaged = c.side == Side::Party;
+    }
+    World w(Fixed(), fight);
+    w.StartFight();
+    CHECK_FALSE(w.machine.Active());
+    CHECK_FALSE(w.paused);
+    // Real time: everyone's orders go through.
+    CHECK(w.Order(kGenlock, CommandType::Attack, Source::Script) == Verdict::Allow);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 30.0f) == Verdict::Allow);
+    w.RunFor(3000);
+    CHECK_FALSE(w.machine.Active());
+    w.Get(kHurlock).engaged = true; // it rounds the corner
+    w.RunFor(3000);
+    REQUIRE(w.machine.Active());
+    CHECK(w.machine.Order().Find(kHurlock) != nullptr);
+    CHECK(w.machine.Order().Find(kGenlock) == nullptr);
+}
+
+TEST_CASE("the fight is over when the last enemy fighting the party falls, others fighting near or not",
+          "[machine][engaged]")
+{
+    World w = WithOutsider();
+    w.StartFight();
+    w.Get(kGenlock).down = true;
+    w.Get(kHurlock).down = true;
+    PassTurns(w, 200);
+    CHECK_FALSE(w.machine.Active());
+    // The one outside is the game's again, in real time.
+    CHECK(w.Order(0x202, CommandType::Attack, Source::Script) == Verdict::Allow);
+    w.applied.clear();
+    w.RunFor(3000);
+    CHECK_FALSE(w.machine.Active());
+    // Nor is a fight begun and dropped with every scan, the game paused a
+    // frame each time.
+    CHECK_FALSE(w.Did(EffectKind::Pause));
+    // And begins turns again when it finds the party.
+    w.Get(0x202).engaged = true;
+    w.RunFor(3000);
+    REQUIRE(w.machine.Active());
+    CHECK(w.machine.Order().Find(0x202) != nullptr);
+}
+
+TEST_CASE("an enemy missing from a scan or two is still in the fight; missing for seconds, it has left",
+          "[machine][engaged]")
+{
+    // The user's eight fights, read off Eluvian's bus: a guard and a
+    // soldier "up again" every three seconds for ten minutes, never having
+    // fallen, losing the turns that came while they were gone.
+    World w;
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    for (int flap = 0; flap < 6; ++flap)
+    {
+        w.Get(kGenlock).fighting = false;
+        PassTurns(w, 100); // 1.6 s, several scans
+        CHECK_FALSE(w.machine.Order().Find(kGenlock)->down);
+        w.Get(kGenlock).fighting = true;
+        PassTurns(w, 100);
+    }
+    CHECK_FALSE(w.machine.Order().Find(kGenlock)->down);
+    CHECK(std::ranges::none_of(events, [](const TurnEvent &e) { return e.kind == EventKind::UpAgain; }));
+    // Gone for good.
+    w.Get(kGenlock).fighting = false;
+    for (int i = 0; i < 1500; ++i) // 24 s: out, and it stays out, alive as it is
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnPauseKey();
+        }
+        w.Frame();
+        if (i > 400)
+        {
+            // Down in the order, or dropped from it with the next round.
+            const Combatant *genlock = w.machine.Order().Find(kGenlock);
+            REQUIRE((genlock == nullptr || genlock->down));
+            REQUIRE(w.Current() != kGenlock);
+        }
+    }
+    CHECK(std::ranges::count_if(events, [](const TurnEvent &e) {
+              return e.kind == EventKind::Gone && e.who == kGenlock && e.detail == "no longer fighting";
+          }) == 1);
+    CHECK(std::ranges::none_of(events, [](const TurnEvent &e) { return e.kind == EventKind::UpAgain; }));
+    // Fighting again: back in, said once, as one that joins or as one back.
+    w.Get(kGenlock).fighting = true;
+    PassTurns(w, 200);
+    REQUIRE(w.machine.Order().Find(kGenlock) != nullptr);
+    CHECK_FALSE(w.machine.Order().Find(kGenlock)->down);
+    CHECK(std::ranges::count_if(events, [](const TurnEvent &e) {
+              return e.who == kGenlock && (e.kind == EventKind::UpAgain || e.kind == EventKind::Joined);
+          }) == 1);
+}
+
+TEST_CASE("a creature outside the fight trying a command every frame is looked at twice a second", "[machine][engaged]")
+{
+    World w = WithOutsider();
+    w.StartFight();
+    REQUIRE(w.Current() == kHero); // the player thinks; nothing else asks for a scan
+    w.RunFor(1000);
+    const int before = w.scans;
+    for (int i = 0; i < 125; ++i) // 2 s
+    {
+        CHECK(w.Order(0x202, CommandType::Attack, Source::Script) == Verdict::Block);
+        w.Frame();
+    }
+    CHECK(w.scans - before >= 3);
+    CHECK(w.scans - before <= 6);
+}
+
+TEST_CASE("the game's repeat of an order just taken is refused without a word", "[machine]")
+{
+    // The user, 2026-09-30: "No action left" over Eleanor, told to attack
+    // and attacking. Her attack came a second time 49 ms after the first.
+    World w;
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 2.0f) == Verdict::Allow);
+    w.Frame();
+    w.Frame();
+    w.Frame(); // 48 ms
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 2.0f) == Verdict::Block);
+    w.Frame();
+    CHECK_FALSE(w.Said(L"No action left"));
+    CHECK(std::ranges::none_of(events, [](const TurnEvent &e) { return e.kind == EventKind::Refused; }));
+    // Another order, or the same one a moment later, is the player's: said.
+    CHECK(w.UseAbility(kHero, Source::Player, 617, 20.0f) == Verdict::Block);
+    w.Frame();
+    CHECK(w.Said(L"No action left"));
+    w.applied.clear();
+    events.clear();
+    w.RunFor(1500); // a second click, long after
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 2.0f) == Verdict::Block);
+    w.Frame();
+    CHECK(w.Said(L"No action left"));
+    CHECK(std::ranges::count_if(events, [](const TurnEvent &e) { return e.kind == EventKind::Refused; }) == 1);
+}

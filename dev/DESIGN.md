@@ -68,7 +68,7 @@ The user: with a target selected, a talent chosen on the quickbar went to it at 
 
 ### Cooldowns in turns (built 2026-09-30)
 
-DAO's cooldowns run in real time, paused or not: passing turns quickly left a talent cooling, and waiting brought it back (the user). An ability used is held on cooldown in the engine (3600 s, where waiting cannot reach) once its action has run, and released at the start of its user's turn that many turns later: its cooldown in the ability table over `cooldown_seconds_per_turn` (4), rounded up. At 4: Shield Bash and Pinning Shot 4 (seen in play, play test 5), the mabari howl about 10, Overwhelm about 15. It was 10 until the fourth play test, where the archers' stun came back every other turn and the dog acted every other round; a stun or a pin costs its victim a whole turn however short it is, so at 4 it keeps about the share of the time it has in real time (the howl's 5 s stun on a 40 s cooldown, an eighth; the user's call, 2026-09-30). A lost turn counts. At the fight's end what still waits goes back to seconds.
+DAO's cooldowns run in real time, paused or not: passing turns quickly left a talent cooling, and waiting brought it back (the user). An ability used is held on cooldown in the engine (3600 s, where waiting cannot reach) once its action has run, and released at the start of its user's turn that many turns later: its cooldown in the ability table over `cooldown_seconds_per_turn` (4), rounded up. At 4: Shield Bash and Pinning Shot 4 (seen in play, play test 5), the mabari howl about 10, Overwhelm about 15. An ability its user was walking to use when the movement ran out never ran, so it is not held (the user, 2026-09-30: chosen, not reached, and wasted on cooldown). It was 10 until the fourth play test, where the archers' stun came back every other turn and the dog acted every other round; a stun or a pin costs its victim a whole turn however short it is, so at 4 it keeps about the share of the time it has in real time (the howl's 5 s stun on a 40 s cooldown, an eighth; the user's call, 2026-09-30). A lost turn counts. At the fight's end what still waits goes back to seconds.
 
 **Sustained abilities** (the ability table's `UseType` 2: Shield Wall, Powerful Swings, Flaming Weapons, Rock Armor, Stealth) cost nothing to turn on or off, and do not end the turn; turned off, one waits for its user's next turn, so it cannot be turned on, off and on again in one turn (the user's rule). Action points will put a price on them.
 
@@ -92,6 +92,16 @@ The direction: the world's clock stops being the fight's clock. A round (or each
 - **Own each timer**: read and set an effect's remaining duration (`dev/DAOLIB_NEEDS.md`, "Rules": an effect's duration and remaining time), hold it as cooldowns are held, and count it down per turn; set regeneration to nothing in fights and give it per turn.
 
 Until then, `pause_on_player_turn = true` keeps what ticks from ticking while the player chooses; off (the default, the user's choice), the world idles on and those timers run.
+## Who is in the fight (built 2026-09-30)
+
+The game says who is in combat, not with whom. In Castle Cousland Howe's men and the castle's guards fight in rooms the party has not reached, all "in combat" and within `combat_radius`: a fight took in nine enemies, the turn order filled with creatures nobody could see, and the camera went to rooms that are not drawn (the user's picture, 2026-09-30). The user did not want a rule of distance alone: it cuts out enemies who should be in the fight and takes in ones who should not.
+
+So an enemy or ally in combat within the radius takes turns only once it is **fighting the party** (`join_by_sight`, on): a party member has line of sight to it (the engine's own question, `CheckLineOfSightObject`'s: walls and doors block), or it or a party member is the other's attack target. Until then it **waits outside the fight**, where it stands: its commands are held like a joiner's, it is not in the turn order, and nothing of it is shown. When the party comes into its sight, or one attacks the other, it joins as any creature joining mid-way does, with a roll of initiative. **Once in, it stays in**: stepping behind a pillar does not take a creature out of the fight. The fight is over when the last enemy in it falls; one still waiting outside is the game's again, in real time, and begins turns again when it finds the party.
+
+Asked of DAOLib (`dev/DAOLIB_NEEDS.md`): whether a creature's room is drawn, which is the user's own idea of the rule and would also keep the camera out of rooms that are black.
+
+**Leaving the fight.** A combatant the scan no longer finds (out of combat, out of range) has left only after four seconds of it: one scan without it is not that. One that left alive stays out, down in the order, until a scan finds it fighting again; its health alone does not bring it back. Before, the status read every frame said "alive" and brought it up again until the next scan put it down: in the user's eight fights a guard and a soldier were "up again" every three seconds for ten minutes, 311 times against 39 falls (read off Eluvian's bus), losing the turns that came while they were down.
+
 ## The AI's turn
 
 The game's AI is event-driven (DAOLib's `dev/TURN_BASED.md`). When a creature's command completes, the engine sends it `EVENT_TYPE_COMMAND_COMPLETE`; `rules_core.nss` runs `AI_DetermineCombatRound`, which picks the next command and queues it with `AddCommand`. There is no round. The mod turns that loop on and off:
@@ -160,6 +170,7 @@ Whose a command is comes from the command itself: the player's orders carry a fl
 | `[turns] max_commands_per_turn` | 6 | |
 | `[turns] order_run_ms` | 0 | An order that queued nothing while paused runs the world this long. Off: in play the engine queued orders at once while paused |
 | `[turns] combat_radius` | 50 | Creatures fighting within this of the party leader take turns |
+| `[turns] join_by_sight` | true | Of those, only who is fighting the party: see "Who is in the fight" |
 | `[turns] ai_poke` | command_complete | Or `kickstart` |
 | `[feedback] floaties` | true | Whose turn, out of movement, not your turn |
 | `[feedback] script_events` | true | The events below |

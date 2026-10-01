@@ -11,6 +11,7 @@
 #include "dao/Gda.h"
 #include "dao/Log.h"
 #include "dao/ScriptHooks.h"
+#include "dao/World.h"
 #include "dao/core/CommandWord.h"
 #include "dao/generated/ScriptApi.h"
 #include "dao/generated/ScriptConstants.h"
@@ -180,6 +181,30 @@ Observation Bridge::Observe(const Needs &needs, std::uint32_t nowMs)
     return obs;
 }
 
+namespace
+{
+// Whether a creature in combat near the party is fighting the party (core:
+// Combatant::engaged), by the game's own answers: it or a party member is
+// the other's attack target, or a party member can see it
+// (CheckLineOfSightObject's question, dao/World.h: walls and doors block,
+// other placeables do not). Not by distance: Howe's men fighting guards
+// rooms away were in the turn order, and the camera went to rooms not
+// drawn (the user, 2026-09-30).
+bool Engaged(ObjectId id, const std::vector<ObjectId> &party)
+{
+    const ObjectId target = api::GetAttackTarget(id);
+    for (const ObjectId member : party)
+    {
+        if (target == member || api::GetAttackTarget(member) == id)
+        {
+            return true;
+        }
+    }
+    return std::ranges::any_of(party,
+                               [&](ObjectId member) { return static_cast<bool>(dao::world::LineOfSight(member, id)); });
+}
+} // namespace
+
 std::vector<Combatant> Bridge::Scan()
 {
     std::vector<Combatant> out;
@@ -206,6 +231,14 @@ std::vector<Combatant> Bridge::Scan()
             out.push_back(Describe(id, Side::Party, id == hero));
         }
     }
+    const std::vector<ObjectId> members(seen.begin(), seen.end());
+    std::size_t outside = 0;
+    const auto add = [&](ObjectId id, Side side) {
+        Combatant c = Describe(id, side, false);
+        c.engaged = !settings_.joinBySight || Engaged(id, members);
+        outside += c.engaged ? 0 : 1;
+        out.push_back(std::move(c));
+    };
     // The game's own question for who is fighting the party (UT_Surrender,
     // utility_h.nss): the nearest living hostiles, those in combat.
     const auto fighting = [&](ObjectId id) {
@@ -220,7 +253,7 @@ std::vector<Combatant> Bridge::Scan()
         if (fighting(id))
         {
             seen.insert(id);
-            out.push_back(Describe(id, Side::Enemy, false));
+            add(id, Side::Enemy);
         }
     }
     // Creatures in combat that are not hostile to the party fight beside it.
@@ -232,11 +265,11 @@ std::vector<Combatant> Bridge::Scan()
         if (fighting(id))
         {
             seen.insert(id);
-            out.push_back(Describe(id, Side::Ally, false));
+            add(id, Side::Ally);
         }
     }
-    spdlog::debug("scan: {} in the party, {} hostiles near, {} others near; {} fighting", party.Size(), hostiles.Size(),
-                  others.Size(), out.size());
+    spdlog::debug("scan: {} in the party, {} hostiles near, {} others near; {} fighting, {} of them not the party",
+                  party.Size(), hostiles.Size(), others.Size(), out.size(), outside);
     return out;
 }
 
@@ -427,6 +460,7 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             // (DAOLib ed55ab8): an archer's shot took as long at 2 as at 1 in
             // the second play test, the mod's own waits aside.
             speedTook_ = dao::clock::SetSpeed(static_cast<float>(e.b) / 1000.0f);
+            camera_.SetSpeed(static_cast<float>(e.b) / 1000.0f);
             if (!*speedTook_)
             {
                 spdlog::warn("the game's speed {:.2f} did not take", static_cast<float>(e.b) / 1000.0f);

@@ -44,6 +44,7 @@ RULES = "src/core/Rules.cpp"
 SETTINGS = "src/core/Settings.cpp"
 BAR = "src/core/Bar.cpp"
 PORTRAITS = "src/core/Portraits.cpp"
+JSON = "src/core/Json.cpp"
 
 MUTANTS = [
     Mutant(
@@ -417,6 +418,84 @@ MUTANTS = [
         MACHINE,
         "    // whether a pan got there (src/game/Camera.cpp).\n    SetSpeed(TurnSpeed(who), fx);",
         "    // whether a pan got there (src/game/Camera.cpp).",
+    ),
+    Mutant(
+        "effects' time turned on mid-fight is never held",
+        MACHINE,
+        "        HoldTime(true, fx);",
+        "        ;",
+    ),
+    Mutant(
+        "a fight stood down begins again while the game still says combat",
+        MACHINE,
+        "    if (!settings_.enabled || stoodDown_)",
+        "    if (!settings_.enabled)",
+    ),
+    Mutant(
+        "standing down trusts what the machine believes of the speed",
+        MACHINE,
+        "    speedSet_ = 0.0f;",
+        "    ;",
+    ),
+    Mutant(
+        "standing down trusts what the machine believes of the clock",
+        MACHINE,
+        "    timeHeld_ = true;",
+        "    ;",
+    ),
+    Mutant(
+        "a whole number takes the digits off the front",
+        JSON,
+        " || got.ptr != text.data() + text.size()",
+        "",
+    ),
+    Mutant(
+        "a talent never reached is held on cooldown",
+        MACHINE,
+        "budget_.lastAbility >= 0 &&",
+        "budget_.lastAbility >= 999999 &&",
+    ),
+    Mutant(
+        "an enemy not fighting the party joins the fight mid-way",
+        MACHINE,
+        "        else if (!seen.down && !seen.engaged)",
+        "        else if (!seen.down && !seen.engaged && seen.down)",
+    ),
+    Mutant(
+        "an enemy not fighting the party is in the fight from its start",
+        MACHINE,
+        "return c.side != Side::Party && !c.engaged; });",
+        "return c.side != Side::Party && !c.engaged && c.down; });",
+    ),
+    Mutant(
+        "an enemy not fighting the party begins the turns again",
+        MACHINE,
+        "c.side == Side::Enemy && !c.down && c.engaged;",
+        "c.side == Side::Enemy && !c.down;",
+    ),
+    Mutant(
+        "one scan without a combatant puts it out of the fight",
+        MACHINE,
+        "            if (lastNow_ - since >= kAbsentMs)",
+        "            if (lastNow_ - since >= kAbsentMs / 1000)",
+    ),
+    Mutant(
+        "one that left the fight is up again by its health",
+        MACHINE,
+        "        else if (!left_.contains(c->id) || status.down)",
+        "        else if (!left_.contains(kNoObject) || status.down)",
+    ),
+    Mutant(
+        "the game's repeat of an order is told to the player",
+        MACHINE,
+        "lastNow_ - budget_.lastAt < kEchoMs;",
+        "lastNow_ - budget_.lastAt < kEchoMs / 1000;",
+    ),
+    Mutant(
+        "a creature outside the fight asks for a scan with every command",
+        MACHINE,
+        "            if (!outsiderScanNow_ || lastNow_ - *outsiderScanNow_ >= kOutsiderScanMs)",
+        "            if (!outsiderScanNow_ || lastNow_ - *outsiderScanNow_ >= kOutsiderScanMs / 1000)",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",

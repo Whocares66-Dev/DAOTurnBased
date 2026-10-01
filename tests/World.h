@@ -31,6 +31,7 @@ struct Creature
     bool down = false;
     bool exists = true;   // gone from the world: destroyed, or vanished by a script
     bool fighting = true; // in combat: the game's scan finds it (party members always)
+    bool engaged = true;  // fighting the party: in its sight, or attacking or attacked by it
     bool busy = false;
     Condition condition = Condition::None; // stunned or pinned, as the game side reads it
     float energy = 1.0f;                   // mana or stamina
@@ -144,6 +145,7 @@ class World
                 x.dexterity = c.dexterity;
                 x.speed = c.speed;
                 x.down = c.down;
+                x.engaged = c.engaged;
                 seen.push_back(x);
             }
             obs.scan = seen;
@@ -246,6 +248,12 @@ class World
         Frame();
         Frame();
         Frame();
+    }
+
+    // An error in the plugin's frame: what it does about it.
+    void StandDown(std::string_view why)
+    {
+        Apply(machine.StandDown(why));
     }
 
     ObjectId Current() const
