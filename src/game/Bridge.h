@@ -71,6 +71,7 @@ class Bridge
   private:
     CameraDirector camera_;
     std::optional<bool> speedTook_;
+    std::optional<bool> byRooms_; // whether the last scan went by the rooms seen (Scan)
     struct Known
     {
         std::wstring name;

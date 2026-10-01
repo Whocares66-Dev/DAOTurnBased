@@ -4,9 +4,12 @@
 #include "core/Text.h"
 
 #include "dao/ClientExoApp.h"
+#include "dao/Gda.h"
 #include "dao/Gui.h"
 #include "dao/Log.h"
 #include "dao/Objects.h"
+#include "dao/core/GdaHash.h"
+#include "dao/generated/ScriptApi.h"
 
 #include <algorithm>
 #include <charconv>
@@ -166,6 +169,44 @@ void BarLink::FollowFight(const TurnView &view, std::uint32_t nowMs)
                  letGo ? "the bar having let them go" : "the bar not having said it let them go");
 }
 
+namespace
+{
+// The picture the game keeps ready for a creature it draws no face for: the
+// portraits table (portraits.gda, table 7, which also gives the portrait
+// renderer its camera) names one by appearance in its Override column:
+// portrait_49 a wolf, 09 and 68 bears, 59 and 57 spiders, 14 the swarm, 06
+// the golem, 12, 28 and 37 the shapeshifter's and the Fade's forms, each a
+// texture in gui.erf, as the party bar shows a ranger's summons. Asked to
+// render such a creature the engine makes nothing, and a wolf's card showed
+// "Wo" (the user, 2026-10-01). Read from the game's files 2026-10-01; a
+// great bear and a blight wolf have rows without one.
+constexpr std::int32_t kPortraitsTable = 7;
+
+std::wstring ReadyMadePortrait(ObjectId id)
+{
+    const std::int32_t appearance = dao::script::api::GetAppearanceType(id);
+    const std::int32_t rows = dao::gda::Rows(kPortraitsTable).value_or(0);
+    if (appearance <= 0)
+    {
+        return {};
+    }
+    for (std::int32_t row = 0; row < rows; ++row)
+    {
+        if (dao::gda::GetInt(kPortraitsTable, row, dao::core::GdaColumnHash("Appearance")) != appearance)
+        {
+            continue;
+        }
+        const std::wstring made =
+            dao::gda::GetString(kPortraitsTable, row, dao::core::GdaColumnHash("Override")).value_or(std::wstring{});
+        if (!made.empty())
+        {
+            return L"img://" + made;
+        }
+    }
+    return {};
+}
+} // namespace
+
 void BarLink::KeepPortraits(const TurnView &view, bool render)
 {
     const auto id = portraits_.Next(view);
@@ -186,7 +227,12 @@ void BarLink::KeepPortraits(const TurnView &view, bool render)
         {
             url = creature->RenderPortrait();
             how = "rendered";
-            rendered = true;
+            rendered = !url.empty();
+        }
+        if (url.empty())
+        {
+            url = ReadyMadePortrait(*id);
+            how = "the portraits table's";
         }
     }
     const auto card = std::ranges::find(view.upcoming, *id, &CardView::id);

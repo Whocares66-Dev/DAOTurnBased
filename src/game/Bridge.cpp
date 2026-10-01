@@ -261,10 +261,27 @@ std::vector<Combatant> Bridge::Scan()
     // no rooms.
     const std::optional<dao::world::Room> ours = settings_.joinBySight ? dao::world::RoomOf(leader) : std::nullopt;
     const bool byRooms = ours && ours->Shown();
-    if (settings_.joinBySight && ours && !byRooms)
+    // Said when it changes, at info: which rule an area goes by is read
+    // out of a player's own log. Outdoors (the Dalish forest, 2026-10-01,
+    // by Eluvian's inspect) every creature's room, the party's own too,
+    // reads in view and not loaded, so sight is the rule there.
+    if (settings_.joinBySight && byRooms_ != byRooms)
     {
-        spdlog::debug("the leader's own room {} reads seen {} load {}: rooms not gone by here, sight is", ours->number,
-                      ours->seen, ours->load);
+        byRooms_ = byRooms;
+        if (byRooms)
+        {
+            spdlog::info("who is in a fight here goes by the rooms the party has seen");
+        }
+        else if (ours)
+        {
+            spdlog::info("who is in a fight here goes by sight: the leader's own room {} reads seen {} load {}, not "
+                         "shown",
+                         ours->number, ours->seen, ours->load);
+        }
+        else
+        {
+            spdlog::info("who is in a fight here goes by sight: the area has no rooms");
+        }
     }
     const auto add = [&](ObjectId id, Side side) {
         Combatant c = Describe(id, side, false);
