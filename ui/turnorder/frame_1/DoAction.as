@@ -475,18 +475,22 @@ function build(state)
         drawCard(bar, card, i, x);
         x += CARD_W + GAP + (card.current ? CARD_W * (CURRENT_SCALE - 100) / 100 : 0);
     }
+    // The medallions are centred on the screen whether End is there or not;
+    // End stands after them on the player's turn (the user: End made part of
+    // the strip shifted its centring).
+    var width = x - GAP;
+    var reach = width;
     if (state.playerTurn)
     {
         drawEndTurn(bar, x + GAP);
-        x += END_W + 2 * GAP;
+        reach = x + GAP + END_W;
     }
-    bar._x = Math.round((Stage.width - x) / 2);
-    // Behind the medallions, centred on them, a translucent black panel,
-    // square with rounded corners and edges that fade out (the user: no
-    // tapering ends, as the top menu's bar had); a small one of the same
-    // under it for the caption.
-    var width = x - GAP;
-    panel(bar.createEmptyMovieClip("plate", 3), -16, TOP - 14, width + 32, CARD_H + 28, 10);
+    bar._x = Math.round((Stage.width - width) / 2);
+    // Behind the medallions (and End), a translucent black panel, square with
+    // rounded corners and edges that fade out (the user: no tapering ends,
+    // as the top menu's bar had); a small one of the same under the
+    // medallions' middle for the caption.
+    panel(bar.createEmptyMovieClip("plate", 3), -16, TOP - 14, reach + 32, CARD_H + 28, 10);
     var strip = bar.createEmptyMovieClip("strip", 4);
     panel(strip.createEmptyMovieClip("plate", 1), width / 2 - CAPTION_W / 2, TOP + CARD_H + 20, CAPTION_W, CAPTION_H,
           8);
