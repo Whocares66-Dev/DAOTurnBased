@@ -49,6 +49,12 @@ class Bridge
     // over the hero if there is one.
     void Say(const std::wstring &text, std::uint32_t colour);
 
+    // Each frame, after Apply: whether the camera got where it was sent.
+    void WatchCamera()
+    {
+        camera_.Watch();
+    }
+
     // A look at a combatant the player asked for (a card clicked).
     void LookAt(ObjectId id)
     {

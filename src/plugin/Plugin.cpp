@@ -216,6 +216,7 @@ void Tick()
     // Unlocked: applying an effect can queue a command, which the gate
     // puts to the machine.
     g.bridge->Apply(effects);
+    g.bridge->WatchCamera();
     ServeBar(now);
 }
 
