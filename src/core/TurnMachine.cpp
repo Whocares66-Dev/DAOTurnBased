@@ -487,6 +487,8 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     absentSince_.clear();
     outside_.clear();
     left_.clear();
+    roundAgedMs_ = 0;
+    ownEffectSince_.reset();
     // Only who is fighting the party (Combatant::engaged): the rest wait
     // outside the order, and join when they are.
     for (const Combatant &c : roster)
@@ -876,9 +878,16 @@ void TurnMachine::SpendRound(std::vector<Effect> &fx)
         HoldTime(true, fx);
         return;
     }
-    Effect e = Effect::Of(EffectKind::AgeTime);
-    e.b = static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f);
-    fx.push_back(e);
+    // The round's worth, less what its actions' own effects took of it.
+    const auto worth = static_cast<std::uint32_t>(settings_.effectSecondsPerRound * 1000.0f);
+    const std::uint32_t left = worth - std::min(roundAgedMs_, worth);
+    roundAgedMs_ = 0;
+    if (left > 0)
+    {
+        Effect e = Effect::Of(EffectKind::AgeTime);
+        e.b = static_cast<std::int32_t>(left);
+        fx.push_back(e);
+    }
     agedAtNow_ = lastNow_;
 }
 
@@ -1055,6 +1064,34 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     if (phase_ != Phase::Executing)
     {
         return;
+    }
+    // Its own action's effect keeps it there (roundAgedMs_): that effect's
+    // time runs with the action. Not one it was held by as its turn began,
+    // which costs the turn, nor a stun, which ends it.
+    if (actor.busy && actor.current == CommandType::ExecuteEffect && !heldByEffect_ && timeHeld_ &&
+        budget_.commands > 0)
+    {
+        if (!ownEffectSince_)
+        {
+            ownEffectSince_ = clock_;
+            if (Logs(LogLevel::Debug))
+            {
+                Log(LogLevel::Debug, "its action's own effect holds it: effects' time runs with it");
+            }
+        }
+        if (const std::uint32_t ran = clock_ - *ownEffectSince_; ran >= kOwnEffectStepMs)
+        {
+            ownEffectSince_ = clock_;
+            roundAgedMs_ += ran;
+            Effect age = Effect::Of(EffectKind::AgeTime);
+            age.b = static_cast<std::int32_t>(ran);
+            fx.push_back(age);
+            agedAtNow_ = lastNow_;
+        }
+    }
+    else
+    {
+        ownEffectSince_.reset();
     }
     if (heldByEffect_ && (!actor.busy || actor.current != CommandType::ExecuteEffect))
     {

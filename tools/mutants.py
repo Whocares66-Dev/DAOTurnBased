@@ -552,6 +552,24 @@ MUTANTS = [
         "PortraitFamily(row.label) == family)",
     ),
     Mutant(
+        "an action's own effect never gets its time",
+        MACHINE,
+        "ran >= kOwnEffectStepMs)",
+        "ran >= kOwnEffectStepMs * 100000)",
+    ),
+    Mutant(
+        "an action's effect time is spent again at the round's end",
+        MACHINE,
+        "            roundAgedMs_ += ran;",
+        "            ;",
+    ),
+    Mutant(
+        "an effect that held a creature before its turn runs the clock",
+        MACHINE,
+        "!heldByEffect_ && timeHeld_ &&",
+        "timeHeld_ &&",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",
@@ -608,8 +626,8 @@ MUTANTS = [
     Mutant(
         "effects are never aged a round",
         MACHINE,
-        "    e.b = static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f);\n    fx.push_back(e);",
-        "    e.b = static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f);",
+        "        e.b = static_cast<std::int32_t>(left);\n        fx.push_back(e);",
+        "        e.b = static_cast<std::int32_t>(left);",
     ),
     Mutant(
         "effects' time stays held after the fight",

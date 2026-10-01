@@ -580,6 +580,20 @@ class TurnMachine
     std::uint32_t deadline_ = 0;
     std::uint32_t executingSince_ = 0;
     std::uint32_t roundRunMs_ = 0; // milliseconds this round has run unpaused
+    // Effects' time spent inside the round by an action that needed it: an
+    // effect of the action's own that keeps its creature at it. A giant
+    // spider's Overwhelm is one effect on the spider and one on its prey,
+    // each ended by its time, and effects' time is held through a fight: the
+    // pounce never ended, the world stood twelve seconds until
+    // max_action_ms stopped it, and the turn ended "took too long" (the
+    // eighth play test, 2026-10-01). While the acting creature is at an
+    // effect's command after its own action, effects' time runs with the
+    // world, a step at a time, and comes off the round's worth, so a round
+    // is still effect_seconds_per_round of it (more only if an action took
+    // more).
+    std::uint32_t roundAgedMs_ = 0;
+    std::optional<std::uint32_t> ownEffectSince_; // the world's clock as the action's own effect was last aged
+    static constexpr std::uint32_t kOwnEffectStepMs = 250;
     std::uint32_t lastStatusNow_ = 0;
     std::uint32_t lastLatchScanNow_ = 0;
     std::uint32_t lastRefusalNow_ = 0;

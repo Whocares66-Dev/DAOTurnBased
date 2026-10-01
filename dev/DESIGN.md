@@ -77,6 +77,8 @@ DAO's cooldowns run in real time, paused or not: passing turns quickly left a ta
 
 The user's rule (2026-09-30): in turn-based mode everything runs on turns (or, later, action points), nothing on time. Built so far: conditions (stun, paralysis, sleep, pins) and cooldowns. Still on the game's clock, running whenever the world runs:
 
+**An action's own effect gets its time** (built 2026-10-01). Effects' time is held through a fight and spent a round's worth at each round. But some actions are themselves an effect that must run out: a giant spider's Overwhelm is one effect on the spider and one on its prey, each ended by its time, and held, the pounce never ended: the world stood twelve seconds until `max_action_ms` stopped it and the turn ended "took too long" (the eighth play test). So while the acting creature is at an effect's command after its own action, effects' time runs with the world, and what it took comes off that round's worth. An effect that held a creature before its turn began still costs the turn, and a stun in one's own turn still ends it.
+
 - **Effect durations**: buffs, debuffs, damage and healing over time (burning, poison, bleeding, regeneration potions, auras), each a duration in seconds on a `CGameEffect`.
 - **Regeneration**: stamina, mana and health coming back each second, in and out of combat.
 - **Sustained abilities' upkeep**: their drain, if any, per second, and their stamina or mana reserved.

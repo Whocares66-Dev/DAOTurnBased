@@ -2326,3 +2326,88 @@ TEST_CASE("the walk to a door is movement: out of it, the walk is stopped", "[ma
     CHECK(walked < 9.0f + TurnMachine::kOvershoot + 0.5f);
     CHECK(w.machine.View().actionsLeft == 1); // nothing was spent but the walk
 }
+
+TEST_CASE("an action whose own effect holds its creature gets that effect's time, out of the round's", "[machine]")
+{
+    // The eighth play test: a giant spider's Overwhelm, an effect on the
+    // spider and one on its prey, each ended by its time, with effects'
+    // time held: twelve seconds, then "took too long".
+    World w;
+    w.StartFight();
+    (void)w.machine.OnPauseKey(); // the hero passes
+    bool poked = false;
+    w.onPoke = [&](ObjectId id) {
+        poked = true;
+        CHECK(w.UseAbility(id, Source::Script, 90133, 60.0f) == Verdict::Allow);
+    };
+    for (int i = 0; i < 40 && !poked; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(poked);
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(w.timeHeld);
+    const std::int64_t before = w.agedMs;
+    w.RunFor(200); // the leap
+    // The pounce: an effect's command follows the talent's, and ends when
+    // four seconds of the effect's time have run.
+    REQUIRE(w.Current() == kGenlock);
+    w.Get(kGenlock).busy = true;
+    w.Get(kGenlock).current = CommandType::ExecuteEffect;
+    int frames = 0;
+    for (; frames < 2000 && w.Current() == kGenlock; ++frames)
+    {
+        if (w.Get(kGenlock).busy && w.agedMs - before >= 4000)
+        {
+            w.Finish(kGenlock);
+        }
+        w.Frame();
+    }
+    CHECK(w.Current() != kGenlock);
+    CHECK(frames * 16 < 6000); // about its four seconds, not max_action_ms
+    CHECK(w.agedMs - before >= 4000);
+    CHECK(w.agedMs - before < 4600);
+    CHECK(std::ranges::none_of(
+        w.log, [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
+    // The round is still six seconds of effects' time in all.
+    for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnPauseKey();
+        }
+        w.Frame();
+    }
+    REQUIRE(w.machine.Order().Round() == 2);
+    w.Frame();
+    w.Frame();
+    CHECK(w.agedMs - before == 6000);
+}
+
+TEST_CASE("held by an effect as its turn begins, a creature's time is not run for it", "[machine]")
+{
+    // What held it before its turn costs the turn (kEffectGraceMs); only an
+    // action's own effect runs the clock.
+    Settings s = Fixed();
+    s.partyControl = PartyControl::Manual;
+    World w{s};
+    w.StartFight();
+    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    (void)w.machine.OnPauseKey();
+    const std::int64_t before = w.agedMs;
+    bool turned = false;
+    for (int i = 0; i < 400 && w.machine.Order().Round() < 2 && w.Current() != kCompanion; ++i)
+    {
+        // Held, it may still turn to face (a free command, let through):
+        // that is not an action of its own, and the effect still holds it.
+        if (!turned && w.Current() == kGenlock && w.machine.State().heldByEffect)
+        {
+            turned = true;
+            CHECK(w.Order(kGenlock, CommandType::Turn, Source::Script) == Verdict::Allow);
+            w.Get(kGenlock).current = CommandType::ExecuteEffect;
+        }
+        w.Frame();
+    }
+    CHECK(turned);
+    CHECK(w.agedMs == before);
+}

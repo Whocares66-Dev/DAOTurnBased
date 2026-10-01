@@ -467,7 +467,10 @@ class Arena
             break;
         case EffectKind::AgeTime:
             Must(timeHeld_, "effects aged by the fight while their time runs anyway");
-            Must(e.b == static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f), "a round aged wrong");
+            // A round's worth, or a step of an action's own effect, or the
+            // round's worth less those.
+            Must(e.b > 0 && e.b <= static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f),
+                 "a round aged wrong");
             ++coverage_.roundsAged;
             // A round's worth off every condition's own timer.
             for (auto &[id, left] : conditionLeftMs_)
