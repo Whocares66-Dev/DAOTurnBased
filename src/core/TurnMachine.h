@@ -146,6 +146,9 @@ struct Effect
     std::int32_t event = 0;
     std::int32_t a = 0;
     std::int32_t b = 0;
+    // A cooldown's: the seconds its sweep is drawn against, b the seconds
+    // left of them (0: as the scripts set one, both the same).
+    std::int32_t c = 0;
 
     [[nodiscard]] static Effect Of(EffectKind kind, ObjectId target = kNoObject)
     {
@@ -243,6 +246,7 @@ struct CooldownView
     ObjectId id = kNoObject;
     std::int32_t ability = -1;
     int turns = 0; // its user's turns still to wait
+    int of = 0;    // of this many in all
 };
 
 struct MachineState
@@ -388,6 +392,7 @@ class TurnMachine
         int commands = 0;
         bool outOfMovement = false;
         bool refunded = false; // an action given back once already this turn
+        bool retried = false;  // an AI told to choose again, its failed action given back
         CommandKind lastKind = CommandKind::Involuntary;
         std::int32_t lastAbility = -1; // the ability the last command was to use; -1 for any other command
         CommandType lastType = CommandType::Invalid; // the last command let through, and when
@@ -496,6 +501,7 @@ class TurnMachine
         ObjectId creature = kNoObject;
         std::int32_t ability = -1;
         int turns = 0;
+        int of = 0; // the turns it was held for in all: the sweep is turns over this
     };
     std::vector<Hold> usedNow_;
     std::vector<Hold> holds_;
@@ -526,6 +532,20 @@ class TurnMachine
     // brings it back. Its status, read every frame, said "alive", which
     // brought it up again until the next scan put it down: the flapping.
     std::unordered_set<ObjectId> left_;
+    // The last refusal an event was emitted for, and when: the same one
+    // again within a second is not another event. In the user's eight
+    // fights 1,097 came, up to 64 in a second (a follower's move asked for
+    // every frame, a movement key held with no movement left), which
+    // drowned a test agent's wait and filled Eluvian's bus (2026-09-30).
+    struct RefusedEvent
+    {
+        ObjectId who = kNoObject;
+        CommandType command = CommandType::Invalid;
+        std::wstring text;
+        std::uint32_t at = 0;
+    };
+    std::optional<RefusedEvent> refusedEvent_;
+    static constexpr std::uint32_t kRefusedEventMs = 1000;
     // Fighting near, but not the party (Combatant::engaged): said once each.
     std::unordered_set<ObjectId> outside_;
     // A scan asked for by a creature outside the order, and when: one

@@ -5,6 +5,7 @@
 #include "core/Rules.h"
 #include "core/Text.h"
 
+#include "dao/Abilities.h"
 #include "dao/ClientExoApp.h"
 #include "dao/Clock.h"
 #include "dao/GameModes.h"
@@ -233,10 +234,25 @@ std::vector<Combatant> Bridge::Scan()
     }
     const std::vector<ObjectId> members(seen.begin(), seen.end());
     std::size_t outside = 0;
+    // Those not fighting the party, each with its room as the game has it
+    // (DAOLib 0747547, dao::world::RoomOf: 5 drawn, 4 in memory and not
+    // drawn, 3 dropped). The user's own idea of the rule was "in an area
+    // that is not loaded"; lib-agent's reading of the states is not yet
+    // seen on screen, so it is said beside the sight rule, not used.
+    std::string rooms;
     const auto add = [&](ObjectId id, Side side) {
         Combatant c = Describe(id, side, false);
         c.engaged = !settings_.joinBySight || Engaged(id, members);
-        outside += c.engaged ? 0 : 1;
+        if (!c.engaged)
+        {
+            ++outside;
+            if (spdlog::should_log(spdlog::level::debug))
+            {
+                const std::optional<dao::world::Room> room = dao::world::RoomOf(id);
+                rooms += room ? std::format(" {:#x} room {} state {}", id, room->number, room->state)
+                              : std::format(" {:#x} no room", id);
+            }
+        }
         out.push_back(std::move(c));
     };
     // The game's own question for who is fighting the party (UT_Surrender,
@@ -268,8 +284,9 @@ std::vector<Combatant> Bridge::Scan()
             add(id, Side::Ally);
         }
     }
-    spdlog::debug("scan: {} in the party, {} hostiles near, {} others near; {} fighting, {} of them not the party",
-                  party.Size(), hostiles.Size(), others.Size(), out.size(), outside);
+    spdlog::debug("scan: {} in the party, {} hostiles near, {} others near; {} fighting, {} of them not the "
+                  "party{}{}",
+                  party.Size(), hostiles.Size(), others.Size(), out.size(), outside, rooms.empty() ? "" : ":", rooms);
     return out;
 }
 
@@ -475,7 +492,23 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             break;
         case EffectKind::Cooldown:
             // Held, released, or back to seconds (core: "Cooldowns in turns").
-            api::SetCooldown(e.target, e.a, static_cast<float>(e.b));
+            // With what the sweep is drawn against (c), through DAOLib
+            // (dao/Abilities.h, b51d676): the scripts' SetCooldown sets what
+            // is left and what it was set to as one, so a hold showed a full
+            // sweep that never moved, where the user wants the turns shown.
+            // DAOLib's refuses a creature with no record for the ability
+            // (an item's, by its tag): the scripts' then, as before.
+            if (e.c <= 0 ||
+                !dao::abilities::SetCooldown(e.target, e.a, static_cast<float>(e.b), static_cast<float>(e.c)))
+            {
+                if (e.c > 0)
+                {
+                    spdlog::debug(
+                        "ability {} of {:#010x}: no cooldown record to set {} of {} s on; set as the scripts do", e.a,
+                        e.target, e.b, e.c);
+                }
+                api::SetCooldown(e.target, e.a, static_cast<float>(e.b));
+            }
             break;
         case EffectKind::EndConditions:
             // Their turns are spent (core: "Conditions in turns"): the

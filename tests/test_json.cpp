@@ -62,7 +62,7 @@ TEST_CASE("the machine's state says whose turn, what is held and what cools down
     CHECK(json.find(R"({"id":"0x100","name":"Hero","side":"party")") != std::string::npos);
     CHECK(json.find(R"("held":[{"id":"0x200","name":"Genlock","condition":"disabled","turns_owed":1)") !=
           std::string::npos);
-    CHECK(json.find(R"("cooldowns":[{"id":"0x100","ability":617,"turns":2}])") != std::string::npos);
+    CHECK(json.find(R"("cooldowns":[{"id":"0x100","ability":617,"turns":2,"of":2}])") != std::string::npos);
     CHECK(json.ends_with("]}"));
 }
 

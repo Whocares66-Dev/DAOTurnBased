@@ -498,6 +498,30 @@ MUTANTS = [
         "            if (!outsiderScanNow_ || lastNow_ - *outsiderScanNow_ >= kOutsiderScanMs / 1000)",
     ),
     Mutant(
+        "a held cooldown's sweep stays full",
+        MACHINE,
+        "kCooldownHoldSeconds * h.turns / h.of, kCooldownHoldSeconds));",
+        "kCooldownHoldSeconds, kCooldownHoldSeconds));",
+    ),
+    Mutant(
+        "an AI whose action was given back is not told to choose again",
+        MACHINE,
+        "    if (!player && budget_.actions > 0 && budget_.refunded && !budget_.retried && !budget_.outOfMovement)",
+        "    if (!player && budget_.actions > 9 && budget_.refunded && !budget_.retried && !budget_.outOfMovement)",
+    ),
+    Mutant(
+        "an AI whose action was given back is told again and again",
+        MACHINE,
+        "        budget_.retried = true;",
+        "        ;",
+    ),
+    Mutant(
+        "every refusal is an event",
+        MACHINE,
+        "lastNow_ - refusedEvent_->at < kRefusedEventMs;",
+        "lastNow_ - refusedEvent_->at < kRefusedEventMs / 1000;",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",
@@ -518,14 +542,14 @@ MUTANTS = [
     Mutant(
         "an ability's cooldown is never held",
         MACHINE,
-        "        if (turns > 0)\n        {\n            usedNow_.push_back(Hold{who->id, request.ability, turns});",
-        "        if (turns > 99)\n        {\n            usedNow_.push_back(Hold{who->id, request.ability, turns});",
+        "        if (turns > 0)\n        {\n            usedNow_.push_back(Hold{who->id, request.ability, turns, turns});",
+        "        if (turns > 99)\n        {\n            usedNow_.push_back(Hold{who->id, request.ability, turns, turns});",
     ),
     Mutant(
         "a held cooldown is released a turn early",
         MACHINE,
-        "if (h.creature == who.id && --h.turns <= 0)",
-        "if (h.creature == who.id && --h.turns <= 1)",
+        "        if (--h.turns <= 0)",
+        "        if (--h.turns <= 1)",
     ),
     Mutant(
         "a sustained ability's toggle costs the action",

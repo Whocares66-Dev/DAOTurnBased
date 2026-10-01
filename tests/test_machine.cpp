@@ -2055,3 +2055,154 @@ TEST_CASE("the game's repeat of an order just taken is refused without a word", 
     CHECK(w.Said(L"No action left"));
     CHECK(std::ranges::count_if(events, [](const TurnEvent &e) { return e.kind == EventKind::Refused; }) == 1);
 }
+
+TEST_CASE("a held cooldown's sweep shows its turns: what is left over what it was held for", "[machine][cooldowns]")
+{
+    // The user, 2026-09-30: with 2 of 3 turns left to wait, a third
+    // recovered. Fixed() has 10 s a turn: 30 s is three turns.
+    World w;
+    w.StartFight();
+    CHECK(w.UseAbility(kHero, Source::Player, kShieldBash, 30.0f) == Verdict::Allow);
+    w.RunFor(100);
+    w.Finish(kHero);
+    w.RunFor(600);
+    const auto shown = [&](std::int32_t left, std::int32_t of) {
+        return std::ranges::any_of(w.applied, [&](const Effect &e) {
+            return e.kind == EffectKind::Cooldown && e.target == kHero && e.a == kShieldBash && e.b == left &&
+                   e.c == of;
+        });
+    };
+    CHECK(shown(3600, 3600)); // held: none of it recovered
+    w.applied.clear();
+    UntilHerosTurn(w);
+    CHECK(shown(2400, 3600)); // 2 of 3 left: a third recovered
+    REQUIRE(w.machine.State().cooldowns.size() == 1);
+    CHECK(w.machine.State().cooldowns[0].turns == 2);
+    CHECK(w.machine.State().cooldowns[0].of == 3);
+    w.applied.clear();
+    UntilHerosTurn(w);
+    CHECK(shown(1200, 3600));
+    w.applied.clear();
+    UntilHerosTurn(w);
+    CHECK(Cooled(w, kHero, kShieldBash, 0)); // ready
+}
+
+TEST_CASE("a fight's end gives a held cooldown back in seconds, left and in all", "[machine][cooldowns]")
+{
+    World w;
+    w.StartFight();
+    CHECK(w.UseAbility(kHero, Source::Player, kShieldBash, 30.0f) == Verdict::Allow);
+    w.RunFor(100);
+    w.Finish(kHero);
+    w.RunFor(600);
+    UntilHerosTurn(w); // 2 of 3 turns left
+    w.applied.clear();
+    w.Get(kGenlock).down = true;
+    w.Get(kHurlock).down = true;
+    (void)w.machine.OnPauseKey();
+    w.RunFor(500);
+    REQUIRE_FALSE(w.machine.Active());
+    CHECK(std::ranges::any_of(w.applied, [](const Effect &e) {
+        return e.kind == EffectKind::Cooldown && e.target == kHero && e.a == kShieldBash && e.b == 20 && e.c == 30;
+    }));
+}
+
+TEST_CASE("an AI whose action failed without acting chooses again, once", "[machine]")
+{
+    // The user, 2026-09-30: an ally guard stood through a fight. His attack
+    // failed for want of room at his target each turn, his action was given
+    // back, and his turn ended 48 ms later all the same.
+    World w;
+    w.StartFight();
+    (void)w.machine.OnPauseKey(); // the hero passes
+    int pokes = 0;
+    w.onPoke = [&](ObjectId id) {
+        ++pokes;
+        CHECK(w.Order(id, CommandType::Attack, Source::Script) == Verdict::Allow);
+    };
+    for (int i = 0; i < 20 && w.Current() != kGenlock; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kGenlock);
+    w.Frame();
+    REQUIRE(pokes == 1);
+    // No room at its target: the command ends at once, nothing done.
+    CHECK(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    w.Finish(kGenlock);
+    w.Frame();
+    w.Frame();
+    w.Frame();
+    CHECK(w.Current() == kGenlock); // its turn goes on
+    CHECK(pokes == 2);              // told again: it chose again
+    // The second fails too: no third try, the turn ends.
+    CHECK_FALSE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    w.Finish(kGenlock);
+    w.RunFor(1000);
+    CHECK(w.Current() != kGenlock);
+    CHECK(pokes == 2);
+}
+
+TEST_CASE("the same refusal again and again is one event a second", "[machine]")
+{
+    // The user's eight fights: 1,097 refusals on Eluvian's bus, up to 64 in
+    // a second.
+    World w;
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) {
+        if (e.kind == EventKind::Refused)
+        {
+            events.push_back(e);
+        }
+    });
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    for (int i = 0; i < 60; ++i) // a follower's move, asked for every frame: 0.96 s
+    {
+        CHECK(w.Order(kCompanion, CommandType::MoveToLocation, Source::Player) == Verdict::Block);
+        w.Frame();
+    }
+    CHECK(events.size() == 1);
+    // Another refusal is its own event, and so is the first again after it.
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 30.0f) == Verdict::Block);
+    CHECK(events.size() == 2);
+    CHECK(w.Order(kCompanion, CommandType::MoveToLocation, Source::Player) == Verdict::Block);
+    CHECK(events.size() == 3);
+    // And the same one a second on.
+    w.RunFor(1100);
+    CHECK(w.Order(kCompanion, CommandType::MoveToLocation, Source::Player) == Verdict::Block);
+    CHECK(events.size() == 4);
+}
+
+TEST_CASE("an AI told to choose again that only moves is not told a third time", "[machine]")
+{
+    // Its action is still unspent after the move: without the once, it
+    // would be told again after every step.
+    World w;
+    w.StartFight();
+    (void)w.machine.OnPauseKey(); // the hero passes
+    int pokes = 0;
+    w.onPoke = [&](ObjectId id) {
+        ++pokes;
+        const CommandType choice = pokes == 1 ? CommandType::Attack : CommandType::MoveToLocation;
+        CHECK(w.Order(id, choice, Source::Script) == Verdict::Allow);
+    };
+    for (int i = 0; i < 20 && w.Current() != kGenlock; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kGenlock);
+    w.Frame();
+    REQUIRE(pokes == 1);
+    CHECK(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    w.Finish(kGenlock);
+    w.Frame();
+    w.Frame();
+    w.Frame();
+    REQUIRE(pokes == 2); // it moves instead
+    w.RunFor(200);
+    w.Finish(kGenlock);
+    w.RunFor(2000);
+    CHECK(pokes == 2);
+    CHECK(w.Current() != kGenlock); // its turn ended
+}

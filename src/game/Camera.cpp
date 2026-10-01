@@ -117,9 +117,13 @@ void CameraDirector::Watch()
     using dao::camera::MoveEnd;
     const std::optional<MoveEnd> why = dao::camera::LastEnd(dao::camera::Move::Pan);
     const std::string_view said = why ? dao::camera::Name(*why) : std::string_view{"?"};
-    if (shortBy <= kArrivedMeters)
+    // DAOLib's "arrived" is the pan's own word that the focus is on the
+    // creature. The distance measured here is the controller's focus from
+    // the creature's feet, which in the user's play stood 3.1 m apart with
+    // the pan arrived: a warning and a second pan for nothing (23:41:31).
+    if (why == MoveEnd::Arrived || shortBy <= kArrivedMeters)
     {
-        spdlog::debug("camera on {:#010x} after {} ms ({})", id, ran, said);
+        spdlog::debug("camera on {:#010x} after {} ms ({}, {:.1f} m from it)", id, ran, said, shortBy);
         return;
     }
     // Short of it and not the player's doing: once more. Another selection

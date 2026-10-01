@@ -103,7 +103,7 @@ std::string ToJson(const MachineState &state)
         const CooldownView &cooldown = state.cooldowns[i];
         out += i == 0 ? R"({"id":)" : R"(,{"id":)";
         Id(out, cooldown.id);
-        out += std::format(R"(,"ability":{},"turns":{}}})", cooldown.ability, cooldown.turns);
+        out += std::format(R"(,"ability":{},"turns":{},"of":{}}})", cooldown.ability, cooldown.turns, cooldown.of);
     }
     out += "]}";
     return out;

@@ -755,11 +755,12 @@ void TurnMachine::HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx)
 
 namespace
 {
-Effect CooldownOf(ObjectId creature, std::int32_t ability, std::int32_t seconds)
+Effect CooldownOf(ObjectId creature, std::int32_t ability, std::int32_t seconds, std::int32_t of = 0)
 {
     Effect e = Effect::Of(EffectKind::Cooldown, creature);
     e.a = ability;
     e.b = seconds;
+    e.c = of;
     return e;
 }
 } // namespace
@@ -773,7 +774,7 @@ void TurnMachine::HoldUsed(std::vector<Effect> &fx)
     {
         std::erase_if(holds_, [&](const Hold &h) { return h.creature == used.creature && h.ability == used.ability; });
         holds_.push_back(used);
-        fx.push_back(CooldownOf(used.creature, used.ability, kCooldownHoldSeconds));
+        fx.push_back(CooldownOf(used.creature, used.ability, kCooldownHoldSeconds, kCooldownHoldSeconds));
         if (Logs(LogLevel::Debug))
         {
             Log(LogLevel::Debug, std::format("ability {} of {:#010x} held for {} of its user's turns", used.ability,
@@ -790,11 +791,23 @@ void TurnMachine::TickCooldowns(const Combatant &who, std::vector<Effect> &fx)
 {
     for (Hold &h : holds_)
     {
-        if (h.creature == who.id && --h.turns <= 0)
+        if (h.creature != who.id)
+        {
+            continue;
+        }
+        if (--h.turns <= 0)
         {
             fx.push_back(CooldownOf(h.creature, h.ability, 0));
             Log(LogLevel::Info, std::format("{}'s ability {} is ready again", Utf8(who.name), h.ability));
             Emit(EventKind::CooldownReleased, who.id, {}, h.ability);
+        }
+        else if (h.of > 0)
+        {
+            // The quickbar's sweep shows the turns: with 2 of 3 left to
+            // wait, a third recovered (the user, 2026-09-30). Held as it
+            // was, the slot showed a full sweep that never moved.
+            fx.push_back(
+                CooldownOf(h.creature, h.ability, kCooldownHoldSeconds * h.turns / h.of, kCooldownHoldSeconds));
         }
     }
     std::erase_if(holds_, [](const Hold &h) { return h.turns <= 0; });
@@ -807,7 +820,8 @@ void TurnMachine::ReleaseCooldowns(std::vector<Effect> &fx)
     {
         fx.push_back(CooldownOf(
             h.creature, h.ability,
-            static_cast<std::int32_t>(std::ceil(static_cast<float>(h.turns) * settings_.cooldownSecondsPerTurn))));
+            static_cast<std::int32_t>(std::ceil(static_cast<float>(h.turns) * settings_.cooldownSecondsPerTurn)),
+            static_cast<std::int32_t>(std::ceil(static_cast<float>(h.of) * settings_.cooldownSecondsPerTurn))));
     }
     holds_.clear();
 }
@@ -1128,6 +1142,21 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
     if (!player && passRequested_)
     {
         EndTurn(fx, "done");
+        return;
+    }
+    // An AI whose action failed without acting has it back (OnCommandFailed)
+    // and is told its turn has come once more: it may choose something
+    // else. Its turn ended here before, the action unused: an ally guard,
+    // no room at his target every turn (COMMAND_FAILED_NO_SPACE_IN_MELEE_
+    // RING), stood through a whole fight (the user, 2026-09-30). Once a
+    // turn, as the action is given back once.
+    if (!player && budget_.actions > 0 && budget_.refunded && !budget_.retried && !budget_.outOfMovement)
+    {
+        budget_.retried = true;
+        Log(LogLevel::Info, std::format("{} chooses again, its action given back", Utf8(current->name)));
+        fx.push_back(Effect::Of(EffectKind::PokeAi, current->id));
+        deadline_ = clock_ + static_cast<std::uint32_t>(settings_.aiThinkMs);
+        phase_ = Phase::AiThinking;
         return;
     }
     if (clock_ < deadline_)
@@ -1524,7 +1553,14 @@ void TurnMachine::Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId o
 void TurnMachine::Refuse(ObjectId target, std::wstring text, CommandType command, std::string note)
 {
     lastPlayerRefusal_ = std::format("{} ({}{}{})", Utf8(text), Name(command), note.empty() ? "" : ": ", note);
-    Emit(EventKind::Refused, target, Utf8(text), 0, Name(command), std::move(note));
+    // The same refusal again within a second is the same event.
+    const bool again = refusedEvent_ && refusedEvent_->who == target && refusedEvent_->command == command &&
+                       refusedEvent_->text == text && lastNow_ - refusedEvent_->at < kRefusedEventMs;
+    if (!again)
+    {
+        refusedEvent_ = RefusedEvent{target, command, text, lastNow_};
+        Emit(EventKind::Refused, target, Utf8(text), 0, Name(command), std::move(note));
+    }
     // One a second: a player clicking again and again gets one message.
     if (anyRefusal_ && lastNow_ - lastRefusalNow_ < 1000)
     {
@@ -1739,7 +1775,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
                               : static_cast<int>(std::ceil(request.cooldownSeconds / settings_.cooldownSecondsPerTurn));
         if (turns > 0)
         {
-            usedNow_.push_back(Hold{who->id, request.ability, turns});
+            usedNow_.push_back(Hold{who->id, request.ability, turns, turns});
         }
     }
     if (settings_.cameraFollow && !player && budget_.commands == 0)
@@ -1824,7 +1860,7 @@ MachineState TurnMachine::State() const
     }
     for (const Hold &h : holds_)
     {
-        state.cooldowns.push_back({h.creature, h.ability, h.turns});
+        state.cooldowns.push_back({h.creature, h.ability, h.turns, h.of});
     }
     state.lastRefusal = lastPlayerRefusal_;
     state.speed = speedSet_;
