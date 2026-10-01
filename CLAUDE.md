@@ -30,7 +30,8 @@ tests/        Catch2 over src/core: scripted cases in a stand-in for the game (W
               fights checked against the design's promises every frame (test_fights.cpp)
 tools/        build.ps1 (DAOLib's, for this tree), deploy.ps1, mutants.py (break the core on purpose),
               movie.py (build ui/ into build\ui\turnorder.swf), snapshot.ps1 (look at it in Ruffle),
-              test_movie.py, console.ps1, check-powershell.ps1
+              sweep.py (who is in a fight, swept through an area by Eluvian: it launches the game),
+              test_*.py, console.ps1, check-powershell.ps1
 dev/          design, UI, DAOLib's needs, testing; images/ for the docs
 extern/DAOLib the submodule
 ```
