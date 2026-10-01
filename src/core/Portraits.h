@@ -40,6 +40,46 @@ namespace tb
 // nothing and draws grey (seen in play, 2026-09-30). Empty stays empty.
 [[nodiscard]] std::wstring TextureName(std::wstring_view url);
 
+// Where a creature's picture comes from. The engine renders a portrait
+// with a camera it takes from the game's portraits table (portraits.gda) by
+// the creature's tag or appearance, else the default, which is a person's
+// face: a giant spider, with no row, came out as a close view of its
+// abdomen (the user's picture, 2026-10-01). For some appearances the table
+// names a ready-made picture instead (its Override column: a wolf, two
+// bears, two spiders, the swarm, a golem, three forms of the Fade), and the
+// engine renders nothing for those. So:
+// - its appearance's ready-made picture, if the table has one;
+// - a render, for a person, or a creature the table has a camera for (a
+//   great bear, a blight wolf, the followers by their tags);
+// - else the ready-made picture of its kin, a row of the same family,
+//   which is the label up to its first comma ("Spider, Giant" is a
+//   Spider), the plain one first ("Spider" before "Spider, Corrupted");
+// - else none: the card shows initials rather than a bad render.
+struct PortraitRow
+{
+    std::int32_t appearance = 0; // 0: a row found by its tag
+    std::wstring label;
+    std::wstring tag;
+    std::wstring made; // Override: a ready-made picture's texture, or empty
+};
+
+enum class PortraitSource : std::uint8_t
+{
+    None,
+    Render,
+    ReadyMade,
+};
+
+struct PortraitChoice
+{
+    PortraitSource source = PortraitSource::None;
+    std::wstring made; // for ReadyMade: the texture
+};
+
+[[nodiscard]] std::wstring PortraitFamily(std::wstring_view label);
+[[nodiscard]] PortraitChoice ChoosePortrait(std::int32_t appearance, std::wstring_view appearanceLabel, bool person,
+                                            std::wstring_view tag, const std::vector<PortraitRow> &rows);
+
 class PortraitBook
 {
   public:

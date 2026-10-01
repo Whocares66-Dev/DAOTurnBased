@@ -171,39 +171,57 @@ void BarLink::FollowFight(const TurnView &view, std::uint32_t nowMs)
 
 namespace
 {
-// The picture the game keeps ready for a creature it draws no face for: the
-// portraits table (portraits.gda, table 7, which also gives the portrait
-// renderer its camera) names one by appearance in its Override column:
-// portrait_49 a wolf, 09 and 68 bears, 59 and 57 spiders, 14 the swarm, 06
-// the golem, 12, 28 and 37 the shapeshifter's and the Fade's forms, each a
-// texture in gui.erf, as the party bar shows a ranger's summons. Asked to
-// render such a creature the engine makes nothing, and a wolf's card showed
-// "Wo" (the user, 2026-10-01). Read from the game's files 2026-10-01; a
-// great bear and a blight wolf have rows without one.
+// The game's portraits table (portraits.gda, table 7), which gives the
+// portrait renderer its camera by tag or appearance, and for some
+// appearances names a ready-made picture instead (Override: portrait_49 a
+// wolf, 09 and 68 bears, 59 and 57 spiders, 14 the swarm, 06 the golem, 12,
+// 28 and 37 forms of the Fade, textures in gui.erf, as the party bar shows
+// a ranger's summons). Read once: the table does not change in a game.
+// Which picture a creature gets from it is core's (ChoosePortrait).
 constexpr std::int32_t kPortraitsTable = 7;
 
-std::wstring ReadyMadePortrait(ObjectId id)
+const std::vector<PortraitRow> &PortraitRows()
 {
-    const std::int32_t appearance = dao::script::api::GetAppearanceType(id);
-    const std::int32_t rows = dao::gda::Rows(kPortraitsTable).value_or(0);
-    if (appearance <= 0)
+    static std::vector<PortraitRow> rows;
+    if (!rows.empty())
     {
-        return {};
+        return rows;
     }
-    for (std::int32_t row = 0; row < rows; ++row)
+    const std::int32_t count = dao::gda::Rows(kPortraitsTable).value_or(0);
+    const auto text = [](std::int32_t row, std::string_view column) {
+        return dao::gda::GetString(kPortraitsTable, row, dao::core::GdaColumnHash(column)).value_or(std::wstring{});
+    };
+    for (std::int32_t row = 0; row < count; ++row)
     {
-        if (dao::gda::GetInt(kPortraitsTable, row, dao::core::GdaColumnHash("Appearance")) != appearance)
-        {
-            continue;
-        }
-        const std::wstring made =
-            dao::gda::GetString(kPortraitsTable, row, dao::core::GdaColumnHash("Override")).value_or(std::wstring{});
-        if (!made.empty())
-        {
-            return L"img://" + made;
-        }
+        PortraitRow r;
+        r.appearance = dao::gda::GetInt(kPortraitsTable, row, dao::core::GdaColumnHash("Appearance")).value_or(0);
+        r.label = text(row, "Label");
+        r.tag = text(row, "Tag");
+        r.made = text(row, "Override");
+        rows.push_back(std::move(r));
     }
-    return {};
+    return rows;
+}
+
+// A person (the appearance table's ModelType H, or P for the races a player
+// is of) has a face the default camera frames; W and S are creatures. An
+// appearance the table does not know is taken for a person's, as before.
+struct Looks
+{
+    std::int32_t appearance = 0;
+    std::wstring label;
+    bool person = true;
+};
+
+Looks LooksOf(ObjectId id)
+{
+    Looks looks;
+    looks.appearance = dao::script::api::GetAppearanceType(id);
+    const auto type = dao::gda::GetString(dao::script::Table::Appearance, looks.appearance, "ModelType");
+    looks.label =
+        dao::gda::GetString(dao::script::Table::Appearance, looks.appearance, "Label").value_or(std::wstring{});
+    looks.person = !type || type->empty() || *type == L"H" || *type == L"P";
+    return looks;
 }
 } // namespace
 
@@ -221,18 +239,32 @@ void BarLink::KeepPortraits(const TurnView &view, bool render)
     bool rendered = false;
     if (creature != nullptr)
     {
-        url = creature->PortraitImage();
-        how = "the game's";
-        if (url.empty() && render)
+        const Looks looks = LooksOf(*id);
+        const PortraitChoice choice =
+            ChoosePortrait(looks.appearance, looks.label, looks.person, dao::script::api::GetTag(*id), PortraitRows());
+        switch (choice.source)
         {
-            url = creature->RenderPortrait();
-            how = "rendered";
-            rendered = !url.empty();
-        }
-        if (url.empty())
-        {
-            url = ReadyMadePortrait(*id);
+        case PortraitSource::ReadyMade:
+            url = L"img://" + choice.made;
             how = "the portraits table's";
+            break;
+        case PortraitSource::Render:
+            url = creature->PortraitImage();
+            how = "the game's";
+            if (url.empty() && render)
+            {
+                url = creature->RenderPortrait();
+                how = "rendered";
+                rendered = !url.empty();
+            }
+            break;
+        case PortraitSource::None:
+            // No picture and no camera for it: a render would be a person's
+            // framing of a beast.
+            how = "no picture or camera for its kind";
+            spdlog::debug("{:#010x} is a {} (appearance {}): the game has no picture of it or its kin, and no camera",
+                          *id, Utf8(looks.label), looks.appearance);
+            break;
         }
     }
     const auto card = std::ranges::find(view.upcoming, *id, &CardView::id);

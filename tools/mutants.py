@@ -540,6 +540,18 @@ MUTANTS = [
         "    case CommandType::PickupItem:\n        return CommandKind::Action;",
     ),
     Mutant(
+        "a beast with no camera is rendered as a person is",
+        PORTRAITS,
+        "    if (person)\n    {\n        return {PortraitSource::Render, {}};",
+        "    if (person || appearance > 0)\n    {\n        return {PortraitSource::Render, {}};",
+    ),
+    Mutant(
+        "a creature gets the picture of another family",
+        PORTRAITS,
+        "PortraitFamily(row.label) != family)",
+        "PortraitFamily(row.label) == family)",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",

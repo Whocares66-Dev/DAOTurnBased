@@ -271,3 +271,65 @@ TEST_CASE("a bar turned off mid-fight lets its portraits go as a fight's end doe
     CHECK(book.Tried() > 0);
     CHECK(book.TakeReleases(9000).empty());
 }
+
+namespace
+{
+// The game's portraits table, the rows that matter (portraits.gda, read
+// from the game's files 2026-10-01).
+std::vector<PortraitRow> GameRows()
+{
+    return {
+        {0, L"Default", L"default", L""},
+        {0, L"Dog", L"gen00fl_dog", L""},
+        {9, L"Bear", L"", L"portrait_09"},
+        {59, L"Spider", L"", L"portrait_59"},
+        {14, L"Swarm", L"", L"portrait_14"},
+        {6, L"Golem", L"", L"portrait_06"},
+        {49, L"Wolf", L"", L"portrait_49"},
+        {68, L"Bear, Beareskan", L"", L"portrait_68"},
+        {57, L"Spider, Corrupted", L"", L"portrait_57"},
+        {8, L"Bear, Great", L"", L""},
+        {74, L"Wolf, Blight", L"", L""},
+    };
+}
+} // namespace
+
+TEST_CASE("a creature's picture: the table's own, a render where there is a camera, its kin's, or none", "[portraits]")
+{
+    const std::vector<PortraitRow> rows = GameRows();
+    const auto choose = [&](std::int32_t appearance, std::wstring_view label, bool person, std::wstring_view tag) {
+        return ChoosePortrait(appearance, label, person, tag, rows);
+    };
+    // The table's own picture: a wolf (the user's "Wo"), a corrupted spider.
+    CHECK(choose(49, L"Wolf", false, L"wolf").source == PortraitSource::ReadyMade);
+    CHECK(choose(49, L"Wolf", false, L"wolf").made == L"portrait_49");
+    CHECK(choose(57, L"Spider, Corrupted", false, L"").made == L"portrait_57");
+    // A person is rendered, whatever its tag.
+    CHECK(choose(15, L"Human", true, L"bhn200cr_howe").source == PortraitSource::Render);
+    CHECK(choose(0, L"", true, L"").source == PortraitSource::Render);
+    // A creature the table has a camera for, by appearance or by tag.
+    CHECK(choose(8, L"Bear, Great", false, L"").source == PortraitSource::Render);
+    CHECK(choose(74, L"Wolf, Blight", false, L"").source == PortraitSource::Render);
+    CHECK(choose(35, L"Dog, Party Member", false, L"gen00fl_dog").source == PortraitSource::Render);
+    // A giant spider has no row: its kin's, the plain spider's, not a render
+    // of its abdomen (the user's picture, 2026-10-01).
+    CHECK(choose(58, L"Spider, Giant", false, L"spider_giant").source == PortraitSource::ReadyMade);
+    CHECK(choose(58, L"Spider, Giant", false, L"spider_giant").made == L"portrait_59");
+    CHECK(choose(53, L"Witherfang", false, L"").source == PortraitSource::None); // no wolf by name
+    // No kin in the table: initials, not a bad render.
+    CHECK(choose(34, L"Dog, Mabari", false, L"bhn200cr_mabari").source == PortraitSource::None);
+    CHECK(choose(27, L"Rage Demon", false, L"").source == PortraitSource::None);
+    CHECK(choose(0, L"", false, L"").source == PortraitSource::None);
+}
+
+TEST_CASE("a family is the label up to its first comma, in small letters", "[portraits]")
+{
+    CHECK(PortraitFamily(L"Spider, Giant") == L"spider");
+    CHECK(PortraitFamily(L"Spider") == L"spider");
+    CHECK(PortraitFamily(L"Bear , Great") == L"bear");
+    CHECK(PortraitFamily(L"Arcane Spirit") == L"arcane spirit");
+    CHECK(PortraitFamily(L"").empty());
+    // With only a family's lesser member ready-made, that one is its kin's.
+    const std::vector<PortraitRow> rows = {{57, L"Spider, Corrupted", L"", L"portrait_57"}};
+    CHECK(ChoosePortrait(58, L"Spider, Giant", false, L"", rows).made == L"portrait_57");
+}

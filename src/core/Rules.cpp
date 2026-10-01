@@ -18,16 +18,6 @@ CommandKind Classify(CommandType type)
     case CommandType::UseItem:
     case CommandType::Fly:
         return CommandKind::Action;
-    // Walking, however it is asked for.
-    case CommandType::MoveToLocation:
-    case CommandType::MoveToObject:
-    case CommandType::MoveToMultipleLocations:
-    case CommandType::MoveAwayFromObject:
-    case CommandType::MoveAwayFromPoint:
-    case CommandType::ForceFollowObject:
-    case CommandType::RandomWalk:
-    case CommandType::Drive:
-        return CommandKind::Move;
     // What is not fighting costs no action and does not end the turn (the
     // user's rule, 2026-10-01: a door, and the like; action points will put
     // a price on these): a door, a chest or a lever used, a lock, a thing
@@ -40,7 +30,17 @@ CommandKind Classify(CommandType type)
     case CommandType::TakeItem:
     case CommandType::PickupItem:
         return CommandKind::Free;
-    // Handling one's own gear, and turning to face.
+    // Walking, however it is asked for.
+    case CommandType::MoveToLocation:
+    case CommandType::MoveToObject:
+    case CommandType::MoveToMultipleLocations:
+    case CommandType::MoveAwayFromObject:
+    case CommandType::MoveAwayFromPoint:
+    case CommandType::ForceFollowObject:
+    case CommandType::RandomWalk:
+    case CommandType::Drive:
+        return CommandKind::Move;
+    // Handling one's own gear, and turning to face (free as well).
     case CommandType::SwitchWeaponSets:
     case CommandType::SheatheWeapons:
     case CommandType::EquipItem:

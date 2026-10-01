@@ -102,4 +102,67 @@ std::size_t PortraitBook::Found() const
         std::ranges::count_if(urls_, [](const auto &entry) { return !entry.second.empty(); }));
 }
 
+std::wstring PortraitFamily(std::wstring_view label)
+{
+    std::wstring family{label.substr(0, label.find(L','))};
+    while (!family.empty() && family.back() == L' ')
+    {
+        family.pop_back();
+    }
+    for (wchar_t &c : family)
+    {
+        if (c >= L'A' && c <= L'Z')
+        {
+            c = static_cast<wchar_t>(c - L'A' + L'a');
+        }
+    }
+    return family;
+}
+
+PortraitChoice ChoosePortrait(std::int32_t appearance, std::wstring_view appearanceLabel, bool person,
+                              std::wstring_view tag, const std::vector<PortraitRow> &rows)
+{
+    const auto own = [&](const PortraitRow &row) { return appearance > 0 && row.appearance == appearance; };
+    for (const PortraitRow &row : rows)
+    {
+        if (own(row) && !row.made.empty())
+        {
+            return {PortraitSource::ReadyMade, row.made};
+        }
+    }
+    if (person)
+    {
+        return {PortraitSource::Render, {}};
+    }
+    for (const PortraitRow &row : rows)
+    {
+        if (own(row) || (!tag.empty() && row.tag == tag))
+        {
+            return {PortraitSource::Render, {}}; // the table has its camera
+        }
+    }
+    const std::wstring family = PortraitFamily(appearanceLabel);
+    const PortraitRow *kin = nullptr;
+    for (const PortraitRow &row : rows)
+    {
+        if (family.empty() || row.made.empty() || PortraitFamily(row.label) != family)
+        {
+            continue;
+        }
+        if (row.label.find(L',') == std::wstring::npos)
+        {
+            return {PortraitSource::ReadyMade, row.made}; // the plain one of its family
+        }
+        if (kin == nullptr)
+        {
+            kin = &row;
+        }
+    }
+    if (kin != nullptr)
+    {
+        return {PortraitSource::ReadyMade, kin->made};
+    }
+    return {};
+}
+
 } // namespace tb
