@@ -7,6 +7,7 @@
 #include "dao/Gui.h"
 #include "dao/Log.h"
 #include "dao/Script.h"
+#include "dao/Vfx.h"
 #include "dao/World.h"
 #include "dao/generated/ScriptApi.h"
 
@@ -31,6 +32,22 @@ namespace api = dao::script::api;
 // two, and a straight walk costs nothing.
 constexpr float kMoved = 0.25f;
 constexpr std::uint32_t kSearchEveryMs = 150;
+
+// The game's own marker for where a move goes: vfx_base's row 30000,
+// "Movement Indicator" (its model SR_MOV, beside the selection rings'
+// SR_PTY and SR_EMY; its art vfx_movetarget.dds, a four-pointed star,
+// white at the heart and amber at the edge, read 2026-10-01 from the
+// table and textures.erf). A lasting effect (the table's type D), laid on
+// the ground (AlignToGround).
+constexpr std::int32_t kMoveMarker = 30000;
+
+// The rings on the ground, drawn by the movie where the game's marker does
+// not belong: round a path's end that is too far, about as wide as a
+// creature's own selection ring, and round where the movement runs out,
+// half that. Each a polygon of so many points, which the movie rounds.
+constexpr float kEndRing = 0.45f;
+constexpr float kStopRing = 0.22f;
+constexpr int kRingPoints = 16;
 
 Vec3 Of(const dao::Vector &v)
 {
@@ -84,6 +101,17 @@ std::vector<ScreenDot> OnScreen(const std::vector<Vec3> &points)
     return dots;
 }
 
+// A ring on the ground on the screen, whole or not at all.
+std::vector<ScreenDot> RingOnScreen(const Vec3 &centre, float radius)
+{
+    std::vector<ScreenDot> dots = OnScreen(RingAround(centre, radius, kRingPoints));
+    if (dots.size() != static_cast<std::size_t>(kRingPoints))
+    {
+        dots.clear();
+    }
+    return dots;
+}
+
 } // namespace
 
 void Preview::Install()
@@ -113,8 +141,46 @@ void Preview::Install()
     });
 }
 
+void Preview::ShowMarker(const Vec3 &at)
+{
+    const dao::CCArea *area = dao::world::CurrentArea();
+    if (area == nullptr)
+    {
+        marker_ = kNoObject;
+        return;
+    }
+    if (marker_ != kNoObject && markerArea_ == area->Id() && dao::vfx::Move(marker_, Of(at)))
+    {
+        return;
+    }
+    // None yet, or it went with its area.
+    marker_ = dao::vfx::Place(kMoveMarker, Of(at));
+    markerArea_ = area->Id();
+    if (!std::exchange(markerSaid_, true))
+    {
+        spdlog::debug("the preview's end is the game's movement marker (effect {:#x})", marker_);
+    }
+}
+
+void Preview::HideMarker()
+{
+    if (marker_ == kNoObject)
+    {
+        return;
+    }
+    // In the area it was placed in only: in another it is gone with the
+    // first, and its id may be another effect's.
+    const dao::CCArea *area = dao::world::CurrentArea();
+    if (area != nullptr && markerArea_ == area->Id())
+    {
+        dao::vfx::Remove(marker_);
+    }
+    marker_ = kNoObject;
+}
+
 void Preview::Clear()
 {
+    HideMarker();
     searched_ = false;
     path_.clear();
     if (!std::exchange(drawn_, false))
@@ -175,8 +241,14 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
     const dao::GameModeExplore *explore = waiting ? ExploreMode() : nullptr;
     // The ground only, for now: over a creature or a door the cursor's point
     // is the object's, and the preview of an attack's walk is still to do.
+    // And ground a move would go to: a click on rubble is not an order at
+    // all (the engine's own test, which its move click makes), and a path
+    // drawn to it promised one. In play a red end there, clicked, was not
+    // refused "Too far": no command came (the fifteenth play test,
+    // 2026-10-01).
     const std::optional<dao::Vector> ground =
-        explore != nullptr && !explore->CursorObject() ? explore->CursorGround() : std::nullopt;
+        explore != nullptr && !explore->CursorObject() && explore->CursorGroundWalkable() ? explore->CursorGround()
+                                                                                          : std::nullopt;
     if (!ground || !AtRest(view.current))
     {
         Clear();
@@ -193,6 +265,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
     {
         // No path there as the game finds it: nothing is promised, so
         // nothing is drawn.
+        HideMarker();
         if (std::exchange(drawn_, false))
         {
             const std::lock_guard lock(mutex_);
@@ -215,6 +288,24 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
     if (shown.reach.size() == split.reach.size())
     {
         shown.beyond = OnScreen(split.beyond);
+        if (split.TooFar())
+        {
+            shown.stopRing = RingOnScreen(split.reach.back(), kStopRing);
+        }
+        // A path too far ends in a ring of the movie's; one in reach in
+        // the game's own marker, below.
+        if (split.TooFar() && shown.beyond.size() == split.beyond.size())
+        {
+            shown.endRing = RingOnScreen(path_.back(), kEndRing);
+        }
+    }
+    if (split.TooFar())
+    {
+        HideMarker();
+    }
+    else
+    {
+        ShowMarker(path_.back());
     }
     std::wstring encoded = EncodePreview(shown);
     drawn_ = true;

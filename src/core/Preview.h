@@ -16,8 +16,11 @@
 //   the reach:  x, y, x, y, ...: the points to where the movement runs out,
 //               in pixels of the view from its top left
 //   the beyond: the same, from there to the path's end; empty in reach
+//   two rings:  the same again, each a ring lying on the ground as the
+//               game's selection ring does: round where the movement runs
+//               out (empty in reach), and round the path's end
 //
-// With nothing to draw the head stands alone.
+// With nothing to draw the head stands alone. Version 2 added the rings.
 #pragma once
 
 #include "core/Types.h"
@@ -29,7 +32,7 @@
 namespace tb
 {
 
-inline constexpr int kPreviewVersion = 1;
+inline constexpr int kPreviewVersion = 2;
 
 struct PathSplit
 {
@@ -52,6 +55,11 @@ struct PathSplit
 // preview is red past exactly there.
 [[nodiscard]] PathSplit SplitPath(std::span<const Vec3> path, float meters);
 
+// `count` points of a ring lying flat round `centre`, for the game layer to
+// place on the screen: seen from the camera it is the ellipse a ring on the
+// ground is.
+[[nodiscard]] std::vector<Vec3> RingAround(const Vec3 &centre, float radius, int count);
+
 // A point of the path on the screen, in pixels of the view.
 struct ScreenDot
 {
@@ -67,6 +75,8 @@ struct PreviewView
     float meters = 0; // the movement left
     std::vector<ScreenDot> reach;
     std::vector<ScreenDot> beyond;
+    std::vector<ScreenDot> stopRing; // round where the movement runs out; empty in reach
+    std::vector<ScreenDot> endRing;  // round the path's end
 };
 
 // Nothing to draw: no path, no turn of the player's, the cursor off the

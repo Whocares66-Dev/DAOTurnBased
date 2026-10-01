@@ -640,24 +640,46 @@ function draw(view)
 
 // The movement preview (dev/UI.md, "The movement preview"): on the player's
 // turn, the path to the ground under the cursor, gold as far as the movement
-// left reaches and red beyond, with its length at its end. The plugin gives
+// left reaches and red beyond, a ring on the ground where the movement runs
+// out and where the path ends, and its length over the end. The plugin gives
 // the path's points where they are on the screen (TB_GetPreview, one string:
 // src/core/Preview.h), in pixels of the game's view, and the view's size
 // with them: the stage is laid over the view whole and centred (showAll),
-// so a pixel is a stage point by one scale and an offset. Asked every frame,
-// since the points move with the camera.
-var PREVIEW_VERSION = 1;
-var RED = 0xD8402C;
+// so a pixel is a stage point by one scale and an offset (seen so in play).
+// Asked every frame, since the points move with the camera.
+var PREVIEW_VERSION = 2;
+// The stage as tools/movie.py makes it (tools/test_movie.py holds the two
+// equal). Not Stage.width and Stage.height: in the game Stage.height is the
+// view's height in stage units, not the stage's (800 for a 1600 x 1000 view,
+// where the stage is 720), and by it the line was drawn 49 pixels low at
+// every point (the fifteenth play test, 2026-10-01). The bar, by its cards'
+// place in the same picture, lies where showAll puts this stage: scaled by
+// one number, centred.
+var STAGE_W = 1280;
+var STAGE_H = 720;
 var lastPreview = null;
 
 // For a player with no game behind it: a walk round a corner, a third of it
 // past the movement left.
 function samplePreview()
 {
-    var head = [PREVIEW_VERSION, Stage.width, Stage.height, 2, "13.6", "6.5"].join(FIELD);
-    var reach = [300, 250, 520, 232, 640, 190].join(FIELD);
-    var beyond = [640, 190, 700, 168, 860, 176].join(FIELD);
-    return head + CARD + reach + CARD + beyond;
+    var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 2, "13.6", "6.5"].join(FIELD);
+    var reach = [300, 262, 470, 250, 560, 214, 640, 200].join(FIELD);
+    var beyond = [640, 200, 720, 186, 800, 204, 900, 196].join(FIELD);
+    return head + CARD + reach + CARD + beyond + CARD + sampleRing(640, 200, 15).join(FIELD) + CARD +
+           sampleRing(900, 196, 26).join(FIELD);
+}
+
+// A ring on the ground as the camera sees it: flattened.
+function sampleRing(x, y, radius)
+{
+    var points = [];
+    for (var i = 0; i < 16; i++)
+    {
+        var angle = i * Math.PI / 8;
+        points.push(Math.round(x + Math.cos(angle) * radius), Math.round(y + Math.sin(angle) * radius * 0.42));
+    }
+    return points;
 }
 
 function askPreview()
@@ -686,42 +708,92 @@ function previewPoints(record, scale, offsetX, offsetY)
     return points;
 }
 
-// A line twice: dark and wide under, the colour over, so it reads on light
-// ground and dark.
-function stroke(clip, points, colour)
+// The line's look (the user, 2026-10-01: "a glowing golden line that fits
+// the game UI"). GFx 3 has no filters for shapes, so the glow is the line
+// drawn again and again, wide and faint to narrow and bright: a soft halo
+// in the colour, the colour itself, and a pale thread of light down its
+// middle, as the bar's gold rings have. Smoothed, since a path's corners
+// are the pathfinder's, not a walk's.
+//
+// The colours are the game's own movement marker's, which the path ends in
+// (the user: "make the line match that style"): vfx_movetarget.dds, the
+// star the game puts where a move click lands, is near white at its heart
+// (0xF7EFDE), a deep gold at the heart's edge (0xDEA210 to 0xE6B02D) and an
+// amber glow fading out (0xFFB300 to 0xFFBA10), measured from the texture
+// 2026-10-01. So: white-hot down the middle, gold at its edge, amber round
+// it. The red is the same made red.
+var MARKER_HALO = 0xFFB60C;
+var MARKER_EDGE = 0xE2A81C;
+var MARKER_HEART = 0xFBF3E2;
+var RED_HALO = 0xFF3A14;
+var RED_EDGE = 0xD8402C;
+var RED_HEART = 0xFFE6DA;
+// Each pass: width in stage pixels, which colour (0 shadow, 1 halo, 2 the
+// edge, 3 the heart), alpha.
+var GLOW = [[9, 0, 14], [24, 1, 5], [17, 1, 8], [11.5, 1, 13], [7.5, 1, 22], [4.6, 2, 100], [2.4, 3, 100]];
+
+// A path through its points, bent at each rather than cornered: straight to
+// the middle of each step, curved from middle to middle round the point
+// between. Closed, it is a ring: middle to middle all the way round.
+function tracePath(clip, points, closed)
 {
-    if (points.length < 2)
+    var n = points.length;
+    if (closed)
+    {
+        var from = points[n - 1];
+        clip.moveTo((from.x + points[0].x) / 2, (from.y + points[0].y) / 2);
+        for (var i = 0; i < n; i++)
+        {
+            var next = points[(i + 1) % n];
+            clip.curveTo(points[i].x, points[i].y, (points[i].x + next.x) / 2, (points[i].y + next.y) / 2);
+        }
+        return;
+    }
+    clip.moveTo(points[0].x, points[0].y);
+    for (var j = 1; j < n - 1; j++)
+    {
+        if (j == 1)
+        {
+            clip.lineTo((points[0].x + points[1].x) / 2, (points[0].y + points[1].y) / 2);
+        }
+        clip.curveTo(points[j].x, points[j].y, (points[j].x + points[j + 1].x) / 2,
+                     (points[j].y + points[j + 1].y) / 2);
+    }
+    clip.lineTo(points[n - 1].x, points[n - 1].y);
+}
+
+// `thin` for a ring: the same glow at about half the width.
+function glow(clip, points, red, closed, thin)
+{
+    if (points.length < (closed ? 3 : 2))
     {
         return;
     }
-    var passes = [[6, INK, 55], [3, colour, 95]];
-    for (var p = 0; p < passes.length; p++)
+    var colours = red ? [INK, RED_HALO, RED_EDGE, RED_HEART] : [INK, MARKER_HALO, MARKER_EDGE, MARKER_HEART];
+    for (var p = 0; p < GLOW.length; p++)
     {
-        clip.lineStyle(passes[p][0], passes[p][1], passes[p][2]);
-        clip.moveTo(points[0].x, points[0].y);
-        for (var i = 1; i < points.length; i++)
-        {
-            clip.lineTo(points[i].x, points[i].y);
-        }
+        clip.lineStyle(GLOW[p][0] * (thin ? 0.6 : 1), colours[GLOW[p][1]], GLOW[p][2]);
+        tracePath(clip, points, closed);
     }
 }
 
-function dot(clip, at, radius, colour)
+// The length, on a small dark plate as the bar's caption is, so it reads
+// on any ground.
+function previewLabel(clip, text, colour, at)
 {
-    var k = Math.tan(Math.PI / 8) * radius;
-    var s = Math.sin(Math.PI / 4) * radius;
-    clip.lineStyle(2, INK, 70);
-    clip.beginFill(colour, 100);
-    clip.moveTo(at.x + radius, at.y);
-    clip.curveTo(at.x + radius, at.y + k, at.x + s, at.y + s);
-    clip.curveTo(at.x + k, at.y + radius, at.x, at.y + radius);
-    clip.curveTo(at.x - k, at.y + radius, at.x - s, at.y + s);
-    clip.curveTo(at.x - radius, at.y + k, at.x - radius, at.y);
-    clip.curveTo(at.x - radius, at.y - k, at.x - s, at.y - s);
-    clip.curveTo(at.x - k, at.y - radius, at.x, at.y - radius);
-    clip.curveTo(at.x + k, at.y - radius, at.x + s, at.y - s);
-    clip.curveTo(at.x + radius, at.y - k, at.x + radius, at.y);
-    clip.endFill();
+    var field = clip.length;
+    field.text = text;
+    field.textColor = colour;
+    var w = field.textWidth + 18;
+    var h = 22;
+    var x = at.x - w / 2;
+    var y = at.y - 44;
+    clip.lineStyle(undefined); // the glow's last line would outline the plate
+    panel(clip, x, y, w, h, 8);
+    field._x = x;
+    field._width = w;
+    centre(field, y, h);
+    field._visible = true;
 }
 
 function drawPreview(text)
@@ -736,7 +808,7 @@ function drawPreview(text)
     {
         // Under the bar, over the sample's backdrop.
         clip = _root.createEmptyMovieClip("preview", 5);
-        label(clip, "length", 1, 0, 0, 160, 24, 15, GOLD, "left", false);
+        label(clip, "length", 1, 0, 0, 160, 24, 15, GOLD, "center", false);
     }
     clip.clear();
     clip.length._visible = false;
@@ -749,34 +821,31 @@ function drawPreview(text)
     {
         return;
     }
-    var scale = Math.min(viewW / Stage.width, viewH / Stage.height);
-    var offsetX = (viewW - Stage.width * scale) / 2;
-    var offsetY = (viewH - Stage.height * scale) / 2;
+    var scale = Math.min(viewW / STAGE_W, viewH / STAGE_H);
+    var offsetX = (viewW - STAGE_W * scale) / 2;
+    var offsetY = (viewH - STAGE_H * scale) / 2;
     var reach = previewPoints(records[1], scale, offsetX, offsetY);
     var beyond = previewPoints(records[2], scale, offsetX, offsetY);
+    // The rings lie on the ground, as the game's own selection ring does:
+    // the plugin gives each as its points on the screen. A path in reach
+    // has no ring at its end: the plugin puts the game's own movement
+    // marker there, in the world.
+    var stopRing = previewPoints(records[3], scale, offsetX, offsetY);
+    var endRing = previewPoints(records[4], scale, offsetX, offsetY);
     var tooFar = head[3] == "2";
-    stroke(clip, reach, GOLD);
-    stroke(clip, beyond, RED);
-    // Where the movement runs out, and where the path ends.
-    if (reach.length > 1)
+    // Red under gold, so the gold's glow lies over where they meet.
+    glow(clip, beyond, true, false, false);
+    glow(clip, reach, false, false, false);
+    glow(clip, endRing, tooFar, true, true);
+    if (tooFar)
     {
-        dot(clip, reach[reach.length - 1], tooFar ? 4 : 6, GOLD);
+        glow(clip, stopRing, false, true, true);
     }
     var end = beyond.length > 0 ? beyond[beyond.length - 1] : reach[reach.length - 1];
-    if (end == undefined)
+    if (end != undefined)
     {
-        return;
+        previewLabel(clip, tooFar ? head[4] + " m of " + head[5] : head[4] + " m", tooFar ? RED_HEART : GOLD, end);
     }
-    if (beyond.length > 1)
-    {
-        dot(clip, end, 6, RED);
-    }
-    var field = clip.length;
-    field.text = tooFar ? head[4] + " m of " + head[5] : head[4] + " m";
-    field.textColor = tooFar ? RED : GOLD;
-    field._x = end.x + 12;
-    field._y = end.y - 22;
-    field._visible = true;
 }
 
 Stage.scaleMode = "showAll";

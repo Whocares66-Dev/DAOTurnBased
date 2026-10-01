@@ -115,6 +115,14 @@ function draw(view)
         self.assertEqual(movie.missing(source, source), [])
         self.assertIn("TB_GetView", source)
 
+    def test_the_script_knows_the_stage_the_shell_is_made_with(self) -> None:
+        # The movement preview takes the view's pixels to stage points by the
+        # stage's size, which in the game Stage.height does not give.
+        source = (movie.SOURCE / "frame_1" / "DoAction.as").read_text(encoding="utf-8")
+        self.assertIn(f"var STAGE_W = {movie.STAGE_W};", source)
+        self.assertIn(f"var STAGE_H = {movie.STAGE_H};", source)
+        self.assertIn("viewH / STAGE_H", source)
+
 
 class Rect(unittest.TestCase):
     def test_bits_are_enough_for_the_largest_signed_value(self) -> None:

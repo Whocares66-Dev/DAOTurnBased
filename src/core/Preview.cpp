@@ -65,6 +65,18 @@ PathSplit SplitPath(std::span<const Vec3> path, float meters)
     return split;
 }
 
+std::vector<Vec3> RingAround(const Vec3 &centre, float radius, int count)
+{
+    constexpr float kTurn = 6.28318530718f;
+    std::vector<Vec3> ring;
+    for (int i = 0; i < count; ++i)
+    {
+        const float angle = kTurn * static_cast<float>(i) / static_cast<float>(count);
+        ring.push_back(Vec3{centre.x + std::cos(angle) * radius, centre.y + std::sin(angle) * radius, centre.z});
+    }
+    return ring;
+}
+
 std::wstring EncodeNoPreview()
 {
     return std::format(L"{}{}0{}0{}0{}0.0{}0.0", kPreviewVersion, kBarField, kBarField, kBarField, kBarField,
@@ -82,6 +94,8 @@ std::wstring EncodePreview(const PreviewView &view)
                     kBarField, view.beyond.empty() ? 1 : 2, kBarField, view.length, kBarField, view.meters);
     AppendDots(out, view.reach);
     AppendDots(out, view.beyond);
+    AppendDots(out, view.stopRing);
+    AppendDots(out, view.endRing);
     return out;
 }
 

@@ -141,8 +141,10 @@ TEST_CASE("the preview's string has a head and two lines of points", "[preview]"
     view.meters = 7.5f;
     view.reach = {ScreenDot{100.4f, 200.6f}, ScreenDot{300, 250}, ScreenDot{310, 180}};
     view.beyond = {ScreenDot{310, 180}, ScreenDot{330, 90}};
+    view.stopRing = {ScreenDot{300, 180}, ScreenDot{310, 185}, ScreenDot{320, 180}, ScreenDot{310, 175}};
+    view.endRing = {ScreenDot{320, 90}, ScreenDot{330, 95}, ScreenDot{340, 90}};
     const std::vector<std::wstring> records = Split(EncodePreview(view), kBarCard);
-    REQUIRE(records.size() == 3);
+    REQUIRE(records.size() == 5);
     const std::vector<std::wstring> head = Split(records[0], kBarField);
     REQUIRE(head.size() == 6);
     CHECK(head[0] == std::to_wstring(kPreviewVersion));
@@ -159,6 +161,13 @@ TEST_CASE("the preview's string has a head and two lines of points", "[preview]"
     const std::vector<std::wstring> beyond = Split(records[2], kBarField);
     REQUIRE(beyond.size() == 4);
     CHECK(beyond[3] == L"90");
+    // The rings after, where the movement runs out and then at the end.
+    const std::vector<std::wstring> stop = Split(records[3], kBarField);
+    REQUIRE(stop.size() == 8);
+    CHECK(stop[0] == L"300");
+    const std::vector<std::wstring> end = Split(records[4], kBarField);
+    REQUIRE(end.size() == 6);
+    CHECK(end[5] == L"90");
 }
 
 TEST_CASE("a preview all in reach says so and has an empty beyond", "[preview]")
@@ -169,10 +178,13 @@ TEST_CASE("a preview all in reach says so and has an empty beyond", "[preview]")
     view.length = 3.0f;
     view.meters = 9.0f;
     view.reach = {ScreenDot{10, 20}, ScreenDot{30, 40}};
+    view.endRing = {ScreenDot{25, 40}, ScreenDot{30, 43}, ScreenDot{35, 40}};
     const std::vector<std::wstring> records = Split(EncodePreview(view), kBarCard);
-    REQUIRE(records.size() == 3);
+    REQUIRE(records.size() == 5);
     CHECK(Split(records[0], kBarField)[3] == L"1");
     CHECK(records[2].empty());
+    CHECK(records[3].empty()); // no ring where the movement runs out: it does not
+    CHECK_FALSE(records[4].empty());
 }
 
 TEST_CASE("nothing to draw is a head alone, of the same fields", "[preview]")
@@ -189,4 +201,21 @@ TEST_CASE("nothing to draw is a head alone, of the same fields", "[preview]")
     view.height = 600;
     view.reach = {ScreenDot{1, 2}};
     CHECK(EncodePreview(view) == nothing);
+}
+
+TEST_CASE("a ring lies flat round its centre, its points evenly about it", "[preview]")
+{
+    const Vec3 centre{3, -2, 1.5f};
+    const std::vector<Vec3> ring = RingAround(centre, 0.5f, 16);
+    REQUIRE(ring.size() == 16);
+    for (const Vec3 &point : ring)
+    {
+        CHECK(point.z == Approx(1.5f)); // on the ground's level
+        CHECK(Distance(point, centre) == Approx(0.5f));
+    }
+    CHECK(ring[0].x == Approx(3.5f));  // begins to the east
+    CHECK(ring[4].y == Approx(-1.5f)); // a quarter round: to the north
+    CHECK(ring[8].x == Approx(2.5f));
+    CHECK(Distance(ring[0], ring[1]) == Approx(Distance(ring[7], ring[8])));
+    CHECK(RingAround(centre, 0.5f, 0).empty());
 }

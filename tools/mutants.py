@@ -710,6 +710,18 @@ MUTANTS = [
         "            split.beyond.push_back(to);",
     ),
     Mutant(
+        "the preview's ring is not round its centre",
+        PREVIEW,
+        "centre.y + std::sin(angle) * radius, centre.z}",
+        "centre.y + std::cos(angle) * radius, centre.z}",
+    ),
+    Mutant(
+        "the preview's rings are left out of its string",
+        PREVIEW,
+        "    AppendDots(out, view.stopRing);\n",
+        "",
+    ),
+    Mutant(
         "a preview too far is said to be in reach",
         PREVIEW,
         "view.beyond.empty() ? 1 : 2",
