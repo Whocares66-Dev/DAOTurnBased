@@ -236,7 +236,7 @@ static_assert(tb::ScanCode(VK_RIGHT) == static_cast<std::uint32_t>(dao::input::K
 
 // The toggle's key as one of the game's own (dao/Input.h; DAOLib's
 // examples/input seen in play 2026-10-01, a4a7020): listed in the options'
-// Controls tab under "Mods", rebound there like any key, and kept in
+// Controls tab under "Turn-based", rebound there like any key, and kept in
 // KeyBindings.ini. `[keys] toggle` is then the key it has until the player
 // binds another: the game writes it into KeyBindings.ini at the first
 // start, and reads that from then on. From DAOLib_Load only, since the
@@ -253,6 +253,7 @@ bool BindToggle(const tb::KeyChord &chord)
     dao::input::Action action;
     action.name = kToggleAction;
     action.label = L"Toggle turn-based combat"; // the row shrinks its text to fit, so short
+    action.section = kOptionsSection;           // its heading in the controls, as the options' section's
     action.key = static_cast<dao::input::Key>(code);
     action.modifiers = (chord.ctrl ? dao::input::kControl : 0U) | (chord.shift ? dao::input::kShift : 0U) |
                        (chord.alt ? dao::input::kAlt : 0U);
@@ -721,9 +722,10 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     g.toggle = BindToggle(settings.toggleKey) ? ToggleKey::Asked : ToggleKey::Polled;
     if (g.toggle == ToggleKey::Asked)
     {
-        spdlog::info("the toggle's key is one of the game's own (Options, Controls, under Mods; TurnBasedToggle in "
-                     "KeyBindings.ini): {} until bound there",
-                     tb::FormatKeyChord(settings.toggleKey));
+        spdlog::info(
+            "the toggle's key is one of the game's own (Options, Controls, under Turn-based; TurnBasedToggle in "
+            "KeyBindings.ini): {} until bound there",
+            tb::FormatKeyChord(settings.toggleKey));
     }
     else
     {
