@@ -52,7 +52,22 @@ std::string ToJson(const MachineState &state)
     const TurnView &view = state.view;
     std::string out = std::format(R"({{"active":{},"phase":"{}","round":{},"world_ms":{},"current":)",
                                   Bool(view.active), Name(view.phase), view.round, state.worldMs);
-    Id(out, view.current);
+    // Whose turn, whole: a script that starts mid-fight reads it here rather
+    // than replay the events (eluvian-agent). The current card is the first.
+    const CardView *current =
+        !view.upcoming.empty() && view.upcoming.front().current ? &view.upcoming.front() : nullptr;
+    if (view.current == kNoObject || current == nullptr)
+    {
+        out += "null";
+    }
+    else
+    {
+        out += R"({"id":)";
+        Id(out, current->id);
+        out += R"(,"name":)";
+        Text(out, Utf8(current->name));
+        out += std::format(R"(,"side":"{}","yours":{}}})", Name(current->side), Bool(current->yours));
+    }
     out += std::format(R"(,"player_turn":{},"actions_left":{},"movement_left":{:.1f},"movement_max":{:.1f})",
                        Bool(view.playerTurn), view.actionsLeft, view.movementLeft, view.movementMax);
     out += std::format(R"(,"speed":{:.2f},"speed_took":{},"held_by_effect":{},"last_refusal":)", state.speed,

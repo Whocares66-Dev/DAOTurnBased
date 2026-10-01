@@ -325,8 +325,8 @@ MUTANTS = [
     Mutant(
         "a refusal goes unheard",
         MACHINE,
-        "    Emit(EventKind::Refused, target, Utf8(text));",
-        "",
+        "    Emit(EventKind::Refused, target, Utf8(text), 0, Name(command), std::move(note));",
+        "    Emit(EventKind::SpeedSet, target, Utf8(text), 0, Name(command), std::move(note));",
     ),
     Mutant(
         "a fall is heard as a creature gone",

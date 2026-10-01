@@ -25,6 +25,9 @@ TEST_CASE("an event is one line of JSON, its strings escaped", "[events]")
     event.value = -3;
     CHECK(ToJson(event, 99) == R"({"ms":99,"world_ms":1500,"round":2,"event":"refused","id":"0x82",)"
                                R"("name":"Ae\"dan\\","detail":"Too far\n\u0001","value":-3})");
+    event.command = "attack";
+    event.note = "12.1 m to walk, 9.0 m left";
+    CHECK(ToJson(event, 99).ends_with(R"("command":"attack","note":"12.1 m to walk, 9.0 m left","value":-3})"));
 }
 
 TEST_CASE("an event for no one leaves who out", "[events]")
@@ -65,6 +68,8 @@ TEST_CASE("a fight's events come in the order a test asserts on", "[events]")
     CHECK(events[2].detail == "yours");
     CHECK(kinds[3] == "refused");
     CHECK(events[3].detail == "Too far");
+    CHECK(events[3].command == "attack");
+    CHECK(events[3].note == "30.0 m to walk, 9.0 m left");
     CHECK(kinds[4] == "turn_ended");
     CHECK(events[4].detail == "ended by the player");
     CHECK(std::ranges::count(kinds, std::string{"fell"}) == 2);

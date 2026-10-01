@@ -67,6 +67,18 @@ std::string ToJson(const TurnEvent &event, std::uint64_t realMs)
         AppendJsonString(out, event.detail);
         out += '"';
     }
+    if (!event.command.empty())
+    {
+        out += R"(,"command":")";
+        AppendJsonString(out, event.command);
+        out += '"';
+    }
+    if (!event.note.empty())
+    {
+        out += R"(,"note":")";
+        AppendJsonString(out, event.note);
+        out += '"';
+    }
     out += std::format(R"(,"value":{}}})", event.value);
     return out;
 }

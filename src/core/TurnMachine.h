@@ -410,7 +410,7 @@ class TurnMachine
     bool ActorGone(const Observation &obs) const;
     void Floaty(std::vector<Effect> &fx, ObjectId target, std::wstring text, std::uint32_t colour) const;
     void Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId object, std::int32_t a, std::int32_t b) const;
-    void Refuse(ObjectId target, std::wstring text);
+    void Refuse(ObjectId target, std::wstring text, CommandType command, std::string note = {});
     void Log(LogLevel level, std::string_view text) const;
     void Refused(LogLevel level, std::string text);
     [[nodiscard]] bool Logs(LogLevel level) const
@@ -448,7 +448,8 @@ class TurnMachine
     // run, 2026-09-30).
     std::optional<ActorObservation> seenActor_;
     EventSink events_;
-    void Emit(EventKind kind, ObjectId who = kNoObject, std::string detail = {}, std::int32_t value = 0) const;
+    void Emit(EventKind kind, ObjectId who = kNoObject, std::string detail = {}, std::int32_t value = 0,
+              std::string command = {}, std::string note = {}) const;
     std::string lastRefusal_; // the last refusal logged, and when: repeats within a second are not
     std::uint32_t lastRefusalLogNow_ = 0;
     bool turnBegun_ = false;        // an interlude came in the middle of a turn, not between two

@@ -12,7 +12,9 @@ namespace tb
 {
 
 // {"active":true,"phase":"awaiting order","round":2,"world_ms":12345,
-//  "current":"0x82","player_turn":true,"actions_left":1,
+//  "current":{"id":"0x82","name":"Aedan","side":"party","yours":true} (null
+//  between turns), "player_turn":true (current's yours, for one build more),
+//  "actions_left":1,
 //  "movement_left":7.3,"movement_max":9.0,"speed":1.0,"speed_took":true,
 //  "held_by_effect":false,
 //  "last_refusal":"...","order":[{"id":"0x...","name":"...","side":"party",

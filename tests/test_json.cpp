@@ -57,7 +57,7 @@ TEST_CASE("the machine's state says whose turn, what is held and what cools down
     const MachineState state = w.machine.State();
     const std::string json = ToJson(state);
     CHECK(json.starts_with(R"({"active":true,)"));
-    CHECK(json.find(R"("current":"0x100")") != std::string::npos);
+    CHECK(json.find(R"("current":{"id":"0x100","name":"Hero","side":"party","yours":true})") != std::string::npos);
     CHECK(json.find(R"("player_turn":true)") != std::string::npos);
     CHECK(json.find(R"({"id":"0x100","name":"Hero","side":"party")") != std::string::npos);
     CHECK(json.find(R"("held":[{"id":"0x200","name":"Genlock","condition":"disabled","turns_owed":1)") !=

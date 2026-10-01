@@ -184,7 +184,8 @@ void TurnMachine::Refused(LogLevel level, std::string text)
     lastRefusal_ = std::move(text);
 }
 
-void TurnMachine::Emit(EventKind kind, ObjectId who, std::string detail, std::int32_t value) const
+void TurnMachine::Emit(EventKind kind, ObjectId who, std::string detail, std::int32_t value, std::string command,
+                       std::string note) const
 {
     if (!events_)
     {
@@ -201,6 +202,8 @@ void TurnMachine::Emit(EventKind kind, ObjectId who, std::string detail, std::in
     }
     event.detail = std::move(detail);
     event.value = value;
+    event.command = std::move(command);
+    event.note = std::move(note);
     events_(event);
 }
 
@@ -1357,9 +1360,9 @@ void TurnMachine::Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId o
     fx.push_back(std::move(effect));
 }
 
-void TurnMachine::Refuse(ObjectId target, std::wstring text)
+void TurnMachine::Refuse(ObjectId target, std::wstring text, CommandType command, std::string note)
 {
-    Emit(EventKind::Refused, target, Utf8(text));
+    Emit(EventKind::Refused, target, Utf8(text), 0, Name(command), std::move(note));
     // One a second: a player clicking again and again gets one message.
     if (anyRefusal_ && lastNow_ - lastRefusalNow_ < 1000)
     {
@@ -1425,7 +1428,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     {
         if (request.source == Source::Player)
         {
-            Refuse(who->id, L"Not " + who->name + L"'s turn");
+            Refuse(who->id, L"Not " + who->name + L"'s turn", request.type);
         }
         if (Logs(refusals))
         {
@@ -1452,7 +1455,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     {
         if (player && asked)
         {
-            Refuse(who->id, L"Held");
+            Refuse(who->id, L"Held", request.type);
         }
         if (Logs(refusals))
         {
@@ -1490,7 +1493,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         {
             if (player && asked)
             {
-                Refuse(who->id, L"No action left");
+                Refuse(who->id, L"No action left", request.type);
             }
             if (Logs(refusals))
             {
@@ -1503,7 +1506,8 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         // AI's goes on and walks what it can: closing in is its turn.
         if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + kReachSlack)
         {
-            Refuse(who->id, L"Too far");
+            Refuse(who->id, L"Too far", request.type,
+                   std::format("{:.1f} m to walk, {:.1f} m left", *request.walk, budget_.MovementLeft()));
             Log(LogLevel::Info, std::format("{}: {} refused, {:.1f} m to walk with {:.1f} m left", Utf8(who->name),
                                             Name(request.type), *request.walk, budget_.MovementLeft()));
             return Verdict::Block;
@@ -1515,7 +1519,8 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         {
             if (player && asked)
             {
-                Refuse(who->id, L"No movement left");
+                Refuse(who->id, L"No movement left", request.type,
+                       std::format("{:.1f} m left", budget_.MovementLeft()));
             }
             if (Logs(refusals))
             {
@@ -1529,7 +1534,8 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         // walk cut short where it ran out.
         if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + kReachSlack)
         {
-            Refuse(who->id, L"Too far");
+            Refuse(who->id, L"Too far", request.type,
+                   std::format("{:.1f} m to walk, {:.1f} m left", *request.walk, budget_.MovementLeft()));
             Log(LogLevel::Info, std::format("{}: {} refused, {:.1f} m of path with {:.1f} m left", Utf8(who->name),
                                             Name(request.type), *request.walk, budget_.MovementLeft()));
             return Verdict::Block;

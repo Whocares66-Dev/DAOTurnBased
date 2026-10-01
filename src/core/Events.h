@@ -23,7 +23,7 @@ enum class EventKind : std::uint8_t
     TurnResumed,        // who: after a conversation, the same turn
     TurnEnded,          // who; detail: why ("done", "ended by the player", ...)
     TurnLost,           // who: its condition took it; value: turns still owed
-    Refused,            // who; detail: what the player was told ("Too far", "No action left", ...)
+    Refused,            // who; detail: what the player was told ("Too far", ...); command; note: the numbers
     Joined,             // who; value: its initiative
     Fell,               // who
     Gone,               // who: vanished from the world
@@ -48,6 +48,8 @@ struct TurnEvent
     std::string name; // who's, UTF-8
     std::string detail;
     std::int32_t value = 0;
+    std::string command; // a refusal's: the command refused ("attack")
+    std::string note;    // a refusal's numbers: "12.1 m to walk, 9.0 m left"
 };
 
 using EventSink = std::function<void(const TurnEvent &event)>;
