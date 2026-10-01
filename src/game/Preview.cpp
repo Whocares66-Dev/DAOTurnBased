@@ -7,12 +7,12 @@
 #include "dao/Gui.h"
 #include "dao/Log.h"
 #include "dao/Script.h"
-#include "dao/Vfx.h"
 #include "dao/World.h"
 #include "dao/generated/ScriptApi.h"
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <exception>
 #include <optional>
@@ -33,18 +33,21 @@ namespace api = dao::script::api;
 constexpr float kMoved = 0.25f;
 constexpr std::uint32_t kSearchEveryMs = 150;
 
-// The game's own marker for where a move goes: vfx_base's row 30000,
-// "Movement Indicator" (its model SR_MOV, beside the selection rings'
-// SR_PTY and SR_EMY; its art vfx_movetarget.dds, a four-pointed star,
-// white at the heart and amber at the edge, read 2026-10-01 from the
-// table and textures.erf). A lasting effect (the table's type D), laid on
-// the ground (AlignToGround).
-constexpr std::int32_t kMoveMarker = 30000;
-
-// The rings on the ground, drawn by the movie where the game's marker does
-// not belong: round a path's end that is too far, about as wide as a
+// The rings on the ground: round the path's end about as wide as a
 // creature's own selection ring, and round where the movement runs out,
-// half that. Each a polygon of so many points, which the movie rounds.
+// half that. Each a polygon of so many points, the first to the east and
+// the fifth to the north, which the movie rounds. At an end in reach the
+// movie lays the game's own movement marker by the ring instead of drawing
+// it: the star of vfx_movetarget.dds, its arms to the ring's east and
+// north.
+//
+// The marker is the movie's, not an effect in the world. It was one, for
+// an hour: vfx_base's row 30000, "Movement Indicator", placed at the end
+// through DAOLib's dao/Vfx.h. But its model (SR_MOV) is a selection
+// reticle and has a shape the cursor's pick meets, so under the cursor it
+// took the pick from the ground: the preview, with no ground, took it
+// away, the ground came back, and it blinked a second on, a second off
+// (the sixteenth play test, 2026-10-01).
 constexpr float kEndRing = 0.45f;
 constexpr float kStopRing = 0.22f;
 constexpr int kRingPoints = 16;
@@ -141,46 +144,8 @@ void Preview::Install()
     });
 }
 
-void Preview::ShowMarker(const Vec3 &at)
-{
-    const dao::CCArea *area = dao::world::CurrentArea();
-    if (area == nullptr)
-    {
-        marker_ = kNoObject;
-        return;
-    }
-    if (marker_ != kNoObject && markerArea_ == area->Id() && dao::vfx::Move(marker_, Of(at)))
-    {
-        return;
-    }
-    // None yet, or it went with its area.
-    marker_ = dao::vfx::Place(kMoveMarker, Of(at));
-    markerArea_ = area->Id();
-    if (!std::exchange(markerSaid_, true))
-    {
-        spdlog::debug("the preview's end is the game's movement marker (effect {:#x})", marker_);
-    }
-}
-
-void Preview::HideMarker()
-{
-    if (marker_ == kNoObject)
-    {
-        return;
-    }
-    // In the area it was placed in only: in another it is gone with the
-    // first, and its id may be another effect's.
-    const dao::CCArea *area = dao::world::CurrentArea();
-    if (area != nullptr && markerArea_ == area->Id())
-    {
-        dao::vfx::Remove(marker_);
-    }
-    marker_ = kNoObject;
-}
-
 void Preview::Clear()
 {
-    HideMarker();
     searched_ = false;
     path_.clear();
     if (!std::exchange(drawn_, false))
@@ -220,13 +185,23 @@ void Preview::Search(ObjectId walker, const Vec3 &from, const Vec3 &to, std::uin
             path_.push_back(to);
         }
     }
-    // The first few, and any slow one: what a search costs in play is not
-    // known yet.
+    // The first few, and any slow one; and every fifty, what they cost: a
+    // sweep of the cursor is many searches.
     if (logged_ < 5 || took >= 20)
     {
         ++logged_;
         spdlog::debug("the preview's path for {:#x}: {} points to ({:.1f}, {:.1f}, {:.1f}), {} ms", walker,
                       path_.size(), to.x, to.y, to.z, took);
+    }
+    ++searches_;
+    searchMs_ += took;
+    slowestMs_ = std::max(slowestMs_, took);
+    if (searches_ == 50)
+    {
+        spdlog::debug("the preview's last 50 searches: {} ms in all, the slowest {} ms", searchMs_, slowestMs_);
+        searches_ = 0;
+        searchMs_ = 0;
+        slowestMs_ = 0;
     }
 }
 
@@ -265,7 +240,6 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
     {
         // No path there as the game finds it: nothing is promised, so
         // nothing is drawn.
-        HideMarker();
         if (std::exchange(drawn_, false))
         {
             const std::lock_guard lock(mutex_);
@@ -292,20 +266,10 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
         {
             shown.stopRing = RingOnScreen(split.reach.back(), kStopRing);
         }
-        // A path too far ends in a ring of the movie's; one in reach in
-        // the game's own marker, below.
-        if (split.TooFar() && shown.beyond.size() == split.beyond.size())
+        if (shown.beyond.size() == split.beyond.size())
         {
             shown.endRing = RingOnScreen(path_.back(), kEndRing);
         }
-    }
-    if (split.TooFar())
-    {
-        HideMarker();
-    }
-    else
-    {
-        ShowMarker(path_.back());
     }
     std::wstring encoded = EncodePreview(shown);
     drawn_ = true;

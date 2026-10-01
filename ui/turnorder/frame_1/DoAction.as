@@ -663,11 +663,10 @@ var lastPreview = null;
 // past the movement left.
 function samplePreview()
 {
-    var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 2, "13.6", "6.5"].join(FIELD);
+    // In reach, the common case: the line ends in the game's marker.
+    var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 1, "5.8", "6.5"].join(FIELD);
     var reach = [300, 262, 470, 250, 560, 214, 640, 200].join(FIELD);
-    var beyond = [640, 200, 720, 186, 800, 204, 900, 196].join(FIELD);
-    return head + CARD + reach + CARD + beyond + CARD + sampleRing(640, 200, 15).join(FIELD) + CARD +
-           sampleRing(900, 196, 26).join(FIELD);
+    return head + CARD + reach + CARD + CARD + CARD + sampleRing(640, 200, 26).join(FIELD);
 }
 
 // A ring on the ground as the camera sees it: flattened.
@@ -677,7 +676,8 @@ function sampleRing(x, y, radius)
     for (var i = 0; i < 16; i++)
     {
         var angle = i * Math.PI / 8;
-        points.push(Math.round(x + Math.cos(angle) * radius), Math.round(y + Math.sin(angle) * radius * 0.42));
+        // To the east first, then the north, which is up the screen.
+        points.push(Math.round(x + Math.cos(angle) * radius), Math.round(y - Math.sin(angle) * radius * 0.42));
     }
     return points;
 }
@@ -777,6 +777,72 @@ function glow(clip, points, red, closed, thin)
     }
 }
 
+// The game's own movement marker at an end in reach: the star the game
+// puts where a move click lands (vfx_movetarget.dds, the art of vfx_base's
+// "Movement Indicator"), loaded as the bar's art is. It lies on the ground:
+// the plugin gives a ring round the end as its points on the screen, the
+// first to the east and the fifth to the north, and from where those two
+// fall the star is turned (its arms to the east and north, as the game's
+// lies fixed in the world) and then squashed as the camera's angle squashes
+// the ground. A clip in a clip: the inner turned, the outer scaled. It
+// breathes a little, as the game's does.
+var STAR_ART = 100;    // the star's clip, in its own pixels
+var STAR_REACH = 1.6;  // the texture's half width, in ring radii: its arms end short of its edge
+var starPhase = 0;
+
+function star(clip)
+{
+    if (clip.star == undefined)
+    {
+        var outer = clip.createEmptyMovieClip("star", 3);
+        var turned = outer.createEmptyMovieClip("turned", 1);
+        art(turned, "vfx_movetarget", 1, -STAR_ART / 2, -STAR_ART / 2, STAR_ART, STAR_ART);
+        outer._visible = false;
+        outer.age = 0;
+    }
+    return clip.star;
+}
+
+// Whether the texture came: in the game a name it has not leaves the clip
+// empty, and the ring is drawn instead.
+function starLoaded(clip)
+{
+    return clip.star.turned.art1.image._width > 0;
+}
+
+function layStar(clip, ring, at)
+{
+    var outer = star(clip);
+    // East and north of the end, on the screen.
+    var ex = ring[0].x - at.x;
+    var ey = ring[0].y - at.y;
+    var nx = ring[4].x - at.x;
+    var ny = ring[4].y - at.y;
+    var across = Math.sqrt(ex * ex + nx * nx); // a ring's radius, sideways
+    var down = Math.sqrt(ey * ey + ny * ny);   // and up the screen: less, by the camera's angle
+    outer._x = at.x;
+    outer._y = at.y;
+    outer.turned._rotation = Math.atan2(-nx, ex) * 180 / Math.PI;
+    outer.across = 2 * STAR_REACH * across * 100 / STAR_ART;
+    outer.down = 2 * STAR_REACH * down * 100 / STAR_ART;
+    outer._xscale = outer.across;
+    outer._yscale = outer.down;
+    outer._visible = true;
+}
+
+function breathe()
+{
+    var outer = _root.preview.star;
+    if (outer == undefined || !outer._visible)
+    {
+        return;
+    }
+    starPhase += 0.16;
+    var swell = 1 + 0.07 * Math.sin(starPhase);
+    outer._xscale = outer.across * swell;
+    outer._yscale = outer.down * swell;
+}
+
 // The length, on a small dark plate as the bar's caption is, so it reads
 // on any ground.
 function previewLabel(clip, text, colour, at)
@@ -812,6 +878,7 @@ function drawPreview(text)
     }
     clip.clear();
     clip.length._visible = false;
+    star(clip)._visible = false;
     var records = text.split(CARD);
     var head = records[0].split(FIELD);
     var viewW = Number(head[1]);
@@ -827,21 +894,29 @@ function drawPreview(text)
     var reach = previewPoints(records[1], scale, offsetX, offsetY);
     var beyond = previewPoints(records[2], scale, offsetX, offsetY);
     // The rings lie on the ground, as the game's own selection ring does:
-    // the plugin gives each as its points on the screen. A path in reach
-    // has no ring at its end: the plugin puts the game's own movement
-    // marker there, in the world.
+    // the plugin gives each as its points on the screen.
     var stopRing = previewPoints(records[3], scale, offsetX, offsetY);
     var endRing = previewPoints(records[4], scale, offsetX, offsetY);
     var tooFar = head[3] == "2";
+    var end = beyond.length > 0 ? beyond[beyond.length - 1] : reach[reach.length - 1];
     // Red under gold, so the gold's glow lies over where they meet.
     glow(clip, beyond, true, false, false);
     glow(clip, reach, false, false, false);
-    glow(clip, endRing, tooFar, true, true);
     if (tooFar)
     {
+        glow(clip, endRing, true, true, true);
         glow(clip, stopRing, false, true, true);
     }
-    var end = beyond.length > 0 ? beyond[beyond.length - 1] : reach[reach.length - 1];
+    else if (endRing.length >= 5 && end != undefined && (!inGame || starLoaded(clip) || clip.star.age < 30))
+    {
+        // In reach: the game's own marker, where the move would go.
+        clip.star.age++;
+        layStar(clip, endRing, end);
+    }
+    else
+    {
+        glow(clip, endRing, false, true, true);
+    }
     if (end != undefined)
     {
         previewLabel(clip, tooFar ? head[4] + " m of " + head[5] : head[4] + " m", tooFar ? RED_HEART : GOLD, end);
@@ -858,5 +933,6 @@ _root.onEnterFrame = function()
         draw(ask());
     }
     drawPreview(askPreview());
+    breathe();
 };
 draw(ask());
