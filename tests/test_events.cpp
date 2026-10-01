@@ -75,3 +75,18 @@ TEST_CASE("a fight's events come in the order a test asserts on", "[events]")
     CHECK(std::ranges::count(kinds, std::string{"fell"}) == 2);
     CHECK(kinds.back() == "fight_over");
 }
+
+TEST_CASE("every event kind says what it means, for a test server's list", "[events]")
+{
+    for (int k = 0; k <= static_cast<int>(kLastEventKind); ++k)
+    {
+        const auto kind = static_cast<EventKind>(k);
+        CAPTURE(Name(kind));
+        const EventDescription d = Describe(kind);
+        REQUIRE(d.meaning != nullptr);
+        CHECK(std::string{d.meaning}.size() > 10);
+        CHECK(std::string{Name(kind)} != "?");
+    }
+    CHECK(Describe(EventKind::Refused).command != nullptr);
+    CHECK(Describe(EventKind::Refused).note != nullptr);
+}

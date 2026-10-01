@@ -11,9 +11,9 @@
 // in DAOLib_Load:
 //
 //   if (const EluvianInterface1 *eluvian = EluvianFind()) {
-//       eluvian->RegisterTool("turnbased_end_turn", R"({"description": "End the current turn."})",
+//       eluvian->RegisterTool("mymod_reset", R"({"description": "Put mymod back as it starts."})",
 //                             &EndTurn, &state, 0);
-//       eluvian->EmitEvent("turnbased.turn.ended", R"({"id": "0x82", "reason": "ended by the player"})");
+//       eluvian->EmitEvent("mymod.thing_happened", R"({"id": "0x82", "detail": "what it was"})");
 //   }
 //
 // A handler is called on the game's frame thread (the scripts' thread, as
@@ -22,11 +22,12 @@
 // error with a sentence the agent reads (what was wrong, what to do).
 //
 // Names: a tool's is what the agent calls it by, and only letters, digits,
-// '_' and '-' reach a model (prefix yours: "turnbased_state"). An inspect
-// kind and an event topic may use dots ("turnbased.state",
-// "turnbased.turn.ended"); prefix them too.
+// '_' and '-' reach a model (prefix yours: "mymod_reset"). An inspect
+// kind and an event topic may use dots ("mymod.state",
+// "mymod.thing_happened"); prefix them too.
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -44,7 +45,7 @@ extern "C"
 
     typedef void (*EluvianToolFn)(void *context, const char *argsJson, EluvianReply *reply);
 
-    // Flags for RegisterTool and RegisterInspectKind.
+    // Flags for RegisterTool, RegisterInspectKind and RegisterToolExtension.
     enum
     {
         // Call the handler on the HTTP listener's thread, not the frame's: for
@@ -64,18 +65,40 @@ extern "C"
         // the same name, -1 if refused (the reason is in eluvian.log).
         int (*RegisterTool)(const char *name, const char *descriptorJson, EluvianToolFn handler, void *context,
                             uint32_t flags);
-        // A kind of the `inspect` tool: `inspect kind="turnbased.state"`.
+        // A kind of the `inspect` tool: `inspect kind="mymod.state"`.
         // descriptorJson: {"description": "..."}. Returns as RegisterTool.
         int (*RegisterInspectKind)(const char *kind, const char *descriptorJson, EluvianToolFn handler, void *context,
                                    uint32_t flags);
         // Publishes an event: payloadJson an object, its creatures as ids
         // ("0x7d9"). Any thread.
         void (*EmitEvent)(const char *topic, const char *payloadJson);
+
+        // From build 200 (0.2.0); a plugin built against this header checks
+        // ELUVIAN_HAS(eluvian, member) before calling these, since an older
+        // Eluvian's interface ends before them.
+
+        // A choice of one of Eluvian's tools that is made of choices:
+        // "inspect" (chosen by `kind`: `inspect kind="mymod.state"`) and
+        // "stage" (chosen by `action`: `stage action="mymod.arena"`, a test's
+        // set-up only the mod knows). descriptorJson: {"description": "..."};
+        // the handler gets the tool's whole arguments. Returns as RegisterTool.
+        int (*RegisterToolExtension)(const char *baseTool, const char *key, const char *descriptorJson,
+                                     EluvianToolFn handler, void *context, uint32_t flags);
+        // Says what an event topic means, so an agent can list the topics
+        // there are (`events describe=true`) before waiting for one.
+        // descriptorJson: {"description": "...", "fields": {"id": "the
+        // creature", ...}}. Returns 1 if new, 0 if it replaced, -1 if refused.
+        int (*DescribeEvent)(const char *topic, const char *descriptorJson);
     } EluvianInterface1;
 
     typedef const EluvianInterface1 *(*EluvianGetInterfaceFn)(uint32_t version);
 
 #define ELUVIAN_GET_INTERFACE "Eluvian_GetInterface"
+
+// Whether the interface a plugin got has `member`: those added after the
+// plugin's Eluvian was built are past the end of an older one.
+#define ELUVIAN_HAS(eluvian, member)                                                                                   \
+    ((eluvian)->size >= offsetof(EluvianInterface1, member) + sizeof((eluvian)->member))
 
 #ifdef __cplusplus
 }

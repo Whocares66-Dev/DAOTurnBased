@@ -8,6 +8,7 @@
 //
 // dev/DESIGN.md is the design, dev/TESTING.md what to check in play and
 // read in turnbased.log (Documents\BioWare\Dragon Age\daolib\).
+#include "core/Events.h"
 #include "core/Json.h"
 #include "core/Keys.h"
 #include "core/Settings.h"
@@ -395,13 +396,54 @@ void LookForEluvian()
             R"("string"}, "value": {"type": "string"}}}})",
             &SettingsTool, nullptr, 0),
         "turnbased_settings");
+    // What each turnbased.* topic means, for `events describe=true` (Eluvian
+    // 0.2.0; an older one's interface ends before DescribeEvent).
+    int described = 0;
+    if (ELUVIAN_HAS(g.eluvian, DescribeEvent))
+    {
+        for (int k = 0; k <= static_cast<int>(tb::kLastEventKind); ++k)
+        {
+            const auto kind = static_cast<tb::EventKind>(k);
+            const tb::EventDescription d = tb::Describe(kind);
+            std::string json = R"({"description":")";
+            tb::AppendJsonString(json, d.meaning != nullptr ? d.meaning : "");
+            json += R"(","fields":{"world_ms":"the fight's clock, the world's milliseconds","round":"the round")";
+            const auto field = [&json](const char *name, const char *text) {
+                if (text != nullptr)
+                {
+                    json += std::format(R"(,"{}":")", name);
+                    tb::AppendJsonString(json, text);
+                    json += '"';
+                }
+            };
+            if (d.creature)
+            {
+                field("id", "the creature, as 0x... (inspect's ids)");
+                field("name", "its name");
+            }
+            field("detail", d.detail);
+            field("value", d.value);
+            field("command", d.command);
+            field("note", d.note);
+            json += "}}";
+            const std::string topic = std::string{"turnbased."} + tb::Name(kind);
+            if (e.DescribeEvent(topic.c_str(), json.c_str()) < 0)
+            {
+                refused.push_back(topic);
+            }
+            else
+            {
+                ++described;
+            }
+        }
+    }
     for (const std::string &name : refused)
     {
         spdlog::warn("Eluvian refused {}: its reason is in eluvian.log", name);
     }
-    spdlog::info("registered with Eluvian (build {}): {} of 4 (inspect turnbased.state; turnbased_end_turn, "
-                 "turnbased_seed, turnbased_settings); events turnbased.<kind>",
-                 e.build, 4 - refused.size());
+    spdlog::info("registered with Eluvian (build {}): inspect turnbased.state; turnbased_end_turn, turnbased_seed, "
+                 "turnbased_settings; events turnbased.<kind>, {} described; {} refused",
+                 e.build, described, refused.size());
 }
 
 void Log(tb::LogLevel level, std::string_view line)

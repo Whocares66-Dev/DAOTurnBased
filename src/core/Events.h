@@ -43,6 +43,23 @@ enum class EventKind : std::uint8_t
 // snake_case, as the bus's topics take it: "turn_started".
 [[nodiscard]] const char *Name(EventKind kind);
 
+// What an event means and what its fields say, for a test server's list of
+// topics (Eluvian's `events describe=true`): an agent reads these before
+// waiting on one. A field it does not carry is null.
+struct EventDescription
+{
+    const char *meaning = nullptr;
+    bool creature = false; // carries id and name
+    const char *detail = nullptr;
+    const char *value = nullptr;
+    const char *command = nullptr;
+    const char *note = nullptr;
+};
+[[nodiscard]] EventDescription Describe(EventKind kind);
+
+// Every kind, in order, for listing them.
+inline constexpr EventKind kLastEventKind = EventKind::ActionGivenBack;
+
 struct TurnEvent
 {
     EventKind kind = EventKind::FightBegan;
