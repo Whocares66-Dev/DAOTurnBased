@@ -438,12 +438,13 @@ ai_turn_speed = 1
 effect_seconds_per_round = 6
 ; Creatures fighting within this many meters of the party leader take turns.
 combat_radius = 50
-; Of those, only the ones fighting the party: an enemy or ally joins the
-; turns once it and a party member can see each other, or one attacks the
-; other. Until then it waits where it is, outside the fight, so a battle
-; rooms away (Howe's men and the castle's guards) neither fills the turn
-; order nor takes the camera to rooms that are not drawn. Once in, it stays
-; in. false: everyone in combat within combat_radius takes turns.
+; Of those, only the ones you can see fighting: an enemy or ally joins the
+; turns once it stands in a room the party has seen (the game draws the
+; rest black), or it and a party member attack each other. Until then it
+; waits where it is, outside the fight, so a battle rooms away (Howe's men
+; and the castle's guards) neither fills the turn order nor takes the
+; camera to black rooms. Once in, it stays in. false: everyone in combat
+; within combat_radius takes turns.
 join_by_sight = true
 ; How an AI creature is told its turn has come: command_complete or kickstart.
 ai_poke = command_complete

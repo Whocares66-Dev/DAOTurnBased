@@ -184,14 +184,24 @@ Observation Bridge::Observe(const Needs &needs, std::uint32_t nowMs)
 
 namespace
 {
-// Whether a creature in combat near the party is fighting the party (core:
-// Combatant::engaged), by the game's own answers: it or a party member is
-// the other's attack target, or a party member can see it
-// (CheckLineOfSightObject's question, dao/World.h: walls and doors block,
-// other placeables do not). Not by distance: Howe's men fighting guards
-// rooms away were in the turn order, and the camera went to rooms not
-// drawn (the user, 2026-09-30).
-bool Engaged(ObjectId id, const std::vector<ObjectId> &party)
+// Whether a creature in combat near the party is one the player can see
+// fighting (core: Combatant::engaged), by the game's own answers. Not by
+// distance: Howe's men fighting guards rooms away were in the turn order,
+// and the camera went to rooms drawn black (the user, 2026-09-30, whose own
+// rule was to leave out those in areas that are not loaded).
+// - It or a party member is the other's attack target.
+// - Else, it stands in a room the game shows (dao::world::RoomOf, DAOLib
+//   1d99f54). An area is made of rooms, and the game hides every room no
+//   party member has yet seen, its creatures inactive, even through an
+//   open door: in lib-agent's play test the room behind a door stayed
+//   black, door open, until the hero walked in. What is seen goes by the
+//   party, not the camera, so the mod's camera going there shows nothing.
+//   A line of sight alone, the first rule here, is clear through that
+//   door. The room's `seen` is read from the function that hides rooms,
+//   not yet watched in play.
+// - Where the area has no room for it, a party member's line of sight to
+//   it (CheckLineOfSightObject's question: walls and doors block).
+bool Engaged(ObjectId id, const std::vector<ObjectId> &party, const std::optional<dao::world::Room> &room)
 {
     const ObjectId target = api::GetAttackTarget(id);
     for (const ObjectId member : party)
@@ -200,6 +210,10 @@ bool Engaged(ObjectId id, const std::vector<ObjectId> &party)
         {
             return true;
         }
+    }
+    if (room)
+    {
+        return room->Shown();
     }
     return std::ranges::any_of(party,
                                [&](ObjectId member) { return static_cast<bool>(dao::world::LineOfSight(member, id)); });
@@ -234,23 +248,25 @@ std::vector<Combatant> Bridge::Scan()
     }
     const std::vector<ObjectId> members(seen.begin(), seen.end());
     std::size_t outside = 0;
-    // Those not fighting the party, each with its room as the game has it
-    // (DAOLib 0747547, dao::world::RoomOf: 5 drawn, 4 in memory and not
-    // drawn, 3 dropped). The user's own idea of the rule was "in an area
-    // that is not loaded"; lib-agent's reading of the states is not yet
-    // seen on screen, so it is said beside the sight rule, not used.
+    // Those the player cannot see fighting, each with its room as the game
+    // has it (seen: 0 never, 1 in view, 2 before; load: 0 loading, 1
+    // loaded, 2 not), for a play test to set beside what the screen shows.
     std::string rooms;
     const auto add = [&](ObjectId id, Side side) {
         Combatant c = Describe(id, side, false);
-        c.engaged = !settings_.joinBySight || Engaged(id, members);
-        if (!c.engaged)
+        if (settings_.joinBySight)
         {
-            ++outside;
-            if (spdlog::should_log(spdlog::level::debug))
+            const std::optional<dao::world::Room> room = dao::world::RoomOf(id);
+            c.engaged = Engaged(id, members, room);
+            if (!c.engaged)
             {
-                const std::optional<dao::world::Room> room = dao::world::RoomOf(id);
-                rooms += room ? std::format(" {:#x} room {} state {}", id, room->number, room->state)
-                              : std::format(" {:#x} no room", id);
+                ++outside;
+                if (spdlog::should_log(spdlog::level::debug))
+                {
+                    rooms +=
+                        room ? std::format(" {:#x} room {} seen {} load {}", id, room->number, room->seen, room->load)
+                             : std::format(" {:#x} no room, out of sight", id);
+                }
             }
         }
         out.push_back(std::move(c));

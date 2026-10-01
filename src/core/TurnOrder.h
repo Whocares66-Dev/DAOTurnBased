@@ -31,10 +31,11 @@ struct Combatant
     float energy = 1.0f; // mana or stamina, the same
     bool mana = false;   // a mage's
     bool down = false;   // dead, dying, or gone from the fight
-    // Fighting the party, not only near it (Settings::joinBySight): it and a
-    // party member can see each other, or one is the other's attack target.
-    // An enemy or ally that is not waits outside the order until it is; one
-    // in the order stays in it. The party's own always are.
+    // Fighting where the player can see it, not only near (Settings::
+    // joinBySight): in a room the party has seen, or it or a party member
+    // the other's attack target. An enemy or ally that is not waits outside
+    // the order until it is; one in the order stays in it. The party's own
+    // always are.
     bool engaged = true;
     int initiative = 0;
 };
