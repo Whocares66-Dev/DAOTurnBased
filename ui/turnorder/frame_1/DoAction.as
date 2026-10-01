@@ -32,7 +32,10 @@ var CAPTION_W = 230; // the caption's strip under the bar
 var CAPTION_H = 30;
 var DIVIDER = 30;
 var TOP = 14;
-var CURRENT_SCALE = 118;
+// The current card, the size of the party bar's portraits, selector and all
+// (the user): in play their arcs measure 59 px against a card's 41 at 100,
+// so the frame 72 against 50 (play test 5's capture, 2026-09-30).
+var CURRENT_SCALE = 143;
 
 var GOLD = 0xF0C850;
 var PARCHMENT = 0xE8DFC8;
@@ -315,12 +318,16 @@ function drawCard(bar, card, index, x)
     var mid = CARD_W / 2;
     var orb = 74 * ART;
     var orbAt = 20 * ART;
-    // The current turn's: the party bar's glow ring, behind.
+    art(clip, "Portraits_IC2", 1, 0, 0, CARD_W, CARD_H);
+    // The current turn's: the party bar's own glow (SelectedPlayer), at the
+    // frame's own size as the party bar has it, over the backplate's rim and
+    // under the ring, so its circle hugs the medallion; the card is the
+    // bigger for it (CURRENT_SCALE). Drawn a quarter larger behind the
+    // backplate, the portrait sat small inside it (the user, 2026-09-30).
     if (card.current)
     {
-        art(clip, "Portraits_I60", 1, -CARD_W * 0.12, -CARD_H * 0.12, CARD_W * 1.24, CARD_H * 1.24);
+        art(clip, "Portraits_I60", 2, 0, 0, CARD_W, CARD_H);
     }
-    art(clip, "Portraits_IC2", 2, 0, 0, CARD_W, CARD_H);
     var tint = card.side == 0 ? partyMember(card.id).tint : strangerTint(card.id);
     art(clip, backgroundTexture(tint), 3, orbAt, orbAt, orb, orb);
     var portrait = portraitOf(card);
@@ -373,7 +380,7 @@ function drawCard(bar, card, index, x)
     {
         clip._xscale = CURRENT_SCALE;
         clip._yscale = CURRENT_SCALE;
-        clip._y = TOP - 4;
+        clip._y = TOP - CARD_H * (CURRENT_SCALE - 100) / 200; // centred on the others
     }
     clip.onRelease = function()
     {
