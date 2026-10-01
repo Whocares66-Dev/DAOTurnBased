@@ -252,11 +252,25 @@ std::vector<Combatant> Bridge::Scan()
     // has it (seen: 0 never, 1 in view, 2 before; load: 0 loading, 1
     // loaded, 2 not), for a play test to set beside what the screen shows.
     std::string rooms;
+    // The rooms are gone by only where they can be: the leader's own room,
+    // which the game shows if it shows any, must read as shown. An area
+    // with rooms where the game never marks one seen would read every
+    // creature as hidden, and no fight there would ever be in turns
+    // (lib-agent's caution, 2026-10-01: not seen, and this would say). A
+    // party member's line of sight is the rule there, as where an area has
+    // no rooms.
+    const std::optional<dao::world::Room> ours = settings_.joinBySight ? dao::world::RoomOf(leader) : std::nullopt;
+    const bool byRooms = ours && ours->Shown();
+    if (settings_.joinBySight && ours && !byRooms)
+    {
+        spdlog::debug("the leader's own room {} reads seen {} load {}: rooms not gone by here, sight is", ours->number,
+                      ours->seen, ours->load);
+    }
     const auto add = [&](ObjectId id, Side side) {
         Combatant c = Describe(id, side, false);
         if (settings_.joinBySight)
         {
-            const std::optional<dao::world::Room> room = dao::world::RoomOf(id);
+            const std::optional<dao::world::Room> room = byRooms ? dao::world::RoomOf(id) : std::nullopt;
             c.engaged = Engaged(id, members, room);
             if (!c.engaged)
             {
