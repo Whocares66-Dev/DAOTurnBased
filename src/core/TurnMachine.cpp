@@ -1350,8 +1350,15 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
                 std::format("{}'s charged cast of ability {} did not come", Utf8(current->name), landing_->ability));
             landing_.reset();
         }
-        Handover(*current, fx);
-        return;
+        // An AI may have gone on by itself as its cast ended, and spent its
+        // action: told its turn had come then, it had nothing left to
+        // choose, and its turn ended "chose nothing" a second and a half
+        // late (the twelfth play test, 2026-10-01). Its turn ends as any.
+        if (player || budget_.actions > 0)
+        {
+            Handover(*current, fx);
+            return;
+        }
     }
     if (!player && passRequested_)
     {

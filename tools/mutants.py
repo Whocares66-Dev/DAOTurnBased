@@ -660,6 +660,12 @@ MUTANTS = [
         "        if (ability != request.ability)\n        {\n            return turns;",
     ),
     Mutant(
+        "an AI that spent its action after its charged cast is told again",
+        MACHINE,
+        "        if (player || budget_.actions > 0)\n        {\n            Handover(*current, fx);",
+        "        if (player || budget_.actions > -9)\n        {\n            Handover(*current, fx);",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",

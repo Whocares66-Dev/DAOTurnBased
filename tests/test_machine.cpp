@@ -2973,3 +2973,47 @@ TEST_CASE("the fight over, a charge is lost", "[machine][charge]")
     CHECK(w.machine.State().charging.empty());
     CHECK_FALSE(w.heldCasts.contains(kHero));
 }
+
+TEST_CASE("an enemy that goes on by itself after its charged cast is not told its turn has come", "[machine][charge]")
+{
+    // The twelfth play test: the spider's own attack followed its cast, its
+    // action spent; told then, it chose nothing for a second and a half.
+    World w(FourSecondTurns());
+    w.StartFight();
+    (void)w.machine.OnPauseKey();
+    int pokes = 0; // the genlock's
+    w.onPoke = [&](ObjectId id) {
+        if (id != kGenlock)
+        {
+            (void)w.Order(id, CommandType::Attack, Source::Script);
+            return;
+        }
+        ++pokes;
+        if (pokes == 1)
+        {
+            CHECK(w.Cast(id, Source::Script, kBlizzard, 4.0f) == Verdict::Hold);
+        }
+    };
+    for (int i = 0; i < 4000 && !Released(w, kGenlock); ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnPauseKey();
+        }
+        w.Frame();
+    }
+    REQUIRE(Released(w, kGenlock));
+    REQUIRE(pokes == 1);
+    w.RunFor(300);
+    // The cast ends, and its own script attacks at once.
+    w.Finish(kGenlock);
+    CHECK(w.Order(kGenlock, CommandType::Attack, Source::Script) == Verdict::Allow);
+    w.RunFor(300);
+    w.Finish(kGenlock);
+    w.RunFor(1200);
+    CHECK(pokes == 1);              // not told: it had acted
+    CHECK(w.Current() != kGenlock); // and its turn is over, without the wait for a choice
+    CHECK(std::ranges::none_of(w.log, [](const std::string &line) {
+        return line.find("Genlock's turn ends: chose nothing") != std::string::npos;
+    }));
+}

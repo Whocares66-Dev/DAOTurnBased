@@ -409,8 +409,18 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
                     kept.z = place->z;
                 }
                 g_heldCasts[self->Id()] = kept;
-                spdlog::debug("{:#x}: its cast of ability {} is kept while it charges (target {:#x}{})", self->Id(),
-                              kept.ability, kept.target, kept.placed ? ", a place" : "");
+                // A command aimed at a creature carries a place as well: both
+                // are kept and given again; said by the one it is aimed at.
+                if (kept.target != dao::kInvalidObject)
+                {
+                    spdlog::debug("{:#x}: its cast of ability {} is kept while it charges (at {:#x})", self->Id(),
+                                  kept.ability, kept.target);
+                }
+                else
+                {
+                    spdlog::debug("{:#x}: its cast of ability {} is kept while it charges (at {}a place)", self->Id(),
+                                  kept.ability, kept.placed ? "" : "nothing, not ");
+                }
             }
             if (verdict != Verdict::Allow)
             {

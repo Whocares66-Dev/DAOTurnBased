@@ -517,7 +517,23 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             // given to it as a script gives a command: it comes back
             // through the gate, which lets it through for nothing. Its
             // conjuring is short now, the turns having been its time.
-            if (const std::optional<HeldCast> kept = TakeHeldCast(e.target))
+            if (const std::optional<HeldCast> kept = TakeHeldCast(e.target);
+                kept && kept->target != dao::kInvalidObject &&
+                (api::IsObjectValid(kept->target) == 0 || api::IsDead(kept->target) != 0))
+            {
+                // Its target fell while it charged: not cast at nothing. In
+                // play the cast was given all the same, struck nothing, and
+                // put the talent on cooldown for five turns (the twelfth
+                // play test, 2026-10-01). Not given, nothing is spent: the
+                // machine says its cast did not come, and the turn goes on.
+                spdlog::info(
+                    "{:#010x}: the target of its charged cast of ability {} ({:#x}) is gone: not cast, nothing "
+                    "spent",
+                    e.target, kept->ability, kept->target);
+                api::DisplayFloatyMessage(e.target, L"Its target is gone", k::FLOATY_MESSAGE,
+                                          static_cast<std::int32_t>(kGrey), 2.0f);
+            }
+            else if (kept)
             {
                 const dao::Vector place = kept->placed ? dao::Vector{kept->x, kept->y, kept->z} : dao::Vector{};
                 if (const dao::script::OwnedCommand cast =
