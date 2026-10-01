@@ -719,22 +719,28 @@ function previewPoints(record, scale, offsetX, offsetY)
 // are the pathfinder's, not a walk's: a few pixels at each corner only, so
 // the line stays on the route.
 //
-// The colours are the game's own movement marker's, which the path ends in
-// (the user: "make the line match that style"): vfx_movetarget.dds, the
-// star the game puts where a move click lands, is near white at its heart
-// (0xF7EFDE), a deep gold at the heart's edge (0xDEA210 to 0xE6B02D) and an
-// amber glow fading out (0xFFB300 to 0xFFBA10), measured from the texture
-// 2026-10-01. So: white-hot down the middle, gold at its edge, amber round
-// it. The red is the same made red.
-var MARKER_HALO = 0xFFB60C;
-var MARKER_EDGE = 0xE2A81C;
-var MARKER_HEART = 0xFBF3E2;
+// The gold is the selection ring's, the circle round the character whose
+// turn it is, which the line starts from (the user, 2026-10-01, of a line
+// in the movement marker's colours, white at its heart: "it still looks
+// kind of yellowish rather than the same gold as the circle around the
+// character selected"). Measured in the game's own picture (play test 16,
+// the ring under Lyna): its body 0xE9BA5F to 0xEBC67C, its dim side
+// 0xC48840 to 0xCF9B52, its highlights 0xFEEFA2; the line beside it read
+// 0xCBB475, paler and greener, its near-white heart being half its width.
+// The ring's art (vfx_selparty.dds) is a deeper orange-gold still, 0xAA7423
+// with highlights 0xCEA24A, lit by the scene. So: an orange-gold body a
+// little richer than the ring reads in play, since a thin line takes more
+// of the ground's colour than a wide ring; a thin pale-gold highlight, not
+// white; an orange glow. The red is the same made red.
+var MARKER_HALO = 0xD98C28;
+var MARKER_EDGE = 0xEFB045;
+var MARKER_HEART = 0xFFEBA2;
 var RED_HALO = 0xFF3A14;
 var RED_EDGE = 0xD8402C;
 var RED_HEART = 0xFFE6DA;
 // Each pass: width in stage pixels, which colour (0 shadow, 1 halo, 2 the
 // edge, 3 the heart), alpha.
-var GLOW = [[9, 0, 14], [24, 1, 5], [17, 1, 8], [11.5, 1, 13], [7.5, 1, 22], [4.6, 2, 100], [2.4, 3, 100]];
+var GLOW = [[9, 0, 14], [24, 1, 5], [17, 1, 8], [11.5, 1, 13], [7.5, 1, 24], [4.8, 2, 100], [1.5, 3, 80]];
 
 // A path through its points, its corners rounded a little. Closed, it is a
 // ring: curved from the middle of each side to the middle of the next, all
