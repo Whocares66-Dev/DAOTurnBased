@@ -153,6 +153,8 @@ void TurnMachine::SetSettings(const Settings &settings)
     {
         return;
     }
+    const char *now = PlayerControls(*current) ? "the player's" : "its AI's";
+    Emit(EventKind::TurnHandedOver, current->id, now);
     // Who plays the current turn changed with the settings (party manual to
     // tactics in a companion's turn): it goes to whoever plays it now, with
     // what it has left. Waiting on the player's order for a companion its AI
@@ -160,11 +162,14 @@ void TurnMachine::SetSettings(const Settings &settings)
     // nothing (the second play test, 2026-09-30).
     if (phase_ == Phase::AwaitingOrder || phase_ == Phase::Dispatching || phase_ == Phase::AiThinking)
     {
-        Log(LogLevel::Info, std::format("{}'s turn is {} now", Utf8(current->name),
-                                        PlayerControls(*current) ? "the player's" : "its AI's"));
-        Emit(EventKind::TurnHandedOver, current->id, PlayerControls(*current) ? "the player's" : "its AI's");
+        Log(LogLevel::Info, std::format("{}'s turn is {} now", Utf8(current->name), now));
         Handover(*current, pending_);
+        return;
     }
+    // Mid-command (an AI acts within milliseconds of being told, the fourth
+    // play test): the turn goes on, and whoever plays it now takes it as the
+    // command ends.
+    Log(LogLevel::Info, std::format("{}'s turn is {} now, from the end of its command", Utf8(current->name), now));
 }
 
 bool TurnMachine::Active() const
@@ -857,6 +862,25 @@ void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
 
 void TurnMachine::StepAwaiting(const Observation &obs, std::vector<Effect> &fx)
 {
+    // The last enemies fallen outside anyone's attack (a script, a trap):
+    // the fight is over now, not when the game ends combat by itself (2.8 s
+    // later in the fourth play test).
+    // A fresh scan first: one joining may not be in the order yet (the long
+    // run of random fights, seed 234).
+    if (!order_.AnyStanding(Side::Enemy))
+    {
+        if (!obs.scan)
+        {
+            wantScan_ = true;
+            return;
+        }
+        Merge(*obs.scan, fx);
+        if (!order_.AnyStanding(Side::Enemy))
+        {
+            End(fx, "no enemy left standing");
+            return;
+        }
+    }
     if (ActorGone(obs))
     {
         EndTurn(fx, "fell");
@@ -986,10 +1010,11 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         const Combatant *current = order_.Current();
         if (!actor.busy && current != nullptr && !PlayerControls(*current))
         {
-            // Its AI was not told, or told while it could not choose.
-            fx.push_back(Effect::Of(EffectKind::PokeAi, current->id));
-            deadline_ = clock_ + static_cast<std::uint32_t>(settings_.aiThinkMs);
-            phase_ = Phase::AiThinking;
+            // Its AI was not told, or told while it could not choose: handed
+            // over whole, the hero selected first for a companion. Poked while
+            // still the one selected (party control turned to tactics while
+            // it was held), the dog's AI chose nothing (the fourth play test).
+            Handover(*current, fx);
             return;
         }
     }
@@ -1376,6 +1401,7 @@ void TurnMachine::Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId o
 
 void TurnMachine::Refuse(ObjectId target, std::wstring text, CommandType command, std::string note)
 {
+    lastPlayerRefusal_ = std::format("{} ({}{}{})", Utf8(text), Name(command), note.empty() ? "" : ": ", note);
     Emit(EventKind::Refused, target, Utf8(text), 0, Name(command), std::move(note));
     // One a second: a player clicking again and again gets one message.
     if (anyRefusal_ && lastNow_ - lastRefusalNow_ < 1000)
@@ -1663,7 +1689,7 @@ MachineState TurnMachine::State() const
     {
         state.cooldowns.push_back({h.creature, h.ability, h.turns});
     }
-    state.lastRefusal = lastRefusal_;
+    state.lastRefusal = lastPlayerRefusal_;
     state.speed = speedSet_;
     state.heldByEffect = heldByEffect_;
     return state;
@@ -1672,11 +1698,22 @@ MachineState TurnMachine::State() const
 // A companion's AI spent her action twice on an attack the engine then
 // failed with COMMAND_FAILED_INVALID_PATH, in a doorway (the third play
 // test, 2026-09-30).
-bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::string_view why)
+bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t ability, std::string_view why)
 {
     const Combatant *current = order_.Current();
-    if (!Active() || current == nullptr || current->id != who || Classify(type) != CommandKind::Action ||
-        budget_.actions != 0 || budget_.refunded)
+    if (!Active() || current == nullptr || current->id != who)
+    {
+        return false;
+    }
+    // A talent that never ran is not held on cooldown: an archer's was, for
+    // a shot nobody took (the fourth play test, 19:21:52).
+    if (type == CommandType::UseAbility &&
+        std::erase_if(usedNow_, [&](const Hold &h) { return h.creature == who && h.ability == ability; }) > 0)
+    {
+        Log(LogLevel::Info,
+            std::format("{}'s ability {} failed ({}): not held on cooldown", Utf8(current->name), ability, why));
+    }
+    if (Classify(type) != CommandKind::Action || budget_.actions != 0 || budget_.refunded)
     {
         return false;
     }

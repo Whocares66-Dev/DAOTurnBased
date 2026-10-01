@@ -330,7 +330,7 @@ class TurnMachine
     // in a failure that did nothing, `why` the failure's name. The current
     // creature's action, spent when the gate let it through, is given back
     // once a turn, as for an approach cut short. True if it was.
-    bool OnCommandFailed(ObjectId who, CommandType type, std::string_view why);
+    bool OnCommandFailed(ObjectId who, CommandType type, std::int32_t ability, std::string_view why);
 
     // Typed events, as they happen (core/Events.h): called under the same
     // lock as everything else, from inside Step and the gate's calls.
@@ -458,7 +458,8 @@ class TurnMachine
     EventSink events_;
     void Emit(EventKind kind, ObjectId who = kNoObject, std::string detail = {}, std::int32_t value = 0,
               std::string command = {}, std::string note = {}) const;
-    std::string lastRefusal_; // the last refusal logged, and when: repeats within a second are not
+    std::string lastPlayerRefusal_; // what the player was last told, for the state: "Too far (attack: ...)"
+    std::string lastRefusal_;       // the last refusal logged, and when: repeats within a second are not
     std::uint32_t lastRefusalLogNow_ = 0;
     bool turnBegun_ = false;        // an interlude came in the middle of a turn, not between two
     bool startInterrupted_ = false; // an interlude came before the fight had started

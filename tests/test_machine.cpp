@@ -145,9 +145,7 @@ TEST_CASE("the hero is the one the player controls once the fight is over", "[ma
     w.applied.clear();
     w.Get(kGenlock).down = true;
     w.Get(kHurlock).down = true;
-    w.RunFor(600);
-    CHECK(w.machine.OnPauseKey()); // the fight ends as the turn passes
-    w.RunFor(600);
+    w.RunFor(600); // the fight ends at the status read that sees them fallen
     REQUIRE_FALSE(w.machine.Active());
     CHECK(w.Did(EffectKind::Select, kHero));
 }
@@ -1492,11 +1490,96 @@ TEST_CASE("a command that failed without acting gives its action back, once a tu
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
     REQUIRE(w.machine.View().actionsLeft == 0);
     CHECK_FALSE(
-        w.machine.OnCommandFailed(kGenlock, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH")); // not its turn
-    CHECK_FALSE(w.machine.OnCommandFailed(kHero, CommandType::MoveToLocation, "COMMAND_FAILED_INVALID_PATH"));
-    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH"));
+        w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH")); // not its turn
+    CHECK_FALSE(w.machine.OnCommandFailed(kHero, CommandType::MoveToLocation, -1, "COMMAND_FAILED_INVALID_PATH"));
+    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH"));
     CHECK(w.machine.View().actionsLeft == 1);
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
-    CHECK_FALSE(w.machine.OnCommandFailed(kHero, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH")); // once
+    CHECK_FALSE(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH")); // once
     CHECK(w.machine.View().actionsLeft == 0);
+}
+
+TEST_CASE("a companion's AI turn let go by an effect selects the hero before its AI is told", "[machine][conditions]")
+{
+    // The fourth play test: the dog held at its turn's start, party control
+    // turned to tactics meanwhile, and poked while still the one selected,
+    // its AI chose nothing.
+    Settings s = Fixed();
+    s.partyControl = PartyControl::Tactics;
+    World w{s};
+    w.StartFight();
+    CHECK(w.Order(kCompanion, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    for (int i = 0; i < 80 && w.Current() != kCompanion; ++i)
+    {
+        (void)w.machine.OnPauseKey();
+        w.RunFor(100);
+    }
+    REQUIRE(w.Current() == kCompanion);
+    CHECK_FALSE(w.Did(EffectKind::PokeAi, kCompanion)); // held
+    w.applied.clear();
+    w.Finish(kCompanion); // let go within the grace
+    w.RunFor(100);
+    CHECK(w.Did(EffectKind::Select, kHero));
+    CHECK(w.Did(EffectKind::PokeAi, kCompanion));
+}
+
+TEST_CASE("party control changed mid-command is said, and taken as the command ends", "[machine][events]")
+{
+    World w;
+    std::vector<std::string> handed;
+    w.machine.SetEventSink([&](const TurnEvent &e) {
+        if (e.kind == EventKind::TurnHandedOver)
+        {
+            handed.push_back(e.detail);
+        }
+    });
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow); // executing
+    Settings tactics = Fixed();
+    tactics.partyControl = PartyControl::Tactics; // the hero stays the player's
+    w.machine.SetSettings(tactics);
+    CHECK(handed.empty());
+    // Alistair's turn, mid-command, handed to his AI.
+    w.Finish(kHero);
+    for (int i = 0; i < 80 && w.Current() != kCompanion; ++i)
+    {
+        (void)w.machine.OnPauseKey();
+        w.RunFor(100);
+    }
+    REQUIRE(w.Current() == kCompanion);
+    w.machine.SetSettings(Fixed()); // back to manual: the player's now
+    REQUIRE(handed.size() == 1);
+    CHECK(handed[0] == "the player's");
+}
+
+TEST_CASE("the last enemy fallen outside anyone's attack ends the fight on the player's turn at once", "[machine]")
+{
+    World w;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    w.Get(kGenlock).down = true;
+    w.Get(kHurlock).down = true;
+    w.RunFor(600); // a status read, the hero still choosing
+    CHECK_FALSE(w.machine.Active());
+}
+
+TEST_CASE("a talent that failed without running is not held on cooldown", "[machine]")
+{
+    World w;
+    w.StartFight();
+    CHECK(w.UseAbility(kHero, Source::Player, 803, 20.0f, false, false) == Verdict::Allow);
+    CHECK(w.machine.OnCommandFailed(kHero, CommandType::UseAbility, 803, "COMMAND_FAILED_INVALID_DATA"));
+    w.Finish(kHero);
+    w.RunFor(1200);
+    CHECK_FALSE(w.Did(EffectKind::Cooldown, kHero));
+}
+
+TEST_CASE("the state's last refusal is the player's, with its command and numbers", "[machine]")
+{
+    World w;
+    w.StartFight();
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 30.0f) == Verdict::Block);
+    CHECK(w.Order(kGenlock, CommandType::Wait, Source::Script) == Verdict::Block); // the AI's, not the player's
+    CHECK(w.machine.State().lastRefusal == "Too far (attack: 30.0 m to walk, 9.0 m left)");
 }

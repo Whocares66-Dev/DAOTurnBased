@@ -489,13 +489,22 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
     // On the game's thread, inside the command step: the machine only
     // counts, and queues or clears nothing.
     dao::commands::OnEnd([&machine, &mutex](ObjectId object, const dao::Command &command, std::int32_t result) {
-        if (!DidNothing(result))
+        if (result == dao::commands::kSuccess || result == dao::commands::kCleared)
         {
             return;
         }
         const auto type = static_cast<CommandType>(static_cast<int>(command.Type()));
+        // Every failure, to read what a command that seemed to do nothing
+        // ended with (an archer's shot charged its cooldown for nothing, the
+        // fourth play test).
+        spdlog::debug("{:#x}: {} ended {}", object, Name(type), dao::commands::ResultName(result));
+        if (!DidNothing(result))
+        {
+            return;
+        }
+        const std::int32_t ability = command.Ability().value_or(-1);
         const std::lock_guard lock(mutex);
-        (void)machine.OnCommandFailed(object, type, dao::commands::ResultName(result));
+        (void)machine.OnCommandFailed(object, type, ability, dao::commands::ResultName(result));
     });
 }
 

@@ -253,8 +253,8 @@ MUTANTS = [
     Mutant(
         "an AI an effect let go within the grace is never told again",
         MACHINE,
-        "            // Its AI was not told, or told while it could not choose.\n            fx.push_back(Effect::Of(EffectKind::PokeAi, current->id));",
-        "            // Its AI was not told, or told while it could not choose.\n",
+        "            Handover(*current, fx);\n            return;\n        }\n    }\n    if (actor.busy)",
+        "            return;\n        }\n    }\n    if (actor.busy)",
     ),
     Mutant(
         "a conversation before the fight has started skips its start",
@@ -375,6 +375,30 @@ MUTANTS = [
         "src/core/TurnOrder.cpp",
         "    for (std::size_t step = 1; step < order_.size() && slots.size() < count; ++step)",
         "    for (std::size_t step = 1; step < 2 * order_.size() && slots.size() < count; ++step)",
+    ),
+    Mutant(
+        "an AI's turn let go by an effect pokes it while still selected",
+        MACHINE,
+        "            Handover(*current, fx);\n            return;\n        }\n    }\n    if (actor.busy)",
+        "            fx.push_back(Effect::Of(EffectKind::PokeAi, current->id));\n            return;\n        }\n    }\n    if (actor.busy)",
+    ),
+    Mutant(
+        "the last enemy fallen outside an attack leaves the fight waiting",
+        MACHINE,
+        '        if (!order_.AnyStanding(Side::Enemy))\n        {\n            End(fx, "no enemy left standing");',
+        '        if (false)\n        {\n            End(fx, "no enemy left standing");',
+    ),
+    Mutant(
+        "a talent that never ran is held on cooldown",
+        MACHINE,
+        "return h.creature == who && h.ability == ability;",
+        "return h.creature == who && h.ability == -12345;",
+    ),
+    Mutant(
+        "the state's last refusal is anyone's",
+        MACHINE,
+        "    state.lastRefusal = lastPlayerRefusal_;",
+        "    state.lastRefusal = lastRefusal_;",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",
