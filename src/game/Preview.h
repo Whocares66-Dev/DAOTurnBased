@@ -46,8 +46,10 @@ class Preview
     }
 
     // Every frame, from the frame callback: finds, places and publishes the
-    // path, or publishes nothing to draw. `enabled` is the setting.
-    void Update(const TurnView &view, std::uint32_t nowMs, bool enabled);
+    // path, or publishes nothing to draw. `enabled` is the setting, and
+    // `onGround` its style: the path as marks laid in the world, not a line
+    // the movie draws.
+    void Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bool onGround);
 
   private:
     void Clear();
@@ -55,6 +57,8 @@ class Preview
     void Compare(std::uint32_t nowMs);
     void ShowMarker(const Vec3 &at);
     void HideMarker();
+    void Lay(std::vector<ObjectId> &marks, std::int32_t row, float scale, const std::vector<Vec3> &at);
+    void HideMarks();
 
     std::mutex mutex_;
     std::wstring encoded_; // what the movie is given
@@ -77,6 +81,14 @@ class Preview
     ObjectId marker_ = kNoObject;
     ObjectId markerArea_ = kNoObject;
     bool markerSaid_ = false;
+
+    // The path's marks on the ground, in reach and beyond, and the ring
+    // round a too-far end: effects placed once and moved, of the marker's
+    // area.
+    std::vector<ObjectId> reachMarks_;
+    std::vector<ObjectId> beyondMarks_;
+    std::vector<ObjectId> endMarks_;
+    bool marksSaid_ = false;
 
     // The path last shown, kept a moment after: if its creature then
     // walks, where it goes is measured against it (Compare).

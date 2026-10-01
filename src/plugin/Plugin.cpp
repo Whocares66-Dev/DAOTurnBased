@@ -67,6 +67,7 @@ struct State
     tb::game::BarLink bar;
     tb::game::Preview preview;
     bool movePreview = true;
+    bool movePreviewGround = false;
     tb::game::Targeting targeting;
     bool turnBar = false;
     bool portraits = true;
@@ -317,6 +318,7 @@ void UseTurnBar(const tb::Settings &settings)
     g.turnBar = settings.turnBar;
     g.portraits = settings.portraits;
     g.movePreview = settings.movePreview;
+    g.movePreviewGround = settings.movePreviewGround;
     g.targeting.SetEnabled(settings.pickTargets);
     tb::game::SetPathCheck(settings.pathCheck);
     if (g.turnBar)
@@ -377,7 +379,7 @@ void ServeBar(std::uint32_t now)
     g.bar.KeepScreen(fighting);
     // Every frame, not with the bar's tenth of a second: the path's place
     // on the screen moves with the camera.
-    g.preview.Update(view, now, g.turnBar && g.movePreview);
+    g.preview.Update(view, now, g.turnBar && g.movePreview, g.movePreviewGround);
     if (now - g.lastBarPublish >= 100)
     {
         g.lastBarPublish = now;

@@ -146,7 +146,8 @@ TEST_CASE("the preview's string has a head and two lines of points", "[preview]"
     const std::vector<std::wstring> records = Split(EncodePreview(view), kBarCard);
     REQUIRE(records.size() == 5);
     const std::vector<std::wstring> head = Split(records[0], kBarField);
-    REQUIRE(head.size() == 6);
+    REQUIRE(head.size() == 7);
+    CHECK(head[6] == L"1"); // the movie draws the line
     CHECK(head[0] == std::to_wstring(kPreviewVersion));
     CHECK(head[1] == L"1920");
     CHECK(head[2] == L"1080");
@@ -192,7 +193,7 @@ TEST_CASE("nothing to draw is a head alone, of the same fields", "[preview]")
     const std::wstring nothing = EncodeNoPreview();
     CHECK(Split(nothing, kBarCard).size() == 1);
     const std::vector<std::wstring> head = Split(nothing, kBarField);
-    REQUIRE(head.size() == 6);
+    REQUIRE(head.size() == 7);
     CHECK(head[0] == std::to_wstring(kPreviewVersion));
     CHECK(head[3] == L"0");
     // A path of one point on the screen is nothing to draw either.
@@ -255,4 +256,54 @@ TEST_CASE("no walk, or no path shown, is not apart", "[preview]")
     const std::vector<Vec3> one{Vec3{1, 1, 0}};
     CHECK(PathLength(one) == 0.0f);
     CHECK(PathApart(kPath, one) == Approx(Distance(Vec3{6, 4, 0}, Vec3{1, 1, 0}))); // from its one point
+}
+
+TEST_CASE("a preview marked in the world tells the movie not to draw its line", "[preview]")
+{
+    PreviewView view;
+    view.width = 1280;
+    view.height = 720;
+    view.length = 3.0f;
+    view.meters = 9.0f;
+    view.reach = {ScreenDot{10, 20}, ScreenDot{30, 40}};
+    view.line = false;
+    const std::vector<std::wstring> head = Split(Split(EncodePreview(view), kBarCard)[0], kBarField);
+    REQUIRE(head.size() == 7);
+    CHECK(head[6] == L"0");
+}
+
+TEST_CASE("marks are laid along a path at even steps, round its corners", "[preview]")
+{
+    // The L: 6 m east, 4 m north. A mark every 2 m from 1 m along to 9 m along.
+    const std::vector<Vec3> marks = AlongPath(kPath, 2.0f, 1.0f, 9.0f);
+    REQUIRE(marks.size() == 5); // at 1, 3, 5, 7 and 9 m
+    CHECK(marks[0].x == Approx(1.0f));
+    CHECK(marks[2].x == Approx(5.0f));
+    CHECK(marks[2].y == Approx(0.0f));
+    CHECK(marks[3].x == Approx(6.0f)); // 7 m along: a meter up the second leg
+    CHECK(marks[3].y == Approx(1.0f));
+    CHECK(marks[4].y == Approx(3.0f));
+}
+
+TEST_CASE("marks stop at the path's end and at the reach asked for", "[preview]")
+{
+    CHECK(AlongPath(kPath, 2.0f, 0.0f, 100.0f).size() == 6); // 0, 2, ... 10: the end itself
+    CHECK(AlongPath(kPath, 2.0f, 0.0f, 9.9f).size() == 5);   // not the end
+    CHECK(AlongPath(kPath, 2.0f, 0.0f, 4.0f).size() == 3);   // 0, 2, 4
+    CHECK(AlongPath(kPath, 3.0f, 2.5f, 6.0f).size() == 2);   // 2.5 and 5.5
+    CHECK(AlongPath(kPath, 2.0f, 11.0f, 20.0f).empty());     // begun past the end
+    CHECK(AlongPath(kPath, 2.0f, 5.0f, 4.0f).empty());       // nothing between
+    CHECK(AlongPath(kPath, 2.0f, -3.0f, 1.0f).size() == 1);  // from the start, no earlier
+}
+
+TEST_CASE("no marks for no spacing, no path, or a path of one point", "[preview]")
+{
+    CHECK(AlongPath(kPath, 0.0f, 0.0f, 10.0f).empty());
+    CHECK(AlongPath(kPath, -1.0f, 0.0f, 10.0f).empty());
+    CHECK(AlongPath({}, 1.0f, 0.0f, 10.0f).empty());
+    const std::vector<Vec3> one{Vec3{1, 1, 0}};
+    CHECK(AlongPath(one, 1.0f, 0.0f, 10.0f).empty());
+    // A step of no length is passed over.
+    const std::vector<Vec3> twice{Vec3{0, 0, 0}, Vec3{0, 0, 0}, Vec3{2, 0, 0}};
+    CHECK(AlongPath(twice, 1.0f, 0.0f, 10.0f).size() == 3);
 }

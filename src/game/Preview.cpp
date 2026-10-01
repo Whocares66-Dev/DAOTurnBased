@@ -61,6 +61,25 @@ constexpr std::int32_t kMoveMarker = 30000;
 // the movement runs out, half that; and round an end in reach only if the
 // marker could not be placed. Each a polygon of so many points, which the
 // movie rounds.
+// The path on the ground (`[feedback] move_preview_ground`; the user,
+// 2026-10-01: "should the line be drawn on the ground as well?"). A line
+// in the world is not to be had: an effect is scaled by one number, so no
+// row can be stretched along a step, and a model of our own is days of
+// work (lib-agent's reading). So marks: the game's own selection rings
+// made small, one every so often along the path, the party's gold ring in
+// reach and the enemy's red one beyond, each left out of the cursor's
+// pick. They begin outside the walker's own ring and stop short of the
+// marker; a too-far end has the red ring at its size. If a path is long
+// the marks are spread to keep their number down.
+constexpr std::int32_t kPartyRing = 30005; // "Party Member", SR_PTY
+constexpr std::int32_t kEnemyRing = 30011; // "Enemy", SR_EMY
+constexpr float kMarkScale = 0.14f;
+constexpr float kMarkEvery = 0.4f;
+constexpr float kMarksFrom = 0.8f;    // meters along: clear of the walker's ring
+constexpr float kMarksShortOf = 0.5f; // of the end: clear of the marker there
+constexpr float kEndRingScale = 0.6f;
+constexpr std::size_t kMostMarks = 60;
+
 constexpr float kEndRing = 0.45f;
 constexpr float kStopRing = 0.22f;
 constexpr int kRingPoints = 16;
@@ -199,6 +218,59 @@ void Preview::HideMarker()
     marker_ = kNoObject;
 }
 
+// `marks` made to lie at `at`: those there are moved, more are placed, the
+// rest are taken away.
+void Preview::Lay(std::vector<ObjectId> &marks, std::int32_t row, float scale, const std::vector<Vec3> &at)
+{
+    for (std::size_t i = 0; i < at.size(); ++i)
+    {
+        if (i < marks.size() && dao::vfx::Move(marks[i], Of(at[i])))
+        {
+            continue;
+        }
+        const ObjectId placed = dao::vfx::Place(row, Of(at[i]), scale);
+        if (placed != kNoObject)
+        {
+            dao::vfx::SetPickable(placed, false);
+        }
+        if (i < marks.size())
+        {
+            marks[i] = placed;
+        }
+        else
+        {
+            marks.push_back(placed);
+        }
+    }
+    while (marks.size() > at.size())
+    {
+        dao::vfx::Remove(marks.back());
+        marks.pop_back();
+    }
+}
+
+void Preview::HideMarks()
+{
+    if (reachMarks_.empty() && beyondMarks_.empty() && endMarks_.empty())
+    {
+        return;
+    }
+    // As the marker: in their own area only.
+    const dao::CCArea *area = dao::world::CurrentArea();
+    const bool here = area != nullptr && markerArea_ == area->Id();
+    for (std::vector<ObjectId> *marks : {&reachMarks_, &beyondMarks_, &endMarks_})
+    {
+        if (here)
+        {
+            for (const ObjectId mark : *marks)
+            {
+                dao::vfx::Remove(mark);
+            }
+        }
+        marks->clear();
+    }
+}
+
 // Does the path shown stand for the walk the game makes? Shown, the path
 // is the pathfinder's whole answer then; ordered, the creature asks the
 // pathfinder itself, a stretch at a time as it goes (its own path, DAOLib's
@@ -272,6 +344,7 @@ void Preview::Compare(std::uint32_t nowMs)
 void Preview::Clear()
 {
     HideMarker();
+    HideMarks();
     searched_ = false;
     path_.clear();
     if (!std::exchange(drawn_, false))
@@ -338,7 +411,7 @@ void Preview::Search(ObjectId walker, const Vec3 &from, const Vec3 &to, std::uin
     }
 }
 
-void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
+void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bool onGround)
 {
     if (!installed_)
     {
@@ -379,6 +452,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
         // No path there as the game finds it: nothing is promised, so
         // nothing is drawn.
         HideMarker();
+        HideMarks();
         if (std::exchange(drawn_, false))
         {
             const std::lock_guard lock(mutex_);
@@ -417,16 +491,52 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
     {
         ShowMarker(path_.back());
     }
+    // The path in the world: marks along it, in the marker's area (which
+    // ShowMarker keeps; with no marker placed the area is asked here).
+    const dao::CCArea *area = dao::world::CurrentArea();
+    shown.line = !onGround || area == nullptr;
+    if (shown.line)
+    {
+        HideMarks();
+    }
+    else
+    {
+        if (markerArea_ != area->Id())
+        {
+            // Another area than the marks were laid in: they went with it.
+            reachMarks_.clear();
+            beyondMarks_.clear();
+            endMarks_.clear();
+            markerArea_ = area->Id();
+        }
+        const float reachEnd = PathLength(split.reach);
+        const float beyondEnd = PathLength(split.beyond);
+        // Spread, if they would be too many.
+        const float every = std::max(kMarkEvery, (reachEnd + beyondEnd) / static_cast<float>(kMostMarks));
+        const float reachTo = split.TooFar() ? reachEnd : reachEnd - kMarksShortOf;
+        Lay(reachMarks_, kPartyRing, kMarkScale, AlongPath(split.reach, every, kMarksFrom, reachTo));
+        // The red ones go on in step from where the gold ones end.
+        const float into = every - std::fmod(std::max(0.0f, reachEnd - kMarksFrom), every);
+        Lay(beyondMarks_, kEnemyRing, kMarkScale,
+            split.TooFar() ? AlongPath(split.beyond, every, into, beyondEnd - kMarksShortOf) : std::vector<Vec3>{});
+        Lay(endMarks_, kEnemyRing, kEndRingScale,
+            split.TooFar() ? std::vector<Vec3>{path_.back()} : std::vector<Vec3>{});
+        if (!std::exchange(marksSaid_, true))
+        {
+            spdlog::debug("the preview's path is marked on the ground: {} in reach, {} beyond, one every {:.2f} m",
+                          reachMarks_.size(), beyondMarks_.size(), every);
+        }
+    }
     // Only if the reach is whole: a line broken behind the camera has no
     // second half to join.
     if (shown.reach.size() == split.reach.size())
     {
         shown.beyond = OnScreen(split.beyond);
-        if (split.TooFar())
+        if (shown.line && split.TooFar())
         {
             shown.stopRing = RingOnScreen(split.reach.back(), kStopRing);
         }
-        if (shown.beyond.size() == split.beyond.size() && (split.TooFar() || marker_ == kNoObject))
+        if (shown.line && shown.beyond.size() == split.beyond.size() && (split.TooFar() || marker_ == kNoObject))
         {
             shown.endRing = RingOnScreen(path_.back(), kEndRing);
         }

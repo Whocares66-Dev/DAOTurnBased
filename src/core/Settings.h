@@ -103,12 +103,13 @@ struct Settings
     AiPoke aiPoke = AiPoke::CommandComplete;
 
     // [feedback]
-    bool floaties = true;      // the game's floating text: whose turn, out of movement, ...
-    bool scriptEvents = true;  // signal the module the turn-based events (core/TurnMachine.h)
-    bool cameraFollow = false; // experimental: centre the camera on whoever's turn it is
-    bool turnBar = false;      // show the turn order bar (dev/UI.md); off until it is seen in play
-    bool portraits = true;     // with the bar: render portraits for combatants the game has none for
-    bool movePreview = true;   // with the bar: draw the path to the cursor, gold in reach and red beyond
+    bool floaties = true;           // the game's floating text: whose turn, out of movement, ...
+    bool scriptEvents = true;       // signal the module the turn-based events (core/TurnMachine.h)
+    bool cameraFollow = false;      // experimental: centre the camera on whoever's turn it is
+    bool turnBar = false;           // show the turn order bar (dev/UI.md); off until it is seen in play
+    bool portraits = true;          // with the bar: render portraits for combatants the game has none for
+    bool movePreview = true;        // with the bar: draw the path to the cursor, gold in reach and red beyond
+    bool movePreviewGround = false; // the path as marks on the ground, not a line over the scene
 
     // [keys]
     KeyChord toggleKey{0x54, true, false, false}; // Ctrl+T

@@ -193,3 +193,12 @@ TEST_CASE("the movement preview is on by default and can be turned off", "[setti
     CHECK_FALSE(off.settings.movePreview);
     CHECK(off.warnings.empty());
 }
+
+TEST_CASE("the preview's marks on the ground are off by default and can be turned on", "[settings]")
+{
+    CHECK_FALSE(tb::Settings{}.movePreviewGround);
+    CHECK_FALSE(tb::ParseSettings(tb::DefaultSettingsFile()).settings.movePreviewGround);
+    const tb::ParsedSettings on = tb::ParseSettings("[feedback]\nmove_preview_ground = true\n");
+    CHECK(on.settings.movePreviewGround);
+    CHECK(on.warnings.empty());
+}

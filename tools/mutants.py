@@ -734,6 +734,24 @@ MUTANTS = [
         "        along = along < 0.0f ? 0.0f : along;",
     ),
     Mutant(
+        "marks are laid past the reach asked for",
+        PREVIEW,
+        "        while (step > 0.0f && next <= walked + step && next <= to)",
+        "        while (step > 0.0f && next <= walked + step)",
+    ),
+    Mutant(
+        "marks do not go round a corner",
+        PREVIEW,
+        "            marks.push_back(Between(path[i - 1], path[i], (next - walked) / step));",
+        "            marks.push_back(Between(path[0], path[1], (next - walked) / step));",
+    ),
+    Mutant(
+        "a preview marked in the world still has the movie draw its line",
+        PREVIEW,
+        "kBarField, view.line ? 1 : 0);",
+        "kBarField, view.line ? 1 : 1);",
+    ),
+    Mutant(
         "a preview too far is said to be in reach",
         PREVIEW,
         "view.beyond.empty() ? 1 : 2",

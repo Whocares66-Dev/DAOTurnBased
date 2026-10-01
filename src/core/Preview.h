@@ -12,7 +12,9 @@
 //   the head:   version, the view's width and height in pixels, the state
 //               (0 nothing to draw, 1 all of it in reach, 2 too far), the
 //               path's length and the movement left, in meters with one
-//               decimal
+//               decimal, and whether the movie draws the line (1) or the
+//               path is marked in the world and only the length is the
+//               movie's to show (0)
 //   the reach:  x, y, x, y, ...: the points to where the movement runs out,
 //               in pixels of the view from its top left
 //   the beyond: the same, from there to the path's end; empty in reach
@@ -20,7 +22,8 @@
 //               game's selection ring does: round where the movement runs
 //               out (empty in reach), and round the path's end
 //
-// With nothing to draw the head stands alone. Version 2 added the rings.
+// With nothing to draw the head stands alone. Version 2 added the rings,
+// version 3 the head's last field.
 #pragma once
 
 #include "core/Types.h"
@@ -32,7 +35,7 @@
 namespace tb
 {
 
-inline constexpr int kPreviewVersion = 2;
+inline constexpr int kPreviewVersion = 3;
 
 struct PathSplit
 {
@@ -66,6 +69,11 @@ struct PathSplit
 // (0) for a walk of no points or a path shown of none.
 [[nodiscard]] float PathApart(std::span<const Vec3> walked, std::span<const Vec3> shown);
 
+// Points along a path, one every `spacing` meters, from `from` meters
+// along it to `to` (no further than its end): where marks are laid on the
+// ground for a path shown in the world. None for a spacing of nothing.
+[[nodiscard]] std::vector<Vec3> AlongPath(std::span<const Vec3> path, float spacing, float from, float to);
+
 // `count` points of a ring lying flat round `centre`, for the game layer to
 // place on the screen: seen from the camera it is the ellipse a ring on the
 // ground is.
@@ -88,6 +96,7 @@ struct PreviewView
     std::vector<ScreenDot> beyond;
     std::vector<ScreenDot> stopRing; // round where the movement runs out; empty in reach
     std::vector<ScreenDot> endRing;  // round the path's end
+    bool line = true;                // the movie draws the line and the rings; false, the world has them
 };
 
 // Nothing to draw: no path, no turn of the player's, the cursor off the

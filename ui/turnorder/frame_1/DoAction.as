@@ -647,7 +647,7 @@ function draw(view)
 // with them: the stage is laid over the view whole and centred (showAll),
 // so a pixel is a stage point by one scale and an offset (seen so in play).
 // Asked every frame, since the points move with the camera.
-var PREVIEW_VERSION = 2;
+var PREVIEW_VERSION = 3;
 // The stage as tools/movie.py makes it (tools/test_movie.py holds the two
 // equal). Not Stage.width and Stage.height: in the game Stage.height is the
 // view's height in stage units, not the stage's (800 for a 1600 x 1000 view,
@@ -665,7 +665,7 @@ function samplePreview()
 {
     // Too far, which shows the most: in reach the line ends in the game's
     // own marker, which is the world's and not this movie's to draw.
-    var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 2, "13.6", "6.5"].join(FIELD);
+    var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 2, "13.6", "6.5", 1].join(FIELD);
     var reach = [300, 262, 470, 250, 560, 214, 640, 200].join(FIELD);
     var beyond = [640, 200, 720, 186, 800, 204, 900, 196].join(FIELD);
     return head + CARD + reach + CARD + beyond + CARD + sampleRing(640, 200, 15).join(FIELD) + CARD +
@@ -906,20 +906,25 @@ function drawPreview(text)
     {
         reach = shortened(reach, CLEAR);
     }
-    // Red under gold, so the gold's glow lies over where they meet.
-    glow(clip, beyond, true, false, false);
-    glow(clip, reach, false, false, false);
-    if (tooFar)
+    // The line is the movie's unless the path is marked in the world, on
+    // the ground (the head's last field): then only the length is drawn.
+    if (head[6] != "0")
     {
-        glow(clip, endRing, true, true, true);
-        glow(clip, stopRing, false, true, true);
-    }
-    else
-    {
-        // In reach the end is the game's own movement marker, which the
-        // plugin places in the world, on the ground; a ring comes for the
-        // end only if that could not be placed.
-        glow(clip, endRing, false, true, true);
+        // Red under gold, so the gold's glow lies over where they meet.
+        glow(clip, beyond, true, false, false);
+        glow(clip, reach, false, false, false);
+        if (tooFar)
+        {
+            glow(clip, endRing, true, true, true);
+            glow(clip, stopRing, false, true, true);
+        }
+        else
+        {
+            // In reach the end is the game's own movement marker, which
+            // the plugin places in the world, on the ground; a ring comes
+            // for the end only if that could not be placed.
+            glow(clip, endRing, false, true, true);
+        }
     }
     if (end != undefined)
     {

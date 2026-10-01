@@ -123,6 +123,28 @@ float PathApart(std::span<const Vec3> walked, std::span<const Vec3> shown)
     return apart;
 }
 
+std::vector<Vec3> AlongPath(std::span<const Vec3> path, float spacing, float from, float to)
+{
+    std::vector<Vec3> marks;
+    if (!(spacing > 0.0f) || path.size() < 2)
+    {
+        return marks;
+    }
+    float next = from > 0.0f ? from : 0.0f; // how far along the next mark lies
+    float walked = 0.0f;
+    for (std::size_t i = 1; i < path.size() && next <= to; ++i)
+    {
+        const float step = Distance(path[i - 1], path[i]);
+        while (step > 0.0f && next <= walked + step && next <= to)
+        {
+            marks.push_back(Between(path[i - 1], path[i], (next - walked) / step));
+            next += spacing;
+        }
+        walked += step;
+    }
+    return marks;
+}
+
 std::vector<Vec3> RingAround(const Vec3 &centre, float radius, int count)
 {
     constexpr float kTurn = 6.28318530718f;
@@ -137,8 +159,8 @@ std::vector<Vec3> RingAround(const Vec3 &centre, float radius, int count)
 
 std::wstring EncodeNoPreview()
 {
-    return std::format(L"{}{}0{}0{}0{}0.0{}0.0", kPreviewVersion, kBarField, kBarField, kBarField, kBarField,
-                       kBarField);
+    return std::format(L"{}{}0{}0{}0{}0.0{}0.0{}1", kPreviewVersion, kBarField, kBarField, kBarField, kBarField,
+                       kBarField, kBarField);
 }
 
 std::wstring EncodePreview(const PreviewView &view)
@@ -147,9 +169,9 @@ std::wstring EncodePreview(const PreviewView &view)
     {
         return EncodeNoPreview();
     }
-    std::wstring out =
-        std::format(L"{}{}{}{}{}{}{}{}{:.1f}{}{:.1f}", kPreviewVersion, kBarField, view.width, kBarField, view.height,
-                    kBarField, view.beyond.empty() ? 1 : 2, kBarField, view.length, kBarField, view.meters);
+    std::wstring out = std::format(L"{}{}{}{}{}{}{}{}{:.1f}{}{:.1f}{}{}", kPreviewVersion, kBarField, view.width,
+                                   kBarField, view.height, kBarField, view.beyond.empty() ? 1 : 2, kBarField,
+                                   view.length, kBarField, view.meters, kBarField, view.line ? 1 : 0);
     AppendDots(out, view.reach);
     AppendDots(out, view.beyond);
     AppendDots(out, view.stopRing);
