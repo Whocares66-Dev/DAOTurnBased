@@ -17,6 +17,7 @@
 // dev/DESIGN.md is the design this implements, phase by phase.
 #pragma once
 
+#include "core/Events.h"
 #include "core/Rules.h"
 #include "core/Settings.h"
 #include "core/TurnOrder.h"
@@ -288,6 +289,13 @@ class TurnMachine
     }
     [[nodiscard]] TurnView View() const;
 
+    // Typed events, as they happen (core/Events.h): called under the same
+    // lock as everything else, from inside Step and the gate's calls.
+    void SetEventSink(EventSink sink)
+    {
+        events_ = std::move(sink);
+    }
+
     // Movement closer than this to the end of the budget is none.
     static constexpr float kMinStep = 0.5f;
     // How far past its budget a creature may go before it is stopped: the
@@ -402,6 +410,8 @@ class TurnMachine
     // once and queue behind the effect (the arena, seed 127 of the long
     // run, 2026-09-30).
     std::optional<ActorObservation> seenActor_;
+    EventSink events_;
+    void Emit(EventKind kind, ObjectId who = kNoObject, std::string detail = {}, std::int32_t value = 0) const;
     std::string lastRefusal_; // the last refusal logged, and when: repeats within a second are not
     std::uint32_t lastRefusalLogNow_ = 0;
     bool turnBegun_ = false;        // an interlude came in the middle of a turn, not between two

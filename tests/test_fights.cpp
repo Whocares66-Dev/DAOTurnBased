@@ -106,6 +106,7 @@ struct Coverage
     int lostOnClock = 0;  // of them, with conditions on the game's clock
     int heldByEffect = 0; // turns lost to an effect's command no condition named
     int speedChanges = 0; // the game's speed set for an AI's turn and back
+    long long events = 0; // typed events heard
     int conditionsEnded = 0;
     int cooldownsHeld = 0;
     int cooldownsReleased = 0;
@@ -122,6 +123,7 @@ class Arena
         world_.machine.SetLogLevel(LogLevel::Info); // the turns, for a failure's message
         world_.onPoke = [this](ObjectId id) { Decide(id, false); };
         world_.onEffect = [this](const Effect &e) { Saw(e); };
+        world_.machine.SetEventSink([this](const TurnEvent &e) { Heard(e); });
         // The machine's last words, for a failure's message.
         world_.onLog = [this](std::string_view line) {
             if (line.find("the action it was moving for is kept") != std::string_view::npos)
@@ -863,11 +865,65 @@ class Arena
         }
     }
 
+    // The machine's typed events (core/Events.h) make a well-formed story:
+    // a fight begins with its first round, a turn opens and ends before the
+    // next opens, and it is the current creature's.
+    void Heard(const TurnEvent &e)
+    {
+        ++coverage_.events;
+        switch (e.kind)
+        {
+        case EventKind::FightBegan:
+            Must(!turnOpen_, "a fight began inside a turn");
+            roundStarted_ = false;
+            break;
+        case EventKind::RoundStarted:
+            roundStarted_ = true;
+            break;
+        case EventKind::TurnStarted:
+        case EventKind::TurnLost:
+            Must(roundStarted_, "a turn before the fight's first round");
+            Must(!turnOpen_, "a turn opened while another was open");
+            Must(e.who == world_.Current(), "a turn opened for someone not current");
+            turnOpen_ = true;
+            break;
+        case EventKind::TurnResumed:
+            // The turn a conversation came in the middle of, still open.
+            Must(turnOpen_, "a turn resumed that was never open");
+            Must(e.who == world_.Current(), "a turn resumed for someone not current");
+            break;
+        case EventKind::TurnEnded:
+        case EventKind::FightOver:
+            turnOpen_ = false;
+            break;
+        case EventKind::ConditionHeld:
+        case EventKind::ConditionEnded:
+        case EventKind::ConditionStillHeld:
+        case EventKind::Fell:
+        case EventKind::Gone:
+        case EventKind::UpAgain:
+        case EventKind::Joined:
+        case EventKind::CooldownHeld:
+        case EventKind::CooldownReleased:
+        case EventKind::Refused:
+            Must(e.who != kNoObject, "an event about someone names no one");
+            break;
+        case EventKind::SpeedSet:
+            break;
+        }
+    }
+
     // After each frame (2, 3, 4, 7).
     void Check()
     {
         FollowTurn();
         const Phase phase = world_.machine.GetPhase();
+        if (phase == Phase::Idle || phase == Phase::Suspended)
+        {
+            // Dropped with the world, or a conversation's: a turn may be
+            // left open (to resume), never one that starts meanwhile.
+            turnOpen_ = phase == Phase::Suspended && turnOpen_;
+        }
         // Effects' time is held exactly while a fight is on (and the setting
         // asks for it): never left held once the fight is over or dropped.
         if (phase == Phase::Idle)
@@ -989,6 +1045,8 @@ class Arena
     std::uint32_t heldInTurnMs_ = 0; // the current creature held by a condition, running
     static constexpr std::uint32_t kHeldTurnMs = 1000;
     bool heldAtStart_ = false;        // the current creature was held by an unnamed effect as its turn came
+    bool turnOpen_ = false;           // a turn's start heard, its end not yet
+    bool roundStarted_ = false;       // this fight's first round heard
     std::uint32_t turnBeganAtMs_ = 0; // turnRunMs_ as the machine began the turn
     static constexpr std::uint32_t kEffectGraceSlackMs = 600;
     int interlude_ = 0;

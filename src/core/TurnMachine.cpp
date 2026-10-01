@@ -167,6 +167,26 @@ void TurnMachine::Refused(LogLevel level, std::string text)
     lastRefusal_ = std::move(text);
 }
 
+void TurnMachine::Emit(EventKind kind, ObjectId who, std::string detail, std::int32_t value) const
+{
+    if (!events_)
+    {
+        return;
+    }
+    TurnEvent event;
+    event.kind = kind;
+    event.worldMs = clock_;
+    event.round = order_.Round();
+    event.who = who;
+    if (const Combatant *c = who != kNoObject ? order_.Find(who) : nullptr)
+    {
+        event.name = Utf8(c->name);
+    }
+    event.detail = std::move(detail);
+    event.value = value;
+    events_(event);
+}
+
 void TurnMachine::Log(LogLevel level, std::string_view text) const
 {
     if (Logs(level))
@@ -372,6 +392,7 @@ void TurnMachine::StepIdle(const Observation &obs, std::vector<Effect> &fx)
     if (!latch_)
     {
         Log(LogLevel::Info, "combat began: turn-based");
+        Emit(EventKind::FightBegan);
         phase_ = Phase::Starting;
         wantScan_ = true;
         clock_ = 0;
@@ -465,6 +486,7 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     }
     Signal(fx, events::kCombatStart, kNoObject, static_cast<std::int32_t>(order_.All().size()), 0);
     Signal(fx, events::kRoundStart, kNoObject, 1, 0);
+    Emit(EventKind::RoundStarted, kNoObject, {}, 1);
     HoldTime(settings_.effectSecondsPerRound > 0.0f, fx);
     Floaty(fx, hero_, L"Turn-based combat", kGold);
     roundRunMs_ = 0;
@@ -512,6 +534,7 @@ void TurnMachine::StartNextTurn(std::vector<Effect> &fx)
         SpendRound(fx);
         Signal(fx, events::kRoundStart, kNoObject, order_.Round(), 0);
         Log(LogLevel::Info, std::format("round {}: {}", order_.Round(), DescribeOrder()));
+        Emit(EventKind::RoundStarted, kNoObject, {}, order_.Round());
     }
     const Combatant *current = order_.Current();
     if (current == nullptr)
@@ -556,6 +579,7 @@ void TurnMachine::StepPadding(std::vector<Effect> &fx)
     SpendRound(fx);
     Signal(fx, events::kRoundStart, kNoObject, order_.Round(), 0);
     Log(LogLevel::Info, std::format("round {}: {}", order_.Round(), DescribeOrder()));
+    Emit(EventKind::RoundStarted, kNoObject, {}, order_.Round());
     phase_ = Phase::TurnStart;
     wantScan_ = true;
 }
@@ -575,6 +599,8 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
 
     Log(LogLevel::Info, std::format("round {}: {}'s turn ({}, {}), {:.1f} m to move", order_.Round(), Utf8(who.name),
                                     Name(who.side), PlayerControls(who) ? "yours" : "AI", budget_.MovementLeft()));
+    Emit(EventKind::TurnStarted, who.id, PlayerControls(who) ? "yours" : "AI",
+         static_cast<std::int32_t>(std::lround(budget_.MovementLeft() * 10.0f)));
     Signal(fx, events::kTurnStart, who.id, order_.Round(), static_cast<std::int32_t>(who.side));
     TickCooldowns(who, fx);
     // An AI's turn is shown once it has chosen (Judge): centring the camera
@@ -604,6 +630,7 @@ void TurnMachine::ResumeTurn(const Combatant &who, std::vector<Effect> &fx)
     orderPending_ = false;
     Log(LogLevel::Info, std::format("{}'s turn goes on: {} action, {:.1f} m left", Utf8(who.name), budget_.actions,
                                     budget_.MovementLeft()));
+    Emit(EventKind::TurnResumed, who.id);
     Handover(who, fx);
 }
 
@@ -636,6 +663,7 @@ bool TurnMachine::LoseTurn(const Combatant &who, std::vector<Effect> &fx)
     budget_.actions = 0;
     Log(LogLevel::Info, std::format("round {}: {}'s turn is lost to its condition ({} more)", order_.Round(),
                                     Utf8(who.name), held.turns));
+    Emit(EventKind::TurnLost, who.id, {}, held.turns);
     Signal(fx, events::kTurnStart, who.id, order_.Round(), static_cast<std::int32_t>(who.side));
     TickCooldowns(who, fx);
     Floaty(fx, who.id, who.name + L" loses the turn", kGrey);
@@ -657,6 +685,7 @@ void TurnMachine::HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx)
     if (held.turns <= 0 && held.seen != Condition::None)
     {
         Log(LogLevel::Info, std::format("{}'s condition has had its turns: ended", Utf8(who.name)));
+        Emit(EventKind::ConditionEnded, who.id);
         fx.push_back(Effect::Of(EffectKind::EndConditions, who.id));
         endedFor_ = who.id;
         held.kind = Condition::None;
@@ -691,6 +720,7 @@ void TurnMachine::HoldUsed(std::vector<Effect> &fx)
             Log(LogLevel::Debug, std::format("ability {} of {:#010x} held for {} of its user's turns", used.ability,
                                              used.creature, used.turns));
         }
+        Emit(EventKind::CooldownHeld, used.creature, std::format("{} turns", used.turns), used.ability);
     }
     usedNow_.clear();
 }
@@ -705,6 +735,7 @@ void TurnMachine::TickCooldowns(const Combatant &who, std::vector<Effect> &fx)
         {
             fx.push_back(CooldownOf(h.creature, h.ability, 0));
             Log(LogLevel::Info, std::format("{}'s ability {} is ready again", Utf8(who.name), h.ability));
+            Emit(EventKind::CooldownReleased, who.id, {}, h.ability);
         }
     }
     std::erase_if(holds_, [](const Hold &h) { return h.turns <= 0; });
@@ -736,6 +767,7 @@ void TurnMachine::SetSpeed(float speed, std::vector<Effect> &fx)
         return;
     }
     speedSet_ = speed;
+    Emit(EventKind::SpeedSet, kNoObject, {}, static_cast<std::int32_t>(std::lround(speed * 1000.0f)));
     Effect e = Effect::Of(EffectKind::GameSpeed);
     e.b = static_cast<std::int32_t>(std::lround(speed * 1000.0f));
     fx.push_back(e);
@@ -1085,6 +1117,7 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
     if (const Combatant *current = order_.Current())
     {
         Log(LogLevel::Info, std::format("{}'s turn ends: {}", Utf8(current->name), why));
+        Emit(EventKind::TurnEnded, current->id, std::string{why});
         Signal(fx, events::kTurnEnd, current->id, order_.Round(), 0);
     }
     if (order_.Advance())
@@ -1102,6 +1135,7 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
 void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
 {
     Log(LogLevel::Info, std::format("the turn-based fight is over after {} rounds: {}", order_.Round(), why));
+    Emit(EventKind::FightOver, kNoObject, std::string{why});
     HoldUsed(fx);
     ReleaseCooldowns(fx);
     HoldTime(false, fx);
@@ -1141,7 +1175,10 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
             // its combat state turned, a cutscene's walk) stops: it waits for
             // its first turn like everyone else.
             fx.push_back(Effect::Of(EffectKind::ClearCommands, joining.id));
+            const ObjectId joined = joining.id;
+            const int initiative = joining.initiative;
             order_.Join(std::move(joining));
+            Emit(EventKind::Joined, joined, {}, initiative);
         }
     }
     // An enemy or ally no longer seen fighting has left it: dead and gone,
@@ -1193,6 +1230,7 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
                 Log(LogLevel::Warn, std::format("{}'s condition was ended, and the engine still holds it: its turns "
                                                 "are lost while it lasts",
                                                 Utf8(c->name)));
+                Emit(EventKind::ConditionStillHeld, c->id);
             }
             else if (settings_.conditionTurns > 0)
             {
@@ -1200,12 +1238,14 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
                 held.turns = std::max(held.turns, settings_.conditionTurns);
                 Log(LogLevel::Info, std::format("{} is held (stunned, pinned, knocked down): {} of its turns lost",
                                                 Utf8(c->name), held.turns));
+                Emit(EventKind::ConditionHeld, c->id, {}, held.turns);
             }
             else
             {
                 Log(LogLevel::Info, std::format("{} is held (stunned, pinned, knocked down): its turns lost while it "
                                                 "lasts",
                                                 Utf8(c->name)));
+                Emit(EventKind::ConditionHeld, c->id, {}, 0);
             }
             const Combatant *current = order_.Current();
             if (status.condition == Condition::Disabled && current != nullptr && current->id == status.id)
@@ -1233,6 +1273,7 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
         {
             Log(LogLevel::Info, c->down ? std::format("{} {}", Utf8(c->name), status.exists ? "falls" : "is gone")
                                         : std::format("{} is up again", Utf8(c->name)));
+            Emit(c->down ? (status.exists ? EventKind::Fell : EventKind::Gone) : EventKind::UpAgain, c->id);
         }
     }
 }
@@ -1301,6 +1342,7 @@ void TurnMachine::Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId o
 
 void TurnMachine::Refuse(ObjectId target, std::wstring text)
 {
+    Emit(EventKind::Refused, target, Utf8(text));
     // One a second: a player clicking again and again gets one message.
     if (anyRefusal_ && lastNow_ - lastRefusalNow_ < 1000)
     {

@@ -317,6 +317,30 @@ MUTANTS = [
         "            if (status.id == endedFor_ && false)",
     ),
     Mutant(
+        "a turn's end goes unheard",
+        MACHINE,
+        "        Emit(EventKind::TurnEnded, current->id, std::string{why});",
+        "",
+    ),
+    Mutant(
+        "a refusal goes unheard",
+        MACHINE,
+        "    Emit(EventKind::Refused, target, Utf8(text));",
+        "",
+    ),
+    Mutant(
+        "a fall is heard as a creature gone",
+        MACHINE,
+        "(status.exists ? EventKind::Fell : EventKind::Gone)",
+        "(status.exists ? EventKind::Gone : EventKind::Gone)",
+    ),
+    Mutant(
+        "an event's string is not escaped",
+        "src/core/Events.cpp",
+        "        case '\"':",
+        "        case '~':",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",

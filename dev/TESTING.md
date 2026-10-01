@@ -32,10 +32,10 @@ What the first session in play found (2026-09-30), now fixed and held by scripte
 ```powershell
 .\tools\build.ps1 -Preset core -Test          # src/core and the tests only: no DAOLib, no plugin
 .\tools\build.ps1 -Preset core-cov -Coverage  # 64-bit clang-cl; per-file coverage, HTML in build\core-cov\coverage\html
-python tools\mutants.py                        # break the core 73 ways, one at a time; each must fail a test
+python tools\mutants.py                        # break the core 77 ways, one at a time; each must fail a test
 ```
 
-**Coverage** (2026-09-30): 90% of `src/core`'s regions, 89% of its lines, before the tests coverage prompted; what it showed unrun led to the arena's knockdowns, deaths mid-turn and vanishing creatures, and to a key-formatting bug (a key with no name was written `0x` and its decimal code). **Mutants** (`tools/mutants.py`): each breaks one promise (the gate letting anyone act, an action never spent, the pause never taken, the turn never passing on, a joiner's place ignored, ...), builds, and runs the suite; a survivor is a promise no test holds. 73 of 73 caught (2026-09-30). A new promise gets a mutant of its own.
+**Coverage** (2026-09-30): 90% of `src/core`'s regions, 89% of its lines, before the tests coverage prompted; what it showed unrun led to the arena's knockdowns, deaths mid-turn and vanishing creatures, and to a key-formatting bug (a key with no name was written `0x` and its decimal code). **Mutants** (`tools/mutants.py`): each breaks one promise (the gate letting anyone act, an action never spent, the pause never taken, the turn never passing on, a joiner's place ignored, ...), builds, and runs the suite; a survivor is a promise no test holds. 77 of 77 caught (2026-09-30). A new promise gets a mutant of its own.
 
 A lesson from the second pass: the reach check changed the arena's random draws, and two mutants that the fights had caught survived. The refund limit and a joiner being stopped had been held only by rare sequences, which the new streams no longer reached in seeds 1-80. So a promise the random fights happen to hold gets a scripted test as well (`test_machine.cpp`: "an action stopped short is given back once a turn", "a creature that joins the fight stops what it was doing"), and the mutants are run after any change to the arena, not only to the core. It happened again with the unnamed holds: "a conversation between two turns resumes a turn never begun" survived, and got its scripted test.
 
@@ -53,6 +53,8 @@ What these do not establish is the engine side: that `src/game` reads and does w
 ```
 
 Logs and settings are in `Documents\BioWare\Dragon Age\daolib\` (on this machine under OneDrive): `turnbased.log`, `turnbased.ini`, `loader.log`, and `crash-<time>.log` if the game crashes. Set `DAOLIB_LOG_LEVEL=debug` in the environment before starting the game for the gate's refusals and every effect applied; info shows the turns.
+
+Beside the log, `turnbased.events.jsonl` has the machine's events as JSON, a line each (`src/core/Events.h`): `fight_began`, `round_started`, `turn_started` (`detail` yours or AI, `value` tenths of a meter to move), `turn_ended` (`detail` why), `turn_lost`, `turn_resumed`, `refused` (`detail` what the player was told), `joined`, `fell`, `gone`, `up_again`, `condition_held`, `condition_ended`, `condition_still_held`, `cooldown_held`, `cooldown_released`, `speed_set`, `fight_over`. Each has `ms` (real), `world_ms` (the fight's clock), `round`, and `who` and `name` when about a creature. A game's start appends a `session_started` line with its process id; the file starts over past 5 MB. Assert on these rather than the log's prose: they are what a test server (Eluvian) will carry.
 
 DAOLib's probe can stay deployed beside the mod: both hook `QueueCommand` and the pause key, and chain.
 

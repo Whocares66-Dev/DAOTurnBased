@@ -27,6 +27,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string_view>
@@ -48,6 +50,7 @@ struct State
     bool turnBar = false;
     bool portraits = true;
     std::uint32_t lastBarPublish = 0;
+    std::ofstream events; // turnbased.events.jsonl: the machine's events, a JSON line each
 };
 State g;
 
@@ -200,6 +203,34 @@ void Tick()
     ServeBar(now);
 }
 
+// The machine's typed events (core/Events.h) as JSON lines beside
+// turnbased.log, for a tester to assert on (eluvian-agent's MCP will carry
+// them on its bus). Appended, a line marking each game's start, so that a
+// second game started by mistake cannot wipe the first's (a playtest's did
+// its logs, 2026-09-30); begun afresh once past 5 MB.
+void OpenEvents()
+{
+    const std::filesystem::path path = dao::LogDirectory() / "turnbased.events.jsonl";
+    std::error_code error;
+    const auto size = std::filesystem::file_size(path, error);
+    constexpr std::uintmax_t kMaxBytes = 5ull * 1024 * 1024;
+    const bool fresh = error || size > kMaxBytes;
+    g.events.open(path, fresh ? std::ios::trunc : std::ios::app);
+    if (!g.events)
+    {
+        spdlog::warn("could not open {} for the machine's events", path.string());
+        return;
+    }
+    g.events << std::format(R"({{"ms":{},"event":"session_started","pid":{}}})", GetTickCount64(),
+                            GetCurrentProcessId())
+             << '\n'
+             << std::flush;
+    g.machine->SetEventSink([](const tb::TurnEvent &event) {
+        g.events << tb::ToJson(event, GetTickCount64()) << '\n' << std::flush;
+    });
+    spdlog::info("the machine's events go to {}", path.string());
+}
+
 void Log(tb::LogLevel level, std::string_view line)
 {
     switch (level)
@@ -241,6 +272,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     // it would say about each is not even put together.
     g.machine->SetLogLevel(spdlog::default_logger()->should_log(spdlog::level::debug) ? tb::LogLevel::Debug
                                                                                       : tb::LogLevel::Info);
+    OpenEvents();
     g.bridge = std::make_unique<tb::game::Bridge>(settings);
     g.toggleKey = settings.toggleKey;
     UseTurnBar(settings);
