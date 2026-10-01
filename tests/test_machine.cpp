@@ -2631,3 +2631,94 @@ TEST_CASE("a fight is said to begin when there is one, each time, and to end onc
     REQUIRE(w.machine.Active());
     CHECK(kinds == std::vector<EventKind>{EventKind::FightBegan, EventKind::FightOver, EventKind::FightBegan});
 }
+
+namespace
+{
+// One of the player's orders that costs nothing, run to its end: the
+// machine looks again at who is fighting as it settles.
+void UseSomething(World &w, ObjectId id)
+{
+    REQUIRE(w.Order(id, CommandType::UseObject, Source::Player) == Verdict::Allow);
+    w.RunFor(200);
+    w.Finish(id);
+    w.RunFor(800);
+}
+} // namespace
+
+TEST_CASE("one that left the fight and is back before the round is out is said to be fighting again",
+          "[machine][engaged]")
+{
+    // Within one long turn of the player's, so the order has not dropped it.
+    World w;
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    w.Get(kGenlock).fighting = false;
+    UseSomething(w, kHero); // missed, from now
+    w.RunFor(4500);
+    UseSomething(w, kHero); // missed for more than four seconds: it has left
+    REQUIRE(w.machine.Order().Find(kGenlock) != nullptr);
+    CHECK(w.machine.Order().Find(kGenlock)->down);
+    CHECK(std::ranges::count_if(
+              events, [](const TurnEvent &e) { return e.kind == EventKind::Gone && e.who == kGenlock; }) == 1);
+    w.RunFor(1000); // alive as it is, its health does not bring it back
+    CHECK(w.machine.Order().Find(kGenlock)->down);
+    w.Get(kGenlock).fighting = true;
+    UseSomething(w, kHero);
+    REQUIRE(w.Current() == kHero);
+    CHECK_FALSE(w.machine.Order().Find(kGenlock)->down);
+    CHECK(std::ranges::count_if(events, [](const TurnEvent &e) {
+              return e.kind == EventKind::UpAgain && e.who == kGenlock && e.detail == "fighting again";
+          }) == 1);
+}
+
+TEST_CASE("a creature that begins to fight near, but not the party, mid-fight is said to wait outside, once",
+          "[machine][engaged]")
+{
+    auto fight = StandardFight();
+    Creature far = Make(0x202, Side::Enemy, false, L"Shriek", 12.0f);
+    far.engaged = false;
+    far.fighting = false; // not fighting anyone yet
+    fight.push_back(far);
+    World w(Fixed(), fight);
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    const auto said = [&] {
+        return std::ranges::count_if(w.log, [](const std::string &line) {
+            return line.find("Shriek is fighting near, but not the party") != std::string::npos;
+        });
+    };
+    CHECK(said() == 0);
+    w.Get(0x202).fighting = true; // a guard has found it, rooms away
+    UseSomething(w, kHero);
+    UseSomething(w, kHero);
+    CHECK(said() == 1);
+    CHECK(w.machine.Order().Find(0x202) == nullptr);
+}
+
+TEST_CASE("the same seed gives the same initiative", "[machine]")
+{
+    // turnbased_seed, for a test run that repeats: default settings, the
+    // dice real.
+    const auto order = [](std::uint64_t seed) {
+        World w{Settings{}};
+        w.machine.Reseed(seed);
+        w.StartFight();
+        std::vector<ObjectId> ids;
+        for (const Combatant &c : w.machine.Order().All())
+        {
+            ids.push_back(c.id);
+        }
+        return ids;
+    };
+    CHECK(order(42) == order(42));
+    CHECK(order(7) == order(7));
+    // Twenty seeds do not all roll the one order.
+    std::vector<std::vector<ObjectId>> seen;
+    for (std::uint64_t seed = 1; seed <= 20; ++seed)
+    {
+        seen.push_back(order(seed));
+    }
+    CHECK(std::ranges::any_of(seen, [&](const auto &ids) { return ids != seen.front(); }));
+}

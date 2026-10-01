@@ -916,9 +916,13 @@ class Arena
         case EventKind::CooldownHeld:
         case EventKind::CooldownReleased:
         case EventKind::Refused:
+        case EventKind::TurnHandedOver:
+        case EventKind::ConditionExpired:
+        case EventKind::ActionGivenBack:
             Must(e.who != kNoObject, "an event about someone names no one");
             break;
         case EventKind::SpeedSet:
+        case EventKind::SettingsChanged:
             break;
         }
     }
