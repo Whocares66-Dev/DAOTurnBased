@@ -1201,6 +1201,11 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
     {
         return;
     }
+    // Shifting its feet to strike what is in reach is not walking (kShuffle).
+    if (budget_.lastKind == CommandKind::Action && budget_.movementUsed - budget_.movementAtCommand < kShuffle)
+    {
+        return;
+    }
 
     fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
     // Stopped on the way to an attack or ability, it never used it: it is
@@ -1787,6 +1792,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     ++budget_.commands;
     budget_.lastKind = kind;
     budget_.lastAbility = request.type == CommandType::UseAbility ? request.ability : -1;
+    budget_.movementAtCommand = budget_.movementUsed;
     budget_.lastType = request.type;
     budget_.lastAt = lastNow_;
     orderPending_ = false;

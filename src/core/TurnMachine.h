@@ -356,6 +356,14 @@ class TurnMachine
     // How far past its budget a creature may go before it is stopped: the
     // frame it is noticed in, and the engine's stopping distance.
     static constexpr float kOvershoot = 0.3f;
+    // An action's own approach is stopped for want of movement only after
+    // this much of it. An action taken with the movement spent is at
+    // something in reach (the gate refuses the player's otherwise), and its
+    // creature still shifts its feet to strike: Eleanor, 0.0 m left, a
+    // soldier 2.0 m away, had her Shield Bash cleared 9 ms after it was
+    // let through, "out of movement", the action gone (the seventh play
+    // test, 2026-10-01).
+    static constexpr float kShuffle = 1.0f;
     // One frame's move longer than this is a teleport, not walking.
     static constexpr float kTeleport = 5.0f;
     // A target this much beyond the movement left still counts as in reach.
@@ -395,6 +403,7 @@ class TurnMachine
         bool retried = false;  // an AI told to choose again, its failed action given back
         CommandKind lastKind = CommandKind::Involuntary;
         std::int32_t lastAbility = -1; // the ability the last command was to use; -1 for any other command
+        float movementAtCommand = 0;   // movementUsed as the last command was let through
         CommandType lastType = CommandType::Invalid; // the last command let through, and when
         std::uint32_t lastAt = 0;
 

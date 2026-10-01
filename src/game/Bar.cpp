@@ -130,7 +130,7 @@ void BarLink::FollowFight(const TurnView &view, std::uint32_t nowMs)
     portraits_.Follow(view, nowMs);
     if (known > 0 && portraits_.Tried() == 0)
     {
-        spdlog::debug("the fight is over: its {} portraits forgotten", known);
+        spdlog::debug("nothing to show (the fight over, or the bar turned off): its {} portraits forgotten", known);
     }
     bool letGo = false;
     {

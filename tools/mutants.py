@@ -522,6 +522,18 @@ MUTANTS = [
         "lastNow_ - refusedEvent_->at < kRefusedEventMs / 1000;",
     ),
     Mutant(
+        "a creature in reach is stopped for shifting its feet",
+        MACHINE,
+        "budget_.movementUsed - budget_.movementAtCommand < kShuffle)",
+        "budget_.movementUsed - budget_.movementAtCommand < 0.0f)",
+    ),
+    Mutant(
+        "an action's walk goes on past its movement",
+        MACHINE,
+        "    budget_.movementAtCommand = budget_.movementUsed;",
+        "    budget_.movementAtCommand = budget_.movementUsed + 999.0f;",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",

@@ -1005,8 +1005,10 @@ class Arena
                 // after, which it measures from. Seed 624 of the long run
                 // took all four.
                 const float frame = kRunSpeed * c.speed * static_cast<float>(kFrameMs) / 1000.0f;
-                const float slack =
-                    TurnMachine::kOvershoot + (4.0f + 2.0f * static_cast<float>(interruptions_)) * frame;
+                // And each of those two tries may shift its feet a way before
+                // it is stopped (kShuffle).
+                const float slack = TurnMachine::kOvershoot + 2.0f * TurnMachine::kShuffle +
+                                    (4.0f + 2.0f * static_cast<float>(interruptions_)) * frame;
                 if (walked_ > budget + slack + 0.01f)
                 {
                     const std::string what =

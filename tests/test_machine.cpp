@@ -2206,3 +2206,64 @@ TEST_CASE("an AI told to choose again that only moves is not told a third time",
     CHECK(pokes == 2);
     CHECK(w.Current() != kGenlock); // its turn ended
 }
+
+TEST_CASE("with the movement spent, a talent on something in reach is used, not stopped", "[machine]")
+{
+    // The seventh play test: Eleanor, 0.0 m left, a soldier 2.0 m away
+    // (reach 3.5): her Shield Bash was cleared 9 ms after it was let
+    // through, "out of movement", the action gone and nothing struck.
+    World w;
+    w.StartFight();
+    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Allow);
+    w.Frame();
+    w.Get(kHero).moving = true;
+    for (int i = 0; i < 12 && w.Get(kHero).moving; ++i)
+    {
+        w.Get(kHero).position.x += 1.0f;
+        w.Frame();
+    }
+    w.RunFor(500);
+    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+    REQUIRE(w.machine.View().movementLeft == 0.0f);
+    w.applied.clear();
+    CHECK(w.UseAbility(kHero, Source::Player, 617, 20.0f) == Verdict::Allow);
+    // It turns and steps into the blow: moving, a little.
+    w.Get(kHero).moving = true;
+    for (int i = 0; i < 10; ++i)
+    {
+        w.Get(kHero).position.x += 0.05f;
+        w.Frame();
+    }
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+    w.Get(kHero).moving = false;
+    w.Finish(kHero);
+    w.RunFor(1000);
+    CHECK(std::ranges::any_of(w.applied, [](const Effect &e) {
+        return e.kind == EffectKind::Cooldown && e.target == kHero && e.a == 617;
+    })); // it ran: held on cooldown
+}
+
+TEST_CASE("with the movement spent, an action that walks on is still stopped", "[machine]")
+{
+    World w;
+    w.StartFight();
+    (void)w.machine.OnPauseKey();
+    w.onPoke = [&](ObjectId id) { w.Order(id, CommandType::Attack, Source::Script); };
+    for (int i = 0; i < 20 && w.Current() != kGenlock; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kGenlock);
+    w.applied.clear();
+    w.Get(kGenlock).moving = true;
+    float walked = 0.0f;
+    for (int i = 0; i < 200 && !w.Did(EffectKind::ClearCommands, kGenlock); ++i)
+    {
+        w.Get(kGenlock).position.x += 0.1f;
+        walked += 0.1f;
+        w.Frame();
+    }
+    REQUIRE(w.Did(EffectKind::ClearCommands, kGenlock));
+    // Its 9 m, the overshoot, and no more than a frame or two.
+    CHECK(walked < 9.0f + TurnMachine::kOvershoot + 0.5f);
+}
