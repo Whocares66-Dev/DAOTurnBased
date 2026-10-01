@@ -82,8 +82,9 @@ class Rng
 inline constexpr float kPersonCombatSpeed = 4.66f;
 
 // How fast a creature moves in combat against a person, from its
-// appearance's Game_CbtSpeed: a mabari 1.07, a shriek 1.58, a dragon 1.46,
-// an ogre 0.84. 1 when there is no speed to read. The scripts' movement
+// appearance's Game_CbtSpeed: a wild mabari 1.07, the party's dog 1.50 (an
+// appearance of its own, 6.99 m/s, seen in play 2026-09-30), a shriek 1.58,
+// a dragon 1.46, an ogre 0.84. 1 when there is no speed to read. The scripts' movement
 // speed property (20) is the flanking angle in the shipped properties
 // table, 60 for everyone in play (2026-09-30), so it is not used.
 [[nodiscard]] float SpeedFactor(float combatSpeed);

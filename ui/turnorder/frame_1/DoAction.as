@@ -545,7 +545,19 @@ function caption()
 function centre(field, top, height)
 {
     field._height = field.textHeight + 4;
-    field._y = top + (height - field.textHeight) / 2 - 2;
+    // The letters, not the line: the game's fonts leave a deep descent under
+    // the baseline, and a line centred sat its word low on the End button
+    // in play (the user, 2026-09-30, twice). The caps' middle is taken at
+    // two fifths of the ascent above the baseline, which sits two pixels in
+    // plus the ascent. Without the font's extent, the line raised by a sixth
+    // of its height, which is what the descent took in play.
+    var extent = field.getNewTextFormat().getTextExtent(field.text);
+    if (extent != undefined && extent.ascent > 0)
+    {
+        field._y = top + height / 2 - 2 - extent.ascent * 0.8;
+        return;
+    }
+    field._y = top + (height - field.textHeight) / 2 - 2 - field.textHeight / 6;
 }
 
 // On the player's turn, the movement left; nothing on anyone else's.

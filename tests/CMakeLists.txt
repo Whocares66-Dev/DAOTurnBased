@@ -18,6 +18,7 @@ endif()
 # Over tb_core only: the rules and the state machine, with no game.
 add_executable(
     tb_tests
+    quiet_crt.cpp
     test_bar.cpp
     test_fights.cpp
     test_keys.cpp
