@@ -11,6 +11,7 @@
 #include "dao/Objects.h"
 #include "dao/Script.h"
 #include "dao/ScriptHooks.h"
+#include "dao/World.h"
 #include "dao/generated/ScriptApi.h"
 
 #include <intrin.h>
@@ -123,6 +124,36 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     return Reached{WalkToReach(distance, reach), distance, reach, weaponType};
 }
 
+// An AI's attack, said with what it would take to land: the desktop play
+// test (2026-09-30) saw archers walk their 9 m a turn for four rounds and
+// never shoot. Whether they had a shot (the engine's own line of sight,
+// DAOLib 859f2db, not yet seen in play) and their reach say why. Their
+// first three attacks a fight, and every one out of reach or sight.
+void SayAiAttack(const dao::CCObject &self, const dao::Command &command)
+{
+    const std::optional<Reached> reached = WalkToTarget(self, command);
+    const std::optional<ObjectId> target = command.Target();
+    if (!reached || !target)
+    {
+        return;
+    }
+    const dao::world::Sight sight = dao::world::LineOfSight(self.Id(), *target);
+    static int said = 0;
+    if (said < 3 || reached->walk > 0.0f || !sight)
+    {
+        ++said;
+        std::string blocked;
+        if (sight.blockedAt)
+        {
+            blocked =
+                std::format(" at ({:.1f}, {:.1f}, {:.1f})", sight.blockedAt->x, sight.blockedAt->y, sight.blockedAt->z);
+        }
+        spdlog::info("{:#010x} attacks {:#010x}: {:.1f} m away, reach {:.1f} m (base item {}), line of sight {}{}",
+                     self.Id(), *target, reached->distance, reached->reach, reached->weaponType,
+                     sight ? "clear" : "blocked", blocked);
+    }
+}
+
 // What cooldowns in turns and sustained abilities need of an ability used
 // (core/TurnMachine.h, CommandRequest): its cooldown and use type from the
 // ability table (UseType 2 is sustained: Shield Wall, Powerful Swings,
@@ -187,6 +218,10 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             const dao::CCCreature *creature = self->AsCreature();
             const std::optional<Reached> reached =
                 source == Source::Player && type == CommandType::Attack ? WalkToTarget(*self, *command) : std::nullopt;
+            if (source == Source::Script && type == CommandType::Attack)
+            {
+                SayAiAttack(*self, *command);
+            }
             const std::optional<float> walk = reached ? std::optional<float>{reached->walk} : std::nullopt;
             CommandRequest request;
             request.object = self->Id();

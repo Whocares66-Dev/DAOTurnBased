@@ -339,6 +339,22 @@ namespace
 // once their turns are spent (Status, EndConditions).
 constexpr std::array kHolding{k::EFFECT_TYPE_STUN, k::EFFECT_TYPE_PARALYZE, k::EFFECT_TYPE_SLEEP, k::EFFECT_TYPE_ROOT,
                               k::EFFECT_TYPE_KNOCKDOWN};
+constexpr std::array<const char *, kHolding.size()> kHoldingNames{"stun", "paralysis", "sleep", "pin", "knockdown"};
+
+// Which of them hold a creature, by name: "pin, stun", or "nothing".
+std::string Holding(ObjectId id)
+{
+    std::string out;
+    for (std::size_t i = 0; i < kHolding.size(); ++i)
+    {
+        if (api::GetHasEffects(id, kHolding[i]) != 0)
+        {
+            out += out.empty() ? "" : ", ";
+            out += kHoldingNames[i];
+        }
+    }
+    return out.empty() ? "nothing" : out;
+}
 } // namespace
 
 CombatantStatus Bridge::Status(ObjectId id)
@@ -374,7 +390,7 @@ void Bridge::Apply(const std::vector<Effect> &effects)
 {
     for (const Effect &e : effects)
     {
-        spdlog::debug("effect: {} {:#010x}", Name(e.kind), e.target);
+        spdlog::debug("effect: {} {:#010x} ({}, {})", Name(e.kind), e.target, e.a, e.b);
         switch (e.kind)
         {
         case EffectKind::Pause:
@@ -419,9 +435,23 @@ void Bridge::Apply(const std::vector<Effect> &effects)
         case EffectKind::EndConditions:
             // Their turns are spent (core: "Conditions in turns"): the
             // engine's own timers are not waited for.
-            for (const std::int32_t type : kHolding)
             {
-                api::RemoveEffectsByParameters(e.target, type);
+                // Said before and after: the desktop play test (2026-09-30) saw
+                // a pin the machine ended hold its creature still.
+                const std::string before = Holding(e.target);
+                for (const std::int32_t type : kHolding)
+                {
+                    api::RemoveEffectsByParameters(e.target, type);
+                }
+                const std::string after = Holding(e.target);
+                if (after != "nothing")
+                {
+                    spdlog::warn("{:#010x}: ended {}, and {} holds it still", e.target, before, after);
+                }
+                else
+                {
+                    spdlog::debug("{:#010x}: ended {}", e.target, before);
+                }
             }
             break;
         case EffectKind::Floaty:

@@ -158,7 +158,11 @@ void BarLink::FollowFight(const TurnView &view, std::uint32_t nowMs)
             ++released;
         }
     }
-    spdlog::info("released {} of the fight's {} rendered portraits, {}", released, releases.size(),
+    // A creature the game has already destroyed (a body gone) cannot be
+    // asked: its renderer went with it, or not (dev/DAOLIB_NEEDS.md, check
+    // 16's memory question).
+    spdlog::info("released {} of the fight's {} rendered portraits ({} of their creatures gone already), {}", released,
+                 releases.size(), releases.size() - released,
                  letGo ? "the bar having let them go" : "the bar not having said it let them go");
 }
 
