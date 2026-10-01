@@ -103,20 +103,32 @@ struct Reached
 // thread, set on reload.
 std::atomic<bool> g_pathCheck{true};
 
-// Whether DAOLib can give a path on demand. Not now: its FindPath answered a
-// call late and left its search as the creature's own path, so the hero's
-// path read 15.6 m all fight and every order of his was refused (the second
-// play test, 2026-09-30, fight B), and DAOLib took it out (7cfe6bd: the
-// engine's search keeps an old request until it ends). Until a search of
-// its own comes, a straight line, and a move walks until its meters run
-// out. A flag, not a constant, so the rest stays compiled and linted.
+// Whether a move farther than its path can go this turn is refused ("Too
+// far") rather than walked until its meters run out. Not now: the player
+// has only known the second, and which it should be is theirs to say. A
+// flag, not a constant, so the rest stays compiled and linted.
 std::atomic<bool> g_pathOnDemand{false};
 
-// The engine's path for an idle creature to a point, its length: nothing
-// while DAOLib has no path on demand.
-std::optional<float> PathLength(ObjectId /*creature*/, const dao::Vector & /*to*/)
+// The walk the game's own pathfinder finds for a creature to a point, its
+// length, by DAOLib's search of its own (dao::world::FindPath, 1fe01a3,
+// seen in play in the Elven Ruins: round a corner 3.21 m straight was
+// 3.42 m of path, outdoors 35.8 m was 46.6 m; a straight walk costs
+// nothing, a search is capped at 30 ms, so once an order, never a frame).
+// `toward` is the creature standing at the point: its own obstacle is
+// lifted, and the path ends beside it, so the rest of the way to the
+// point is added. Nothing where there is no path (a shut door, no mesh).
+// The first FindPath drove the creature's own search and left it as its
+// path: the hero's read 15.6 m all fight and every order of his was
+// refused (the second play test, 2026-09-30), and DAOLib took it out.
+std::optional<float> PathLength(ObjectId creature, const dao::Vector &to, ObjectId toward = dao::kInvalidObject)
 {
-    return std::nullopt;
+    const std::optional<dao::world::WalkPath> path = dao::world::FindPath(creature, to, toward);
+    if (!path || path->waypoints.empty())
+    {
+        return std::nullopt;
+    }
+    const dao::Vector &end = path->waypoints.back();
+    return path->Length() + std::hypot(end.x - to.x, end.y - to.y);
 }
 
 std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Command &command, bool byPath)
@@ -148,9 +160,15 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     std::optional<float> path;
     if (byPath && g_pathCheck.load())
     {
-        path = PathLength(attacker, api::GetPosition(*target));
+        path = PathLength(attacker, api::GetPosition(*target), *target);
+        if (!path)
+        {
+            spdlog::debug("attack on {:#010x}: the game finds no path to it; judged by the straight line", *target);
+        }
     }
-    const float walked = path ? *path : distance;
+    // Never less than the straight line: a path that ends short of it is
+    // not a shorter walk.
+    const float walked = path ? std::max(*path, distance) : distance;
     if (path)
     {
         spdlog::debug("attack on {:#010x}: {:.1f} m away, {:.1f} m of path, reach {:.1f} m", *target, distance, *path,

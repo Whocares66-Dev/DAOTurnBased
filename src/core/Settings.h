@@ -79,9 +79,10 @@ struct Settings
     bool pickTargets = true;
     // The game's speed during an AI's turn (1: as ever; 2: twice as fast).
     float aiTurnSpeed = 1.0f;
-    // Judge a move's or an attack's walk by the engine's own path (DAOLib's
-    // FindPath) rather than a straight line, and refuse a move it cannot
-    // finish this turn.
+    // Judge an attack's walk by the game's own path (DAOLib's FindPath)
+    // rather than a straight line. Refusing a move it cannot finish this
+    // turn is built and off (src/game/Gate.cpp): a move walks until its
+    // meters run out.
     bool pathCheck = true;
     // Effects' and regeneration's time in rounds: held through a fight, and
     // this many seconds spent on them at each new round (0: the game's clock).
