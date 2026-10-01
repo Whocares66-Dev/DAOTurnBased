@@ -57,7 +57,7 @@ std::string ToJson(const TurnEvent &event, std::uint64_t realMs)
                                   event.round, Name(event.kind));
     if (event.who != kNoObject)
     {
-        out += std::format(R"(,"who":"{:#010x}","name":")", event.who);
+        out += std::format(R"(,"id":"{:#x}","name":")", event.who);
         AppendJsonString(out, event.name);
         out += '"';
     }

@@ -252,6 +252,9 @@ struct MachineState
     std::vector<CooldownView> cooldowns;
     std::string lastRefusal;
     float speed = 1.0f;
+    // Whether the game took the last speed set (DAOLib's SetSpeed says):
+    // filled in by the game side; nothing before any was set.
+    std::optional<bool> speedTook;
     bool heldByEffect = false;
 };
 

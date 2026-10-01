@@ -53,9 +53,10 @@ struct TurnEvent
 using EventSink = std::function<void(const TurnEvent &event)>;
 
 // One JSON object on one line: {"ms":..,"world_ms":..,"round":..,"event":"turn_started",
-// "who":"0x00000082","name":"Aedan","detail":"yours","value":90}. realMs is
-// the caller's clock. Strings are escaped as JSON wants; who is left out
-// for no one.
+// "id":"0x82","name":"Aedan","detail":"yours","value":90}. realMs is the
+// caller's clock. Ids unpadded and named "id", as the log and Eluvian write
+// them, so an agent's id matches everywhere (eluvian-agent). Strings are
+// escaped as JSON wants; the id is left out for no one.
 [[nodiscard]] std::string ToJson(const TurnEvent &event, std::uint64_t realMs);
 
 } // namespace tb

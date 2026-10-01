@@ -257,11 +257,14 @@ void OpenEvents()
 // Handlers come on the frame thread, as the hooks do: the machine's lock.
 void InspectState(void * /*context*/, const char * /*args*/, EluvianReply *reply)
 {
-    std::string json;
+    tb::MachineState state;
     {
         const std::lock_guard lock(g.mutex);
-        json = tb::ToJson(g.machine->State());
+        state = g.machine->State();
     }
+    // The bridge is the frame thread's, as this handler is.
+    state.speedTook = g.bridge->SpeedTook();
+    const std::string json = tb::ToJson(state);
     reply->ok(reply, json.c_str());
 }
 
@@ -345,32 +348,53 @@ void LookForEluvian()
         return;
     }
     const EluvianInterface1 &e = *g.eluvian;
-    e.RegisterInspectKind(
-        "turnbased.state",
-        R"({"description": "The turn-based fight now: whether one is on, its phase and round, whose turn and what )"
-        R"(that creature has left (action, meters), the order to come with each card's health, mana or stamina, )"
-        R"(side and whether the player commands it, the conditions holding creatures and the turns they owe, the )"
-        R"(cooldowns held for turns, the player's last refusal, and the game's speed. Ids as "0x..."."})",
-        &InspectState, nullptr, ELUVIAN_READ_ONLY);
-    e.RegisterTool("turnbased_end_turn",
-                   R"({"description": "End the current party member's turn, as Space or the bar's End does. Only )"
-                   R"(on a turn the player plays.", "inputSchema": {"type": "object", "properties": {}}})",
-                   &EndTurnTool, nullptr, 0);
-    e.RegisterTool("turnbased_seed",
-                   R"({"description": "Seed initiative's rolls from now on (a joiner's, the next fight's), so a )"
-                   R"(test repeats.", "inputSchema": {"type": "object", "properties": {"seed": {"type": "integer"}}, )"
-                   R"("required": ["seed"]}})",
-                   &SeedTool, nullptr, 0);
-    e.RegisterTool(
-        "turnbased_settings",
-        R"({"description": "Read turnbased.ini (no arguments), or set one setting in it and apply it now: section, )"
-        R"(key and value as the ini has them, e.g. turns / ai_turn_speed / 2. Answers the parse's warnings.", )"
-        R"("inputSchema": {"type": "object", "properties": {"section": {"type": "string"}, "key": {"type": )"
-        R"("string"}, "value": {"type": "string"}}}})",
-        &SettingsTool, nullptr, 0);
-    spdlog::info("registered with Eluvian (build {}): inspect turnbased.state; turnbased_end_turn, turnbased_seed, "
-                 "turnbased_settings; events turnbased.<kind>",
-                 e.build);
+    // Each answers -1 when refused, the reason in eluvian.log: the state's
+    // descriptor once was not JSON, and only eluvian.log said so (2026-09-30).
+    std::vector<std::string> refused;
+    const auto check = [&refused](int result, const char *name) {
+        if (result < 0)
+        {
+            refused.emplace_back(name);
+        }
+    };
+    check(
+        e.RegisterInspectKind(
+            "turnbased.state",
+            R"({"description": "The turn-based fight now: whether one is on, its phase and round, whose turn and what )"
+            R"(that creature has left (action, meters), the order to come with each card's health, mana or stamina, )"
+            R"(side and whether the player commands it, the conditions holding creatures and the turns they owe, the )"
+            R"(cooldowns held for turns, the player's last refusal, and the game's speed. Ids are 0x... strings."})",
+            &InspectState, nullptr, ELUVIAN_READ_ONLY),
+        "turnbased.state");
+    check(
+        e.RegisterTool("turnbased_end_turn",
+                       R"({"description": "End the current party member's turn, as Space or the bar's End does. Only )"
+                       R"(on a turn the player plays.", "inputSchema": {"type": "object", "properties": {}}})",
+                       &EndTurnTool, nullptr, 0),
+        "turnbased_end_turn");
+    check(e.RegisterTool(
+              "turnbased_seed",
+              R"({"description": "Seed initiative's rolls from now on (a joiner's, the next fight's), so a )"
+              R"(test repeats.", "inputSchema": {"type": "object", "properties": {"seed": {"type": "integer"}}, )"
+              R"("required": ["seed"]}})",
+              &SeedTool, nullptr, 0),
+          "turnbased_seed");
+    check(
+        e.RegisterTool(
+            "turnbased_settings",
+            R"({"description": "Read turnbased.ini (no arguments), or set one setting in it and apply it now: section, )"
+            R"(key and value as the ini has them, e.g. turns / ai_turn_speed / 2. Answers the parse's warnings.", )"
+            R"("inputSchema": {"type": "object", "properties": {"section": {"type": "string"}, "key": {"type": )"
+            R"("string"}, "value": {"type": "string"}}}})",
+            &SettingsTool, nullptr, 0),
+        "turnbased_settings");
+    for (const std::string &name : refused)
+    {
+        spdlog::warn("Eluvian refused {}: its reason is in eluvian.log", name);
+    }
+    spdlog::info("registered with Eluvian (build {}): {} of 4 (inspect turnbased.state; turnbased_end_turn, "
+                 "turnbased_seed, turnbased_settings); events turnbased.<kind>",
+                 e.build, 4 - refused.size());
 }
 
 void Log(tb::LogLevel level, std::string_view line)

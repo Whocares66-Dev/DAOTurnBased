@@ -1,6 +1,6 @@
 // The machine's whole state as JSON (TurnMachine::State): what a test server
 // answers an agent's inspect turnbased.state with (eluvian-agent's MCP,
-// 2026-09-30). Creature ids are "0x..." strings, as the log and the server's
+// 2026-09-30). Creature ids are unpadded "0x82" strings, as the log and the server's
 // own tools write them, so an agent can match them across the two.
 #pragma once
 
@@ -12,8 +12,9 @@ namespace tb
 {
 
 // {"active":true,"phase":"awaiting order","round":2,"world_ms":12345,
-//  "current":"0x00000082","player_turn":true,"actions_left":1,
-//  "movement_left":7.3,"movement_max":9.0,"speed":1.0,"held_by_effect":false,
+//  "current":"0x82","player_turn":true,"actions_left":1,
+//  "movement_left":7.3,"movement_max":9.0,"speed":1.0,"speed_took":true,
+//  "held_by_effect":false,
 //  "last_refusal":"...","order":[{"id":"0x...","name":"...","side":"party",
 //  "rank":100,"health":0.85,"energy":1.0,"mana":false,"down":false,
 //  "current":true,"yours":true,"round":2},...],"held":[{"id":"0x...",

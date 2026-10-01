@@ -426,7 +426,8 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             // Whether the world's timer took it and the frame's hook is placed
             // (DAOLib ed55ab8): an archer's shot took as long at 2 as at 1 in
             // the second play test, the mod's own waits aside.
-            if (!dao::clock::SetSpeed(static_cast<float>(e.b) / 1000.0f))
+            speedTook_ = dao::clock::SetSpeed(static_cast<float>(e.b) / 1000.0f);
+            if (!*speedTook_)
             {
                 spdlog::warn("the game's speed {:.2f} did not take", static_cast<float>(e.b) / 1000.0f);
             }

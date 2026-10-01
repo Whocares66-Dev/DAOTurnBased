@@ -13,6 +13,7 @@
 #include "game/Camera.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -54,8 +55,16 @@ class Bridge
         camera_.TurnTo(id);
     }
 
+    // Whether the game took the last speed set (DAOLib's SetSpeed says);
+    // nothing before any was set. For a test server's turnbased.state.
+    std::optional<bool> SpeedTook() const
+    {
+        return speedTook_;
+    }
+
   private:
     CameraDirector camera_;
+    std::optional<bool> speedTook_;
     struct Known
     {
         std::wstring name;

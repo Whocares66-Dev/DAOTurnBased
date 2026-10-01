@@ -23,7 +23,7 @@ TEST_CASE("an event is one line of JSON, its strings escaped", "[events]")
     event.name = "Ae\"dan\\";
     event.detail = "Too far\n\x01";
     event.value = -3;
-    CHECK(ToJson(event, 99) == R"({"ms":99,"world_ms":1500,"round":2,"event":"refused","who":"0x00000082",)"
+    CHECK(ToJson(event, 99) == R"({"ms":99,"world_ms":1500,"round":2,"event":"refused","id":"0x82",)"
                                R"("name":"Ae\"dan\\","detail":"Too far\n\u0001","value":-3})");
 }
 

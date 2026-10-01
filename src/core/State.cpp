@@ -18,7 +18,7 @@ void Id(std::string &out, ObjectId id)
         out += "null";
         return;
     }
-    out += std::format(R"("{:#010x}")", id);
+    out += std::format(R"("{:#x}")", id);
 }
 
 void Text(std::string &out, std::string_view text)
@@ -55,7 +55,8 @@ std::string ToJson(const MachineState &state)
     Id(out, view.current);
     out += std::format(R"(,"player_turn":{},"actions_left":{},"movement_left":{:.1f},"movement_max":{:.1f})",
                        Bool(view.playerTurn), view.actionsLeft, view.movementLeft, view.movementMax);
-    out += std::format(R"(,"speed":{:.2f},"held_by_effect":{},"last_refusal":)", state.speed, Bool(state.heldByEffect));
+    out += std::format(R"(,"speed":{:.2f},"speed_took":{},"held_by_effect":{},"last_refusal":)", state.speed,
+                       state.speedTook ? Bool(*state.speedTook) : "null", Bool(state.heldByEffect));
     Text(out, state.lastRefusal);
     out += R"(,"order":[)";
     for (std::size_t i = 0; i < view.upcoming.size(); ++i)
