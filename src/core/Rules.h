@@ -14,9 +14,9 @@ namespace tb
 // What a command is worth in a turn.
 enum class CommandKind : std::uint8_t
 {
-    Action,      // the one per turn: attack, ability, spell, using an object or item
+    Action,      // the one per turn, a combat action: attack, ability, spell, using an item
     Move,        // spends movement, measured as the creature goes
-    Free,        // costs nothing: switching weapon sets, drawing them, equipping, dropping, turning to face
+    Free,        // costs nothing: a door, a chest, a lock, a thing picked up; one's own gear; turning to face
     Pass,        // the AI choosing to wait: its turn ends
     Involuntary, // what happens to a creature, not what it chooses: an effect applying, a death
                  // blow's animation, a scripted jump, bark or conversation; always let through

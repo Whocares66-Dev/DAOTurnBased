@@ -534,6 +534,12 @@ MUTANTS = [
         "    budget_.movementAtCommand = budget_.movementUsed + 999.0f;",
     ),
     Mutant(
+        "a door costs the action",
+        RULES,
+        "    case CommandType::PickupItem:\n        return CommandKind::Free;",
+        "    case CommandType::PickupItem:\n        return CommandKind::Action;",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",

@@ -1201,8 +1201,10 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
     {
         return;
     }
-    // Shifting its feet to strike what is in reach is not walking (kShuffle).
-    if (budget_.lastKind == CommandKind::Action && budget_.movementUsed - budget_.movementAtCommand < kShuffle)
+    // Shifting its feet to strike what is in reach, or to open the door it
+    // stands at, is not walking (kShuffle).
+    if ((budget_.lastKind == CommandKind::Action || budget_.lastKind == CommandKind::Free) &&
+        budget_.movementUsed - budget_.movementAtCommand < kShuffle)
     {
         return;
     }

@@ -10,18 +10,13 @@ CommandKind Classify(CommandType type)
 {
     switch (type)
     {
-    // The one per turn: what a creature does to the world or someone in it.
+    // The one per turn: a combat action, what a creature does to someone
+    // in the fight or to itself for it. An attack, a talent or a spell, an
+    // item used (a potion, a bomb).
     case CommandType::Attack:
     case CommandType::UseAbility:
     case CommandType::UseItem:
-    case CommandType::UseObject:
-    case CommandType::Interact:
     case CommandType::Fly:
-    case CommandType::Lock:
-    case CommandType::Unlock:
-    case CommandType::GiveItem:
-    case CommandType::TakeItem:
-    case CommandType::PickupItem:
         return CommandKind::Action;
     // Walking, however it is asked for.
     case CommandType::MoveToLocation:
@@ -33,6 +28,18 @@ CommandKind Classify(CommandType type)
     case CommandType::RandomWalk:
     case CommandType::Drive:
         return CommandKind::Move;
+    // What is not fighting costs no action and does not end the turn (the
+    // user's rule, 2026-10-01: a door, and the like; action points will put
+    // a price on these): a door, a chest or a lever used, a lock, a thing
+    // handed over or picked up. The walk to it is movement all the same.
+    case CommandType::UseObject:
+    case CommandType::Interact:
+    case CommandType::Lock:
+    case CommandType::Unlock:
+    case CommandType::GiveItem:
+    case CommandType::TakeItem:
+    case CommandType::PickupItem:
+        return CommandKind::Free;
     // Handling one's own gear, and turning to face.
     case CommandType::SwitchWeaponSets:
     case CommandType::SheatheWeapons:

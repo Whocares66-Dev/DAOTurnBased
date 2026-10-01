@@ -18,7 +18,15 @@ TEST_CASE("commands cost what the design says", "[rules]")
 {
     CHECK(Classify(CommandType::Attack) == CommandKind::Action);
     CHECK(Classify(CommandType::UseAbility) == CommandKind::Action);
-    CHECK(Classify(CommandType::UseObject) == CommandKind::Action);
+    CHECK(Classify(CommandType::UseItem) == CommandKind::Action); // a potion
+    // What is not fighting is free (the user's rule, 2026-10-01).
+    CHECK(Classify(CommandType::UseObject) == CommandKind::Free); // a door, a chest, a lever
+    CHECK(Classify(CommandType::Interact) == CommandKind::Free);
+    CHECK(Classify(CommandType::Unlock) == CommandKind::Free);
+    CHECK(Classify(CommandType::Lock) == CommandKind::Free);
+    CHECK(Classify(CommandType::PickupItem) == CommandKind::Free);
+    CHECK(Classify(CommandType::GiveItem) == CommandKind::Free);
+    CHECK(Classify(CommandType::TakeItem) == CommandKind::Free);
     CHECK(Classify(CommandType::MoveToLocation) == CommandKind::Move);
     CHECK(Classify(CommandType::MoveToObject) == CommandKind::Move);
     CHECK(Classify(CommandType::Drive) == CommandKind::Move);

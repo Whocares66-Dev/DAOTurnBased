@@ -2267,3 +2267,62 @@ TEST_CASE("with the movement spent, an action that walks on is still stopped", "
     // Its 9 m, the overshoot, and no more than a frame or two.
     CHECK(walked < 9.0f + TurnMachine::kOvershoot + 0.5f);
 }
+
+TEST_CASE("a door used costs no action and does not end the turn; an attack after it does", "[machine]")
+{
+    // The user, 2026-10-01: only combat actions (an attack, a spell, a
+    // potion) end the turn. Before, a door cost the action.
+    Settings s = Fixed();
+    s.endTurnWhenActionUsed = true;
+    World w(s);
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
+    CHECK(w.machine.View().actionsLeft == 1);
+    w.RunFor(300);
+    w.Finish(kHero);
+    w.RunFor(2000);
+    CHECK(w.Current() == kHero); // still his turn
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    // And again: a chest after the door.
+    CHECK(w.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
+    w.RunFor(300);
+    w.Finish(kHero);
+    w.RunFor(1000);
+    REQUIRE(w.Current() == kHero);
+    // The combat action is still his, and it ends the turn.
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
+    CHECK(w.machine.View().actionsLeft == 0);
+    w.RunFor(300);
+    w.Finish(kHero);
+    w.RunFor(2000);
+    CHECK(w.Current() != kHero);
+}
+
+TEST_CASE("a door is not for someone else's turn", "[machine]")
+{
+    World w;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kCompanion, CommandType::UseObject, Source::Player) == Verdict::Block);
+}
+
+TEST_CASE("the walk to a door is movement: out of it, the walk is stopped", "[machine]")
+{
+    World w;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
+    w.applied.clear();
+    w.Get(kHero).moving = true;
+    float walked = 0.0f;
+    for (int i = 0; i < 200 && !w.Did(EffectKind::ClearCommands, kHero); ++i)
+    {
+        w.Get(kHero).position.x += 0.1f;
+        walked += 0.1f;
+        w.Frame();
+    }
+    REQUIRE(w.Did(EffectKind::ClearCommands, kHero));
+    CHECK(walked < 9.0f + TurnMachine::kOvershoot + 0.5f);
+    CHECK(w.machine.View().actionsLeft == 1); // nothing was spent but the walk
+}

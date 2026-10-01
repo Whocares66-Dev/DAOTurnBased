@@ -125,9 +125,9 @@ Each of the game's 43 command types (its `commands.gda`, as DAOLib names them) h
 
 | Cost | Types |
 |---|---|
-| The action | attack, use ability, use item, use object, interact, fly, lock, unlock, give, take, pick up |
+| The action, a combat action | attack, use ability (a talent, a spell), use item (a potion), fly |
 | Movement | move to a point or an object, move through points, move away, follow, random walk, the player steering |
-| Free, on one's own turn | switch or draw weapons, equip, unequip, drop, turn to face |
+| Free, on one's own turn | use object (a door, a chest, a lever), interact, lock, unlock, give, take, pick up; switch or draw weapons, equip, unequip, drop, turn to face |
 | A pass, from a script | wait: an AI choosing to do nothing ends its turn |
 | Always let through | an effect executing, a death blow, jumps, barks, animations, sounds, conversations, appearing and vanishing, shops, and a wait nobody chose (the scripts' `SetActive` queues one) |
 
