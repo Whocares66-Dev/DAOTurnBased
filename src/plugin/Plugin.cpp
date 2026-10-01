@@ -25,6 +25,7 @@
 #include "dao/Frame.h"
 #include "dao/Input.h"
 #include "dao/Log.h"
+#include "dao/Options.h"
 #include "dao/Plugin.h"
 
 #include <Windows.h>
@@ -60,6 +61,7 @@ struct State
     tb::KeyChord toggleKey;
     bool toggleWasDown = false;
     ToggleKey toggle = ToggleKey::Polled;
+    bool optionsAsked = false; // the options' section was given to DAOLib, and what became of it is not known yet
     std::uint32_t lastSettingsCheck = 0;
     tb::game::BarLink bar;
     tb::game::Targeting targeting;
@@ -93,8 +95,15 @@ bool ChordDown(const tb::KeyChord &chord)
            KeyDown(VK_SHIFT) == chord.shift && KeyDown(VK_MENU) == chord.alt;
 }
 
-// The player asks for turn-based combat on or off.
-void Toggle()
+bool TurnBasedOn()
+{
+    const std::lock_guard lock(g.mutex);
+    return g.machine->GetSettings().enabled;
+}
+
+// The player asks for turn-based combat on or off: by the key, or by the
+// box in the game's options. Answers whether it is on after.
+bool Toggle()
 {
     const bool inCombat = g.bridge->PartyInCombat();
     tb::ToggleResult result = tb::ToggleResult::RefusedInCombat;
@@ -107,16 +116,92 @@ void Toggle()
     case tb::ToggleResult::Enabled:
         tb::game::SaveEnabled(true);
         g.bridge->Say(L"Turn-based combat on", tb::kGold);
-        break;
+        return true;
     case tb::ToggleResult::Disabled:
         tb::game::SaveEnabled(false);
         g.bridge->Say(L"Turn-based combat off", tb::kGrey);
-        break;
+        return false;
     case tb::ToggleResult::RefusedInCombat:
         spdlog::info("toggle refused: in combat");
         g.bridge->Say(L"Turn-based combat can be changed only out of combat", tb::kRed);
         break;
     }
+    return TurnBasedOn();
+}
+
+// The section's title in the game's options, and what dao::options knows
+// it by.
+constexpr wchar_t kOptionsSection[] = L"Turn-based";
+
+// The switch in the game's own options: a section "Turn-based" on the Game
+// tab with one box, "Turn-based combat" (the user, 2026-10-01: "not
+// controls, gameplay tab i think, its own section w/ a toggle"; DAOLib's
+// dao/Options.h, 3628d67). The box is the game's own checkbox; the library
+// asks `get` when the screen opens and `set` at a click, both on the
+// frame's thread as Tick is. `set` answers what the setting now is, and
+// the box is drawn by the answer: in a fight the setting does not change,
+// so the box goes back, and the tooltip says why. The change is made at
+// the click, not at the screen's OK, and is kept in turnbased.ini as the
+// key's is. From DAOLib_Load only.
+bool AddOptions()
+{
+    dao::options::Toggle toggle;
+    toggle.name = L"TurnBasedCombat";
+    toggle.label = L"Turn-based combat";
+    toggle.tooltip = L"Changes outside a fight only";
+    toggle.get = [] {
+        try
+        {
+            return TurnBasedOn();
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("the options' box, asked: {}", e.what());
+            return false;
+        }
+    };
+    toggle.set = [](bool wanted) {
+        try
+        {
+            return TurnBasedOn() == wanted ? wanted : Toggle();
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("the options' box, clicked: {}", e.what());
+            return !wanted;
+        }
+    };
+    std::vector<dao::options::Toggle> toggles;
+    toggles.push_back(std::move(toggle));
+    return dao::options::AddSection(kOptionsSection, std::move(toggles));
+}
+
+// What became of the section, said once: known when the game first opens
+// its options.
+void WatchOptions()
+{
+    if (!g.optionsAsked)
+    {
+        return;
+    }
+    switch (dao::options::StateOf(kOptionsSection))
+    {
+    case dao::options::SectionState::Waiting:
+        return;
+    case dao::options::SectionState::Shown:
+        spdlog::info("the options' Game tab has the Turn-based section");
+        break;
+    case dao::options::SectionState::NoRoom:
+        spdlog::warn("the options' Game tab had no room for the Turn-based section: other plugins' took its rows");
+        break;
+    case dao::options::SectionState::Failed:
+        spdlog::warn("the options' movie was not as DAOLib read it: no Turn-based section, and the screen left alone");
+        break;
+    case dao::options::SectionState::Unknown:
+        spdlog::warn("DAOLib does not know the Turn-based section it was given");
+        break;
+    }
+    g.optionsAsked = false;
 }
 
 // The game's name for the toggle: its key in KeyBindings.ini
@@ -176,7 +261,7 @@ bool BindToggle(const tb::KeyChord &chord)
     return dao::input::RegisterAction(std::move(action), [] {
         try
         {
-            Toggle();
+            (void)Toggle();
         }
         catch (const std::exception &e)
         {
@@ -217,7 +302,7 @@ void PollToggle()
     g.toggleWasDown = down;
     if (pressed)
     {
-        Toggle();
+        (void)Toggle();
     }
 }
 
@@ -341,6 +426,7 @@ void Tick()
     const auto now = static_cast<std::uint32_t>(GetTickCount64());
     ReloadIfChanged(now);
     PollToggle();
+    WatchOptions();
     tb::Needs needs;
     {
         const std::lock_guard lock(g.mutex);
@@ -644,6 +730,11 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         spdlog::info("the toggle's key, {}, is not one the game's bindings are known to take: polled, and not in "
                      "the game's controls",
                      tb::FormatKeyChord(settings.toggleKey));
+    }
+    g.optionsAsked = AddOptions();
+    if (!g.optionsAsked)
+    {
+        spdlog::warn("DAOLib refused the Turn-based section for the game's options: the key and turnbased.ini remain");
     }
     UseTurnBar(settings);
 
