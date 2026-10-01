@@ -8,7 +8,7 @@ Dragon Age: Origins fights in real time with pause. This mod makes a fight a seq
 - **Initiative**: a number rolled for each combatant when the fight starts. Highest acts first. The order is fixed for the fight; newcomers are slotted in.
 - **Turn**: one combatant acting. It has one **action** and some **movement** to spend, then passes the turn on.
 - **Round**: everyone's turn, once. Round 2 starts when the last combatant in the order has had its turn.
-- **Action**: the one thing a turn is for: an attack, an ability or spell, drinking a potion, using an object. One per turn for now (see "Later: action points").
+- **Action**: the one thing a turn is for: an attack, an ability or spell, drinking a potion. One per turn for now (see "Action points"). Opening a door or a chest, picking something up and the like are free ("only combat actions ... should" end it, the user, 2026-10-01).
 - **Movement**: meters a combatant may walk in its turn, spent as it goes, before or after its action or both.
 - **Free**: costs nothing (switching weapon sets).
 - **End turn**: giving up what is left. The game's pause key does it on a party member's turn.
@@ -253,6 +253,35 @@ What the game's data says (`abi_base.gda`, Awakening's `abi_gxa.gda` and `spellc
 
 Refused: "refusing too far is right i think" (the user). A click on ground whose path is longer than the movement left is refused, "Too far", before a step, as an attack out of reach is; the walk is the game's own path's length (`path_check`, DAOLib's `FindPath`), found for a creature at rest. Where the game finds no path, or with `path_check = false`, a move walks until its meters run out, as before.
 
-## Later: action points
+## Action points (being designed, 2026-10-01; not built)
 
-The one-action rule is a budget of one. Action points generalise it: each turn has N points, each command costs some (attack 2, move 1 per 3 m, potion 1, sustained toggle 0). `TurnMachine::Budget` and `Classify` are the two places that change; the gate and the rest stay as they are. Costs could come from the ability table (casting speed, `abi_base`'s `Speed` column) so heavier abilities cost more.
+The one-action rule is a budget of one. Action points make it a budget of several, spent on things of different cost. The user's sketch, 2026-10-01, in their words: "each turn an actor should get N base action points. not sure what N should be. maybe it should represent 1s, so 4? this doesn't mean they get to attack 4x or use 4 talents. time to use ability should affects action point consumption. longer cast time = more action points. 1s cast = 1 action point, 4 s = 4 action points. i think action points should allow you to do different things. using a less health poulstice takes an action point. larger ones take more. so you can use health poulstice, drink potion, set trap, etc. and all that takes action points. attacking takes an action point; can't attack again same turn (unless maybe we allow multi-attack w/ a talent or something). talents take action points and lock out other skills so you can't spam multiple skills in a turn. don't want to force end turn after attack / talent, so things like drink potion can come after, though that would be easiest. still needs further thinking an refinement."
+
+**What is settled by that** (the user's, unless marked):
+
+- **4 points a turn, a point a second.** It is the number the rest already stands on: a turn is 4 s for cooldowns (`cooldown_seconds_per_turn`) and for casting time, so a slow spell (4 s) is a whole turn's points and a ritual (6 s) more than a turn's. Charging (above) is then not a rule of its own but a cost greater than a turn.
+- **A cost by time.** An ability costs its conjuring time in seconds, at least 1.
+- **One talent or spell a turn**: using one locks the others out for the turn, so cooldowns in turns keep their meaning. Proposed with it: sustained modes are outside the lockout, a point to turn on and nothing to turn off (they cost nothing either way today).
+- **Items cost points, more for the greater**: a lesser poultice 1, larger ones more; traps, bombs and the like their own.
+- **The turn is not ended by an attack or a talent**: what points are left may still be spent (a potion after the blow). The turn ends when its owner ends it, or when neither points nor movement are left.
+- **Movement stays its own budget**, in meters, as now (proposed; the sketch does not fold it into the points).
+
+**What the game's data gives for costs** (read with DAOLib's `tools/gda.py`):
+
+- Abilities: the conjuring speeds in use are instant (0 s), fast (1 s) and normal (2 s): `abi_base`'s `Speed` is 0 for 177 rows, 1 for 330, 2 for 37, 3 for 7. So by time alone nearly every talent and spell is 1 point and a few are 2: casting time gives little to choose between them.
+- Weapons: the item table (`bitm_base`) has a `Speed` class: dagger 3; longsword, mace, waraxe 2; greatsword, maul, battleaxe, staff 1; bows 0. It is readable in play as the weapon's range already is (`Table::Items`, read in the gate for an attack's reach), so a cost by weapon needs nothing new of DAOLib.
+- Items: the game has no "time" for a poultice or a trap, so their costs would be a small table in `turnbased.ini` with defaults.
+
+**Proposed to the user, and theirs to decide:**
+
+1. **An attack's cost from its weapon's speed, and attacks repeatable while points last**: say a dagger 1, a one-handed weapon 2, a two-handed weapon, staff or bow 3. A flat "one attack, one point" has a greatsword strike as often as a dagger for far more damage, which takes away the game's balance of fast against heavy, and leaves a fighter whose talents are on cooldown spending one point of four. By weapon, a turn of plain attacks is four dagger blows, two sword blows or one of a greatsword: near what four seconds give in real time.
+2. **If attacks stay one a turn, something to spend the rest on**: a dash, 1 point for a quarter more movement.
+3. **Doors, chests and pickups 1 point.** They are free today only because the other choice was the whole turn.
+4. **Haste and slow as a point more or fewer**: they are effects on time.
+5. **No banking**: points not spent are lost at the turn's end, to begin with.
+6. **Enemies on the same budget**: an AI is told to choose again after each command until its points are gone or it passes. Enemy turns get longer in real time; `ai_turn_speed` is the offset.
+7. **Shown**: the points on the turn bar's caption beside the movement, and refusals that give the numbers ("needs 2, 1 left").
+
+**Asked of the user, 2026-10-01, and not yet answered:** attacks one a turn at 1 point, or by weapon speed and repeatable; doors and chests 1 point or free; a dash or not.
+
+**How it would be built**, in two stages: first the budget (`TurnMachine::Budget`'s `actions` becomes points), the costs (`Classify` answers a cost with its kind; the gate gives the machine the weapon's speed and the ability's conjuring time, as it gives the latter now), the one-talent lockout, the AI told again, and the caption; then the items' table, the dash and haste. The gate's hooks and the rest stay as they are.
