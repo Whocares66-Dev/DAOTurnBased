@@ -522,6 +522,14 @@ portraits = true
 [keys]
 ; Turn turn-based combat on or off, outside combat. The game's pause key
 ; ends a party member's turn during a turn-based fight.
+; This key is one of the game's own: it is listed in the game's Options,
+; Controls, under "Mods", and bound there like any other. What is written
+; here is the key it has before that: the game copies it into its
+; KeyBindings.ini the first time it starts with the mod, and goes by that
+; file from then on (Restore Defaults in the controls puts this one back).
+; A number pad key, Pause, or a key given by its code ("0xBA") is not the
+; game's: it works as written here, read at start, and is not in the
+; controls.
 toggle = Ctrl+T
 )";
 }

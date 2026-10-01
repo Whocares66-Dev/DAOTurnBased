@@ -155,7 +155,7 @@ Whose a command is comes from the command itself: the player's orders carry a fl
 
 ## Turning it on and off
 
-`Ctrl+T` (`keys.toggle`) turns turn-based combat on or off, only outside combat ("can't change during battle"). The answer floats over the hero and is written to `turnbased.ini`. The rest of the settings are in that file, which is re-read when it changes. The game's own Options screen is the intended home for the switch. That needs DAOLib's Scaleform work (`dev/UI.md`).
+`Ctrl+T` turns turn-based combat on or off, only outside combat ("can't change during battle"). The answer floats over the hero and is written to `turnbased.ini`. The key is one of the game's own since 2026-10-01 (DAOLib's `dao/Input.h`): listed in the options' Controls tab under "Mods" as "Toggle turn-based combat", bound there like any key, and kept in the game's `KeyBindings.ini` (`TurnBasedToggle_0`). `[keys] toggle` is the key it has until the player binds another. A key the game's bindings are not known to take (the number pad, Pause, a key by its code) is polled as before and is not in the controls. The rest of the settings are in that file, which is re-read when it changes. The switch itself is to be in the game's Options too: a "Turn-based" section on the Game tab with a toggle, the user's call of 2026-10-01 ("not controls, gameplay tab i think, its own section w/ a toggle"), which DAOLib is building (`dev/DAOLIB_NEEDS.md`).
 
 ## Settings
 
@@ -187,7 +187,7 @@ Whose a command is comes from the command itself: the player's orders carry a fl
 | `[feedback] camera_follow` | false | Experimental: centre on whoever's turn it is |
 | `[feedback] turn_bar` | false | The turn order bar; off until seen in play |
 | `[feedback] portraits` | true | With the bar: render portraits for combatants the game has none for |
-| `[keys] toggle` | Ctrl+T | |
+| `[keys] toggle` | Ctrl+T | the key until bound in the game's controls |
 
 ## For script mods: events
 

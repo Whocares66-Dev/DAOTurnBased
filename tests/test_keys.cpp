@@ -59,3 +59,39 @@ TEST_CASE("a chord reads back as it is written", "[keys]")
         CHECK(FormatKeyChord(*chord) == text);
     }
 }
+
+TEST_CASE("a key has the scan code the game's bindings know it by", "[keys]")
+{
+    using tb::ScanCode;
+    CHECK(ScanCode(ParseKeyChord("Ctrl+T")->key) == 0x14); // the toggle's default
+    CHECK(ScanCode('Q') == 0x10);
+    CHECK(ScanCode('P') == 0x19);
+    CHECK(ScanCode('A') == 0x1E);
+    CHECK(ScanCode('L') == 0x26);
+    CHECK(ScanCode('Z') == 0x2C);
+    CHECK(ScanCode('M') == 0x32);
+    CHECK(ScanCode('1') == 0x02);
+    CHECK(ScanCode('9') == 0x0A);
+    CHECK(ScanCode('0') == 0x0B); // after 9, as on the keyboard
+    CHECK(ScanCode(ParseKeyChord("F1")->key) == 0x3B);
+    CHECK(ScanCode(ParseKeyChord("F5")->key) == 0x3F); // the game's quicksave
+    CHECK(ScanCode(ParseKeyChord("F10")->key) == 0x44);
+    CHECK(ScanCode(ParseKeyChord("F11")->key) == 0x57); // not next to F10
+    CHECK(ScanCode(ParseKeyChord("F12")->key) == 0x58);
+    CHECK(ScanCode(ParseKeyChord("Space")->key) == 0x39); // the game's pause
+    CHECK(ScanCode(ParseKeyChord("Enter")->key) == 0x1C);
+    CHECK(ScanCode(ParseKeyChord("Delete")->key) == 0xD3);
+    CHECK(ScanCode(ParseKeyChord("PageUp")->key) == 0xC9);
+    CHECK(ScanCode(ParseKeyChord("Left")->key) == 0xCB);
+}
+
+TEST_CASE("a key the game's bindings are not known to take has no scan code", "[keys]")
+{
+    using tb::ScanCode;
+    CHECK(ScanCode(0) == 0); // no key
+    CHECK(ScanCode(ParseKeyChord("NumPad7")->key) == 0);
+    CHECK(ScanCode(ParseKeyChord("Pause")->key) == 0);
+    CHECK(ScanCode(ParseKeyChord("F13")->key) == 0);
+    CHECK(ScanCode(ParseKeyChord("0xBA")->key) == 0);
+    CHECK(ScanCode('a') == 0); // 0x61 is the number pad's 1, not a letter
+}

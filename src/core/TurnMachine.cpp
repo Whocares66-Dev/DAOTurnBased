@@ -775,7 +775,7 @@ bool TurnMachine::LandCast(const Combatant &who, std::vector<Effect> &fx)
     landing_ = *charge;
     charges_.erase(charge);
     budget_.landing = true;
-    Log(LogLevel::Info, std::format("{} casts ability {}: charged", Utf8(who.name), landing_->ability));
+    Log(LogLevel::Info, std::format("{}'s charged cast of ability {} is due", Utf8(who.name), landing_->ability));
     Effect release = Effect::Of(EffectKind::ReleaseCast, who.id);
     release.a = landing_->ability;
     fx.push_back(release);

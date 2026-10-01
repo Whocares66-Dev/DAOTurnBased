@@ -128,4 +128,4 @@ It needs the cursor's point in the world (explore mode keeps it: the move-to-loc
 
 ## The switch
 
-The game's Options screen (`optionsmenu.gfx`) with a "Turn-based combat" toggle beside auto-pause, disabled while in combat. It needs the movie extended (an override of `optionsmenu.gfx`, or a page added through it) and the value read back. Until then, `Ctrl+T` and `turnbased.ini`.
+The game's Options screen (`optionsmenu.gfx`) with a "Turn-based combat" toggle beside auto-pause, disabled while in combat. It needs the movie extended (an override of `optionsmenu.gfx`, or a page added through it) and the value read back. Until then, `Ctrl+T` and `turnbased.ini`. Decided 2026-10-01: a "Turn-based" section of its own on the Game tab, with the toggle (the user's call; DAOLib found room in both of the tab's columns and is building `dao/Options.h` for it). The key is in the game's Controls tab already, under "Mods" (`dao/Input.h`).

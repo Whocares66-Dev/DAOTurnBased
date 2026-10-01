@@ -23,6 +23,7 @@
 #include "plugin/EluvianAPI.h"
 
 #include "dao/Frame.h"
+#include "dao/Input.h"
 #include "dao/Log.h"
 #include "dao/Plugin.h"
 
@@ -37,10 +38,19 @@
 #include <memory>
 #include <mutex>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace
 {
+
+// Who hears the toggle's key (BindToggle).
+enum class ToggleKey
+{
+    Polled,   // this, each frame
+    Asked,    // given to the game, which has not registered its actions yet
+    TheGames, // the game: one of its own keys
+};
 
 struct State
 {
@@ -49,6 +59,7 @@ struct State
     std::unique_ptr<tb::game::Bridge> bridge; // the scripts' thread's alone
     tb::KeyChord toggleKey;
     bool toggleWasDown = false;
+    ToggleKey toggle = ToggleKey::Polled;
     std::uint32_t lastSettingsCheck = 0;
     tb::game::BarLink bar;
     tb::game::Targeting targeting;
@@ -82,15 +93,9 @@ bool ChordDown(const tb::KeyChord &chord)
            KeyDown(VK_SHIFT) == chord.shift && KeyDown(VK_MENU) == chord.alt;
 }
 
-void PollToggle()
+// The player asks for turn-based combat on or off.
+void Toggle()
 {
-    const bool down = GameInFront() && ChordDown(g.toggleKey);
-    const bool pressed = down && !g.toggleWasDown;
-    g.toggleWasDown = down;
-    if (!pressed)
-    {
-        return;
-    }
     const bool inCombat = g.bridge->PartyInCombat();
     tb::ToggleResult result = tb::ToggleResult::RefusedInCombat;
     {
@@ -111,6 +116,108 @@ void PollToggle()
         spdlog::info("toggle refused: in combat");
         g.bridge->Say(L"Turn-based combat can be changed only out of combat", tb::kRed);
         break;
+    }
+}
+
+// The game's name for the toggle: its key in KeyBindings.ini
+// (TurnBasedToggle_0, TurnBasedToggle_1).
+constexpr wchar_t kToggleAction[] = L"TurnBasedToggle";
+
+// core/Keys.h's scan codes are DAOLib's.
+static_assert(tb::ScanCode('T') == static_cast<std::uint32_t>(dao::input::Key::T));
+static_assert(tb::ScanCode('Q') == static_cast<std::uint32_t>(dao::input::Key::Q));
+static_assert(tb::ScanCode('A') == static_cast<std::uint32_t>(dao::input::Key::A));
+static_assert(tb::ScanCode('M') == static_cast<std::uint32_t>(dao::input::Key::M));
+static_assert(tb::ScanCode('1') == static_cast<std::uint32_t>(dao::input::Key::Digit1));
+static_assert(tb::ScanCode('0') == static_cast<std::uint32_t>(dao::input::Key::Digit0));
+static_assert(tb::ScanCode(VK_F1) == static_cast<std::uint32_t>(dao::input::Key::F1));
+static_assert(tb::ScanCode(VK_F10) == static_cast<std::uint32_t>(dao::input::Key::F10));
+static_assert(tb::ScanCode(VK_F11) == static_cast<std::uint32_t>(dao::input::Key::F11));
+static_assert(tb::ScanCode(VK_F12) == static_cast<std::uint32_t>(dao::input::Key::F12));
+static_assert(tb::ScanCode(VK_SPACE) == static_cast<std::uint32_t>(dao::input::Key::Space));
+static_assert(tb::ScanCode(VK_TAB) == static_cast<std::uint32_t>(dao::input::Key::Tab));
+static_assert(tb::ScanCode(VK_RETURN) == static_cast<std::uint32_t>(dao::input::Key::Enter));
+static_assert(tb::ScanCode(VK_BACK) == static_cast<std::uint32_t>(dao::input::Key::Backspace));
+static_assert(tb::ScanCode(VK_INSERT) == static_cast<std::uint32_t>(dao::input::Key::Insert));
+static_assert(tb::ScanCode(VK_DELETE) == static_cast<std::uint32_t>(dao::input::Key::Delete));
+static_assert(tb::ScanCode(VK_HOME) == static_cast<std::uint32_t>(dao::input::Key::Home));
+static_assert(tb::ScanCode(VK_END) == static_cast<std::uint32_t>(dao::input::Key::End));
+static_assert(tb::ScanCode(VK_PRIOR) == static_cast<std::uint32_t>(dao::input::Key::PageUp));
+static_assert(tb::ScanCode(VK_NEXT) == static_cast<std::uint32_t>(dao::input::Key::PageDown));
+static_assert(tb::ScanCode(VK_UP) == static_cast<std::uint32_t>(dao::input::Key::Up));
+static_assert(tb::ScanCode(VK_DOWN) == static_cast<std::uint32_t>(dao::input::Key::Down));
+static_assert(tb::ScanCode(VK_LEFT) == static_cast<std::uint32_t>(dao::input::Key::Left));
+static_assert(tb::ScanCode(VK_RIGHT) == static_cast<std::uint32_t>(dao::input::Key::Right));
+
+// The toggle's key as one of the game's own (dao/Input.h; DAOLib's
+// examples/input seen in play 2026-10-01, a4a7020): listed in the options'
+// Controls tab under "Mods", rebound there like any key, and kept in
+// KeyBindings.ini. `[keys] toggle` is then the key it has until the player
+// binds another: the game writes it into KeyBindings.ini at the first
+// start, and reads that from then on. From DAOLib_Load only, since the
+// game registers its actions once. False for a key the game's bindings are
+// not known to take (core/Keys.h), or if the registration is refused: the
+// key is then polled, as every key was before.
+bool BindToggle(const tb::KeyChord &chord)
+{
+    const std::uint32_t code = tb::ScanCode(chord.key);
+    if (chord.key != 0 && code == 0)
+    {
+        return false;
+    }
+    dao::input::Action action;
+    action.name = kToggleAction;
+    action.label = L"Toggle turn-based combat"; // the row shrinks its text to fit, so short
+    action.key = static_cast<dao::input::Key>(code);
+    action.modifiers = (chord.ctrl ? dao::input::kControl : 0U) | (chord.shift ? dao::input::kShift : 0U) |
+                       (chord.alt ? dao::input::kAlt : 0U);
+    // The callback runs at the next frame, on the frame's thread, as Tick
+    // does; under a menu or in a conversation the engine keeps the key.
+    return dao::input::RegisterAction(std::move(action), [] {
+        try
+        {
+            Toggle();
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("the toggle's key: {}", e.what());
+        }
+    });
+}
+
+void PollToggle()
+{
+    if (g.toggle == ToggleKey::TheGames)
+    {
+        return;
+    }
+    if (g.toggle == ToggleKey::Asked)
+    {
+        // Final once the game's mode controller has started, a few seconds
+        // after load (lib-agent, 2026-10-01): asked until then, not after.
+        const dao::input::ActionState state = dao::input::StateOf(kToggleAction);
+        if (state == dao::input::ActionState::Waiting)
+        {
+            return;
+        }
+        if (state == dao::input::ActionState::Registered)
+        {
+            g.toggle = ToggleKey::TheGames;
+            spdlog::debug("the game has taken the toggle's key");
+            return;
+        }
+        spdlog::warn("the game did not take the toggle's key ({}), so it is not in the controls: polling {} instead",
+                     state == dao::input::ActionState::NameTaken ? "it has an action named TurnBasedToggle already"
+                                                                 : "the action is not known to it",
+                     tb::FormatKeyChord(g.toggleKey));
+        g.toggle = ToggleKey::Polled;
+    }
+    const bool down = GameInFront() && ChordDown(g.toggleKey);
+    const bool pressed = down && !g.toggleWasDown;
+    g.toggleWasDown = down;
+    if (pressed)
+    {
+        Toggle();
     }
 }
 
@@ -525,6 +632,19 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     OpenEvents();
     g.bridge = std::make_unique<tb::game::Bridge>(settings);
     g.toggleKey = settings.toggleKey;
+    g.toggle = BindToggle(settings.toggleKey) ? ToggleKey::Asked : ToggleKey::Polled;
+    if (g.toggle == ToggleKey::Asked)
+    {
+        spdlog::info("the toggle's key is one of the game's own (Options, Controls, under Mods; TurnBasedToggle in "
+                     "KeyBindings.ini): {} until bound there",
+                     tb::FormatKeyChord(settings.toggleKey));
+    }
+    else
+    {
+        spdlog::info("the toggle's key, {}, is not one the game's bindings are known to take: polled, and not in "
+                     "the game's controls",
+                     tb::FormatKeyChord(settings.toggleKey));
+    }
     UseTurnBar(settings);
 
     g.targeting.Install(*g.machine, g.mutex);

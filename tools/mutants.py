@@ -45,6 +45,7 @@ SETTINGS = "src/core/Settings.cpp"
 BAR = "src/core/Bar.cpp"
 PORTRAITS = "src/core/Portraits.cpp"
 JSON = "src/core/Json.cpp"
+KEYS = "src/core/Keys.h"
 
 MUTANTS = [
     Mutant(
@@ -664,6 +665,30 @@ MUTANTS = [
         MACHINE,
         "        if (player || budget_.actions > 0)\n        {\n            Handover(*current, fx);",
         "        if (player || budget_.actions > -9)\n        {\n            Handover(*current, fx);",
+    ),
+    Mutant(
+        "the 0 key is given to the game as another key",
+        KEYS,
+        "    case '0':\n        return 0x0B;",
+        "    case '0':\n        return 0x01;",
+    ),
+    Mutant(
+        "F11 is given to the game as the key after F10",
+        KEYS,
+        "    case 0x7A: // F11\n        return 0x57;",
+        "    case 0x7A: // F11\n        return 0x45;",
+    ),
+    Mutant(
+        "a row of letters is given to the game a key off",
+        KEYS,
+        "constexpr std::uint32_t firsts[] = {0x10, 0x1E, 0x2C};",
+        "constexpr std::uint32_t firsts[] = {0x10, 0x1D, 0x2C};",
+    ),
+    Mutant(
+        "a key the game's bindings are not known to take is given to them",
+        KEYS,
+        "    default:\n        return 0;\n    }\n}",
+        "    default:\n        return key;\n    }\n}",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",
