@@ -20,6 +20,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -103,8 +104,21 @@ std::atomic<bool> g_pathCheck{true};
 
 // The engine's path for an idle creature to a point, its length; nothing
 // when there is none, or the creature is busy (FindPath refuses then).
+//
+// Not called, whatever path_check says, until DAOLib fixes FindPath: in the
+// second play test (2026-09-30, fight B) it answered a call late and left
+// its result installed as the creature's own path, so the hero's path read
+// 15.6 m all fight and every order of his was refused, and after the fight
+// he would not walk a clicked path (lib-agent: "treat FindPath as broken").
+// A straight line and a move that walks until its meters run out, as before.
+std::atomic<bool> g_findPathWorks{false}; // a flag, not a constant, so the code stays compiled and linted
+
 std::optional<float> PathLength(ObjectId creature, const dao::Vector &to)
 {
+    if (!g_findPathWorks.load())
+    {
+        return std::nullopt;
+    }
     const std::optional<dao::world::WalkPath> path = dao::world::FindPath(creature, to);
     if (!path)
     {
@@ -160,7 +174,7 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
 // A player's move, measured as the engine would walk it.
 std::optional<float> MoveLength(const dao::CCObject &self, const dao::Command &command)
 {
-    if (!g_pathCheck.load() || GetCurrentThreadId() != dao::script::ScriptThreadId())
+    if (!g_findPathWorks.load() || !g_pathCheck.load() || GetCurrentThreadId() != dao::script::ScriptThreadId())
     {
         return std::nullopt;
     }
@@ -195,10 +209,17 @@ void SayAiAttack(const dao::CCObject &self, const dao::Command &command)
         return;
     }
     const dao::world::Sight sight = dao::world::LineOfSight(self.Id(), *target);
+    // The same attacker on the same target at most every 3 s: a companion's
+    // own AI tried one out of turn some 45 times in two seconds (the second
+    // play test, 2026-09-30).
     static int said = 0;
-    if (said < 3 || reached->walk > 0.0f || !sight)
+    static std::map<std::pair<ObjectId, ObjectId>, std::uint64_t> lastSaid;
+    const std::uint64_t now = GetTickCount64();
+    std::uint64_t &last = lastSaid[{self.Id(), *target}];
+    if ((said < 3 || reached->walk > 0.0f || !sight) && (last == 0 || now - last >= 3000))
     {
         ++said;
+        last = now;
         std::string blocked;
         if (sight.blockedAt)
         {

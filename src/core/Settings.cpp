@@ -362,7 +362,8 @@ max = 20
 ; Judge how far a move or an attack must walk by the engine's own path, around
 ; walls and tables, and refuse a click on the ground the path cannot reach
 ; this turn ("Too far"). Off: a straight line for attacks, and a move walks
-; until its meters run out.
+; until its meters run out. Not in effect yet: the path finder it needs
+; misbehaved in play (2026-09-30) and waits on a fix.
 path_check = true
 
 [turns]

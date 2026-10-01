@@ -24,7 +24,17 @@ void CameraDirector::TurnTo(ObjectId id)
     {
         return;
     }
+    // A move still running (the last turn's pan or swing) is stopped first:
+    // once, the camera stayed on the archers' room for Eleanor's turn (the
+    // second play test, 2026-09-30, 17:18:32). What it follows after is said,
+    // to see whether the pan took.
+    if (dao::camera::Moving())
+    {
+        dao::camera::Stop();
+    }
     dao::camera::PanTo(id, kMoveSeconds);
+    spdlog::debug("camera to {:#010x}: following {:#010x}{}", id, camera->Target(),
+                  camera->Tactical() ? ", tactical" : "");
     if (camera->Tactical())
     {
         return;
