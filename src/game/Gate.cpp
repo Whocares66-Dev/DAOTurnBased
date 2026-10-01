@@ -98,33 +98,24 @@ struct Reached
 };
 
 // path_check (Settings::pathCheck): the player's orders measured by the
-// path the engine would walk (DAOLib 8819b7c's FindPath, not yet seen in
-// play), not a straight line. Read on the scripts' thread, set on reload.
+// path the engine would walk, not a straight line. Read on the scripts'
+// thread, set on reload.
 std::atomic<bool> g_pathCheck{true};
 
-// The engine's path for an idle creature to a point, its length; nothing
-// when there is none, or the creature is busy (FindPath refuses then).
-//
-// Not called, whatever path_check says, until DAOLib fixes FindPath: in the
-// second play test (2026-09-30, fight B) it answered a call late and left
-// its result installed as the creature's own path, so the hero's path read
-// 15.6 m all fight and every order of his was refused, and after the fight
-// he would not walk a clicked path (lib-agent: "treat FindPath as broken").
-// A straight line and a move that walks until its meters run out, as before.
-std::atomic<bool> g_findPathWorks{false}; // a flag, not a constant, so the code stays compiled and linted
+// Whether DAOLib can give a path on demand. Not now: its FindPath answered a
+// call late and left its search as the creature's own path, so the hero's
+// path read 15.6 m all fight and every order of his was refused (the second
+// play test, 2026-09-30, fight B), and DAOLib took it out (7cfe6bd: the
+// engine's search keeps an old request until it ends). Until a search of
+// its own comes, a straight line, and a move walks until its meters run
+// out. A flag, not a constant, so the rest stays compiled and linted.
+std::atomic<bool> g_pathOnDemand{false};
 
-std::optional<float> PathLength(ObjectId creature, const dao::Vector &to)
+// The engine's path for an idle creature to a point, its length: nothing
+// while DAOLib has no path on demand.
+std::optional<float> PathLength(ObjectId /*creature*/, const dao::Vector & /*to*/)
 {
-    if (!g_findPathWorks.load())
-    {
-        return std::nullopt;
-    }
-    const std::optional<dao::world::WalkPath> path = dao::world::FindPath(creature, to);
-    if (!path)
-    {
-        return std::nullopt;
-    }
-    return path->Length();
+    return std::nullopt;
 }
 
 std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Command &command, bool byPath)
@@ -174,7 +165,7 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
 // A player's move, measured as the engine would walk it.
 std::optional<float> MoveLength(const dao::CCObject &self, const dao::Command &command)
 {
-    if (!g_findPathWorks.load() || !g_pathCheck.load() || GetCurrentThreadId() != dao::script::ScriptThreadId())
+    if (!g_pathOnDemand.load() || !g_pathCheck.load() || GetCurrentThreadId() != dao::script::ScriptThreadId())
     {
         return std::nullopt;
     }

@@ -423,7 +423,17 @@ void Bridge::Apply(const std::vector<Effect> &effects)
         case EffectKind::GameSpeed:
             // Game logic and animation together (DAOLib's dao/Clock.h,
             // 4e0032e); the Flash UI keeps its own clock.
-            dao::clock::SetSpeed(static_cast<float>(e.b) / 1000.0f);
+            // Whether the world's timer took it and the frame's hook is placed
+            // (DAOLib ed55ab8): an archer's shot took as long at 2 as at 1 in
+            // the second play test, the mod's own waits aside.
+            if (!dao::clock::SetSpeed(static_cast<float>(e.b) / 1000.0f))
+            {
+                spdlog::warn("the game's speed {:.2f} did not take", static_cast<float>(e.b) / 1000.0f);
+            }
+            else
+            {
+                spdlog::debug("the game's speed is {:.2f}", static_cast<float>(e.b) / 1000.0f);
+            }
             break;
         case EffectKind::AgeTime:
             dao::clock::Advance(static_cast<float>(e.b) / 1000.0f);
