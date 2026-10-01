@@ -4,6 +4,8 @@ Turn-based combat for Dragon Age: Origins, as a native plugin (`turnbased.dll`) 
 
 Markdown here is not hard-wrapped: one line per paragraph or list item.
 
+Licensed GPLv3 (`LICENSE`, the user's choice, 2026-09-30). `src/plugin/EluvianAPI.h` is Eluvian's header, MIT, as its own notice says.
+
 ## The target
 
 DAOLib's `CLAUDE.md` has the game, the one exe build every address is from, the toolchain and where logs go. Everything is 32-bit x86; `CMakeLists.txt` refuses a 64-bit configure.
