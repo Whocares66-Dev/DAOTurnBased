@@ -420,7 +420,6 @@ void TurnMachine::StepIdle(const Observation &obs, std::vector<Effect> &fx)
     if (!latch_)
     {
         Log(LogLevel::Info, "combat began: turn-based");
-        Emit(EventKind::FightBegan);
         phase_ = Phase::Starting;
         wantScan_ = true;
         clock_ = 0;
@@ -522,6 +521,12 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
         }
     }
     order_.Begin(std::move(roster));
+    // Said here, where there is a fight: when the game said combat and no
+    // enemy was fighting the party, "began" came with no fight and no
+    // "over" after it (eluvian-agent's staged wolf, 2026-10-01), and a fight
+    // begun again in the same combat (hostiles fighting again) was not
+    // said at all.
+    Emit(EventKind::FightBegan);
     Log(LogLevel::Info, std::format("the fight: {} combatants; {}", order_.All().size(), DescribeOrder()));
     if (!outside_.empty())
     {

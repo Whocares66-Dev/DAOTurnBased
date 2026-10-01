@@ -612,6 +612,12 @@ MUTANTS = [
         "            if (waited)\n            {\n                budget_.actions = 0;",
     ),
     Mutant(
+        "a fight made is not said to begin",
+        MACHINE,
+        '    Emit(EventKind::FightBegan);\n    Log(LogLevel::Info, std::format("the fight: {} combatants; {}"',
+        '    Log(LogLevel::Info, std::format("the fight: {} combatants; {}"',
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",

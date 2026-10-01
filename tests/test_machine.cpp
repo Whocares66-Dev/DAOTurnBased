@@ -2587,3 +2587,47 @@ TEST_CASE("an AI standing at a move it does not take is stopped, and its turn en
     CHECK(std::ranges::none_of(
         w.log, [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
 }
+
+TEST_CASE("a fight is said to begin when there is one, each time, and to end once for each", "[machine][engaged]")
+{
+    // eluvian-agent's staged wolf: the game said combat with no enemy
+    // fighting the party, and "began" came with no fight and no "over".
+    auto fight = StandardFight();
+    for (Creature &c : fight)
+    {
+        c.engaged = c.side == Side::Party;
+    }
+    World w(Fixed(), fight);
+    std::vector<EventKind> kinds;
+    w.machine.SetEventSink([&](const TurnEvent &e) {
+        if (e.kind == EventKind::FightBegan || e.kind == EventKind::FightOver)
+        {
+            kinds.push_back(e.kind);
+        }
+    });
+    w.StartFight();
+    w.RunFor(2000);
+    REQUIRE_FALSE(w.machine.Active());
+    CHECK(kinds.empty()); // combat, and no fight: nothing said
+    // An enemy comes to fight the party: begun, in the same combat.
+    w.Get(kHurlock).engaged = true;
+    w.RunFor(3000);
+    REQUIRE(w.machine.Active());
+    CHECK(kinds == std::vector<EventKind>{EventKind::FightBegan});
+    w.Get(kHurlock).down = true;
+    for (int i = 0; i < 200 && w.machine.Active(); ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnPauseKey();
+        }
+        w.Frame();
+    }
+    REQUIRE_FALSE(w.machine.Active());
+    CHECK(kinds == std::vector<EventKind>{EventKind::FightBegan, EventKind::FightOver});
+    // And the other, still in the same combat: begun again, and said.
+    w.Get(kGenlock).engaged = true;
+    w.RunFor(3000);
+    REQUIRE(w.machine.Active());
+    CHECK(kinds == std::vector<EventKind>{EventKind::FightBegan, EventKind::FightOver, EventKind::FightBegan});
+}

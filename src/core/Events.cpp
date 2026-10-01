@@ -64,7 +64,13 @@ EventDescription Describe(EventKind kind)
     switch (kind)
     {
     case EventKind::FightBegan:
-        return {"A turn-based fight began (the game entered combat).", false, nullptr, nullptr, nullptr, nullptr};
+        return {"A turn-based fight began: the turn order is made. Not said when the game enters combat with "
+                "no enemy fighting the party.",
+                false,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr};
     case EventKind::FightOver:
         return {"The turn-based fight is over; real time runs again.",
                 false,
