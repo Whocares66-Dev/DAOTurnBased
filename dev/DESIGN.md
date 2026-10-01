@@ -229,6 +229,32 @@ Filling in what a turn-based mode usually has, by how much it matters:
 - **Cooldowns and durations in rounds.** See Time above.
 - **Balance.** DAO is tuned for real time: some fights throw many weak enemies, and regeneration assumes seconds pass. Expect `movement.meters`, `round_min_seconds` and initiative to want tuning in play.
 
+## Proposed, not decided (2026-10-01)
+
+Two questions put to the user and not yet answered. Nothing here is built unless it says so.
+
+### Casting time
+
+The user's question: abilities balanced by time in real time with pause, a spell that takes long to cast and can be interrupted, lose that in turns, where nobody acts during one's own turn. Spread the cast over turns, interruptible before it lands?
+
+What the game's data says (`abi_base.gda` and `spellconjuringspeeds.gda`, dumped with DAOLib's `tools/gda.py`, 2026-10-01; the base table only, not Awakening's or the DLCs'): the ability table's `Speed` column appears to index the conjuring speeds: 1 instant (0 s), 2 fast (1 s), 3 normal (2 s), 4 slow (4 s), 5 ritual (6 s). That the column is used so is read from the names and the range of values, not from a script. Of 551 abilities, 330 are instant, among them 74 mage spells with a conjure animation (Fireball, Heal, Paralyze); nine spells are fast (Inferno, Blizzard, Tempest, Death Cloud, Chain Lightning, Mass Paralysis, Flying Swarm, Spider Shape, Bear Shape) with some talents; seven talents are normal (Arrow of Slaying, Final Blow, Shield Bash, with no conjure animation, so the column may mean something else for them); none is slow or ritual. At 4 s a turn every cast fits inside one turn. So casting over several turns would be a new rule, not the game's timing carried over; what turns lose is the window in which a cast can be interrupted.
+
+The proposal: a slow cast is declared on one turn and lands at the start of its caster's next, as a full-round spell does at a table.
+
+- Which: any ability above instant, read from the table (the nine spells now; a mod's slow or ritual spell one or two turns by `cooldown_seconds_per_turn`'s kind of sum).
+- Declared: the action is spent, the target or the place fixed, "Casting" over the caster and on its card.
+- Interrupted: a stun, a knockdown, paralysis, sleep or death before its next turn cancels it, nothing spent and nothing on cooldown; the mod follows all of these already. Whether damage alone should is not known: what the engine does in real time has not been read.
+- Landing: at the start of its next turn the spell is released for nothing and the game plays the cast; the caster then has its turn.
+- Enemies too: an enemy's Blizzard is said a turn ahead, and stunning the mage stops it.
+
+What is not proven in the engine: giving the held order again at the right moment (the gate knows the ability, its target and its place); a pose or an effect that shows the casting while it waits; the engine's own rule for an interruption by damage. Not chosen: letting the engine's own conjure run on into the turns that follow, which counts seconds, and whose one second would be over before anyone acted.
+
+For the user to say: only the spells, or the seven talents at 2 s too; whether damage interrupts, or only what holds a creature; whether the caster has a whole turn when the spell lands (proposed) or landing is that turn's action.
+
+### A move farther than its movement
+
+A click on ground farther than the movement left walks until the meters run out. Refusing it instead ("Too far", as an attack out of reach is refused) is built and off (`src/game/Gate.cpp`, `g_pathOnDemand`; the machine's refusal is tested): the walk would be the game's own path's length. It changes how moving feels, so it waits on the user: walk as far as it goes, or refuse.
+
 ## Later: action points
 
 The one-action rule is a budget of one. Action points generalise it: each turn has N points, each command costs some (attack 2, move 1 per 3 m, potion 1, sustained toggle 0). `TurnMachine::Budget` and `Classify` are the two places that change; the gate and the rest stay as they are. Costs could come from the ability table (casting speed, `abi_base`'s `Speed` column) so heavier abilities cost more.
