@@ -1,6 +1,7 @@
 #include "game/Gate.h"
 
 #include "core/Rules.h"
+#include "core/Text.h"
 
 #include "dao/Addresses.h"
 #include "dao/CommandEvents.h"
@@ -192,8 +193,14 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
         else
         {
             door = search.result == kDoorInTheWay;
-            spdlog::debug("attack on {:#010x}: the game finds no path to it ({}); {}", *target, search.result,
-                          door ? "a door is in the way" : "judged by the straight line");
+            // What is in the way, as the game finds it (DAOLib cb08d00: a
+            // placeable within 5 m of where the path stopped). Only shut
+            // doors have been seen; said, in case it is ever something else.
+            const std::string what =
+                door && search.blocker != dao::kInvalidObject
+                    ? std::format("{} ({:#x}) is in the way", Utf8(api::GetName(search.blocker)), search.blocker)
+                    : std::string{door ? "a door is in the way" : "judged by the straight line"};
+            spdlog::debug("attack on {:#010x}: the game finds no path to it ({}); {}", *target, search.result, what);
         }
     }
     // Never less than the straight line: a path that ends short of it is
