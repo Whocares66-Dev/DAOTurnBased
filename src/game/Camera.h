@@ -29,13 +29,13 @@ class CameraDirector
     // its card).
     void TurnTo(ObjectId id);
 
-    // Each frame: whether the last pan got there. Twice, at ai_turn_speed
-    // 2, the pan to the hero's turn left the view on an enemy's room (play
-    // tests 2 and 5, 2026-09-30) and the log said only that it was asked
-    // for. A pan that stops short this soon is not the player's doing (no
-    // one turns the camera within a fifth of a second of a turn's start),
-    // so it is asked for once more; one that stops short later is taken
-    // as the player's. Either is logged, with how far short.
+    // Each frame: whether the last pan got there, and why it ended (DAOLib's
+    // LastEnd). Twice, at ai_turn_speed 2, the pan to the hero's turn left
+    // the view on an enemy's room (play tests 2 and 5, 2026-09-30): the
+    // game's own pull toward the party, lib-agent found, taken by the pan
+    // for the player's (DAOLib 79d2baa). A pan that ends short for any
+    // reason but the player's is asked for once more, until play shows it
+    // arrives; either is logged, with how far short and why.
     void Watch();
 
   private:

@@ -9,6 +9,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <optional>
+#include <string_view>
 
 namespace tb::game
 {
@@ -96,21 +98,31 @@ void CameraDirector::Watch()
     const float shortBy = std::hypot(focus.x - at.x, focus.y - at.y);
     const std::uint64_t nowMs = NowMs();
     const std::uint64_t ran = nowMs - panAt_;
+    // Why, by DAOLib's word (79d2baa): the player is seen by the game's own
+    // pan, not guessed from the camera jumping.
+    using dao::camera::MoveEnd;
+    const std::optional<MoveEnd> why = dao::camera::LastEnd(dao::camera::Move::Pan);
+    const std::string_view said = why ? dao::camera::Name(*why) : std::string_view{"?"};
     if (shortBy <= kArrivedMeters)
     {
-        spdlog::debug("camera on {:#010x} after {} ms", id, ran);
+        spdlog::debug("camera on {:#010x} after {} ms ({})", id, ran, said);
         return;
     }
-    if (ran < kTooSoonMs && !again_)
+    // Short of it and not the player's doing: once more. Another selection
+    // (a party AI's turn selects the hero) is taken as the mod's own only
+    // this soon after the pan began, since later it may be the player's.
+    const bool theirs =
+        why == MoveEnd::Player || why == MoveEnd::NoCamera || why == MoveEnd::Replaced || why == MoveEnd::Stopped;
+    if (!theirs && !again_ && (why != MoveEnd::Retargeted || ran < kTooSoonMs))
     {
-        spdlog::warn("the camera's pan to {:#010x} stopped after {} ms, {:.1f} m short: panned again", id, ran,
-                     shortBy);
+        spdlog::warn("the camera's pan to {:#010x} ended after {} ms, {:.1f} m short ({}): panned again", id, ran,
+                     shortBy, said);
         again_ = true;
         Pan(id, nowMs);
         return;
     }
-    spdlog::info("the camera's pan to {:#010x} ended after {} ms, {:.1f} m short (following {:#010x}){}", id, ran,
-                 shortBy, camera->Target(), again_ ? ", the second time" : ": the player's, taken as");
+    spdlog::info("the camera's pan to {:#010x} ended after {} ms, {:.1f} m short ({}, following {:#010x}){}", id, ran,
+                 shortBy, said, camera->Target(), again_ ? ", the second time" : "");
 }
 
 } // namespace tb::game
