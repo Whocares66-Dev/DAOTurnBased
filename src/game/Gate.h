@@ -21,6 +21,7 @@
 #include "core/TurnMachine.h"
 
 #include <mutex>
+#include <optional>
 
 namespace tb::game
 {
@@ -32,5 +33,21 @@ bool InstallGate(TurnMachine &machine, std::mutex &mutex);
 // Settings::pathCheck: whether the player's moves and attacks are measured
 // by the engine's own path (DAOLib's world::FindPath).
 void SetPathCheck(bool on);
+
+// A cast that charges (core: Verdict::Hold): the gate refuses the command
+// and keeps what it was, the ability, its target and the place, for the
+// bridge to give again when its turns are up (EffectKind::ReleaseCast) or
+// to forget (DropCast; no creature: every one). On the scripts' thread.
+struct HeldCast
+{
+    std::int32_t ability = -1;
+    ObjectId target = kNoObject;
+    bool placed = false; // aimed at a place
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+[[nodiscard]] std::optional<HeldCast> TakeHeldCast(ObjectId creature);
+void DropHeldCast(ObjectId creature);
 
 } // namespace tb::game

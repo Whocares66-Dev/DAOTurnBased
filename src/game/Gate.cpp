@@ -105,6 +105,10 @@ struct Reached
 // thread, set on reload.
 std::atomic<bool> g_pathCheck{true};
 
+// Casts kept while they charge (Gate.h, HeldCast), by their caster. The
+// gate and the bridge's effects both run on the scripts' thread.
+std::unordered_map<ObjectId, HeldCast> g_heldCasts;
+
 // A move farther than its path can go this turn is refused ("Too far")
 // rather than walked until its meters run out: the user's call, 2026-10-01
 // ("refusing too far is right i think"). Off, a move walks until stopped.
@@ -309,6 +313,14 @@ void DescribeAbility(const dao::CCObject &self, const dao::Command &command, Com
     {
         request.sustainedOn = api::IsModalAbilityActive(self.Id(), *ability) != 0;
     }
+    // Its conjuring time: the ability's Speed is a row of the game's table
+    // of conjuring speeds (spellconjuringspeeds.gda, read 2026-10-01: 1
+    // instant 0 s, 2 fast 1 s, 3 normal 2 s, 4 slow 4 s, 5 ritual 6 s). That
+    // Speed is that row is read from the two tables' names and values, not
+    // from a script.
+    const std::int32_t speed = dao::gda::GetInt(dao::script::Table::AbilitiesTalents, *ability, "Speed").value_or(0);
+    request.conjureSeconds = static_cast<float>(
+        std::max(0, dao::gda::GetInt(dao::script::Table::SpellConjuringspeed, speed, "Speed").value_or(0)));
 }
 
 // The engine's frames have no unwind data, so no exception may leave a hook
@@ -382,7 +394,25 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
                 spdlog::info("the refused attack: {:.1f} m away, reach {:.1f} m, main hand base item {} (bitm_base)",
                              reached->distance, reached->reach, reached->weaponType);
             }
-            if (verdict == Verdict::Block)
+            if (verdict == Verdict::Hold)
+            {
+                // A cast that charges: kept, to be given again when its
+                // turns are up, and refused now as below.
+                HeldCast kept;
+                kept.ability = request.ability;
+                kept.target = command->Target().value_or(dao::kInvalidObject);
+                if (const std::optional<dao::Vector> place = command->Position())
+                {
+                    kept.placed = true;
+                    kept.x = place->x;
+                    kept.y = place->y;
+                    kept.z = place->z;
+                }
+                g_heldCasts[self->Id()] = kept;
+                spdlog::debug("{:#x}: its cast of ability {} is kept while it charges (target {:#x}{})", self->Id(),
+                              kept.ability, kept.target, kept.placed ? ", a place" : "");
+            }
+            if (verdict != Verdict::Allow)
             {
                 // The queue always takes a command it is given, and no caller
                 // frees one after (DAOLib's reading of all ten, 2026-09-30), so
@@ -518,6 +548,30 @@ template <std::size_t... I> bool WatchOrders(std::index_sequence<I...>)
 }
 
 } // namespace
+
+std::optional<HeldCast> TakeHeldCast(ObjectId creature)
+{
+    const auto kept = g_heldCasts.find(creature);
+    if (kept == g_heldCasts.end())
+    {
+        return std::nullopt;
+    }
+    const HeldCast cast = kept->second;
+    g_heldCasts.erase(kept);
+    return cast;
+}
+
+void DropHeldCast(ObjectId creature)
+{
+    if (creature == kNoObject)
+    {
+        g_heldCasts.clear();
+    }
+    else
+    {
+        g_heldCasts.erase(creature);
+    }
+}
 
 void SetPathCheck(bool on)
 {

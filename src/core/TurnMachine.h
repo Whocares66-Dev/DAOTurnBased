@@ -133,6 +133,8 @@ enum class EffectKind : std::uint8_t
     HoldTime,      // every temporary effect's time held still (a 1) or let run (a 0)
     AgeTime,       // every temporary effect aged b milliseconds, once
     GameSpeed,     // the game runs at b thousandths of its speed (1000: as ever)
+    ReleaseCast,   // target's held cast of ability a is given to it now: it has charged its turns
+    DropCast,      // target's held cast is forgotten (interrupted); no target: everyone's
 };
 
 [[nodiscard]] const char *Name(EffectKind kind);
@@ -191,12 +193,20 @@ struct CommandRequest
     float cooldownSeconds = 0.0f;
     bool sustained = false;
     bool sustainedOn = false;
+    // And its conjuring time in seconds (the ability's Speed, through the
+    // game's table of conjuring speeds: 0 instant, 1 fast, 2 normal, 4
+    // slow, 6 ritual): a turn's worth or more of it is charged in turns.
+    float conjureSeconds = 0.0f;
 };
 
 enum class Verdict : std::uint8_t
 {
     Allow,
     Block,
+    // Not queued now, and kept by the game layer to give again: a cast
+    // that charges (TurnMachine::ChargeTurns). EffectKind::ReleaseCast asks
+    // for it, DropCast forgets it.
+    Hold,
 };
 
 enum class ToggleResult : std::uint8_t
@@ -256,12 +266,20 @@ struct CooldownView
     int of = 0;    // of this many in all
 };
 
+struct ChargeView
+{
+    ObjectId id = kNoObject;
+    std::int32_t ability = -1;
+    int turns = 0; // its caster's turns still to go before it is cast
+};
+
 struct MachineState
 {
     TurnView view;
     std::uint32_t worldMs = 0;
     std::vector<HeldView> held;
     std::vector<CooldownView> cooldowns;
+    std::vector<ChargeView> charging;
     std::string lastRefusal;
     float speed = 1.0f;
     // Whether the game took the last speed set (DAOLib's SetSpeed says):
@@ -408,6 +426,7 @@ class TurnMachine
         bool outOfMovement = false;
         bool refunded = false; // an action given back once already this turn
         bool retried = false;  // an AI told to choose again, its failed action given back
+        bool landing = false;  // the turn began with a charged cast: its creature's turn follows it
         CommandKind lastKind = CommandKind::Involuntary;
         std::int32_t lastAbility = -1; // the ability the last command was to use; -1 for any other command
         float movementAtCommand = 0;   // movementUsed as the last command was let through
@@ -433,6 +452,14 @@ class TurnMachine
     void StepPadding(std::vector<Effect> &fx);
     [[nodiscard]] Verdict Judge(const CommandRequest &request);
     [[nodiscard]] bool LoseTurn(const Combatant &who, std::vector<Effect> &fx);
+    // A cast that charges (the user's rule, 2026-10-01): the turns an
+    // ability charges before it is cast; a turn of its caster's spent on
+    // one; the cast given again at the start of the turn it is cast on;
+    // and its loss.
+    [[nodiscard]] int ChargeTurns(const CommandRequest &request) const;
+    [[nodiscard]] bool ChargingTurn(const Combatant &who, std::vector<Effect> &fx);
+    [[nodiscard]] bool LandCast(const Combatant &who, std::vector<Effect> &fx);
+    void Interrupt(ObjectId who, std::string_view why, std::vector<Effect> &fx);
     void HoldUsed(std::vector<Effect> &fx);
     void TickCooldowns(const Combatant &who, std::vector<Effect> &fx);
     void ReleaseCooldowns(std::vector<Effect> &fx);
@@ -521,6 +548,23 @@ class TurnMachine
     };
     std::vector<Hold> usedNow_;
     std::vector<Hold> holds_;
+    // Casts that charge. The user's rule: a spell whose conjuring time is a
+    // turn's worth or more charges that many of its caster's turns, the one
+    // it is ordered on the first, and is cast at the start of the turn
+    // after: slow (4 s at 4 s a turn) one turn and cast on the second,
+    // ritual (6 s) two and on the third; instant, fast and normal on the
+    // turn. A caster held (a stun, a knockdown, paralysis, sleep), fallen
+    // or gone before then loses it, nothing spent. Cast, it costs no action
+    // of that turn: the caster then has its turn.
+    struct Charge
+    {
+        ObjectId caster = kNoObject;
+        std::int32_t ability = -1;
+        int turns = 0; // its caster's turns still to go, the next included
+    };
+    std::vector<Charge> charges_;
+    std::optional<Charge> landing_; // given again this turn, and not yet come through the gate
+    bool chargeBegan_ = false;      // a cast began to charge: its caster's turn ends with the next step
     // Effects' time in rounds (dev/DESIGN.md, "Everything in turns"):
     // whether the fight holds it.
     bool timeHeld_ = false;

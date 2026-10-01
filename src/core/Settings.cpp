@@ -29,6 +29,13 @@ std::string_view Trim(std::string_view s)
     return s;
 }
 
+// All of `text` as a whole number, or false.
+bool WholeInt(std::string_view text, int &value)
+{
+    const std::from_chars_result got = std::from_chars(text.data(), text.data() + text.size(), value);
+    return !text.empty() && got.ec == std::errc{} && got.ptr == text.data() + text.size();
+}
+
 std::string Lower(std::string_view s)
 {
     std::string out{s};
@@ -193,6 +200,42 @@ const std::vector<Entry> &Entries()
         {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
         {"turns", "join_by_sight", Bool(&Settings::joinBySight)},
+        {"turns", "charge",
+         [](Settings &s, std::string_view text) -> std::string {
+             // "10002:1, 13000:2": an ability's id and its turns.
+             std::vector<std::pair<std::int32_t, int>> list;
+             std::size_t at = 0;
+             while (at < text.size())
+             {
+                 std::size_t end = text.find(',', at);
+                 end = end == std::string_view::npos ? text.size() : end;
+                 std::string_view item = text.substr(at, end - at);
+                 at = end + 1;
+                 while (!item.empty() && item.front() == ' ')
+                 {
+                     item.remove_prefix(1);
+                 }
+                 while (!item.empty() && item.back() == ' ')
+                 {
+                     item.remove_suffix(1);
+                 }
+                 if (item.empty())
+                 {
+                     continue;
+                 }
+                 const std::size_t colon = item.find(':');
+                 int ability = 0;
+                 int turns = 0;
+                 if (colon == std::string_view::npos || !WholeInt(item.substr(0, colon), ability) ||
+                     !WholeInt(item.substr(colon + 1), turns) || ability < 0 || turns < 0 || turns > 9)
+                 {
+                     return "not a list of ability:turns, turns 0 to 9 (10002:1, 13000:2)";
+                 }
+                 list.emplace_back(ability, turns);
+             }
+             s.charge = std::move(list);
+             return {};
+         }},
         {"turns", "ai_poke",
          [](Settings &s, std::string_view text) -> std::string {
              const std::string v = Lower(text);
@@ -447,6 +490,16 @@ combat_radius = 50
 ; camera to black rooms. Once in, it stays in. false: everyone in combat
 ; within combat_radius takes turns.
 join_by_sight = true
+; A spell with a long casting time charges before it is cast: one whose
+; conjuring time is a turn's worth or more (cooldown_seconds_per_turn)
+; charges that many turns and is cast at the start of its caster's turn
+; after. At 4 s a turn: slow (4 s) charges one turn and is cast on the
+; second, ritual (6 s) two and on the third; instant, fast and normal are
+; cast on the turn. A stun, a knockdown, paralysis, sleep or death before
+; then interrupts it. The game's own abilities are instant, fast or normal,
+; so none charges by the rule; here an ability can be made to, by its id
+; and its turns: charge = 10002:1, 13000:1 (Inferno, Blizzard).
+charge =
 ; How an AI creature is told its turn has come: command_complete or kickstart.
 ai_poke = command_complete
 

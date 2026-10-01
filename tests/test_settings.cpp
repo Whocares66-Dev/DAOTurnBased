@@ -167,3 +167,20 @@ TEST_CASE("cooldowns count four seconds a turn by default", "[settings]")
     CHECK(tb::Settings{}.cooldownSecondsPerTurn == 4.0f);
     CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.cooldownSecondsPerTurn == 4.0f);
 }
+
+TEST_CASE("[turns] charge is a list of an ability and its turns", "[settings]")
+{
+    const auto parsed = ParseSettings("[turns]\ncharge = 10002:1, 13000:2\n");
+    REQUIRE(parsed.settings.charge.size() == 2);
+    CHECK(parsed.settings.charge[0] == std::pair<std::int32_t, int>{10002, 1});
+    CHECK(parsed.settings.charge[1] == std::pair<std::int32_t, int>{13000, 2});
+    CHECK(ParseSettings("[turns]\ncharge =\n").settings.charge.empty());
+    CHECK(ParseSettings(DefaultSettingsFile()).settings.charge.empty());
+    for (const char *bad : {"10002", "10002:x", "a:1", "10002:1 13000:2", "10002:12", "-1:1"})
+    {
+        CAPTURE(bad);
+        const auto wrong = ParseSettings(std::string{"[turns]\ncharge = "} + bad + "\n");
+        CHECK(wrong.settings.charge.empty());
+        CHECK_FALSE(wrong.warnings.empty());
+    }
+}

@@ -234,23 +234,19 @@ Filling in what a turn-based mode usually has, by how much it matters:
 
 Two questions put to the user and not yet answered. Nothing here is built unless it says so.
 
-### Casting time
+### Casting time (decided and built 2026-10-01)
 
-The user's question: abilities balanced by time in real time with pause, a spell that takes long to cast and can be interrupted, lose that in turns, where nobody acts during one's own turn. Spread the cast over turns, interruptible before it lands?
+The user's rule: "the ritual spells which take 6 s should charge for 2 turns, since 1 turn is 4 s. cast on the 3rd turn. instant & fast & normal can cast on the turn of. slow spells take 1 turn to charge."
 
-What the game's data says (`abi_base.gda` and `spellconjuringspeeds.gda`, dumped with DAOLib's `tools/gda.py`, 2026-10-01; the base table only, not Awakening's or the DLCs'): the ability table's `Speed` column appears to index the conjuring speeds: 1 instant (0 s), 2 fast (1 s), 3 normal (2 s), 4 slow (4 s), 5 ritual (6 s). That the column is used so is read from the names and the range of values, not from a script. Of 551 abilities, 330 are instant, among them 74 mage spells with a conjure animation (Fireball, Heal, Paralyze); nine spells are fast (Inferno, Blizzard, Tempest, Death Cloud, Chain Lightning, Mass Paralysis, Flying Swarm, Spider Shape, Bear Shape) with some talents; seven talents are normal (Arrow of Slaying, Final Blow, Shield Bash, with no conjure animation, so the column may mean something else for them); none is slow or ritual. At 4 s a turn every cast fits inside one turn. So casting over several turns would be a new rule, not the game's timing carried over; what turns lose is the window in which a cast can be interrupted.
+So an ability whose conjuring time is a turn's worth or more (`cooldown_seconds_per_turn`, 4 s) charges that many of its caster's turns, rounded up, the turn it is ordered on the first, and is cast at the start of the turn after: slow (4 s) one turn and cast on the second, ritual (6 s) two and on the third. Less than a turn's worth (instant, fast 1 s, normal 2 s) is cast on the turn, as before.
 
-The proposal: a slow cast is declared on one turn and lands at the start of its caster's next, as a full-round spell does at a table.
+- **Begun:** the action is spent and the turn ends; "Casting" over the caster. The command is not queued: the game layer keeps what it was (the ability, its target, its place).
+- **A charging turn** (a ritual's second): spent on the charge, nothing to order.
+- **Cast:** as its caster's turn begins the kept cast is given to it again, with a short conjuring (the turns were its time), for nothing: the caster then has its turn, its action its own. It goes on cooldown as any ability used.
+- **Interrupted:** a caster held (a stun, a knockdown, paralysis, sleep), fallen or gone before then loses the charge, "Interrupted", nothing spent and nothing on cooldown; the fight's end loses it too. Damage alone does not: what the engine does in real time has not been read. This and the caster keeping its turn were not the user's words, and are theirs to change.
+- **Enemies too:** an enemy's slow spell is said a turn ahead, and stunning the caster stops it.
 
-- Which: any ability above instant, read from the table (the nine spells now; a mod's slow or ritual spell one or two turns by `cooldown_seconds_per_turn`'s kind of sum).
-- Declared: the action is spent, the target or the place fixed, "Casting" over the caster and on its card.
-- Interrupted: a stun, a knockdown, paralysis, sleep or death before its next turn cancels it, nothing spent and nothing on cooldown; the mod follows all of these already. Whether damage alone should is not known: what the engine does in real time has not been read.
-- Landing: at the start of its next turn the spell is released for nothing and the game plays the cast; the caster then has its turn.
-- Enemies too: an enemy's Blizzard is said a turn ahead, and stunning the mage stops it.
-
-What is not proven in the engine: giving the held order again at the right moment (the gate knows the ability, its target and its place); a pose or an effect that shows the casting while it waits; the engine's own rule for an interruption by damage. Not chosen: letting the engine's own conjure run on into the turns that follow, which counts seconds, and whose one second would be over before anyone acted.
-
-For the user to say: only the spells, or the seven talents at 2 s too; whether damage interrupts, or only what holds a creature; whether the caster has a whole turn when the spell lands (proposed) or landing is that turn's action.
+What the game's data says (`abi_base.gda`, Awakening's `abi_gxa.gda` and `spellconjuringspeeds.gda`, read with DAOLib's `tools/gda.py`): the ability table's `Speed` is a row of the conjuring speeds: 1 instant (0 s), 2 fast (1 s), 3 normal (2 s), 4 slow (4 s), 5 ritual (6 s); that it is used so is read from the names and values, not from a script. No ability of the base game or of Awakening is slow or ritual (one plot monster's summon aside), and the downloadable contents' tables are in archives the tool does not read. So by the rule nothing charges in the game as it ships; `[turns] charge = 10002:1, 13000:1` makes an ability charge so many turns whatever its conjuring time, which is also how it is tested. With action points (below) this is the same thing seen from the other side: a cost of more than a turn's points.
 
 ### A move farther than its movement (decided 2026-10-01)
 

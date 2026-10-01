@@ -187,6 +187,20 @@ class World
 
     // An ability used: its cooldown in seconds, and whether it is a
     // sustained one and on (so that this turns it off).
+    // An ability with a conjuring time: a turn's worth or more charges.
+    Verdict Cast(ObjectId id, Source source, std::int32_t ability, float conjureSeconds, float cooldownSeconds = 20.0f)
+    {
+        CommandRequest request;
+        request.object = id;
+        request.type = CommandType::UseAbility;
+        request.source = source;
+        request.inCombat = Get(id).fighting;
+        request.ability = ability;
+        request.cooldownSeconds = cooldownSeconds;
+        request.conjureSeconds = conjureSeconds;
+        return Queue(request);
+    }
+
     Verdict UseAbility(ObjectId id, Source source, std::int32_t ability, float cooldownSeconds, bool sustained = false,
                        bool on = false)
     {
@@ -207,6 +221,10 @@ class World
         const ObjectId id = request.object;
         const CommandType type = request.type;
         const Verdict verdict = machine.OnCommand(request);
+        if (verdict == Verdict::Hold)
+        {
+            heldCasts[id] = request; // as the game layer keeps it
+        }
         if (verdict == Verdict::Allow)
         {
             Creature &started = Get(id);
@@ -269,10 +287,12 @@ class World
     bool timeHeld = false;     // effects' time, as DAOLib's dao::effects::Hold leaves it
     std::int32_t speed = 1000; // the game's, in thousandths
     std::int64_t agedMs = 0;
-    std::function<void(ObjectId)> onPoke;         // what an AI does when told to choose
-    std::function<void(const Effect &)> onEffect; // sees every effect as it is applied
-    std::function<void(std::string_view)> onLog;  // sees every line the machine logs
-    bool record = true;                           // keep the log and the effects (a long random fight does not)
+    std::unordered_map<ObjectId, CommandRequest> heldCasts; // casts the game layer keeps while they charge
+    std::vector<Verdict> released;                          // what each cast given again was answered
+    std::function<void(ObjectId)> onPoke;                   // what an AI does when told to choose
+    std::function<void(const Effect &)> onEffect;           // sees every effect as it is applied
+    std::function<void(std::string_view)> onLog;            // sees every line the machine logs
+    bool record = true; // keep the log and the effects (a long random fight does not)
     Mode mode = Mode::Explore;
     bool paused = false;
     bool inCombat = true;
@@ -319,6 +339,26 @@ class World
                 if (onPoke)
                 {
                     onPoke(e.target);
+                }
+                break;
+            case EffectKind::ReleaseCast:
+                // The game layer gives the cast it kept, as a script's.
+                if (const auto kept = heldCasts.find(e.target); kept != heldCasts.end())
+                {
+                    CommandRequest again = kept->second;
+                    heldCasts.erase(kept);
+                    again.source = Source::Script;
+                    released.push_back(Queue(again));
+                }
+                break;
+            case EffectKind::DropCast:
+                if (e.target == kNoObject)
+                {
+                    heldCasts.clear();
+                }
+                else
+                {
+                    heldCasts.erase(e.target);
                 }
                 break;
             default:

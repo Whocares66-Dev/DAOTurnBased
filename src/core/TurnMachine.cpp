@@ -134,12 +134,16 @@ const char *Name(EffectKind kind)
         return "age time";
     case EffectKind::GameSpeed:
         return "game speed";
+    case EffectKind::ReleaseCast:
+        return "release cast";
+    case EffectKind::DropCast:
+        return "drop cast";
     }
     return "?";
 }
 
 TurnMachine::TurnMachine(Settings settings, std::uint64_t seed, LogSink log)
-    : settings_(settings), rng_(seed), log_(std::move(log))
+    : settings_(std::move(settings)), rng_(seed), log_(std::move(log))
 {
 }
 
@@ -294,7 +298,15 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         }
         latch_ = false;
         wantScan_ = false;
+        const bool charging = !charges_.empty() || landing_.has_value();
+        charges_.clear();
+        landing_.reset();
+        chargeBegan_ = false;
         fx.clear(); // their objects may be gone with the world
+        if (charging)
+        {
+            fx.push_back(Effect::Of(EffectKind::DropCast)); // names no object: every held cast
+        }
         // Not the clock, which is no object's: it must not stay held, nor
         // the game at an enemy's speed.
         HoldTime(false, fx);
@@ -367,6 +379,14 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
             fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));
         }
         EndTurn(fx, "stunned");
+        EnforcePause(obs, fx);
+        return fx;
+    }
+    // A cast began to charge (Judge): its caster does nothing else this
+    // turn.
+    if (std::exchange(chargeBegan_, false) && Active() && order_.Current() != nullptr)
+    {
+        EndTurn(fx, "charging");
         EnforcePause(obs, fx);
         return fx;
     }
@@ -486,6 +506,9 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     absentSince_.clear();
     outside_.clear();
     left_.clear();
+    charges_.clear();
+    landing_.reset();
+    chargeBegan_ = false;
     roundAgedMs_ = 0;
     ownEffectSince_.reset();
     // Only who is fighting the party (Combatant::engaged): the rest wait
@@ -626,6 +649,10 @@ void TurnMachine::StartNextTurn(std::vector<Effect> &fx)
     {
         return;
     }
+    if (ChargingTurn(*current, fx))
+    {
+        return;
+    }
     BeginTurn(*current, fx);
 }
 
@@ -684,7 +711,103 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     {
         Floaty(fx, who.id, who.name, who.side == Side::Enemy ? kRed : kGrey);
     }
+    if (LandCast(who, fx))
+    {
+        return;
+    }
     Handover(who, fx);
+}
+
+int TurnMachine::ChargeTurns(const CommandRequest &request) const
+{
+    if (request.type != CommandType::UseAbility || request.sustained || request.ability < 0)
+    {
+        return 0;
+    }
+    for (const auto &[ability, turns] : settings_.charge)
+    {
+        if (ability == request.ability)
+        {
+            return turns;
+        }
+    }
+    // Whole turns of its conjuring time; less than a turn's worth is cast
+    // on the turn (fast and normal, 1 and 2 s of a 4 s turn).
+    const float turn = settings_.cooldownSecondsPerTurn;
+    if (!(turn > 0.0f) || request.conjureSeconds < turn)
+    {
+        return 0;
+    }
+    return static_cast<int>(std::ceil(request.conjureSeconds / turn));
+}
+
+// A turn of a charging caster's: spent on the charge, unless this is the
+// turn it is cast on (LandCast, from BeginTurn).
+bool TurnMachine::ChargingTurn(const Combatant &who, std::vector<Effect> &fx)
+{
+    const auto charge = std::ranges::find(charges_, who.id, &Charge::caster);
+    if (charge == charges_.end() || --charge->turns <= 0)
+    {
+        return false;
+    }
+    budget_ = Budget{};
+    budget_.actions = 0;
+    Log(LogLevel::Info, std::format("round {}: {}'s turn is spent charging ability {} ({} more)", order_.Round(),
+                                    Utf8(who.name), charge->ability, charge->turns));
+    Emit(EventKind::CastCharging, who.id, std::format("{} more", charge->turns), charge->ability);
+    Signal(fx, events::kTurnStart, who.id, order_.Round(), static_cast<std::int32_t>(who.side));
+    TickCooldowns(who, fx);
+    Floaty(fx, who.id, L"Casting", kGold);
+    EndTurn(fx, "charging");
+    return true;
+}
+
+// The turn a charged cast is cast on: the game layer gives its creature
+// the cast it kept (ReleaseCast), which comes back through the gate and is
+// let through for nothing (Judge); the creature's turn follows it.
+bool TurnMachine::LandCast(const Combatant &who, std::vector<Effect> &fx)
+{
+    const auto charge = std::ranges::find(charges_, who.id, &Charge::caster);
+    if (charge == charges_.end() || charge->turns > 0)
+    {
+        return false;
+    }
+    landing_ = *charge;
+    charges_.erase(charge);
+    budget_.landing = true;
+    Log(LogLevel::Info, std::format("{} casts ability {}: charged", Utf8(who.name), landing_->ability));
+    Effect release = Effect::Of(EffectKind::ReleaseCast, who.id);
+    release.a = landing_->ability;
+    fx.push_back(release);
+    phase_ = Phase::Executing;
+    executingSince_ = clock_;
+    idleTicks_ = 0;
+    return true;
+}
+
+void TurnMachine::Interrupt(ObjectId who, std::string_view why, std::vector<Effect> &fx)
+{
+    std::int32_t ability = -1;
+    if (const auto charge = std::ranges::find(charges_, who, &Charge::caster); charge != charges_.end())
+    {
+        ability = charge->ability;
+        charges_.erase(charge);
+    }
+    else if (landing_ && landing_->caster == who)
+    {
+        ability = landing_->ability;
+        landing_.reset();
+    }
+    else
+    {
+        return;
+    }
+    const Combatant *c = order_.Find(who);
+    Log(LogLevel::Info, std::format("{}'s cast of ability {} is interrupted: {}",
+                                    c != nullptr ? Utf8(c->name) : std::string{"?"}, ability, why));
+    Emit(EventKind::CastInterrupted, who, std::string{why}, ability);
+    fx.push_back(Effect::Of(EffectKind::DropCast, who));
+    Floaty(fx, who, L"Interrupted", kGrey);
 }
 
 // After a conversation or cutscene: the same turn, with what it had left
@@ -1217,6 +1340,19 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
         return;
     }
     const bool player = PlayerControls(*current);
+    // The charged cast is done (or never came): the turn it began is its
+    // creature's now, handed over as any turn is: an AI told, the player waited on.
+    if (std::exchange(budget_.landing, false))
+    {
+        if (landing_)
+        {
+            Log(LogLevel::Info,
+                std::format("{}'s charged cast of ability {} did not come", Utf8(current->name), landing_->ability));
+            landing_.reset();
+        }
+        Handover(*current, fx);
+        return;
+    }
     if (!player && passRequested_)
     {
         EndTurn(fx, "done");
@@ -1358,6 +1494,15 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
         fx.push_back(Effect::Of(EffectKind::Select, hero_));
     }
     Emit(EventKind::FightOver, kNoObject, std::string{why});
+    while (!charges_.empty())
+    {
+        Interrupt(charges_.front().caster, "the fight over", fx);
+    }
+    if (landing_)
+    {
+        Interrupt(landing_->caster, "the fight over", fx);
+    }
+    chargeBegan_ = false;
     HoldUsed(fx);
     ReleaseCooldowns(fx);
     HoldTime(false, fx);
@@ -1481,6 +1626,10 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
 {
     for (const CombatantStatus &status : statuses)
     {
+        if (!status.exists || status.down || status.condition == Condition::Disabled)
+        {
+            Interrupt(status.id, !status.exists ? "gone" : status.down ? "fell" : "held", pending_);
+        }
         Combatant *c = order_.Find(status.id);
         if (c == nullptr)
         {
@@ -1671,7 +1820,7 @@ Verdict TurnMachine::OnCommand(const CommandRequest &request)
         // world for. A refusal ran it for half a second in play, every
         // click after an action was spent (2026-09-30).
         orderPending_ = false;
-        if (verdict == Verdict::Block && phase_ == Phase::Dispatching)
+        if (verdict != Verdict::Allow && phase_ == Phase::Dispatching)
         {
             phase_ = Phase::AwaitingOrder;
         }
@@ -1744,6 +1893,10 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     }
     const bool player = PlayerControls(*current);
     const bool asked = request.source == Source::Player; // the player's own order
+    // The cast its creature charged, given again by the game layer as its
+    // turn began (LandCast): not an order of this turn's.
+    const bool landing = landing_ && landing_->caster == who->id && request.type == CommandType::UseAbility &&
+                         request.ability == landing_->ability;
     // Held in an effect's command: an order would queue behind it and run
     // in someone else's turn (Eleanor's ability, pinned, 2026-09-30).
     if (heldByEffect_ && kind != CommandKind::Free)
@@ -1762,7 +1915,8 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     // a controlled character carries on attacking by itself (in real time,
     // AI_DetermineCombatRound_Partial), and in play that ended a pinned
     // character's turn before the player had chosen (2026-09-30, 11:30).
-    if (player && request.source == Source::Script && (kind == CommandKind::Action || kind == CommandKind::Move))
+    if (player && !landing && request.source == Source::Script &&
+        (kind == CommandKind::Action || kind == CommandKind::Move))
     {
         // At debug: the AI tries again each time a command of its ends.
         if (Logs(LogLevel::Debug))
@@ -1784,6 +1938,12 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     switch (kind)
     {
     case CommandKind::Action:
+        if (landing)
+        {
+            Emit(EventKind::CastLanded, who->id, {}, request.ability);
+            landing_.reset();
+            break; // for nothing: its turns were its price
+        }
         if (budget_.actions <= 0)
         {
             // The order just taken, come again (kEchoMs): held like any
@@ -1823,6 +1983,20 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
             return Verdict::Block;
         }
         --budget_.actions;
+        // A cast that charges is not queued now: its caster's turn is spent
+        // beginning it, and the game layer keeps it to give again.
+        if (const int charge = ChargeTurns(request); charge > 0)
+        {
+            std::erase_if(charges_, [&](const Charge &c) { return c.caster == who->id; });
+            charges_.push_back(Charge{who->id, request.ability, charge});
+            chargeBegan_ = true;
+            Log(LogLevel::Info, std::format("{} begins to cast ability {}: it charges {} turn{} and is cast on the "
+                                            "next",
+                                            Utf8(who->name), request.ability, charge, charge == 1 ? "" : "s"));
+            Emit(EventKind::CastCharging, who->id, std::format("{} more", charge), request.ability);
+            Floaty(pending_, who->id, L"Casting", kGold);
+            return Verdict::Hold;
+        }
         break;
     case CommandKind::Move:
         if (budget_.outOfMovement || budget_.MovementLeft() < kMinStep)
@@ -1962,6 +2136,10 @@ MachineState TurnMachine::State() const
     for (const Hold &h : holds_)
     {
         state.cooldowns.push_back({h.creature, h.ability, h.turns, h.of});
+    }
+    for (const Charge &c : charges_)
+    {
+        state.charging.push_back({c.caster, c.ability, c.turns});
     }
     state.lastRefusal = lastPlayerRefusal_;
     state.speed = speedSet_;

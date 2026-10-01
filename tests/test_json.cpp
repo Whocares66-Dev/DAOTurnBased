@@ -62,7 +62,8 @@ TEST_CASE("the machine's state says whose turn, what is held and what cools down
     CHECK(json.find(R"({"id":"0x100","name":"Hero","side":"party")") != std::string::npos);
     CHECK(json.find(R"("held":[{"id":"0x200","name":"Genlock","condition":"disabled","turns_owed":1)") !=
           std::string::npos);
-    CHECK(json.find(R"("cooldowns":[{"id":"0x100","ability":617,"turns":2,"of":2}])") != std::string::npos);
+    CHECK(json.find(R"("cooldowns":[{"id":"0x100","ability":617,"turns":2,"of":2}],"charging":[]})") !=
+          std::string::npos);
     CHECK(json.ends_with("]}"));
 }
 
@@ -71,7 +72,7 @@ TEST_CASE("outside a fight the state says so", "[json]")
     World w;
     const std::string json = ToJson(w.machine.State());
     CHECK(json.starts_with(R"({"active":false,"phase":"idle","round":0,"world_ms":0,"current":null,)"));
-    CHECK(json.find(R"("order":[],"held":[],"cooldowns":[]})") != std::string::npos);
+    CHECK(json.find(R"("order":[],"held":[],"cooldowns":[],"charging":[]})") != std::string::npos);
     CHECK(json.find(R"("speed":1.00,"speed_took":null,)") != std::string::npos);
     MachineState taken = w.machine.State();
     taken.speedTook = false;

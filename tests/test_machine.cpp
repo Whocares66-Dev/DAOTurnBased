@@ -2722,3 +2722,254 @@ TEST_CASE("the same seed gives the same initiative", "[machine]")
     }
     CHECK(std::ranges::any_of(seen, [&](const auto &ids) { return ids != seen.front(); }));
 }
+
+namespace
+{
+// The user's turn: four seconds (cooldown_seconds_per_turn's default).
+Settings FourSecondTurns()
+{
+    Settings s = Fixed();
+    s.cooldownSecondsPerTurn = 4.0f;
+    return s;
+}
+
+constexpr std::int32_t kBlizzard = 13000;
+
+bool Released(const World &w, ObjectId id)
+{
+    return std::ranges::any_of(w.applied,
+                               [&](const Effect &e) { return e.kind == EffectKind::ReleaseCast && e.target == id; });
+}
+
+// Everyone's turns pass until the hero's comes again.
+void UntilHeroAgain(World &w)
+{
+    for (int i = 0; i < 4000 && w.Current() == kHero; ++i)
+    {
+        w.Frame();
+    }
+    for (int i = 0; i < 4000 && w.Current() != kHero; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnPauseKey();
+        }
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kHero);
+    w.Frame();
+    w.Frame();
+}
+} // namespace
+
+TEST_CASE("instant, fast and normal are cast on the turn; slow charges one, ritual two", "[machine][charge]")
+{
+    // The user's rule, 2026-10-01, a turn being 4 s.
+    const auto verdict = [](float conjureSeconds) {
+        World w(FourSecondTurns());
+        w.StartFight();
+        return w.Cast(kHero, Source::Player, kBlizzard, conjureSeconds);
+    };
+    CHECK(verdict(0.0f) == Verdict::Allow);
+    CHECK(verdict(1.0f) == Verdict::Allow);
+    CHECK(verdict(2.0f) == Verdict::Allow);
+    CHECK(verdict(4.0f) == Verdict::Hold);
+    CHECK(verdict(6.0f) == Verdict::Hold);
+    const auto turns = [](float conjureSeconds) {
+        World w(FourSecondTurns());
+        w.StartFight();
+        (void)w.Cast(kHero, Source::Player, kBlizzard, conjureSeconds);
+        const MachineState state = w.machine.State();
+        return state.charging.empty() ? 0 : state.charging.front().turns;
+    };
+    CHECK(turns(4.0f) == 1);
+    CHECK(turns(6.0f) == 2);
+    CHECK(turns(2.0f) == 0);
+}
+
+TEST_CASE("a slow spell is begun on one turn and cast at the start of the next, for nothing", "[machine][charge]")
+{
+    World w(FourSecondTurns());
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Cast(kHero, Source::Player, kBlizzard, 4.0f) == Verdict::Hold);
+    CHECK(w.machine.View().actionsLeft == 0);
+    CHECK_FALSE(w.Get(kHero).busy); // not queued: kept
+    CHECK(w.heldCasts.contains(kHero));
+    w.Frame();
+    w.Frame();
+    CHECK(w.Current() != kHero); // the turn is over: it does nothing else
+    CHECK(w.Said(L"Casting"));
+    CHECK_FALSE(Released(w, kHero));
+    // No cooldown yet: it has not been cast.
+    CHECK(std::ranges::none_of(w.applied, [](const Effect &e) { return e.kind == EffectKind::Cooldown; }));
+    UntilHeroAgain(w);
+    // Cast as his turn begins.
+    CHECK(Released(w, kHero));
+    REQUIRE(w.released.size() == 1);
+    CHECK(w.released.front() == Verdict::Allow);
+    CHECK(w.Get(kHero).busy);
+    CHECK(w.machine.View().actionsLeft == 1); // it cost this turn nothing
+    w.RunFor(300);
+    w.Finish(kHero);
+    w.RunFor(1500);
+    // And his turn follows it: the player's to play.
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(w.machine.View().actionsLeft == 1);
+    CHECK(std::ranges::any_of(w.applied, [](const Effect &e) {
+        return e.kind == EffectKind::Cooldown && e.target == kHero && e.a == kBlizzard;
+    })); // cast, it is on cooldown
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
+    const auto count = [&](EventKind kind) {
+        return std::ranges::count_if(events, [&](const TurnEvent &e) { return e.kind == kind && e.who == kHero; });
+    };
+    CHECK(count(EventKind::CastCharging) == 1);
+    CHECK(count(EventKind::CastLanded) == 1);
+    CHECK(count(EventKind::CastInterrupted) == 0);
+}
+
+TEST_CASE("a ritual charges two turns and is cast on the third", "[machine][charge]")
+{
+    World w(FourSecondTurns());
+    w.StartFight();
+    CHECK(w.Cast(kHero, Source::Player, kBlizzard, 6.0f) == Verdict::Hold);
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() != kHero);
+    // The second turn: spent charging, nothing for the player to do.
+    for (int i = 0; i < 8000 && w.machine.Order().Round() < 3; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            REQUIRE(w.Current() != kHero); // his turn never waits on an order
+            (void)w.machine.OnPauseKey();
+        }
+        w.Frame();
+    }
+    REQUIRE(w.machine.Order().Round() == 3);
+    CHECK_FALSE(Released(w, kHero)); // not on the second
+    CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
+        return line.find("Hero's turn is spent charging ability 13000 (1 more)") != std::string::npos;
+    }));
+    // The third: cast.
+    for (int i = 0; i < 20 && !Released(w, kHero); ++i)
+    {
+        w.Frame();
+    }
+    CHECK(Released(w, kHero));
+    CHECK(w.Current() == kHero);
+}
+
+TEST_CASE("a caster held, fallen or gone loses its charge: nothing cast, nothing on cooldown", "[machine][charge]")
+{
+    const auto interrupted = [](const std::function<void(Creature &)> &how, const char *why) {
+        World w(FourSecondTurns());
+        std::vector<TurnEvent> events;
+        w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+        w.StartFight();
+        REQUIRE(w.Cast(kHero, Source::Player, kBlizzard, 4.0f) == Verdict::Hold);
+        w.Frame();
+        w.Frame();
+        how(w.Get(kHero));
+        w.RunFor(700); // conditions are read twice a second, and as each turn begins
+        CAPTURE(why);
+        CHECK(w.machine.State().charging.empty());
+        CHECK_FALSE(w.heldCasts.contains(kHero)); // the game layer forgets it
+        CHECK(w.Said(L"Interrupted"));
+        CHECK(std::ranges::count_if(events, [&](const TurnEvent &e) {
+                  return e.kind == EventKind::CastInterrupted && e.who == kHero && e.detail == why &&
+                         e.value == kBlizzard;
+              }) == 1);
+        // Never cast after.
+        for (int i = 0; i < 3000; ++i)
+        {
+            if (w.machine.GetPhase() == Phase::AwaitingOrder)
+            {
+                (void)w.machine.OnPauseKey();
+            }
+            w.Frame();
+        }
+        CHECK_FALSE(Released(w, kHero));
+        CHECK(std::ranges::none_of(w.applied,
+                                   [](const Effect &e) { return e.kind == EffectKind::Cooldown && e.a == kBlizzard; }));
+    };
+    interrupted([](Creature &c) { c.condition = Condition::Disabled; }, "held");
+    interrupted([](Creature &c) { c.down = true; }, "fell");
+    interrupted([](Creature &c) { c.exists = false; }, "gone");
+}
+
+TEST_CASE("an enemy's slow spell is said a turn ahead, cast on its next, and its turn follows", "[machine][charge]")
+{
+    World w(FourSecondTurns());
+    w.StartFight();
+    (void)w.machine.OnPauseKey();
+    int pokes = 0; // the genlock's
+    w.onPoke = [&](ObjectId id) {
+        if (id != kGenlock)
+        {
+            (void)w.Order(id, CommandType::Attack, Source::Script);
+            return;
+        }
+        ++pokes;
+        if (pokes == 1)
+        {
+            CHECK(w.Cast(id, Source::Script, kBlizzard, 4.0f) == Verdict::Hold);
+        }
+        else
+        {
+            CHECK(w.Order(id, CommandType::Attack, Source::Script) == Verdict::Allow);
+        }
+    };
+    for (int i = 0; i < 40 && pokes == 0; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(pokes == 1);
+    w.Frame();
+    w.Frame();
+    CHECK(w.Current() != kGenlock); // its turn ended on the charge
+    CHECK(w.machine.State().charging.size() == 1);
+    // Round 2: the genlock's turn begins with the cast, then its AI is told.
+    for (int i = 0; i < 4000 && !Released(w, kGenlock); ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnPauseKey();
+        }
+        w.Frame();
+    }
+    REQUIRE(Released(w, kGenlock));
+    CHECK(pokes == 1); // not told while the cast is given
+    w.RunFor(300);
+    w.Finish(kGenlock);
+    w.RunFor(1000);
+    CHECK(pokes == 2); // its turn after the cast
+}
+
+TEST_CASE("an ability named in [turns] charge charges, whatever its conjuring time", "[machine][charge]")
+{
+    Settings s = FourSecondTurns();
+    s.charge = {{kBlizzard, 1}, {617, 0}};
+    World w(s);
+    w.StartFight();
+    CHECK(w.Cast(kHero, Source::Player, kBlizzard, 1.0f) == Verdict::Hold); // fast, and made to charge
+    World other(s);
+    other.StartFight();
+    CHECK(other.Cast(kHero, Source::Player, 617, 6.0f) == Verdict::Allow); // a ritual, and made not to
+}
+
+TEST_CASE("the fight over, a charge is lost", "[machine][charge]")
+{
+    World w(FourSecondTurns());
+    w.StartFight();
+    REQUIRE(w.Cast(kHero, Source::Player, kBlizzard, 4.0f) == Verdict::Hold);
+    w.Get(kGenlock).down = true;
+    w.Get(kHurlock).down = true;
+    w.RunFor(2000);
+    REQUIRE_FALSE(w.machine.Active());
+    CHECK(w.machine.State().charging.empty());
+    CHECK_FALSE(w.heldCasts.contains(kHero));
+}

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace tb
@@ -87,6 +88,10 @@ struct Settings
     // this many seconds spent on them at each new round (0: the game's clock).
     float effectSecondsPerRound = 6.0f;
     float combatRadius = 50.0f; // meters from the party leader a creature may fight from and take turns
+    // Abilities that charge for so many turns whatever their conjuring time
+    // (ability id, turns): the game's own slow and ritual spells charge by
+    // the rule (TurnMachine::ChargeTurns), and the base game has none.
+    std::vector<std::pair<std::int32_t, int>> charge;
     // Of those, only who the player can see fighting takes turns: in a room
     // the party has seen (the game draws the rest black), or attacking or
     // attacked by a party member. In Castle Cousland a fight took in nine

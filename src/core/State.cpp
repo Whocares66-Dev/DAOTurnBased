@@ -105,6 +105,14 @@ std::string ToJson(const MachineState &state)
         Id(out, cooldown.id);
         out += std::format(R"(,"ability":{},"turns":{},"of":{}}})", cooldown.ability, cooldown.turns, cooldown.of);
     }
+    out += R"(],"charging":[)";
+    for (std::size_t i = 0; i < state.charging.size(); ++i)
+    {
+        const ChargeView &charge = state.charging[i];
+        out += i == 0 ? R"({"id":)" : R"(,{"id":)";
+        Id(out, charge.id);
+        out += std::format(R"(,"ability":{},"turns":{}}})", charge.ability, charge.turns);
+    }
     out += "]}";
     return out;
 }

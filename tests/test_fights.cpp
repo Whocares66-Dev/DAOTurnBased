@@ -498,6 +498,9 @@ class Arena
             conditionLeftMs_.erase(e.target);
             Release(e.target);
             break;
+        case EffectKind::ReleaseCast:
+        case EffectKind::DropCast:
+            break; // nothing charges in the random fights
         case EffectKind::ClearCommands:
         case EffectKind::Floaty:
         case EffectKind::CenterCamera:
@@ -919,6 +922,9 @@ class Arena
         case EventKind::TurnHandedOver:
         case EventKind::ConditionExpired:
         case EventKind::ActionGivenBack:
+        case EventKind::CastCharging:
+        case EventKind::CastLanded:
+        case EventKind::CastInterrupted:
             Must(e.who != kNoObject, "an event about someone names no one");
             break;
         case EventKind::SpeedSet:

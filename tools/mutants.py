@@ -618,6 +618,48 @@ MUTANTS = [
         '    Log(LogLevel::Info, std::format("the fight: {} combatants; {}"',
     ),
     Mutant(
+        "a slow spell is cast on the turn",
+        MACHINE,
+        "    if (!(turn > 0.0f) || request.conjureSeconds < turn)",
+        "    if (!(turn > 0.0f) || request.conjureSeconds <= turn)",
+    ),
+    Mutant(
+        "a ritual is cast a turn early",
+        MACHINE,
+        "    if (charge == charges_.end() || --charge->turns <= 0)",
+        "    if (charge == charges_.end() || --charge->turns <= 1)",
+    ),
+    Mutant(
+        "a charged cast given again is taken for an order of the turn's",
+        MACHINE,
+        "    const bool landing = landing_ && landing_->caster == who->id && request.type == CommandType::UseAbility &&",
+        "    const bool landing = landing_ && landing_->caster != who->id && request.type == CommandType::UseAbility &&",
+    ),
+    Mutant(
+        "a caster held keeps its charge",
+        MACHINE,
+        "        if (!status.exists || status.down || status.condition == Condition::Disabled)",
+        "        if (!status.exists || status.down)",
+    ),
+    Mutant(
+        "a caster fallen keeps its charge",
+        MACHINE,
+        "        if (!status.exists || status.down || status.condition == Condition::Disabled)",
+        "        if (!status.exists || status.condition == Condition::Disabled)",
+    ),
+    Mutant(
+        "a cast that charges does not end its caster's turn",
+        MACHINE,
+        "    if (std::exchange(chargeBegan_, false) && Active() && order_.Current() != nullptr)",
+        "    if (std::exchange(chargeBegan_, false) && !Active() && order_.Current() != nullptr)",
+    ),
+    Mutant(
+        "an ability made to charge by the settings does not",
+        MACHINE,
+        "        if (ability == request.ability)\n        {\n            return turns;",
+        "        if (ability != request.ability)\n        {\n            return turns;",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",
@@ -668,8 +710,8 @@ MUTANTS = [
     Mutant(
         "a character's own AI spends the player's turn",
         MACHINE,
-        "if (player && request.source == Source::Script && (kind == CommandKind::Action",
-        "if (player && request.source == Source::Unknown && (kind == CommandKind::Action",
+        "    if (player && !landing && request.source == Source::Script &&",
+        "    if (player && !landing && request.source == Source::Unknown &&",
     ),
     Mutant(
         "effects are never aged a round",
@@ -710,14 +752,14 @@ MUTANTS = [
     Mutant(
         "a refused order still runs the world",
         MACHINE,
-        "        orderPending_ = false;\n        if (verdict == Verdict::Block && phase_ == Phase::Dispatching)",
-        "        if (verdict == Verdict::Block && phase_ == Phase::Dispatching)",
+        "        orderPending_ = false;\n        if (verdict != Verdict::Allow && phase_ == Phase::Dispatching)",
+        "        if (verdict != Verdict::Allow && phase_ == Phase::Dispatching)",
     ),
     Mutant(
         "a refusal while an order runs the world lets it run on",
         MACHINE,
-        "if (verdict == Verdict::Block && phase_ == Phase::Dispatching)",
-        "if (verdict == Verdict::Block && phase_ == Phase::Idle)",
+        "if (verdict != Verdict::Allow && phase_ == Phase::Dispatching)",
+        "if (verdict != Verdict::Allow && phase_ == Phase::Idle)",
     ),
     Mutant(
         "an order runs the world though order_run_ms is off",

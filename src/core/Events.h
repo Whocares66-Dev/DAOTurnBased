@@ -38,6 +38,9 @@ enum class EventKind : std::uint8_t
     SettingsChanged,    // the settings were set anew (a reload, a tool)
     ConditionExpired,   // who: a hold ran out by itself, the machine not ending it
     ActionGivenBack,    // who: its command failed without acting; detail: how; command
+    CastCharging,       // who: a slow cast begun or a turn spent on it; value: the ability; detail: turns still to go
+    CastLanded,         // who: the charged cast is cast, at its turn's start; value: the ability
+    CastInterrupted,    // who: the charge is lost; value: the ability; detail: why
 };
 
 // snake_case, as the bus's topics take it: "turn_started".
@@ -58,7 +61,7 @@ struct EventDescription
 [[nodiscard]] EventDescription Describe(EventKind kind);
 
 // Every kind, in order, for listing them.
-inline constexpr EventKind kLastEventKind = EventKind::ActionGivenBack;
+inline constexpr EventKind kLastEventKind = EventKind::CastInterrupted;
 
 struct TurnEvent
 {

@@ -1,6 +1,7 @@
 #include "game/Bridge.h"
 
 #include "game/Camera.h"
+#include "game/Gate.h"
 
 #include "core/Rules.h"
 #include "core/Text.h"
@@ -105,6 +106,9 @@ constexpr std::int32_t kMaxCreaturesInCombat = 24;
 // EVENT_TYPE_DEBUG_KICKSTART_AI (events_h.nss): rules_core runs
 // AI_DetermineCombatRound on it.
 constexpr std::int32_t kKickstartAi = 9998;
+// A charged cast's conjuring when it is given at last: a moment for the
+// gesture, the turns it charged having been its casting time.
+constexpr float kChargedConjureSeconds = 1.0f;
 
 // The game's mode as the core names it; none yet (no game modes) is
 // Unknown, as before the world (DAOLib 3c8cccf made it an optional).
@@ -507,6 +511,34 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             break;
         case EffectKind::PokeAi:
             Poke(e.target);
+            break;
+        case EffectKind::ReleaseCast:
+            // The cast its creature charged (core: "Casts that charge"),
+            // given to it as a script gives a command: it comes back
+            // through the gate, which lets it through for nothing. Its
+            // conjuring is short now, the turns having been its time.
+            if (const std::optional<HeldCast> kept = TakeHeldCast(e.target))
+            {
+                const dao::Vector place = kept->placed ? dao::Vector{kept->x, kept->y, kept->z} : dao::Vector{};
+                if (const dao::script::OwnedCommand cast =
+                        api::CommandUseAbility(kept->ability, kept->target, place, kChargedConjureSeconds))
+                {
+                    api::AddCommand(e.target, *cast.get(), 1);
+                    spdlog::debug("{:#010x}: its charged cast of ability {} is given to it", e.target, kept->ability);
+                }
+                else
+                {
+                    spdlog::warn("{:#010x}: could not make the command for its charged cast of ability {}", e.target,
+                                 kept->ability);
+                }
+            }
+            else
+            {
+                spdlog::warn("{:#010x}: no cast kept for it to be given (ability {})", e.target, e.a);
+            }
+            break;
+        case EffectKind::DropCast:
+            DropHeldCast(e.target);
             break;
         case EffectKind::Explain:
             Explain(e.target);

@@ -55,6 +55,12 @@ const char *Name(EventKind kind)
         return "condition_expired";
     case EventKind::ActionGivenBack:
         return "action_given_back";
+    case EventKind::CastCharging:
+        return "cast_charging";
+    case EventKind::CastLanded:
+        return "cast_landed";
+    case EventKind::CastInterrupted:
+        return "cast_interrupted";
     }
     return "?";
 }
@@ -213,6 +219,27 @@ EventDescription Describe(EventKind kind)
                 "the failure (COMMAND_FAILED_...)",
                 nullptr,
                 "the command",
+                nullptr};
+    case EventKind::CastCharging:
+        return {"A slow cast charges: begun (its action spent, its turn over), or a turn of its caster's spent on it.",
+                true,
+                "the turns still to go before it is cast, as text",
+                "the ability",
+                nullptr,
+                nullptr};
+    case EventKind::CastLanded:
+        return {"A charged cast is cast, at the start of its caster's turn; the caster then has its turn.",
+                true,
+                nullptr,
+                "the ability",
+                nullptr,
+                nullptr};
+    case EventKind::CastInterrupted:
+        return {"A charging cast is lost: nothing spent, nothing on cooldown.",
+                true,
+                "why: held (a stun, a knockdown, paralysis, sleep), fell, gone, the fight over",
+                "the ability",
+                nullptr,
                 nullptr};
     }
     return {};
