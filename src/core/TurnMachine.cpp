@@ -623,6 +623,12 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     orderPending_ = false;
 
     HoldAtTurnStart(who, fx);
+    // The game's speed for this turn before the camera moves: twice at
+    // ai_turn_speed 2 the camera's pan to the hero, issued before the speed
+    // went back to 1, never arrived (play tests 2 and 5, 2026-09-30).
+    // Whether the order was why is not known yet: the camera now says
+    // whether a pan got there (src/game/Camera.cpp).
+    SetSpeed(TurnSpeed(who), fx);
 
     Log(LogLevel::Info, std::format("round {}: {}'s turn ({}, {}), {:.1f} m to move", order_.Round(), Utf8(who.name),
                                     Name(who.side), PlayerControls(who) ? "yours" : "AI", budget_.MovementLeft()));
@@ -834,7 +840,8 @@ void TurnMachine::SpendRound(std::vector<Effect> &fx)
 
 void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
 {
-    SetSpeed(PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed, fx);
+    // Set already as the turn began; again for a turn handed over mid-way.
+    SetSpeed(TurnSpeed(who), fx);
     if (PlayerControls(who))
     {
         fx.push_back(Effect::Of(EffectKind::Select, who.id));
@@ -1369,6 +1376,11 @@ void TurnMachine::EnforcePause(const Observation &obs, std::vector<Effect> &fx) 
 bool TurnMachine::PlayerControls(const Combatant &c) const
 {
     return c.side == Side::Party && (settings_.partyControl == PartyControl::Manual || c.hero);
+}
+
+float TurnMachine::TurnSpeed(const Combatant &who) const
+{
+    return PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed;
 }
 
 bool TurnMachine::TurnSpent() const

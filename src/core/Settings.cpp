@@ -404,7 +404,7 @@ order_run_ms = 0
 condition_turns = 1
 ; Cooldowns count in turns: an ability used is held until the start of its
 ; user's turn this many seconds of its cooldown later, rounded up (at 4,
-; Shield Bash's 20 s is 5 turns, the mabari howl's 40 s 10), so that a stun
+; Shield Bash is held 4 turns, as seen in play), so that a stun
 ; or a pin, which costs its victim a whole turn, keeps about the share of
 ; the time it has in real time. At 10 the archers' stun came back every
 ; other turn. Waiting in real time no longer brings it back. A sustained

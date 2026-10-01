@@ -399,6 +399,8 @@ class TurnMachine
     void ReleaseCooldowns(std::vector<Effect> &fx);
     void HoldTime(bool held, std::vector<Effect> &fx);
     void SetSpeed(float speed, std::vector<Effect> &fx);
+    // 1 for a turn the player plays, ai_turn_speed for one an AI does.
+    [[nodiscard]] float TurnSpeed(const Combatant &who) const;
     void SpendRound(std::vector<Effect> &fx);
     void HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx);
 

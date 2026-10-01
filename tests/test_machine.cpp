@@ -1633,3 +1633,36 @@ TEST_CASE("a hold run out as a round ages effects keeps the turns it owes", "[ma
     }
     CHECK(w.Said(L"Genlock loses the turn")); // the second it owed
 }
+
+TEST_CASE("the game's speed is set for a turn before its camera moves", "[machine][speed]")
+{
+    // Play tests 2 and 5: at ai_turn_speed 2 the pan to the hero, issued
+    // before the speed went back to 1, never arrived.
+    Settings s = Fixed();
+    s.aiTurnSpeed = 2.0f;
+    s.cameraFollow = true;
+    World w{s};
+    w.StartFight();
+    CHECK(w.machine.OnPauseKey()); // the hero's turn: the genlock's at 2
+    for (int i = 0; i < 80 && w.Current() != kCompanion; ++i)
+    {
+        (void)w.machine.OnPauseKey();
+        w.RunFor(100);
+    }
+    w.applied.clear();
+    for (int i = 0; i < 200 && w.Current() != kHero; ++i)
+    {
+        (void)w.machine.OnPauseKey();
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kHero);
+    for (int i = 0; i < 20 && w.machine.GetPhase() != Phase::AwaitingOrder; ++i)
+    {
+        w.Frame(); // the turn-start frame begins it
+    }
+    const auto camera = std::ranges::find_if(
+        w.applied, [](const Effect &e) { return e.kind == EffectKind::CenterCamera && e.target == kHero; });
+    REQUIRE(camera != w.applied.end());
+    CHECK(std::none_of(camera, w.applied.end(), [](const Effect &e) { return e.kind == EffectKind::GameSpeed; }));
+    CHECK(w.machine.State().speed == 1.0f);
+}

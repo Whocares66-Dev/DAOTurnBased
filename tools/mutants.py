@@ -265,14 +265,14 @@ MUTANTS = [
     Mutant(
         "an enemy's turn runs at the game's own speed",
         MACHINE,
-        "    SetSpeed(PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed, fx);",
-        "    SetSpeed(PlayerControls(who) ? 1.0f : 1.0f, fx);",
+        "    return PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed;",
+        "    return PlayerControls(who) ? 1.0f : 1.0f;",
     ),
     Mutant(
         "the player's turn runs at the enemies' speed",
         MACHINE,
-        "    SetSpeed(PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed, fx);",
-        "    SetSpeed(settings_.aiTurnSpeed, fx);",
+        "    return PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed;",
+        "    return PlayerControls(who) ? settings_.aiTurnSpeed : settings_.aiTurnSpeed;",
     ),
     Mutant(
         "a conversation plays at the enemies' speed",
@@ -411,6 +411,12 @@ MUTANTS = [
         MACHINE,
         "(!agedAtNow_ || lastNow_ - *agedAtNow_ > kAgeSettleMs)",
         "(!agedAtNow_ || lastNow_ - *agedAtNow_ > 0u)",
+    ),
+    Mutant(
+        "a turn's camera moves before its speed is set",
+        MACHINE,
+        "    // whether a pan got there (src/game/Camera.cpp).\n    SetSpeed(TurnSpeed(who), fx);",
+        "    // whether a pan got there (src/game/Camera.cpp).",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",
