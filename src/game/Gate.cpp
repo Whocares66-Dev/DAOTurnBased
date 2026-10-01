@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -95,7 +96,24 @@ struct Reached
     std::int32_t weaponType = -1; // the main hand's base item type; -1 for none
 };
 
-std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Command &command)
+// path_check (Settings::pathCheck): the player's orders measured by the
+// path the engine would walk (DAOLib 8819b7c's FindPath, not yet seen in
+// play), not a straight line. Read on the scripts' thread, set on reload.
+std::atomic<bool> g_pathCheck{true};
+
+// The engine's path for an idle creature to a point, its length; nothing
+// when there is none, or the creature is busy (FindPath refuses then).
+std::optional<float> PathLength(ObjectId creature, const dao::Vector &to)
+{
+    const std::optional<dao::world::WalkPath> path = dao::world::FindPath(creature, to);
+    if (!path)
+    {
+        return std::nullopt;
+    }
+    return path->Length();
+}
+
+std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Command &command, bool byPath)
 {
     static std::once_flag said;
     const bool onScripts = GetCurrentThreadId() == dao::script::ScriptThreadId();
@@ -120,8 +138,47 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     const float space =
         dao::gda::GetFloat(dao::script::Table::Appearance, api::GetAppearanceType(*target), "PerSpace").value_or(0.0f);
     const float reach = Reach(weaponRange, space);
-    spdlog::debug("attack on {:#010x}: {:.1f} m away, reach {:.1f} m", *target, distance, reach);
-    return Reached{WalkToReach(distance, reach), distance, reach, weaponType};
+    // Around what stands between them: the path to where the target stands.
+    std::optional<float> path;
+    if (byPath && g_pathCheck.load())
+    {
+        path = PathLength(attacker, api::GetPosition(*target));
+    }
+    const float walked = path ? *path : distance;
+    if (path)
+    {
+        spdlog::debug("attack on {:#010x}: {:.1f} m away, {:.1f} m of path, reach {:.1f} m", *target, distance, *path,
+                      reach);
+    }
+    else
+    {
+        spdlog::debug("attack on {:#010x}: {:.1f} m away, reach {:.1f} m", *target, distance, reach);
+    }
+    return Reached{WalkToReach(walked, reach), walked, reach, weaponType};
+}
+
+// A player's move, measured as the engine would walk it.
+std::optional<float> MoveLength(const dao::CCObject &self, const dao::Command &command)
+{
+    if (!g_pathCheck.load() || GetCurrentThreadId() != dao::script::ScriptThreadId())
+    {
+        return std::nullopt;
+    }
+    const std::optional<dao::Vector> to = command.Position();
+    if (!to)
+    {
+        return std::nullopt;
+    }
+    const std::optional<float> length = PathLength(self.Id(), *to);
+    if (length)
+    {
+        spdlog::debug("move: {:.1f} m of path", *length);
+    }
+    else
+    {
+        spdlog::debug("move: no path found, it walks until stopped");
+    }
+    return length;
 }
 
 // An AI's attack, said with what it would take to land: the desktop play
@@ -131,7 +188,7 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
 // first three attacks a fight, and every one out of reach or sight.
 void SayAiAttack(const dao::CCObject &self, const dao::Command &command)
 {
-    const std::optional<Reached> reached = WalkToTarget(self, command);
+    const std::optional<Reached> reached = WalkToTarget(self, command, false);
     const std::optional<ObjectId> target = command.Target();
     if (!reached || !target)
     {
@@ -216,13 +273,18 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             const Source source = SourceOf(*command, caller);
             NoteCaller(caller, type);
             const dao::CCCreature *creature = self->AsCreature();
-            const std::optional<Reached> reached =
-                source == Source::Player && type == CommandType::Attack ? WalkToTarget(*self, *command) : std::nullopt;
+            const std::optional<Reached> reached = source == Source::Player && type == CommandType::Attack
+                                                       ? WalkToTarget(*self, *command, true)
+                                                       : std::nullopt;
             if (source == Source::Script && type == CommandType::Attack)
             {
                 SayAiAttack(*self, *command);
             }
-            const std::optional<float> walk = reached ? std::optional<float>{reached->walk} : std::nullopt;
+            std::optional<float> walk = reached ? std::optional<float>{reached->walk} : std::nullopt;
+            if (source == Source::Player && type == CommandType::MoveToLocation)
+            {
+                walk = MoveLength(*self, *command);
+            }
             CommandRequest request;
             request.object = self->Id();
             request.type = type;
@@ -381,6 +443,11 @@ template <std::size_t... I> bool WatchOrders(std::index_sequence<I...>)
 }
 
 } // namespace
+
+void SetPathCheck(bool on)
+{
+    g_pathCheck.store(on);
+}
 
 bool InstallGate(TurnMachine &machine, std::mutex &mutex)
 {

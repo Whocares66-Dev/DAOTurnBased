@@ -1398,3 +1398,21 @@ TEST_CASE(
     CHECK_FALSE(w.Did(EffectKind::EndConditions, kGenlock)); // the game's clock ends it
     CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
 }
+
+TEST_CASE("a move its path cannot finish this turn is refused before a step", "[machine]")
+{
+    // The engine's path to the click (DAOLib FindPath), as the gate measures
+    // it: longer than the meters left, "Too far", as for an attack.
+    World w;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player, 30.0f) == Verdict::Block);
+    w.Frame();
+    CHECK(w.Said(L"Too far"));
+    CHECK(w.machine.View().movementLeft == w.machine.View().movementMax); // not a step taken
+    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player, 4.0f) == Verdict::Allow);
+    // A move with no path told (path_check off, or no path found) walks as before.
+    w.Finish(kHero);
+    w.RunFor(600);
+    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Allow);
+}

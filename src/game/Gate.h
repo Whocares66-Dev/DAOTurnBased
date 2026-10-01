@@ -29,4 +29,8 @@ namespace tb::game
 // log says which.
 bool InstallGate(TurnMachine &machine, std::mutex &mutex);
 
+// Settings::pathCheck: whether the player's moves and attacks are measured
+// by the engine's own path (DAOLib's world::FindPath).
+void SetPathCheck(bool on);
+
 } // namespace tb::game

@@ -112,6 +112,7 @@ void UseTurnBar(const tb::Settings &settings)
     g.turnBar = settings.turnBar;
     g.portraits = settings.portraits;
     g.targeting.SetEnabled(settings.pickTargets);
+    tb::game::SetPathCheck(settings.pathCheck);
     if (g.turnBar)
     {
         g.bar.Install();

@@ -60,7 +60,7 @@ The turn order bar, the movement preview and the on/off switch are made of the g
 For the movement preview (gold in reach, red too far):
 
 1. **The cursor's point in the world, and the object under it.** Explore mode keeps them: `MoveCharacterToLocationMessage` has no fields (`dev/messages.csv`), so its handler (0x0070C9A0) reads the destination from `GameModeExplore`. `PreMoveCharacterToLocationMessage` (0x0070AAF0) may run on the button going down. Wanted: `GameModeExplore::CursorWorldPoint()`, `CursorObject()`.
-2. **The pathfinder**: a path, and its length, from a creature to a point, as the creature would walk it. With it the preview draws the real path and the budget is exact before the move, not measured during it.
+2. **Done** (DAOLib `5b9b82f` `CurrentPath`, `8819b7c` `FindPath`, for an idle creature; the mod's `path_check`, not yet seen in play). **The pathfinder**: a path, and its length, from a creature to a point, as the creature would walk it. With it the preview draws the real path and the budget is exact before the move, not measured during it.
 3. **Drawing in the world**: the ring area spells show while aimed (`ActivateAnalogTargetModeMessage`, `ActivateLinearTargetModeMessage` on explore mode), with a radius and a tint of ours. Otherwise, a visual effect placed at points along the path (`Engine_ApplyEffectAtLocation` with a VFX from `vfx_base`), which the script API reaches today, so it could be tried at once.
 
 ## The camera

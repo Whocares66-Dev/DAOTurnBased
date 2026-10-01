@@ -169,8 +169,8 @@ MUTANTS = [
     Mutant(
         "the player's attack out of reach is let through",
         MACHINE,
-        "if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + kReachSlack)",
-        "if (false)",
+        "closing in is its turn.\n        if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + kReachSlack)",
+        "closing in is its turn.\n        if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + 999.0f)",
     ),
     Mutant(
         "reach ignores a big target",
@@ -339,6 +339,12 @@ MUTANTS = [
         "src/core/Events.cpp",
         "        case '\"':",
         "        case '~':",
+    ),
+    Mutant(
+        "a move its path cannot finish is let walk",
+        MACHINE,
+        "where it ran out.\n        if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + kReachSlack)",
+        "where it ran out.\n        if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + 999.0f)",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",

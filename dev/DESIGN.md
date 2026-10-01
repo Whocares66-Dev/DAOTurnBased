@@ -33,7 +33,7 @@ An AI's attack at something far away is not refused: it walks what it can and is
 
 Abilities and spells are not checked for reach yet: an ability's range is in its own table (`abi_base`), not read so far.
 
-The engine's pathfinder is not reachable yet, so nothing can say before a move whether a click on the ground is in reach, and the reach check measures a straight line to the target rather than the path. The gold/red arc preview needs the pathfinder (`dev/UI.md`, `dev/DAOLIB_NEEDS.md`).
+The engine's pathfinder is reachable since DAOLib `8819b7c` (`world::FindPath`, for an idle creature; built 2026-09-30, not yet seen in play): a click on the ground whose path is longer than the meters left is refused before a step ("Too far"), as an attack out of reach is, and an attack's reach is measured along the path to its target rather than a straight line. `[movement] path_check` turns it off, back to a straight line and a move that walks until its meters run out. The gold/red arc preview still needs a way to draw in the world (`dev/UI.md`, `dev/DAOLIB_NEEDS.md`).
 
 ## Time
 

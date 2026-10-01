@@ -308,14 +308,19 @@ class Arena
         const float approach = Chance(rng_, 0.4) ? 0.0f : Between(rng_, 0.5f, 16.0f);
         // Now and then the walk cannot be told (an order off the scripts'
         // thread): the attack walks until it is stopped, as an AI's does.
-        const bool told = type == CommandType::Attack && source == Source::Player && Chance(rng_, 0.7);
+        // A move's path, as the gate measures it (path_check): its length.
+        const float path = Between(rng_, 1.0f, 16.0f);
+        const bool told = (type == CommandType::Attack || type == CommandType::MoveToLocation) &&
+                          source == Source::Player && Chance(rng_, 0.7);
+        const float walk = type == CommandType::Attack ? approach : path;
         const float left = told && active ? world_.machine.View().movementLeft : 0.0f;
         const Verdict verdict = type == CommandType::UseAbility
                                     ? world_.UseAbility(id, source, ability, cooldown, sustained, on)
-                                    : world_.Order(id, type, source, told ? std::optional{approach} : std::nullopt);
-        if (told && active && verdict == Verdict::Allow && approach > left + TurnMachine::kReachSlack)
+                                    : world_.Order(id, type, source, told ? std::optional{walk} : std::nullopt);
+        if (told && active && verdict == Verdict::Allow && walk > left + TurnMachine::kReachSlack &&
+            id == world_.Current())
         {
-            Must(false, "the player's attack let through though it cannot reach this turn");
+            Must(false, "the player's order let through though it cannot reach this turn");
         }
         if (!active)
         {
@@ -350,6 +355,8 @@ class Arena
             task.workMs = static_cast<std::int32_t>(Between(rng_, 500.0f, 4000.0f));
             break;
         case CommandType::MoveToLocation:
+            task.walk = path;
+            break;
         case CommandType::Drive:
             task.walk = Between(rng_, 1.0f, 16.0f);
             break;

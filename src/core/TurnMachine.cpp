@@ -1506,6 +1506,17 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
             }
             return Verdict::Block;
         }
+        // A ground click whose path is longer than the movement left is
+        // refused before a step, as an attack out of reach is: the walk the
+        // engine's path finder says (src/game/Gate.cpp, path_check), not a
+        // walk cut short where it ran out.
+        if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + kReachSlack)
+        {
+            Refuse(who->id, L"Too far");
+            Log(LogLevel::Info, std::format("{}: {} refused, {:.1f} m of path with {:.1f} m left", Utf8(who->name),
+                                            Name(request.type), *request.walk, budget_.MovementLeft()));
+            return Verdict::Block;
+        }
         break;
     case CommandKind::Pass:
         if (!player)

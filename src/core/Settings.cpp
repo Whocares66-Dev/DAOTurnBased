@@ -189,6 +189,7 @@ const std::vector<Entry> &Entries()
         {"turns", "pause_on_player_turn", Bool(&Settings::pauseOnPlayerTurn)},
         {"turns", "pick_targets", Bool(&Settings::pickTargets)},
         {"turns", "ai_turn_speed", Float(&Settings::aiTurnSpeed, 0.25f, 4.0f)},
+        {"movement", "path_check", Bool(&Settings::pathCheck)},
         {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
         {"turns", "ai_poke",
@@ -358,6 +359,11 @@ meters = 9
 per_dexterity = 0
 min = 3
 max = 20
+; Judge how far a move or an attack must walk by the engine's own path, around
+; walls and tables, and refuse a click on the ground the path cannot reach
+; this turn ("Too far"). Off: a straight line for attacks, and a move walks
+; until its meters run out.
+path_check = true
 
 [turns]
 ; Who commands the party on its turns:
