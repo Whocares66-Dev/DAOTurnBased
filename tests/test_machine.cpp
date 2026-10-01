@@ -694,11 +694,11 @@ TEST_CASE("the view lists the turns to come, whose it is and what is left", "[ma
     CHECK(view.current == kHero);
     CHECK(view.actionsLeft == 1);
     CHECK(view.movementMax == 9.0f);
-    REQUIRE(view.upcoming.size() >= 4);
+    REQUIRE(view.upcoming.size() == 4); // each combatant once
     CHECK(view.upcoming[0].id == kHero);
     CHECK(view.upcoming[0].current);
     CHECK(view.upcoming[1].id == kGenlock);
-    CHECK(view.upcoming[4].round == 2);
+    CHECK(view.upcoming[3].round == 1);
 }
 
 TEST_CASE("new settings apply from the next turn", "[machine]")

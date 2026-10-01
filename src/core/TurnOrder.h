@@ -78,8 +78,10 @@ class TurnOrder
 
     [[nodiscard]] bool AnyStanding(Side side) const;
 
-    // The turns to come, the current first: the rest of this round, then
-    // the next, up to `count`. Fallen party members are included (they are
+    // The turns to come, the current first and each combatant once, as BG3's
+    // bar shows them: the rest of this round, then the next round's up to
+    // the current, at most `count`. Two laps had everyone twice on the bar
+    // (the user, 2026-09-30). Fallen party members are included (they are
     // still in the fight), fallen others not.
     [[nodiscard]] std::vector<Slot> Upcoming(std::size_t count) const;
 

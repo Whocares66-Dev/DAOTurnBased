@@ -111,20 +111,24 @@ TEST_CASE("a combatant whose place has passed this round acts from the next", "[
     CHECK(order.Current()->id == 4);
 }
 
-TEST_CASE("the upcoming turns run on into the next round, without the fallen others", "[order]")
+TEST_CASE("the upcoming turns are each combatant once, running on into the next round", "[order]")
 {
     TurnOrder order;
     order.Begin({Make(1, Side::Party, 20), Make(2, Side::Party, 15), Make(3, Side::Enemy, 10)});
-    CHECK(Upcoming(order, 5) == std::vector<ObjectId>{1, 2, 3, 1, 2});
-    const auto slots = order.Upcoming(5);
+    CHECK(Upcoming(order, 12) == std::vector<ObjectId>{1, 2, 3});
+    CHECK_FALSE(order.Advance());                                 // to 2, the same round
+    CHECK(Upcoming(order, 12) == std::vector<ObjectId>{2, 3, 1}); // 1 again only next round
+    const auto slots = order.Upcoming(12);
     CHECK(slots[0].current);
     CHECK(slots[0].round == 1);
-    CHECK(slots[3].round == 2);
+    CHECK(slots[1].round == 1);
+    CHECK(slots[2].round == 2);
+    CHECK(Upcoming(order, 2) == std::vector<ObjectId>{2, 3}); // at most count
 
-    order.Find(2)->down = true; // a party member down: still shown
-    CHECK(Upcoming(order, 3) == std::vector<ObjectId>{1, 2, 3});
+    order.Find(1)->down = true; // a party member down: still shown
+    CHECK(Upcoming(order, 12) == std::vector<ObjectId>{2, 3, 1});
     order.Find(3)->down = true; // an enemy down: not
-    CHECK(Upcoming(order, 3) == std::vector<ObjectId>{1, 2, 1});
+    CHECK(Upcoming(order, 12) == std::vector<ObjectId>{2, 1});
 }
 
 TEST_CASE("a party all fallen stays in the order, and advancing goes round without end", "[order]")

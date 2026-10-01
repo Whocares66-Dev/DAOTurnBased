@@ -70,7 +70,7 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     CHECK(bar.head[5] == L"1");                   // an action left
     CHECK(bar.head[6] == L"9.0");                 // meters left
     CHECK(bar.head[7] == L"9.0");                 // meters at most
-    REQUIRE(bar.cards.size() >= 5);
+    REQUIRE(bar.cards.size() == 4);               // each combatant once
     for (const auto &card : bar.cards)
     {
         REQUIRE(card.size() == 13);
@@ -86,7 +86,15 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     CHECK(bar.cards[1][0] == std::to_wstring(kGenlock));
     CHECK(bar.cards[1][1] == L"2"); // an enemy
     CHECK(bar.cards[1][6] == L"0"); // the AI's
-    CHECK(bar.cards[4][7] == L"2"); // the next round's
+    // The hero's turn over: the genlock first, the hero last, next round's.
+    CHECK(w.machine.OnPauseKey());
+    w.Frame();
+    w.Frame();
+    const Decoded after = Decode(EncodeBar(w.machine.View()));
+    REQUIRE(after.cards.size() == 4);
+    CHECK(after.cards.front()[0] == std::to_wstring(kGenlock));
+    CHECK(after.cards.back()[0] == std::to_wstring(kHero));
+    CHECK(after.cards.back()[7] == L"2");
 }
 
 TEST_CASE("a name cannot break the bar's string apart", "[bar]")

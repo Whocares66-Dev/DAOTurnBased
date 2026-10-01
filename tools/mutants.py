@@ -371,6 +371,12 @@ MUTANTS = [
         "    }\n    Emit(EventKind::FightOver",
     ),
     Mutant(
+        "the bar shows each combatant twice",
+        "src/core/TurnOrder.cpp",
+        "    for (std::size_t step = 1; step < order_.size() && slots.size() < count; ++step)",
+        "    for (std::size_t step = 1; step < 2 * order_.size() && slots.size() < count; ++step)",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",

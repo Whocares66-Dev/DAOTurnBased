@@ -145,7 +145,7 @@ std::vector<TurnOrder::Slot> TurnOrder::Upcoming(std::size_t count) const
     slots.push_back({&order_[current_], round_, true});
     std::size_t index = current_;
     int round = round_;
-    for (std::size_t step = 0; step < 2 * order_.size() && slots.size() < count; ++step)
+    for (std::size_t step = 1; step < order_.size() && slots.size() < count; ++step)
     {
         ++index;
         if (index >= order_.size())

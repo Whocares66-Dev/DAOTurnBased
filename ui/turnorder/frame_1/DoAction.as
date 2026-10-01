@@ -53,18 +53,17 @@ var ticks = 0;
 // with no game behind it.
 function sampleView()
 {
-    var head = [BAR_VERSION, 1, 2, 256, 1, 1, "6.5", "9.0"].join(FIELD);
+    // Each combatant once, the current first: the rest of round 2, then
+    // round 3's up to the current (core/TurnOrder.h, Upcoming).
+    var head = [BAR_VERSION, 1, 2, 257, 1, 1, "6.5", "9.0"].join(FIELD);
     var cards = [
-        [256, 0, 100, 100, 0, 1, 1, 2, "Warden", "player", "gui_portrait_09", 70, 0],
-        [512, 2, 4, 80, 0, 0, 0, 2, "Hurlock Emissary", "e", "gui_portrait_49", 55, 1],
-        [257, 0, 0, 65, 0, 0, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0],
+        [257, 0, 0, 65, 0, 1, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0],
         [513, 2, 2, 40, 0, 0, 0, 2, "Genlock", "g", "", 100, 0],
         [258, 0, 0, 0, 1, 0, 1, 2, "Morrigan", "gen00fl_morrigan", "gui_portrait_49", 30, 1],
         [768, 1, 2, 90, 0, 0, 0, 2, "Soldier", "s", "gui_portrait_09", 80, 0],
         [514, 2, 3, 100, 0, 0, 0, 2, "Genlock Alpha", "a", "gui_portrait_49", 45, 0],
         [256, 0, 100, 100, 0, 0, 1, 3, "Warden", "player", "gui_portrait_09", 70, 0],
-        [512, 2, 4, 80, 0, 0, 0, 3, "Hurlock Emissary", "e", "gui_portrait_49", 55, 1],
-        [257, 0, 0, 65, 0, 0, 1, 3, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0]
+        [512, 2, 4, 80, 0, 0, 0, 3, "Hurlock Emissary", "e", "gui_portrait_49", 55, 1]
     ];
     var text = head;
     for (var i = 0; i < cards.length; i++)
