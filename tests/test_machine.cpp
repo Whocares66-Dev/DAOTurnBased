@@ -1300,3 +1300,101 @@ TEST_CASE("a conversation as combat begins: the fight starts afresh after it", "
     CHECK(w.Current() == kHero);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
 }
+
+TEST_CASE("at ai_turn_speed 2 an AI's waits pass in half the time", "[machine][speed]")
+{
+    // The desktop play test: an enemy's turn took 3 s at speed 1 and at 2,
+    // the machine's own waits counting real time.
+    for (const float speed : {1.0f, 2.0f})
+    {
+        Settings s = Fixed();
+        s.aiTurnSpeed = speed;
+        World w{s};
+        w.StartFight();
+        CHECK(w.machine.OnPauseKey());
+        w.Frame();
+        w.Frame();
+        REQUIRE(w.Current() == kGenlock); // its AI chooses nothing
+        w.RunFor(static_cast<std::uint32_t>(s.aiThinkMs / 2 + 100));
+        if (speed == 2.0f)
+        {
+            CHECK(w.Current() != kGenlock); // its thinking time, in the world's time, is over
+        }
+        else
+        {
+            CHECK(w.Current() == kGenlock);
+        }
+    }
+}
+
+TEST_CASE("a creature falling is said in the log", "[machine]")
+{
+    World w;
+    std::vector<std::string> lines;
+    w.onLog = [&](std::string_view line) { lines.emplace_back(line); };
+    w.StartFight();
+    w.Get(kHurlock).down = true;
+    w.RunFor(600); // a status read
+    CHECK(std::ranges::count(lines, std::string{"Hurlock falls"}) == 1);
+}
+
+namespace
+{
+// Ends turns until the genlock's conditions are ended at its turn's start.
+void UntilEnded(World &w)
+{
+    for (int i = 0; i < 80 && !w.Did(EffectKind::EndConditions, kGenlock); ++i)
+    {
+        (void)w.machine.OnPauseKey();
+        w.RunFor(100);
+    }
+}
+} // namespace
+
+TEST_CASE("a condition the engine still holds after it was ended owes no fresh turn", "[machine][conditions]")
+{
+    // The desktop play test (2026-09-30): the dog's pin, ended at its turn,
+    // was read again half a second later and charged a turn more.
+    World w;
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.StartFight();
+    UntilEnded(w);
+    REQUIRE(w.Did(EffectKind::EndConditions, kGenlock));
+    REQUIRE(w.Current() == kGenlock);
+    w.Get(kGenlock).condition = Condition::Disabled; // the engine holds it still
+    w.RunFor(600);                                   // a status read: the rest of this turn is lost
+    CHECK(w.Current() != kGenlock);
+    // It runs out before the genlock's next turn: that turn is its own.
+    w.Get(kGenlock).condition = Condition::None;
+    w.RunFor(600);
+    w.applied.clear();
+    for (int i = 0; i < 80 && !w.Did(EffectKind::PokeAi, kGenlock); ++i)
+    {
+        (void)w.machine.OnPauseKey();
+        w.RunFor(100);
+    }
+    CHECK(w.Did(EffectKind::PokeAi, kGenlock));
+    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+}
+
+TEST_CASE(
+    "a condition the engine still holds after it was ended costs each turn while it lasts, and is not ended again",
+    "[machine][conditions]")
+{
+    World w;
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.StartFight();
+    UntilEnded(w);
+    REQUIRE(w.Current() == kGenlock);
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.RunFor(600);
+    w.applied.clear();
+    for (int i = 0; i < 80 && !w.Said(L"Genlock loses the turn"); ++i)
+    {
+        (void)w.machine.OnPauseKey();
+        w.RunFor(100);
+    }
+    CHECK(w.Said(L"Genlock loses the turn"));
+    CHECK_FALSE(w.Did(EffectKind::EndConditions, kGenlock)); // the game's clock ends it
+    CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
+}

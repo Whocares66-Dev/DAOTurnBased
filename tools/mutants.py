@@ -223,7 +223,7 @@ MUTANTS = [
     Mutant(
         "a condition on the game's clock costs no turn",
         MACHINE,
-        "    const bool holds = settings_.conditionTurns == 0 && held.seen == Condition::Disabled;",
+        "    const bool holds = (settings_.conditionTurns == 0 || held.onClock) && held.seen == Condition::Disabled;",
         "    const bool holds = false;",
     ),
     Mutant(
@@ -297,6 +297,24 @@ MUTANTS = [
         BAR,
         "        Field(out, card.mana);",
         "        Field(out, false);",
+    ),
+    Mutant(
+        "a creature falls unsaid",
+        MACHINE,
+        "        if (c->down != wasDown)",
+        "        if (c->down != wasDown && c->down == wasDown)",
+    ),
+    Mutant(
+        "an AI's waits count real time at an enemy's speed",
+        MACHINE,
+        "static_cast<float>(dt) * speedSet_",
+        "static_cast<float>(dt)",
+    ),
+    Mutant(
+        "a condition the engine still holds after it was ended owes a fresh turn",
+        MACHINE,
+        "            if (status.id == endedFor_)",
+        "            if (status.id == endedFor_ && false)",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",

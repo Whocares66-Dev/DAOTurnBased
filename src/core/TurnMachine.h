@@ -383,7 +383,12 @@ class TurnMachine
         Condition seen = Condition::None;
         Condition kind = Condition::None;
         int turns = 0;
+        // Ended by the machine, and the engine held it still (the dog's pin
+        // in the desktop play test, 2026-09-30): it runs out on the game's
+        // clock, each turn lost while it lasts, no fresh turns owed.
+        bool onClock = false;
     };
+    ObjectId endedFor_ = kNoObject; // whose conditions the machine ended this turn
     std::unordered_map<ObjectId, Held> held_;
     bool currentStunned_ = false; // the current combatant was stunned in its own turn
     // The current combatant was found in an effect's command it did not
@@ -440,7 +445,8 @@ class TurnMachine
 
     bool haveNow_ = false;
     std::uint32_t lastNow_ = 0;
-    std::uint32_t clock_ = 0; // milliseconds the fight has run unpaused: deadlines count in this
+    std::uint32_t clock_ =
+        0; // the world's milliseconds the fight has run unpaused (at the game's speed): deadlines count in this
     std::uint32_t deadline_ = 0;
     std::uint32_t executingSince_ = 0;
     std::uint32_t roundRunMs_ = 0; // milliseconds this round has run unpaused

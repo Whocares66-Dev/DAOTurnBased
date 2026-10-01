@@ -298,8 +298,13 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
 
     if (!obs.paused)
     {
-        clock_ += dt;
-        roundRunMs_ += dt;
+        // The world's time: at an enemy's speed it runs faster, and the
+        // waits that count in it (settling, an AI's thinking and follow-up)
+        // with it. In real time they held ai_turn_speed 2 to the same 3 s
+        // an enemy's turn took at 1 (the desktop play test, 2026-09-30).
+        const auto worldDt = static_cast<std::uint32_t>(std::lround(static_cast<float>(dt) * speedSet_));
+        clock_ += worldDt;
+        roundRunMs_ += worldDt;
     }
     ApplyStatuses(obs.statuses);
     if (currentStunned_ && (phase_ == Phase::AwaitingOrder || phase_ == Phase::Dispatching ||
@@ -618,7 +623,7 @@ bool TurnMachine::LoseTurn(const Combatant &who, std::vector<Effect> &fx)
     // every turn it still holds the creature: it cannot act, and with
     // effects' time held its command cannot end within the turn.
     const bool owes = held.kind == Condition::Disabled && held.turns > 0;
-    const bool holds = settings_.conditionTurns == 0 && held.seen == Condition::Disabled;
+    const bool holds = (settings_.conditionTurns == 0 || held.onClock) && held.seen == Condition::Disabled;
     if (!owes && !holds)
     {
         return false;
@@ -653,6 +658,7 @@ void TurnMachine::HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx)
     {
         Log(LogLevel::Info, std::format("{}'s condition has had its turns: ended", Utf8(who.name)));
         fx.push_back(Effect::Of(EffectKind::EndConditions, who.id));
+        endedFor_ = who.id;
         held.kind = Condition::None;
         // Gone once the effect is applied: a new stun after it is new.
         held.seen = Condition::None;
@@ -1087,6 +1093,7 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
     }
     budget_ = Budget{};
     heldByEffect_ = false;
+    endedFor_ = kNoObject;
     budget_.actions = 0;
     phase_ = Phase::TurnStart;
     wantScan_ = true;
@@ -1177,7 +1184,17 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
             // Newly held: it owes that many of its turns, whatever the
             // condition's timer in seconds says; or, on the game's clock,
             // it loses each turn that comes while it lasts.
-            if (settings_.conditionTurns > 0)
+            if (status.id == endedFor_)
+            {
+                // Ended at this turn's start, and the engine holds it still:
+                // not a new condition. It runs out on the game's clock.
+                held.kind = status.condition;
+                held.onClock = true;
+                Log(LogLevel::Warn, std::format("{}'s condition was ended, and the engine still holds it: its turns "
+                                                "are lost while it lasts",
+                                                Utf8(c->name)));
+            }
+            else if (settings_.conditionTurns > 0)
             {
                 held.kind = status.condition;
                 held.turns = std::max(held.turns, settings_.conditionTurns);
@@ -1197,6 +1214,11 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
             }
         }
         held.seen = status.condition;
+        if (status.condition == Condition::None)
+        {
+            held.onClock = false; // run out
+        }
+        const bool wasDown = c->down;
         if (!status.exists)
         {
             c->down = c->down || c->side != Side::Party;
@@ -1204,6 +1226,13 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
         else
         {
             c->down = status.down;
+        }
+        // Said, not only seen as a gap in the next round's order (the desktop
+        // play test, 2026-09-30).
+        if (c->down != wasDown)
+        {
+            Log(LogLevel::Info, c->down ? std::format("{} {}", Utf8(c->name), status.exists ? "falls" : "is gone")
+                                        : std::format("{} is up again", Utf8(c->name)));
         }
     }
 }
