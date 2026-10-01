@@ -73,12 +73,21 @@ constexpr std::int32_t kMoveMarker = 30000;
 // the marks are spread to keep their number down.
 constexpr std::int32_t kPartyRing = 30005; // "Party Member", SR_PTY
 constexpr std::int32_t kEnemyRing = 30011; // "Enemy", SR_EMY
-constexpr float kMarkScale = 0.14f;
-constexpr float kMarkEvery = 0.4f;
+// At 0.14 and every 0.4 m a mark was a thin outline a tenth of the walker's
+// ring across: clear close to, a few pixels beyond five or six meters, and
+// the red ones hardly to be made out (the nineteenth play test). Half as
+// large again, and the too-far end's ring a creature's size.
+constexpr float kMarkScale = 0.21f;
+constexpr float kMarkEvery = 0.5f;
 constexpr float kMarksFrom = 0.8f;    // meters along: clear of the walker's ring
 constexpr float kMarksShortOf = 0.5f; // of the end: clear of the marker there
-constexpr float kEndRingScale = 0.6f;
+constexpr float kEndRingScale = 1.0f;
 constexpr std::size_t kMostMarks = 60;
+
+// The movie's line begins at the edge of the walker's own selection ring,
+// not at its feet: drawn over the scene it lay across the walker's shin
+// (the eighteenth play test's close picture).
+constexpr float kLineFrom = 0.6f;
 
 constexpr float kEndRing = 0.45f;
 constexpr float kStopRing = 0.22f;
@@ -480,7 +489,10 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     }
     shown.length = order;
     shown.meters = view.movementLeft;
-    shown.reach = OnScreen(split.reach);
+    // The drawn line leaves out its first stretch, inside the walker's ring.
+    const PathSplit outside = SplitPath(split.reach, kLineFrom);
+    const std::vector<Vec3> &lineReach = outside.TooFar() ? outside.beyond : split.reach;
+    shown.reach = OnScreen(lineReach);
     // Where the move would go, the game's marker; past the movement left
     // none, since it says "it will walk here" and it would not.
     if (split.TooFar())
@@ -529,7 +541,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     }
     // Only if the reach is whole: a line broken behind the camera has no
     // second half to join.
-    if (shown.reach.size() == split.reach.size())
+    if (shown.reach.size() == lineReach.size())
     {
         shown.beyond = OnScreen(split.beyond);
         if (shown.line && split.TooFar())
