@@ -105,11 +105,11 @@ struct Reached
 // thread, set on reload.
 std::atomic<bool> g_pathCheck{true};
 
-// Whether a move farther than its path can go this turn is refused ("Too
-// far") rather than walked until its meters run out. Not now: the player
-// has only known the second, and which it should be is theirs to say. A
-// flag, not a constant, so the rest stays compiled and linted.
-std::atomic<bool> g_pathOnDemand{false};
+// A move farther than its path can go this turn is refused ("Too far")
+// rather than walked until its meters run out: the user's call, 2026-10-01
+// ("refusing too far is right i think"). Off, a move walks until stopped.
+// A flag, not a constant, so both ways stay compiled and linted.
+std::atomic<bool> g_pathOnDemand{true};
 
 // The walk the game's own pathfinder finds for a creature to a point, its
 // length, by DAOLib's search of its own (dao::world::FindPath, 1fe01a3,
@@ -227,6 +227,12 @@ std::optional<float> MoveLength(const dao::CCObject &self, const dao::Command &c
     }
     const std::optional<dao::Vector> to = command.Position();
     if (!to)
+    {
+        return std::nullopt;
+    }
+    // For a creature at rest, as for an attack: a click while it walks is
+    // not searched for, and walks until stopped.
+    if (self.CurrentCommand() != nullptr || api::GetCommandQueueSize(self.Id()) != 0)
     {
         return std::nullopt;
     }

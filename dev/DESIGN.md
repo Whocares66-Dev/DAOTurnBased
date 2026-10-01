@@ -252,9 +252,9 @@ What is not proven in the engine: giving the held order again at the right momen
 
 For the user to say: only the spells, or the seven talents at 2 s too; whether damage interrupts, or only what holds a creature; whether the caster has a whole turn when the spell lands (proposed) or landing is that turn's action.
 
-### A move farther than its movement
+### A move farther than its movement (decided 2026-10-01)
 
-A click on ground farther than the movement left walks until the meters run out. Refusing it instead ("Too far", as an attack out of reach is refused) is built and off (`src/game/Gate.cpp`, `g_pathOnDemand`; the machine's refusal is tested): the walk would be the game's own path's length. It changes how moving feels, so it waits on the user: walk as far as it goes, or refuse.
+Refused: "refusing too far is right i think" (the user). A click on ground whose path is longer than the movement left is refused, "Too far", before a step, as an attack out of reach is; the walk is the game's own path's length (`path_check`, DAOLib's `FindPath`), found for a creature at rest. Where the game finds no path, or with `path_check = false`, a move walks until its meters run out, as before.
 
 ## Later: action points
 

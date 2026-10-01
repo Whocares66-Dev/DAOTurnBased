@@ -360,10 +360,12 @@ meters = 9
 per_dexterity = 0
 min = 3
 max = 20
-; Judge how far an attack must walk by the game's own path, around walls
-; and tables, not a straight line: an enemy 5 m off round a corner may be
-; 14 m of walking, and is "Too far" before a step is taken. Off: a straight
-; line. A move still walks until its meters run out, either way.
+; Judge how far an attack or a move must walk by the game's own path,
+; around walls and tables, not a straight line: an enemy 5 m off round a
+; corner may be 14 m of walking. What the walk cannot reach this turn is
+; refused, "Too far", before a step is taken, a click on the ground too.
+; Off: a straight line for attacks, and a move walks until its meters run
+; out.
 path_check = true
 
 [turns]
