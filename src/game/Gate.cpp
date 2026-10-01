@@ -157,8 +157,22 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
         dao::gda::GetFloat(dao::script::Table::Appearance, api::GetAppearanceType(*target), "PerSpace").value_or(0.0f);
     const float reach = Reach(weaponRange, space);
     // Around what stands between them: the path to where the target stands.
+    // Only for a creature at rest, as it is when the player gives an order.
+    // The game's own second go at an attack comes while the creature is at
+    // something else: with a shut door in the way the attack fails "path
+    // action required", and the game queues the door's use and the attack
+    // again. A search made then, a millisecond after the door's use was
+    // queued, was followed by twelve seconds of the creature standing at
+    // "use object", its turn lost (the ninth play test, 2026-10-01). Whether
+    // the search disturbed the creature's own request for a path is not
+    // proven; it is not made while one may be pending.
     std::optional<float> path;
-    if (byPath && g_pathCheck.load())
+    const bool atRest = self.CurrentCommand() == nullptr && api::GetCommandQueueSize(attacker) == 0;
+    if (byPath && g_pathCheck.load() && !atRest)
+    {
+        spdlog::debug("attack on {:#010x}: its creature is at a command already; judged by the straight line", *target);
+    }
+    else if (byPath && g_pathCheck.load())
     {
         path = PathLength(attacker, api::GetPosition(*target), *target);
         if (!path)
