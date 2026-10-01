@@ -159,3 +159,11 @@ TEST_CASE("a setting the player commented out is left commented out", "[settings
     CHECK(whole == text);
     CHECK(tb::WithMissingSettings(whole) == whole);
 }
+
+TEST_CASE("cooldowns count four seconds a turn by default", "[settings]")
+{
+    // The user (2026-09-30): a hold's share of the time about what it is in
+    // real time; at 10 the archers' stun came back every other turn.
+    CHECK(tb::Settings{}.cooldownSecondsPerTurn == 4.0f);
+    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.cooldownSecondsPerTurn == 4.0f);
+}

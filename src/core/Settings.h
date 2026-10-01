@@ -68,7 +68,9 @@ struct Settings
     int orderRunMs = 0;                // an order that queued nothing while paused: run the world this long (0: off)
     int conditionTurns = 1;            // turns a stun costs, a pin's turns without movement (0: the game's timers)
     // An ability's cooldown in turns: its seconds over this (0: the game's timers).
-    float cooldownSecondsPerTurn = 10.0f;
+    // 4: a hold's share of the time about what it is in real time (the user,
+    // 2026-09-30: at 10 the archers' stun came back every other turn).
+    float cooldownSecondsPerTurn = 4.0f;
     // The world holds still while the player chooses (otherwise it idles on).
     bool pauseOnPlayerTurn = false;
     // A talent chosen on the quickbar asks for its target, even with one

@@ -1041,7 +1041,7 @@ TEST_CASE("a creature stunned in its own turn loses the rest of it at once, and 
 
 namespace
 {
-constexpr std::int32_t kShieldBash = 617; // 20 s: two turns at 10 s a turn
+constexpr std::int32_t kShieldBash = 617; // 20 s: two turns at 10 s a turn (Fixed's rate)
 constexpr std::int32_t kShieldWall = 12;  // sustained
 
 bool Cooled(const World &w, ObjectId id, std::int32_t ability, std::int32_t seconds)
@@ -1582,4 +1582,54 @@ TEST_CASE("the state's last refusal is the player's, with its command and number
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 30.0f) == Verdict::Block);
     CHECK(w.Order(kGenlock, CommandType::Wait, Source::Script) == Verdict::Block); // the AI's, not the player's
     CHECK(w.machine.State().lastRefusal == "Too far (attack: 30.0 m to walk, 9.0 m left)");
+}
+
+TEST_CASE("a hold taken off before its victim's turn gives that turn back", "[machine][conditions]")
+{
+    // The fourth play test's addendum: a stun lifted (stage remove_effects)
+    // still cost its victim the turn.
+    World w;
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.StartFight();
+    REQUIRE(w.machine.State().held.size() == 1);
+    w.Get(kGenlock).condition = Condition::None; // cured, mid-round
+    w.RunFor(600);
+    CHECK(w.machine.State().held.empty());
+    for (int i = 0; i < 80 && !w.Did(EffectKind::PokeAi, kGenlock); ++i)
+    {
+        (void)w.machine.OnPauseKey();
+        w.RunFor(100);
+    }
+    CHECK(w.Did(EffectKind::PokeAi, kGenlock)); // its turn, played
+    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+}
+
+TEST_CASE("a hold run out as a round ages effects keeps the turns it owes", "[machine][conditions]")
+{
+    Settings s = Fixed();
+    s.conditionTurns = 2;
+    World w{s};
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.StartFight();
+    // Round 1's turn lost; then, as round 2 begins and ages effects, it runs out.
+    w.applied.clear();
+    for (int i = 0; i < 200 && !w.Did(EffectKind::AgeTime); ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnPauseKey();
+        }
+        w.Frame();
+    }
+    REQUIRE(w.Did(EffectKind::AgeTime));
+    CHECK(w.Said(L"Genlock loses the turn"));
+    w.Get(kGenlock).condition = Condition::None;
+    w.RunFor(600);
+    w.applied.clear();
+    for (int i = 0; i < 80 && !w.Said(L"Genlock loses the turn") && !w.Did(EffectKind::PokeAi, kGenlock); ++i)
+    {
+        (void)w.machine.OnPauseKey();
+        w.RunFor(100);
+    }
+    CHECK(w.Said(L"Genlock loses the turn")); // the second it owed
 }

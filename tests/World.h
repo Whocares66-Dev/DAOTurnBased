@@ -70,6 +70,9 @@ inline Settings Fixed()
     // And hold the world still while the player chooses, which they check;
     // one of their own has the default, the world idling on.
     s.pauseOnPlayerTurn = true;
+    // And the cooldowns' first rate, the numbers they were written with
+    // (Shield Bash's 20 s two turns); the default is a test of its own.
+    s.cooldownSecondsPerTurn = 10.0f;
     return s;
 }
 

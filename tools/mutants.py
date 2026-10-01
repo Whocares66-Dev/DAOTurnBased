@@ -401,6 +401,18 @@ MUTANTS = [
         "    state.lastRefusal = lastRefusal_;",
     ),
     Mutant(
+        "a hold taken off before its victim's turn still costs the turn",
+        MACHINE,
+        "            if (takenOff && held.turns > 0)",
+        "            if (takenOff && held.turns > 99)",
+    ),
+    Mutant(
+        "a hold run out on the clock gives its turns back",
+        MACHINE,
+        "(!agedAtNow_ || lastNow_ - *agedAtNow_ > kAgeSettleMs)",
+        "(!agedAtNow_ || lastNow_ - *agedAtNow_ > 0u)",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",

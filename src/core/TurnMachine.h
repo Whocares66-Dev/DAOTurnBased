@@ -459,7 +459,12 @@ class TurnMachine
     void Emit(EventKind kind, ObjectId who = kNoObject, std::string detail = {}, std::int32_t value = 0,
               std::string command = {}, std::string note = {}) const;
     std::string lastPlayerRefusal_; // what the player was last told, for the state: "Too far (attack: ...)"
-    std::string lastRefusal_;       // the last refusal logged, and when: repeats within a second are not
+    // When a round last aged effects (real ms, lastNow_'s clock): a hold
+    // gone soon after ran out on the clock; gone any other time while
+    // effects' time is held, something took it off (a cure, a dispel).
+    std::optional<std::uint32_t> agedAtNow_; // none: no round has aged effects yet
+    static constexpr std::uint32_t kAgeSettleMs = 1500;
+    std::string lastRefusal_; // the last refusal logged, and when: repeats within a second are not
     std::uint32_t lastRefusalLogNow_ = 0;
     bool turnBegun_ = false;        // an interlude came in the middle of a turn, not between two
     bool startInterrupted_ = false; // an interlude came before the fight had started

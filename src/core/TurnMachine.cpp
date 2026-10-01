@@ -829,6 +829,7 @@ void TurnMachine::SpendRound(std::vector<Effect> &fx)
     Effect e = Effect::Of(EffectKind::AgeTime);
     e.b = static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f);
     fx.push_back(e);
+    agedAtNow_ = lastNow_;
 }
 
 void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
@@ -1309,8 +1310,23 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
         }
         if (held.seen != Condition::None && status.condition == Condition::None)
         {
-            // Run out by itself (the machine's ending forgets it at once).
-            Emit(EventKind::ConditionExpired, c->id);
+            // Gone by itself (the machine's ending forgets it at once). Run
+            // out on the clock, it keeps the turns it owes: effects' time
+            // moves only as a round begins, and a stun shorter than a round
+            // would cost nothing otherwise. Taken off by something else (a
+            // cure, a dispel), with effects' time held, it gives them back:
+            // a stun lifted before its victim's turn still cost the turn
+            // (the fourth play test's addendum, 2026-09-30).
+            const bool takenOff = timeHeld_ && (!agedAtNow_ || lastNow_ - *agedAtNow_ > kAgeSettleMs);
+            if (takenOff && held.turns > 0)
+            {
+                Log(LogLevel::Info, std::format("{}'s condition was taken off: the {} turn{} it owed given back",
+                                                Utf8(c->name), held.turns, held.turns == 1 ? "" : "s"));
+                held.turns = 0;
+                held.kind = Condition::None;
+                held.onClock = false;
+            }
+            Emit(EventKind::ConditionExpired, c->id, takenOff ? "taken off" : "ran out");
         }
         held.seen = status.condition;
         if (status.condition == Condition::None)

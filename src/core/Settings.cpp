@@ -403,12 +403,15 @@ order_run_ms = 0
 ; creature losing every turn that comes while it lasts.
 condition_turns = 1
 ; Cooldowns count in turns: an ability used is held until the start of its
-; user's turn this many seconds of its cooldown later, rounded up (at 10,
-; Shield Bash's 20 s is 2 turns, the mabari howl's 40 s 4). Waiting in real
-; time no longer brings it back. A sustained ability costs nothing to turn
-; on, and turned off it waits for its user's next turn. 0 leaves the game's
-; timers in seconds, which run in real time, paused or not.
-cooldown_seconds_per_turn = 10
+; user's turn this many seconds of its cooldown later, rounded up (at 4,
+; Shield Bash's 20 s is 5 turns, the mabari howl's 40 s 10), so that a stun
+; or a pin, which costs its victim a whole turn, keeps about the share of
+; the time it has in real time. At 10 the archers' stun came back every
+; other turn. Waiting in real time no longer brings it back. A sustained
+; ability costs nothing to turn on, and turned off it waits for its user's
+; next turn. 0 leaves the game's timers in seconds, which run in real time,
+; paused or not.
+cooldown_seconds_per_turn = 4
 ; Pause the game while a party member's turn waits on your order. Off, the
 ; world idles on (breathing, torches, creatures shifting on their feet) and
 ; nobody acts out of turn, but what runs on the game's clock runs: damage
