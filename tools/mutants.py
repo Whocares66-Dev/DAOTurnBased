@@ -582,6 +582,12 @@ MUTANTS = [
         "(ownEffectSince_ ? 1000 : 1);",
     ),
     Mutant(
+        "a room shown by an order is looked into only at the turn's end",
+        MACHINE,
+        "    wantScan_ = true;\n    phase_ = Phase::AwaitingOrder;\n}",
+        "    phase_ = Phase::AwaitingOrder;\n}",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",

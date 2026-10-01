@@ -1221,6 +1221,12 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
         Log(LogLevel::Debug,
             std::format("awaiting the next order: {} action, {:.1f} m left", budget_.actions, budget_.MovementLeft()));
     }
+    // What the order did may have shown the party a room: a door opened, a
+    // walk through one. Who fights there joins now, with their cards, not
+    // when the turn ends: for the rest of Lyna's turn the room stood open,
+    // its spiders frozen and not on the bar (the eighth play test,
+    // 2026-10-01).
+    wantScan_ = true;
     phase_ = Phase::AwaitingOrder;
 }
 

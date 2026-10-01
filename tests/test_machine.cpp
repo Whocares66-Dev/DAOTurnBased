@@ -2442,3 +2442,26 @@ TEST_CASE("an action on its own effect's time may outlast max_action_ms, not thr
     CHECK(std::ranges::any_of(w.log,
                               [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
 }
+
+TEST_CASE("a door opened shows a room: who fights there joins as the order ends, not the turn", "[machine][engaged]")
+{
+    // The eighth play test: the room's spiders joined 2.2 s after the door
+    // opened, when Lyna's turn ended.
+    World w = WithOutsider();
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    w.RunFor(1000); // the player thinks: nobody asks for a scan
+    REQUIRE(w.machine.Order().Find(0x202) == nullptr);
+    CHECK(w.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
+    w.RunFor(300);
+    w.Get(0x202).engaged = true; // the door is open: its room is seen
+    w.Finish(kHero);
+    w.RunFor(1500);
+    REQUIRE(w.Current() == kHero); // still his turn
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    REQUIRE(w.machine.Order().Find(0x202) != nullptr);
+    CHECK(
+        std::ranges::any_of(events, [](const TurnEvent &e) { return e.kind == EventKind::Joined && e.who == 0x202; }));
+}
