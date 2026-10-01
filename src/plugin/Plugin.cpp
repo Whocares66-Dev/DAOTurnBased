@@ -18,6 +18,7 @@
 #include "game/Bridge.h"
 #include "game/Camera.h"
 #include "game/Gate.h"
+#include "game/Preview.h"
 #include "game/SettingsFile.h"
 #include "game/Targeting.h"
 #include "plugin/EluvianAPI.h"
@@ -64,6 +65,8 @@ struct State
     bool optionsAsked = false; // the options' section was given to DAOLib, and what became of it is not known yet
     std::uint32_t lastSettingsCheck = 0;
     tb::game::BarLink bar;
+    tb::game::Preview preview;
+    bool movePreview = true;
     tb::game::Targeting targeting;
     bool turnBar = false;
     bool portraits = true;
@@ -313,11 +316,13 @@ void UseTurnBar(const tb::Settings &settings)
 {
     g.turnBar = settings.turnBar;
     g.portraits = settings.portraits;
+    g.movePreview = settings.movePreview;
     g.targeting.SetEnabled(settings.pickTargets);
     tb::game::SetPathCheck(settings.pathCheck);
     if (g.turnBar)
     {
         g.bar.Install();
+        g.preview.Install();
     }
 }
 
@@ -370,6 +375,9 @@ void ServeBar(std::uint32_t now)
     // let the portraits go, and they are released after.
     g.bar.FollowFight(view, now);
     g.bar.KeepScreen(fighting);
+    // Every frame, not with the bar's tenth of a second: the path's place
+    // on the screen moves with the camera.
+    g.preview.Update(view, now, g.turnBar && g.movePreview);
     if (now - g.lastBarPublish >= 100)
     {
         g.lastBarPublish = now;

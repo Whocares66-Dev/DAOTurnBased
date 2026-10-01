@@ -638,6 +638,147 @@ function draw(view)
     caption();
 }
 
+// The movement preview (dev/UI.md, "The movement preview"): on the player's
+// turn, the path to the ground under the cursor, gold as far as the movement
+// left reaches and red beyond, with its length at its end. The plugin gives
+// the path's points where they are on the screen (TB_GetPreview, one string:
+// src/core/Preview.h), in pixels of the game's view, and the view's size
+// with them: the stage is laid over the view whole and centred (showAll),
+// so a pixel is a stage point by one scale and an offset. Asked every frame,
+// since the points move with the camera.
+var PREVIEW_VERSION = 1;
+var RED = 0xD8402C;
+var lastPreview = null;
+
+// For a player with no game behind it: a walk round a corner, a third of it
+// past the movement left.
+function samplePreview()
+{
+    var head = [PREVIEW_VERSION, Stage.width, Stage.height, 2, "13.6", "6.5"].join(FIELD);
+    var reach = [300, 250, 520, 232, 640, 190].join(FIELD);
+    var beyond = [640, 190, 700, 168, 860, 176].join(FIELD);
+    return head + CARD + reach + CARD + beyond;
+}
+
+function askPreview()
+{
+    if (!inGame)
+    {
+        return samplePreview();
+    }
+    var preview = flash.external.ExternalInterface.call("TB_GetPreview");
+    return preview == undefined || preview == null ? "" : String(preview);
+}
+
+// A record's numbers as stage points.
+function previewPoints(record, scale, offsetX, offsetY)
+{
+    var points = [];
+    if (record == undefined || record.length == 0)
+    {
+        return points;
+    }
+    var f = record.split(FIELD);
+    for (var i = 0; i + 1 < f.length; i += 2)
+    {
+        points.push({x: (Number(f[i]) - offsetX) / scale, y: (Number(f[i + 1]) - offsetY) / scale});
+    }
+    return points;
+}
+
+// A line twice: dark and wide under, the colour over, so it reads on light
+// ground and dark.
+function stroke(clip, points, colour)
+{
+    if (points.length < 2)
+    {
+        return;
+    }
+    var passes = [[6, INK, 55], [3, colour, 95]];
+    for (var p = 0; p < passes.length; p++)
+    {
+        clip.lineStyle(passes[p][0], passes[p][1], passes[p][2]);
+        clip.moveTo(points[0].x, points[0].y);
+        for (var i = 1; i < points.length; i++)
+        {
+            clip.lineTo(points[i].x, points[i].y);
+        }
+    }
+}
+
+function dot(clip, at, radius, colour)
+{
+    var k = Math.tan(Math.PI / 8) * radius;
+    var s = Math.sin(Math.PI / 4) * radius;
+    clip.lineStyle(2, INK, 70);
+    clip.beginFill(colour, 100);
+    clip.moveTo(at.x + radius, at.y);
+    clip.curveTo(at.x + radius, at.y + k, at.x + s, at.y + s);
+    clip.curveTo(at.x + k, at.y + radius, at.x, at.y + radius);
+    clip.curveTo(at.x - k, at.y + radius, at.x - s, at.y + s);
+    clip.curveTo(at.x - radius, at.y + k, at.x - radius, at.y);
+    clip.curveTo(at.x - radius, at.y - k, at.x - s, at.y - s);
+    clip.curveTo(at.x - k, at.y - radius, at.x, at.y - radius);
+    clip.curveTo(at.x + k, at.y - radius, at.x + s, at.y - s);
+    clip.curveTo(at.x + radius, at.y - k, at.x + radius, at.y);
+    clip.endFill();
+}
+
+function drawPreview(text)
+{
+    if (text == lastPreview)
+    {
+        return;
+    }
+    lastPreview = text;
+    var clip = _root.preview;
+    if (clip == undefined)
+    {
+        // Under the bar, over the sample's backdrop.
+        clip = _root.createEmptyMovieClip("preview", 5);
+        label(clip, "length", 1, 0, 0, 160, 24, 15, GOLD, "left", false);
+    }
+    clip.clear();
+    clip.length._visible = false;
+    var records = text.split(CARD);
+    var head = records[0].split(FIELD);
+    var viewW = Number(head[1]);
+    var viewH = Number(head[2]);
+    if (Number(head[0]) != PREVIEW_VERSION || head[3] == "0" || head[3] == undefined || !(viewW > 0) ||
+        !(viewH > 0))
+    {
+        return;
+    }
+    var scale = Math.min(viewW / Stage.width, viewH / Stage.height);
+    var offsetX = (viewW - Stage.width * scale) / 2;
+    var offsetY = (viewH - Stage.height * scale) / 2;
+    var reach = previewPoints(records[1], scale, offsetX, offsetY);
+    var beyond = previewPoints(records[2], scale, offsetX, offsetY);
+    var tooFar = head[3] == "2";
+    stroke(clip, reach, GOLD);
+    stroke(clip, beyond, RED);
+    // Where the movement runs out, and where the path ends.
+    if (reach.length > 1)
+    {
+        dot(clip, reach[reach.length - 1], tooFar ? 4 : 6, GOLD);
+    }
+    var end = beyond.length > 0 ? beyond[beyond.length - 1] : reach[reach.length - 1];
+    if (end == undefined)
+    {
+        return;
+    }
+    if (beyond.length > 1)
+    {
+        dot(clip, end, 6, RED);
+    }
+    var field = clip.length;
+    field.text = tooFar ? head[4] + " m of " + head[5] : head[4] + " m";
+    field.textColor = tooFar ? RED : GOLD;
+    field._x = end.x + 12;
+    field._y = end.y - 22;
+    field._visible = true;
+}
+
 Stage.scaleMode = "showAll";
 _root.onEnterFrame = function()
 {
@@ -647,5 +788,6 @@ _root.onEnterFrame = function()
     {
         draw(ask());
     }
+    drawPreview(askPreview());
 };
 draw(ask());

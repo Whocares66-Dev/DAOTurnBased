@@ -113,6 +113,7 @@ add_library(
     src/core/Json.cpp
     src/core/Keys.cpp
     src/core/Portraits.cpp
+    src/core/Preview.cpp
     src/core/Rules.cpp
     src/core/Settings.cpp
     src/core/State.cpp
@@ -185,6 +186,7 @@ add_daolib_plugin(
         src/game/Bridge.cpp
         src/game/Camera.cpp
         src/game/Gate.cpp
+        src/game/Preview.cpp
         src/game/SettingsFile.cpp
         src/game/Targeting.cpp
         src/plugin/Plugin.cpp

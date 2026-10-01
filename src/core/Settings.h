@@ -108,6 +108,7 @@ struct Settings
     bool cameraFollow = false; // experimental: centre the camera on whoever's turn it is
     bool turnBar = false;      // show the turn order bar (dev/UI.md); off until it is seen in play
     bool portraits = true;     // with the bar: render portraits for combatants the game has none for
+    bool movePreview = true;   // with the bar: draw the path to the cursor, gold in reach and red beyond
 
     // [keys]
     KeyChord toggleKey{0x54, true, false, false}; // Ctrl+T

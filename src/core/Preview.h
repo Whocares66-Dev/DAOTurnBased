@@ -1,0 +1,77 @@
+// The movement preview (dev/UI.md, "The movement preview"): the path from
+// whoever's turn it is to the cursor, and how far along it the movement left
+// reaches, gold to there and red beyond.
+//
+// The game layer finds the path and where its points are on the screen
+// (src/game/Preview.cpp, through DAOLib); what is decided without the game
+// is here: where along the path the movement runs out, and the string the
+// turn bar's movie draws from. The movie asks with
+// ExternalInterface.call("TB_GetPreview") and takes the answer apart as it
+// does the bar's (core/Bar.h): records apart by U+001E, fields by U+001F.
+//
+//   the head:   version, the view's width and height in pixels, the state
+//               (0 nothing to draw, 1 all of it in reach, 2 too far), the
+//               path's length and the movement left, in meters with one
+//               decimal
+//   the reach:  x, y, x, y, ...: the points to where the movement runs out,
+//               in pixels of the view from its top left
+//   the beyond: the same, from there to the path's end; empty in reach
+//
+// With nothing to draw the head stands alone.
+#pragma once
+
+#include "core/Types.h"
+
+#include <span>
+#include <string>
+#include <vector>
+
+namespace tb
+{
+
+inline constexpr int kPreviewVersion = 1;
+
+struct PathSplit
+{
+    // From the path's start to where the movement runs out, or to its end.
+    std::vector<Vec3> reach;
+    // From where the movement runs out to the path's end: its first point
+    // is the reach's last. Empty when the whole path is in reach.
+    std::vector<Vec3> beyond;
+    float length = 0; // the whole path's, in meters
+
+    [[nodiscard]] bool TooFar() const
+    {
+        return !beyond.empty();
+    }
+};
+
+// `path` as the creature would walk it, its first point where it stands;
+// `meters` the movement it has left. The machine refuses a move whose walk
+// is longer than that by any amount (TurnMachine's "Too far"), so the
+// preview is red past exactly there.
+[[nodiscard]] PathSplit SplitPath(std::span<const Vec3> path, float meters);
+
+// A point of the path on the screen, in pixels of the view.
+struct ScreenDot
+{
+    float x = 0;
+    float y = 0;
+};
+
+struct PreviewView
+{
+    int width = 0; // the view's, in pixels
+    int height = 0;
+    float length = 0; // the path's, in meters
+    float meters = 0; // the movement left
+    std::vector<ScreenDot> reach;
+    std::vector<ScreenDot> beyond;
+};
+
+// Nothing to draw: no path, no turn of the player's, the cursor off the
+// ground.
+[[nodiscard]] std::wstring EncodeNoPreview();
+[[nodiscard]] std::wstring EncodePreview(const PreviewView &view);
+
+} // namespace tb

@@ -258,6 +258,7 @@ const std::vector<Entry> &Entries()
         {"feedback", "camera_follow", Bool(&Settings::cameraFollow)},
         {"feedback", "turn_bar", Bool(&Settings::turnBar)},
         {"feedback", "portraits", Bool(&Settings::portraits)},
+        {"feedback", "move_preview", Bool(&Settings::movePreview)},
         {"keys", "toggle",
          [](Settings &s, std::string_view text) -> std::string {
              const auto chord = ParseKeyChord(text);
@@ -518,6 +519,10 @@ turn_bar = false
 ; has none for (enemies, allies), once a fight, as it renders the party's.
 ; Off: their cards show initials.
 portraits = true
+; With the bar: on a party member's turn, the path to the ground under the
+; cursor, gold as far as the movement left reaches and red beyond, before a
+; click. The path is the game's own pathfinder's.
+move_preview = true
 
 [keys]
 ; Turn turn-based combat on or off, outside combat. The game's pause key

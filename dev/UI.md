@@ -97,6 +97,7 @@ The movie pulls; the plugin never calls into it. A movie's calls come on its own
 | From the movie | The plugin |
 |---|---|
 | `ExternalInterface.call("TB_GetView")` | Answers one string: the view, as `src/core/Bar.h` encodes it, at most a tenth of a second old |
+| `ExternalInterface.call("TB_GetPreview")` | Answers one string: the movement preview's path on the screen, as `src/core/Preview.h` encodes it, the frame's own |
 | `fscommand("TB_EndTurn", "")` | Ends the player's turn, as the pause key does |
 | `fscommand("TB_Focus", "<id>")` | Centres the camera on that combatant |
 
@@ -118,13 +119,23 @@ Scene field `+0xA0` is 10 for full-screen menus and 0 for the HUD; `AddScreen` p
 
 ## The movement preview
 
-On a party member's turn, while the cursor is over the ground:
+On a party member's turn, while the game waits for its order and the cursor is over the ground: the path to the cursor, gold as far as the movement left reaches and red beyond, a dot where the movement runs out and one at the path's end, and the path's length there ("6.4 m", or "13.6 m of 9.0" in red). Before a click, so a move too far is seen and not only refused.
 
+**Built 2026-10-01, the path to the ground; not yet seen in play.** `[feedback] move_preview` (on, with the turn bar).
+
+- **The point**: explore mode's own pick, `GameModeExplore::CursorGround()` (DAOLib's `dao/GameModes.h`; combat mode derives from it), re-taken by the engine 15 times a second. Over the interface or an object it is nothing, and nothing is drawn.
+- **The path**: the game's pathfinder's, `dao::world::FindPath`, for the creature at rest, as the gate asks it to judge a move (`path_check`): from where it stands, by the waypoints, to the point. Searched again only when the cursor's point has moved a quarter of a meter, and at most every 150 ms: a search is capped at 30 ms and a straight walk costs nothing (lib-agent). Where the game finds no path, nothing is drawn.
+- **Where it runs out**: `src/core/Preview.h`'s `SplitPath`, by the movement left exactly, as the machine refuses a walk longer than it by any amount.
+- **On the screen**: each point through `dao::world::ToScreen` (the scene camera's; seen in play by DAOLib, `fda9a27`), every frame, so the line stays on the ground as the camera moves; a line that goes behind the camera ends there.
+- **Drawn** by the turn bar's movie, under the bar: it asks `TB_GetPreview` every frame and gets one string, the head (version, the view's size in pixels, the state, the two lengths) and two lines of points in pixels of the view (`src/core/Preview.h`). The stage is taken to lie over the view whole and centred (`showAll`): a pixel is a stage point by one scale and an offset. How the game gives a HUD movie its viewport is not read; if the line sits off the ground's point in play, this is where.
+
+![The movie's sample preview under the bar, as Ruffle draws it (2026-10-01): gold to where the movement runs out, red beyond](images/turnorder-preview-sample.png)
+
+**Still to do:**
+
+- the same for an attack: the walk to a target under the cursor, gold if it can be reached this turn, red if not;
 - a ring around the character, its radius the movement left;
-- the path to the cursor, gold while it is within that, red past it (the part beyond the budget, or the whole of it);
-- the same for an attack: gold if the target can be reached this turn, red if not, before the player clicks.
-
-It needs the cursor's point in the world (explore mode keeps it: the move-to-location order reads it from there, `MoveCharacterToLocationMessage` carrying nothing), the engine's pathfinder for the path's length and shape, and a way to draw in the world. The aiming ring's decal is the natural one, tinted gold or red; failing that, a line or a string of small effects along the path.
+- on the ground itself rather than over everything: DAOLib's `dao/Vfx.h` places a `vfx_base` row at a point as a ground decal (`Place`, `Move`, `Remove`; the game's aiming ring is `PlaceRing`), seen in play. Rings at the waypoints would be the game's own art, as dots; gold against red wants two rows that look so, not yet looked for. A line in the movie was the first that could be built whole.
 
 ## The switch
 

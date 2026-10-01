@@ -46,6 +46,7 @@ BAR = "src/core/Bar.cpp"
 PORTRAITS = "src/core/Portraits.cpp"
 JSON = "src/core/Json.cpp"
 KEYS = "src/core/Keys.h"
+PREVIEW = "src/core/Preview.cpp"
 
 MUTANTS = [
     Mutant(
@@ -689,6 +690,30 @@ MUTANTS = [
         KEYS,
         "    default:\n        return 0;\n    }\n}",
         "    default:\n        return key;\n    }\n}",
+    ),
+    Mutant(
+        "a path as long as the movement left is shown too far",
+        PREVIEW,
+        "        if (!out && split.length + step > reach)",
+        "        if (!out && split.length + step >= reach)",
+    ),
+    Mutant(
+        "the preview's cut is put past where the movement runs out",
+        PREVIEW,
+        "Between(from, to, (reach - split.length) / step)",
+        "Between(from, to, (reach + split.length) / step)",
+    ),
+    Mutant(
+        "the preview's red part does not begin where the gold ends",
+        PREVIEW,
+        "            split.beyond.push_back(cut);",
+        "            split.beyond.push_back(to);",
+    ),
+    Mutant(
+        "a preview too far is said to be in reach",
+        PREVIEW,
+        "view.beyond.empty() ? 1 : 2",
+        "view.beyond.empty() ? 2 : 1",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",

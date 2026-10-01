@@ -187,6 +187,7 @@ Whose a command is comes from the command itself: the player's orders carry a fl
 | `[feedback] camera_follow` | false | Experimental: centre on whoever's turn it is |
 | `[feedback] turn_bar` | false | The turn order bar; off until seen in play |
 | `[feedback] portraits` | true | With the bar: render portraits for combatants the game has none for |
+| `[feedback] move_preview` | true | With the bar: the path to the cursor, gold in reach and red beyond (`dev/UI.md`) |
 | `[keys] toggle` | Ctrl+T | the key until bound in the game's controls |
 
 ## For script mods: events
@@ -211,8 +212,8 @@ A module script can handle them like any other event. A new script command (`IsT
 | Whose turn and who is next, BG3's portrait bar | A prototype is built: the movie (`ui/turnorder`, `dev/images/turnorder-sample.png`), the plugin's side and the screen. Everyone's portraits come from the engine: the party's as the game has them, everyone else's rendered as the party's are (`dev/UI.md`, "Portraits"). Not yet seen in the game |
 | One attack or ability per turn | Built |
 | Movement per turn | Built: speed-based, measured, enforced |
-| The movement arc, gold in reach, red too far | Waits on DAOLib: the cursor's world point, the pathfinder, a way to draw in the world (`dev/UI.md`) |
-| On/off outside combat, not in it | Built as a key and the settings file; the Options screen waits on DAOLib |
+| The movement arc, gold in reach, red too far | Built for a move, 2026-10-01: the path to the ground under the cursor, drawn by the turn bar's movie (`dev/UI.md`, "The movement preview"). Not yet seen in play. Still to do: an attack's walk, the ring |
+| On/off outside combat, not in it | Built: a key in the game's controls and a "Turn-based" section in its options (seen in play, play tests 13 and 14), and the settings file |
 
 ## Also needed, and what turn-based players will expect
 

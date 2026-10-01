@@ -184,3 +184,12 @@ TEST_CASE("[turns] charge is a list of an ability and its turns", "[settings]")
         CHECK_FALSE(wrong.warnings.empty());
     }
 }
+
+TEST_CASE("the movement preview is on by default and can be turned off", "[settings]")
+{
+    CHECK(tb::Settings{}.movePreview);
+    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.movePreview);
+    const tb::ParsedSettings off = tb::ParseSettings("[feedback]\nmove_preview = false\n");
+    CHECK_FALSE(off.settings.movePreview);
+    CHECK(off.warnings.empty());
+}

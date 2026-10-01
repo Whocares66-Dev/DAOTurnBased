@@ -26,6 +26,7 @@ add_executable(
     test_keys.cpp
     test_machine.cpp
     test_portraits.cpp
+    test_preview.cpp
     test_rules.cpp
     test_settings.cpp
     test_text.cpp
