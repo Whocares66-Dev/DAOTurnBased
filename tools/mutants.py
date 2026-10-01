@@ -359,6 +359,18 @@ MUTANTS = [
         "        if (held.seen == Condition::None || held.turns >= 0)",
     ),
     Mutant(
+        "a command that failed without acting keeps its action spent",
+        MACHINE,
+        "    budget_.actions = 1;\n    budget_.refunded = true;\n    Log(LogLevel::Info,\n        std::format(\"{}'s {} failed",
+        "    budget_.actions = 0;\n    budget_.refunded = true;\n    Log(LogLevel::Info,\n        std::format(\"{}'s {} failed",
+    ),
+    Mutant(
+        "the hero is not the one controlled after a fight",
+        MACHINE,
+        "        fx.push_back(Effect::Of(EffectKind::Select, hero_));\n    }\n    Emit(EventKind::FightOver",
+        "    }\n    Emit(EventKind::FightOver",
+    ),
+    Mutant(
         "a stun in a creature's own turn is waited out",
         MACHINE,
         "                currentStunned_ = true;\n",

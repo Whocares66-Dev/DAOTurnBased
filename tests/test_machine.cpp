@@ -129,8 +129,41 @@ TEST_CASE("the player's attack at something out of reach this turn is refused be
     w.Frame();
     CHECK(w.Said(L"Too far"));
     CHECK(w.machine.View().actionsLeft == 1);
-    // Within reach of the movement left, with a little slack for the approach.
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 9.4f) == Verdict::Allow);
+    // Past the movement left by a little: refused too, since the walk is a
+    // straight line and the path is never shorter (the third play test: 9.3
+    // m with 9.0 left, let through and cut short). Within it: let through.
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 9.3f) == Verdict::Block);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 9.0f) == Verdict::Allow);
+}
+
+TEST_CASE("the hero is the one the player controls once the fight is over", "[machine]")
+{
+    // The third play test: the last turn's companion stayed selected, and
+    // the first click after the fight moved her.
+    World w;
+    w.StartFight();
+    w.applied.clear();
+    w.Get(kGenlock).down = true;
+    w.Get(kHurlock).down = true;
+    w.RunFor(600);
+    CHECK(w.machine.OnPauseKey()); // the fight ends as the turn passes
+    w.RunFor(600);
+    REQUIRE_FALSE(w.machine.Active());
+    CHECK(w.Did(EffectKind::Select, kHero));
+}
+
+TEST_CASE("a hold that runs out by itself is heard as expired, a settings change and a handover too", "[events]")
+{
+    World w;
+    std::vector<std::string> kinds;
+    w.machine.SetEventSink([&](const TurnEvent &e) { kinds.emplace_back(Name(e.kind)); });
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.StartFight();
+    w.Get(kGenlock).condition = Condition::None; // worn off
+    w.RunFor(600);
+    CHECK(std::ranges::count(kinds, std::string{"condition_expired"}) == 1);
+    w.machine.SetSettings(Fixed());
+    CHECK(std::ranges::count(kinds, std::string{"settings_changed"}) == 1);
 }
 
 TEST_CASE("an AI's attack at something far away goes on and closes in", "[machine]")
@@ -1447,4 +1480,23 @@ TEST_CASE("party control changed in a companion's turn hands the turn to whoever
     CHECK(w.Did(EffectKind::Select, kCompanion));
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
     CHECK(w.machine.OnPauseKey());
+}
+
+TEST_CASE("a command that failed without acting gives its action back, once a turn", "[machine]")
+{
+    // The third play test: an attack the engine failed with an invalid path,
+    // its action spent all the same.
+    World w;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
+    REQUIRE(w.machine.View().actionsLeft == 0);
+    CHECK_FALSE(
+        w.machine.OnCommandFailed(kGenlock, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH")); // not its turn
+    CHECK_FALSE(w.machine.OnCommandFailed(kHero, CommandType::MoveToLocation, "COMMAND_FAILED_INVALID_PATH"));
+    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH"));
+    CHECK(w.machine.View().actionsLeft == 1);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
+    CHECK_FALSE(w.machine.OnCommandFailed(kHero, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH")); // once
+    CHECK(w.machine.View().actionsLeft == 0);
 }

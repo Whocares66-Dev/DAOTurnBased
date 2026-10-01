@@ -3,6 +3,7 @@
 #include "core/Rules.h"
 
 #include "dao/Addresses.h"
+#include "dao/CommandEvents.h"
 #include "dao/Gda.h"
 #include "dao/Hook.h"
 #include "dao/Log.h"
@@ -461,8 +462,48 @@ void SetPathCheck(bool on)
     g_pathCheck.store(on);
 }
 
+namespace
+{
+
+// A command that failed without acting gives its action back (DAOLib's
+// command events, 38eea39, not yet seen in play): the failures that did
+// nothing. A target destroyed or a timeout may have acted, and a creature
+// disabled is its condition's business.
+bool DidNothing(std::int32_t result)
+{
+    switch (result)
+    {
+    case k::COMMAND_FAILED_INVALID_PATH:
+    case k::COMMAND_FAILED_NO_LINE_OF_SIGHT:
+    case k::COMMAND_FAILED_NO_SPACE_IN_MELEE_RING:
+    case k::COMMAND_FAILED_PATH_ACTION_REQUIRED:
+    case k::COMMAND_FAILED_INVALID_DATA:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
+{
+    // On the game's thread, inside the command step: the machine only
+    // counts, and queues or clears nothing.
+    dao::commands::OnEnd([&machine, &mutex](ObjectId object, const dao::Command &command, std::int32_t result) {
+        if (!DidNothing(result))
+        {
+            return;
+        }
+        const auto type = static_cast<CommandType>(static_cast<int>(command.Type()));
+        const std::lock_guard lock(mutex);
+        (void)machine.OnCommandFailed(object, type, dao::commands::ResultName(result));
+    });
+}
+
+} // namespace
+
 bool InstallGate(TurnMachine &machine, std::mutex &mutex)
 {
+    WatchCommandEnds(machine, mutex);
     g_machine = &machine;
     g_mutex = &mutex;
     const bool queue = Place(g_queue, dao::addr::kCCObject_QueueCommand, &QueueCommand, "CCObject::QueueCommand");

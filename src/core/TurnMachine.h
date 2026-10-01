@@ -326,6 +326,12 @@ class TurnMachine
     // run repeats with the same seed.
     void Reseed(std::uint64_t seed);
 
+    // From the game (DAOLib's command events): a creature's command ended
+    // in a failure that did nothing, `why` the failure's name. The current
+    // creature's action, spent when the gate let it through, is given back
+    // once a turn, as for an approach cut short. True if it was.
+    bool OnCommandFailed(ObjectId who, CommandType type, std::string_view why);
+
     // Typed events, as they happen (core/Events.h): called under the same
     // lock as everything else, from inside Step and the gate's calls.
     void SetEventSink(EventSink sink)
@@ -340,10 +346,12 @@ class TurnMachine
     static constexpr float kOvershoot = 0.3f;
     // One frame's move longer than this is a teleport, not walking.
     static constexpr float kTeleport = 5.0f;
-    // A target this much beyond the movement left still counts as in reach:
-    // the reach is from centre to centre, and an approach stops a little
-    // inside it.
-    static constexpr float kReachSlack = 0.5f;
+    // A target this much beyond the movement left still counts as in reach.
+    // None: the walk is a straight line, and the path is never shorter. At
+    // 0.5 m an attack needing 9.3 m with 9.0 left was let through and cut
+    // short 4 m from its target, the movement's own cut being 0.3 m past
+    // (the third play test, 2026-09-30).
+    static constexpr float kReachSlack = 0.0f;
     // An order with no command after this long, paused, has queued nothing
     // (and with `order_run_ms` is dispatched: the game runs until a command
     // comes, or that long has passed).

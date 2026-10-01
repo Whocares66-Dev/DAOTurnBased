@@ -22,7 +22,7 @@ enum class EventKind : std::uint8_t
     TurnStarted,        // who; detail: "yours" or "AI"; value: tenths of a meter to move
     TurnResumed,        // who: after a conversation, the same turn
     TurnEnded,          // who; detail: why ("done", "ended by the player", ...)
-    TurnLost,           // who: its condition took it; value: turns still owed
+    TurnLost,           // who: its condition took it (a turn turn_ended closes); value: turns still owed
     Refused,            // who; detail: what the player was told ("Too far", ...); command; note: the numbers
     Joined,             // who; value: its initiative
     Fell,               // who
@@ -34,6 +34,10 @@ enum class EventKind : std::uint8_t
     CooldownHeld,       // who; value: the ability; detail: the turns, as text
     CooldownReleased,   // who; value: the ability
     SpeedSet,           // value: the game's speed, thousandths
+    TurnHandedOver,     // who: party control changed mid-turn; detail: "the player's" or "its AI's"
+    SettingsChanged,    // the settings were set anew (a reload, a tool)
+    ConditionExpired,   // who: a hold ran out by itself, the machine not ending it
+    ActionGivenBack,    // who: its command failed without acting; detail: how; command
 };
 
 // snake_case, as the bus's topics take it: "turn_started".

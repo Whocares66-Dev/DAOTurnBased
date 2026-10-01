@@ -148,6 +148,7 @@ void TurnMachine::SetSettings(const Settings &settings)
     const Combatant *current = order_.Current();
     const bool playerBefore = current != nullptr && PlayerControls(*current);
     settings_ = settings;
+    Emit(EventKind::SettingsChanged);
     if (current == nullptr || !Active() || PlayerControls(*current) == playerBefore)
     {
         return;
@@ -161,6 +162,7 @@ void TurnMachine::SetSettings(const Settings &settings)
     {
         Log(LogLevel::Info, std::format("{}'s turn is {} now", Utf8(current->name),
                                         PlayerControls(*current) ? "the player's" : "its AI's"));
+        Emit(EventKind::TurnHandedOver, current->id, PlayerControls(*current) ? "the player's" : "its AI's");
         Handover(*current, pending_);
     }
 }
@@ -1155,6 +1157,13 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
 void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
 {
     Log(LogLevel::Info, std::format("the turn-based fight is over after {} rounds: {}", order_.Round(), why));
+    // The hero, the player's own, is who they control after: the last turn's
+    // companion stayed selected, and the first click after the fight moved
+    // her (the third play test, 2026-09-30).
+    if (const Combatant *hero = hero_ != kNoObject ? order_.Find(hero_) : nullptr; hero != nullptr && !hero->down)
+    {
+        fx.push_back(Effect::Of(EffectKind::Select, hero_));
+    }
     Emit(EventKind::FightOver, kNoObject, std::string{why});
     HoldUsed(fx);
     ReleaseCooldowns(fx);
@@ -1272,6 +1281,11 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
             {
                 currentStunned_ = true;
             }
+        }
+        if (held.seen != Condition::None && status.condition == Condition::None)
+        {
+            // Run out by itself (the machine's ending forgets it at once).
+            Emit(EventKind::ConditionExpired, c->id);
         }
         held.seen = status.condition;
         if (status.condition == Condition::None)
@@ -1653,6 +1667,25 @@ MachineState TurnMachine::State() const
     state.speed = speedSet_;
     state.heldByEffect = heldByEffect_;
     return state;
+}
+
+// A companion's AI spent her action twice on an attack the engine then
+// failed with COMMAND_FAILED_INVALID_PATH, in a doorway (the third play
+// test, 2026-09-30).
+bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::string_view why)
+{
+    const Combatant *current = order_.Current();
+    if (!Active() || current == nullptr || current->id != who || Classify(type) != CommandKind::Action ||
+        budget_.actions != 0 || budget_.refunded)
+    {
+        return false;
+    }
+    budget_.actions = 1;
+    budget_.refunded = true;
+    Log(LogLevel::Info,
+        std::format("{}'s {} failed ({}): its action is given back", Utf8(current->name), Name(type), why));
+    Emit(EventKind::ActionGivenBack, who, std::string{why}, 0, Name(type));
+    return true;
 }
 
 void TurnMachine::Reseed(std::uint64_t seed)

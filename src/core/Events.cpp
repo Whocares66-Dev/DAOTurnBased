@@ -47,6 +47,14 @@ const char *Name(EventKind kind)
         return "cooldown_released";
     case EventKind::SpeedSet:
         return "speed_set";
+    case EventKind::TurnHandedOver:
+        return "turn_handed_over";
+    case EventKind::SettingsChanged:
+        return "settings_changed";
+    case EventKind::ConditionExpired:
+        return "condition_expired";
+    case EventKind::ActionGivenBack:
+        return "action_given_back";
     }
     return "?";
 }
