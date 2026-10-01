@@ -96,6 +96,7 @@ struct Reached
     float distance = 0.0f;
     float reach = 0.0f;
     std::int32_t weaponType = -1; // the main hand's base item type; -1 for none
+    bool door = false;            // the game's path to the target ends at a shut door
 };
 
 // path_check (Settings::pathCheck): the player's orders measured by the
@@ -120,6 +121,8 @@ std::atomic<bool> g_pathOnDemand{false};
 // The first FindPath drove the creature's own search and left it as its
 // path: the hero's read 15.6 m all fight and every order of his was
 // refused (the second play test, 2026-09-30), and DAOLib took it out.
+constexpr std::int32_t kDoorInTheWay = 6; // PathSearch::result
+
 std::optional<float> PathLength(ObjectId creature, const dao::Vector &to, ObjectId toward = dao::kInvalidObject)
 {
     const std::optional<dao::world::WalkPath> path = dao::world::FindPath(creature, to, toward);
@@ -172,12 +175,25 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     {
         spdlog::debug("attack on {:#010x}: its creature is at a command already; judged by the straight line", *target);
     }
-    else if (byPath && g_pathCheck.load())
+    bool door = false;
+    if (byPath && g_pathCheck.load() && atRest)
     {
-        path = PathLength(attacker, api::GetPosition(*target), *target);
-        if (!path)
+        // The whole search, for why there is no path: the pathfinder's
+        // answer 6 is a door or the like in the way, what the game ends a
+        // move at with COMMAND_FAILED_PATH_ACTION_REQUIRED (DAOLib's
+        // Pathfind, seen in play behind the Elven Ruins' shut doors).
+        const dao::Vector to = api::GetPosition(*target);
+        const dao::world::PathSearch search = dao::world::Pathfind(attacker, to, *target);
+        if (search.path && !search.path->waypoints.empty())
         {
-            spdlog::debug("attack on {:#010x}: the game finds no path to it; judged by the straight line", *target);
+            const dao::Vector &end = search.path->waypoints.back();
+            path = search.path->Length() + std::hypot(end.x - to.x, end.y - to.y);
+        }
+        else
+        {
+            door = search.result == kDoorInTheWay;
+            spdlog::debug("attack on {:#010x}: the game finds no path to it ({}); {}", *target, search.result,
+                          door ? "a door is in the way" : "judged by the straight line");
         }
     }
     // Never less than the straight line: a path that ends short of it is
@@ -192,7 +208,7 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     {
         spdlog::debug("attack on {:#010x}: {:.1f} m away, reach {:.1f} m", *target, distance, reach);
     }
-    return Reached{WalkToReach(walked, reach), walked, reach, weaponType};
+    return Reached{WalkToReach(walked, reach), walked, reach, weaponType, door};
 }
 
 // A player's move, measured as the engine would walk it.
@@ -336,6 +352,7 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             request.source = source;
             request.inCombat = creature != nullptr && creature->CombatState() != 0;
             request.walk = walk;
+            request.doorInTheWay = reached && reached->door;
             if (type == CommandType::UseAbility)
             {
                 DescribeAbility(*self, *command, request);

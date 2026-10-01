@@ -2465,3 +2465,125 @@ TEST_CASE("a door opened shows a room: who fights there joins as the order ends,
     CHECK(
         std::ranges::any_of(events, [](const TurnEvent &e) { return e.kind == EventKind::Joined && e.who == 0x202; }));
 }
+
+TEST_CASE("the player's attack with a shut door in the way is refused, with why", "[machine]")
+{
+    // The ninth play test: told to attack through a shut door from 12 m,
+    // the game's own answer left the creature standing at "use object".
+    World w;
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CommandRequest attack;
+    attack.object = kHero;
+    attack.type = CommandType::Attack;
+    attack.source = Source::Player;
+    attack.inCombat = true;
+    attack.walk = 2.0f;
+    attack.doorInTheWay = true;
+    CHECK(w.Queue(attack) == Verdict::Block);
+    w.Frame();
+    CHECK(w.Said(L"A door is in the way"));
+    CHECK(w.machine.View().actionsLeft == 1);
+    REQUIRE(!events.empty());
+    CHECK(events.back().kind == EventKind::Refused);
+    CHECK(events.back().detail == "A door is in the way");
+    // The door opened, the same attack is taken.
+    attack.doorInTheWay = false;
+    CHECK(w.Queue(attack) == Verdict::Allow);
+    // An AI's is not refused for it: the game opens doors for its own.
+    World ai;
+    ai.StartFight();
+    (void)ai.machine.OnPauseKey();
+    for (int i = 0; i < 20 && ai.Current() != kGenlock; ++i)
+    {
+        ai.Frame();
+    }
+    REQUIRE(ai.Current() == kGenlock);
+    ai.Frame(); // its turn begins
+    ai.Frame();
+    attack.object = kGenlock;
+    attack.source = Source::Script;
+    attack.doorInTheWay = true;
+    CHECK(ai.Queue(attack) == Verdict::Allow);
+}
+
+TEST_CASE("standing at a door's use without a step, a creature is stopped; the player's turn goes on", "[machine]")
+{
+    // The game's own answer to an attack through a shut door: the door's
+    // use, the attack behind it, and the creature standing for good.
+    World w;
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 2.0f) == Verdict::Allow);
+    w.RunFor(100);
+    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_PATH_ACTION_REQUIRED"));
+    CHECK(w.Order(kHero, CommandType::UseObject, Source::Script) == Verdict::Allow);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 2.0f) == Verdict::Allow);
+    REQUIRE(w.machine.View().actionsLeft == 0);
+    w.Get(kHero).current = CommandType::UseObject; // the door first, the attack behind it
+    w.applied.clear();
+    w.RunFor(2000);
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero)); // not yet
+    w.RunFor(1000);
+    CHECK(w.Did(EffectKind::ClearCommands, kHero));
+    CHECK(w.machine.View().actionsLeft == 1); // the attack never began
+    w.RunFor(2000);
+    CHECK(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(std::ranges::none_of(
+        w.log, [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
+    CHECK(std::ranges::any_of(events, [](const TurnEvent &e) {
+        return e.kind == EventKind::ActionGivenBack && e.detail == "stood still at a use object";
+    }));
+}
+
+TEST_CASE("a creature walking to a door, or swinging where it stands, is not taken for stuck", "[machine]")
+{
+    World w;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    // Walking: a step every frame.
+    CHECK(w.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
+    w.applied.clear();
+    w.Get(kHero).moving = true;
+    for (int i = 0; i < 250; ++i) // 4 s, 4 m
+    {
+        w.Get(kHero).position.x += 0.016f;
+        w.Frame();
+    }
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+    w.Get(kHero).moving = false;
+    w.Finish(kHero);
+    w.RunFor(1000);
+    REQUIRE(w.Current() == kHero);
+    // Swinging: four seconds on the spot at an attack.
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
+    w.applied.clear();
+    w.RunFor(4000);
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+}
+
+TEST_CASE("an AI standing at a move it does not take is stopped, and its turn ends", "[machine]")
+{
+    World w;
+    w.StartFight();
+    (void)w.machine.OnPauseKey();
+    w.onPoke = [&](ObjectId id) { CHECK(w.Order(id, CommandType::MoveToObject, Source::Script) == Verdict::Allow); };
+    for (int i = 0; i < 20 && w.Current() != kGenlock; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kGenlock);
+    w.applied.clear();
+    w.RunFor(4000);
+    CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
+    w.Finish(kGenlock);
+    w.RunFor(1500);
+    CHECK(w.Current() != kGenlock);
+    CHECK(std::ranges::none_of(
+        w.log, [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
+}

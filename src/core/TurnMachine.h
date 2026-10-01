@@ -177,6 +177,13 @@ struct CommandRequest
     // (WalkToReach), when the game layer could tell. A player's attack that
     // cannot reach this turn is refused before a step is taken.
     std::optional<float> walk;
+    // For an attack: the game's own path to the target ends at a shut door
+    // (src/game/Gate.cpp). The player's is refused: told to attack through
+    // one from a way off, the game queues the door's use and the attack
+    // again, and its creature walks a few metres and stands at "use
+    // object" for good, the mod on or off (the ninth play test,
+    // 2026-10-01). Opening the door first costs no action.
+    bool doorInTheWay = false;
     // For a use of an ability: which, its cooldown in seconds (the ability
     // table's), and whether it is a sustained one (UseType 2) and already
     // on, so that this use turns it off.
@@ -594,6 +601,16 @@ class TurnMachine
     std::uint32_t roundAgedMs_ = 0;
     std::optional<std::uint32_t> ownEffectSince_; // the world's clock as the action's own effect was last aged
     static constexpr std::uint32_t kOwnEffectStepMs = 250;
+    // A creature at a walk it does not take: at a move, or at the use of a
+    // door or the like (whose walk is a step of the command), and not a
+    // step taken in this long. It is stopped: the engine would leave it
+    // there (the door above), and max_action_ms is twelve seconds of the
+    // world standing and the turn lost. An attack or a talent stands still
+    // while it swings, and is not judged so.
+    std::optional<Vec3> stoodAt_;
+    std::uint32_t stoodSince_ = 0;
+    static constexpr std::uint32_t kStoodMs = 2500;
+    static constexpr float kStoodStill = 0.05f;
     // An action running on its own effect's time ends when that time has
     // run, and has this many times max_action_ms to do it in: the pounce
     // took 9.7 s of the 12 (seen in play, 2026-10-01), and a longer one

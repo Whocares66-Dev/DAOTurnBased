@@ -254,8 +254,8 @@ MUTANTS = [
     Mutant(
         "an AI an effect let go within the grace is never told again",
         MACHINE,
-        "            Handover(*current, fx);\n            return;\n        }\n    }\n    if (actor.busy)",
-        "            return;\n        }\n    }\n    if (actor.busy)",
+        "            Handover(*current, fx);\n            return;\n        }\n    }\n    // Standing at a walk it does not take (kStoodMs)",
+        "            return;\n        }\n    }\n    // Standing at a walk it does not take (kStoodMs)",
     ),
     Mutant(
         "a conversation before the fight has started skips its start",
@@ -380,8 +380,8 @@ MUTANTS = [
     Mutant(
         "an AI's turn let go by an effect pokes it while still selected",
         MACHINE,
-        "            Handover(*current, fx);\n            return;\n        }\n    }\n    if (actor.busy)",
-        "            fx.push_back(Effect::Of(EffectKind::PokeAi, current->id));\n            return;\n        }\n    }\n    if (actor.busy)",
+        "            Handover(*current, fx);\n            return;\n        }\n    }\n    // Standing at a walk it does not take (kStoodMs)",
+        "            fx.push_back(Effect::Of(EffectKind::PokeAi, current->id));\n            return;\n        }\n    }\n    // Standing at a walk it does not take (kStoodMs)",
     ),
     Mutant(
         "the last enemy fallen outside an attack leaves the fight waiting",
@@ -586,6 +586,30 @@ MUTANTS = [
         MACHINE,
         "    wantScan_ = true;\n    phase_ = Phase::AwaitingOrder;\n}",
         "    phase_ = Phase::AwaitingOrder;\n}",
+    ),
+    Mutant(
+        "an attack through a shut door is let through",
+        MACHINE,
+        "        if (player && asked && request.doorInTheWay)",
+        "        if (player && asked && request.doorInTheWay && request.inCombat && !request.inCombat)",
+    ),
+    Mutant(
+        "a creature standing at a walk is left to max_action_ms",
+        MACHINE,
+        "        else if (clock_ - stoodSince_ >= kStoodMs)",
+        "        else if (clock_ - stoodSince_ >= kStoodMs * 1000)",
+    ),
+    Mutant(
+        "a swing on the spot is taken for standing at a walk",
+        MACHINE,
+        "(at == CommandKind::Move || at == CommandKind::Free))",
+        "(at == CommandKind::Move || at == CommandKind::Free || at == CommandKind::Action))",
+    ),
+    Mutant(
+        "an action that waited behind a walk is lost when it is stopped",
+        MACHINE,
+        "            if (waited)\n            {\n                budget_.actions = 1;",
+        "            if (waited)\n            {\n                budget_.actions = 0;",
     ),
     Mutant(
         "a stun in a creature's own turn is waited out",

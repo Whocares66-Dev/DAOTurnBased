@@ -1107,6 +1107,41 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
             return;
         }
     }
+    // Standing at a walk it does not take (kStoodMs): stopped. The player's
+    // turn goes on, and an action that waited behind the walk and never
+    // began is given back; an AI's turn ends as its command does.
+    const CommandKind at = Classify(actor.current);
+    if (actor.busy && !heldByEffect_ && (at == CommandKind::Move || at == CommandKind::Free))
+    {
+        if (!stoodAt_ || Distance(*stoodAt_, actor.position) > kStoodStill)
+        {
+            stoodAt_ = actor.position;
+            stoodSince_ = clock_;
+        }
+        else if (clock_ - stoodSince_ >= kStoodMs)
+        {
+            const Combatant *current = order_.Current();
+            const bool waited =
+                budget_.lastKind == CommandKind::Action && budget_.actions == 0 && budget_.lastType != actor.current;
+            Log(LogLevel::Info,
+                std::format("{} stood {} ms at a {} without a step: stopped{}",
+                            current != nullptr ? Utf8(current->name) : std::string{"?"}, clock_ - stoodSince_,
+                            Name(actor.current), waited ? "; the action waiting behind it is given back" : ""));
+            if (waited)
+            {
+                budget_.actions = 1;
+                Emit(EventKind::ActionGivenBack, actor.id, std::format("stood still at a {}", Name(actor.current)), 0,
+                     Name(budget_.lastType));
+            }
+            fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
+            stoodAt_.reset();
+            return;
+        }
+    }
+    else
+    {
+        stoodAt_.reset();
+    }
     if (actor.busy)
     {
         idleTicks_ = 0;
@@ -1760,6 +1795,15 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
                 Refused(level, std::format("{}: {} held, no action left{}", Utf8(who->name), Name(request.type),
                                            echo ? " (the order just taken, again)" : ""));
             }
+            return Verdict::Block;
+        }
+        // A shut door between the player's creature and its target
+        // (CommandRequest::doorInTheWay): refused, with why.
+        if (player && asked && request.doorInTheWay)
+        {
+            Refuse(who->id, L"A door is in the way", request.type, "open it first: that costs no action");
+            Log(LogLevel::Info,
+                std::format("{}: {} refused, a door is in the way of the walk", Utf8(who->name), Name(request.type)));
             return Verdict::Block;
         }
         // The player's order at something out of reach this turn is
