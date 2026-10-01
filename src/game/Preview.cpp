@@ -31,8 +31,11 @@ namespace api = dao::script::api;
 // The cursor's point must move this far for the path to be searched again,
 // and a search is not made more often than this: the pathfinder's search is
 // capped at 30 ms (src/game/Gate.cpp's PathLength), which is a frame or
-// two, and a straight walk costs nothing.
-constexpr float kMoved = 0.25f;
+// two, and a straight walk costs nothing. In play a sweep of forty places
+// kept 57 to 61 frames a second and the searches were 0 to 16 ms (the
+// seventeenth play test), so a tenth of a meter, where it was a quarter:
+// between searches the path's end follows the cursor anyway.
+constexpr float kMoved = 0.1f;
 constexpr std::uint32_t kSearchEveryMs = 150;
 
 // The game's own marker for where a move goes (the user, 2026-10-01: "the
@@ -303,10 +306,17 @@ void Preview::Search(ObjectId walker, const Vec3 &from, const Vec3 &to, std::uin
                 path_.push_back(point);
             }
         }
+        // Its last point is the cursor's, which Update keeps there.
         if (Flat(path_.back(), to) > 0.05f)
         {
             path_.push_back(to);
         }
+        else
+        {
+            path_.back() = to;
+        }
+        route_ = found->Length();
+        routeEnd_ = Of(found->waypoints.back());
     }
     // The first few, and any slow one; and every fifty, what they cost: a
     // sweep of the cursor is many searches.
@@ -335,8 +345,12 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
         return;
     }
     Compare(nowMs);
+    // With less than a step left a move is held whatever its length
+    // ("no movement left"), and a red line to everywhere says nothing: in
+    // play it read "8.4 m of 0.0" wherever the cursor lay (the seventeenth
+    // play test).
     const bool waiting = enabled && view.active && view.playerTurn && view.phase == Phase::AwaitingOrder &&
-                         view.current != kNoObject && view.movementLeft > 0.0f;
+                         view.current != kNoObject && view.movementLeft >= TurnMachine::kMinStep;
     const dao::GameModeExplore *explore = waiting ? ExploreMode() : nullptr;
     // The ground only, for now: over a creature or a door the cursor's point
     // is the object's, and the preview of an attack's walk is still to do.
@@ -372,14 +386,25 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
         }
         return;
     }
-    const PathSplit split = SplitPath(path_, view.movementLeft);
+    path_.back() = to;
+    // Too far or not is the gate's to say when the click comes, by the
+    // length it measures (src/game/Gate.cpp's PathLength: the waypoints'
+    // length and the rest of the way to the point), so the preview measures
+    // the same and says the same. The line drawn begins at the creature's
+    // feet and so may be a little longer than that; by its own length the
+    // plate read "4.2 m of 4.0" in red and the click walked 4.0 m (the
+    // seventeenth play test). The difference is taken off where the line
+    // is cut, and the plate gives the gate's number.
+    const float order = route_ + Flat(routeEnd_, to);
+    const float drawn = PathLength(path_);
+    const PathSplit split = SplitPath(path_, view.movementLeft + (drawn - order));
     PreviewView shown;
     if (const std::optional<dao::world::ViewSize> size = dao::world::ScreenSize())
     {
         shown.width = size->width;
         shown.height = size->height;
     }
-    shown.length = split.length;
+    shown.length = order;
     shown.meters = view.movementLeft;
     shown.reach = OnScreen(split.reach);
     // Where the move would go, the game's marker; past the movement left

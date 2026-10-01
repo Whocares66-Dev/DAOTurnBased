@@ -68,6 +68,8 @@ class Preview
     bool searched_ = false;
     std::uint32_t searchedAt_ = 0;
     std::vector<Vec3> path_; // empty: the game finds no path there
+    float route_ = 0;        // the waypoints' own length, as the gate measures an order
+    Vec3 routeEnd_;          // the last of them
     int logged_ = 0;
     // The game's movement marker at the path's end, while one is placed,
     // and the area it was placed in: an effect goes with its area, and its

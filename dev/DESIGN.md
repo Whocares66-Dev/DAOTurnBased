@@ -212,7 +212,7 @@ A module script can handle them like any other event. A new script command (`IsT
 | Whose turn and who is next, BG3's portrait bar | A prototype is built: the movie (`ui/turnorder`, `dev/images/turnorder-sample.png`), the plugin's side and the screen. Everyone's portraits come from the engine: the party's as the game has them, everyone else's rendered as the party's are (`dev/UI.md`, "Portraits"). Not yet seen in the game |
 | One attack or ability per turn | Built |
 | Movement per turn | Built: speed-based, measured, enforced |
-| The movement arc, gold in reach, red too far | Built for a move, 2026-10-01: the path to the ground under the cursor, drawn by the turn bar's movie (`dev/UI.md`, "The movement preview"). Seen in play (play test 15). Still to do: an attack's walk, the ring |
+| The movement arc, gold in reach, red too far | Built for a move, 2026-10-01: the path to the ground under the cursor, drawn by the turn bar's movie, ending in the game's own movement marker on the ground (`dev/UI.md`, "The movement preview"). Seen in play (play test 17): the clicks kept, the walk within a third of a meter of the path shown. Still to do: an attack's walk, the ring |
 | On/off outside combat, not in it | Built: a key in the game's controls and a "Turn-based" section in its options (seen in play, play tests 13 and 14), and the settings file |
 
 ## Also needed, and what turn-based players will expect
