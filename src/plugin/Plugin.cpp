@@ -360,18 +360,24 @@ void LookForEluvian()
     check(
         e.RegisterInspectKind(
             "turnbased.state",
-            R"({"description": "The turn-based fight now: whether one is on, its phase and round, whose turn and what )"
-            R"(that creature has left (action, meters), the order to come with each card's health, mana or stamina, )"
-            R"(side and whether the player commands it, the conditions holding creatures and the turns they owe, the )"
-            R"(cooldowns held for turns, the player's last refusal, and the game's speed. Ids are 0x... strings."})",
+            R"({"description": "The turn-based combat mod's fight now. Top: active, phase (awaiting order, AI )"
+            R"(thinking, executing, settling, turn start, idle...), round, world_ms; current {id, name, side, yours} )"
+            R"(of whose turn it is (null between turns; yours when the player plays it); actions_left, )"
+            R"(movement_left, movement_max; speed (the game's, as the mod set it) and speed_took; held_by_effect; )"
+            R"(last_refusal. order: the turns to come, current first, each {id, name, side, rank, health, energy, )"
+            R"(mana, down, current, yours, round}. held: conditions holding creatures {id, name, condition, )"
+            R"(turns_owed, on_clock}. cooldowns: abilities held for turns {id, ability, turns}. Ids are 0x... )"
+            R"(strings."})",
             &InspectState, nullptr, ELUVIAN_READ_ONLY),
         "turnbased.state");
-    check(
-        e.RegisterTool("turnbased_end_turn",
-                       R"({"description": "End the current party member's turn, as Space or the bar's End does. Only )"
-                       R"(on a turn the player plays.", "inputSchema": {"type": "object", "properties": {}}})",
-                       &EndTurnTool, nullptr, 0),
-        "turnbased_end_turn");
+    check(e.RegisterTool(
+              "turnbased_end_turn",
+              R"({"description": "End the current party member's turn, as Space or the bar's End does: what it has )"
+              R"(left is given up and the next creature's turn starts (turnbased.turn_ended, then )"
+              R"(turnbased.turn_started). Only on a turn the player plays (turnbased.state's current.yours); an error )"
+              R"(otherwise.", "inputSchema": {"type": "object", "properties": {}}})",
+              &EndTurnTool, nullptr, 0),
+          "turnbased_end_turn");
     check(e.RegisterTool(
               "turnbased_seed",
               R"({"description": "Seed initiative's rolls from now on (a joiner's, the next fight's), so a )"
@@ -383,7 +389,8 @@ void LookForEluvian()
         e.RegisterTool(
             "turnbased_settings",
             R"({"description": "Read turnbased.ini (no arguments), or set one setting in it and apply it now: section, )"
-            R"(key and value as the ini has them, e.g. turns / ai_turn_speed / 2. Answers the parse's warnings.", )"
+            R"(key and value as the ini has them, e.g. turns / ai_turn_speed / 2 (the game's speed in AI turns), )"
+            R"(turns / party / tactics, turns / condition_turns / 1. Applied at once; answers the parse's warnings.", )"
             R"("inputSchema": {"type": "object", "properties": {"section": {"type": "string"}, "key": {"type": )"
             R"("string"}, "value": {"type": "string"}}}})",
             &SettingsTool, nullptr, 0),

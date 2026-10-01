@@ -32,10 +32,10 @@ What the first session in play found (2026-09-30), now fixed and held by scripte
 ```powershell
 .\tools\build.ps1 -Preset core -Test          # src/core and the tests only: no DAOLib, no plugin
 .\tools\build.ps1 -Preset core-cov -Coverage  # 64-bit clang-cl; per-file coverage, HTML in build\core-cov\coverage\html
-python tools\mutants.py                        # break the core 80 ways, one at a time; each must fail a test
+python tools\mutants.py                        # break the core 82 ways, one at a time; each must fail a test
 ```
 
-**Coverage** (2026-09-30): 90% of `src/core`'s regions, 89% of its lines, before the tests coverage prompted; what it showed unrun led to the arena's knockdowns, deaths mid-turn and vanishing creatures, and to a key-formatting bug (a key with no name was written `0x` and its decimal code). **Mutants** (`tools/mutants.py`): each breaks one promise (the gate letting anyone act, an action never spent, the pause never taken, the turn never passing on, a joiner's place ignored, ...), builds, and runs the suite; a survivor is a promise no test holds. 80 of 80 caught (2026-09-30). A new promise gets a mutant of its own.
+**Coverage** (2026-09-30): 90% of `src/core`'s regions, 89% of its lines, before the tests coverage prompted; what it showed unrun led to the arena's knockdowns, deaths mid-turn and vanishing creatures, and to a key-formatting bug (a key with no name was written `0x` and its decimal code). **Mutants** (`tools/mutants.py`): each breaks one promise (the gate letting anyone act, an action never spent, the pause never taken, the turn never passing on, a joiner's place ignored, ...), builds, and runs the suite; a survivor is a promise no test holds. 82 of 82 caught (2026-09-30). A new promise gets a mutant of its own.
 
 A lesson from the second pass: the reach check changed the arena's random draws, and two mutants that the fights had caught survived. The refund limit and a joiner being stopped had been held only by rare sequences, which the new streams no longer reached in seeds 1-80. So a promise the random fights happen to hold gets a scripted test as well (`test_machine.cpp`: "an action stopped short is given back once a turn", "a creature that joins the fight stops what it was doing"), and the mutants are run after any change to the arena, not only to the core. It happened again with the unnamed holds: "a conversation between two turns resumes a turn never begun" survived, and got its scripted test.
 
@@ -54,7 +54,7 @@ What these do not establish is the engine side: that `src/game` reads and does w
 
 Logs and settings are in `Documents\BioWare\Dragon Age\daolib\` (on this machine under OneDrive): `turnbased.log`, `turnbased.ini`, `loader.log`, and `crash-<time>.log` if the game crashes. Set `DAOLIB_LOG_LEVEL=debug` in the environment before starting the game for the gate's refusals and every effect applied; info shows the turns.
 
-Beside the log, `turnbased.events.jsonl` has the machine's events as JSON, a line each (`src/core/Events.h`): `fight_began`, `round_started`, `turn_started` (`detail` yours or AI, `value` tenths of a meter to move), `turn_ended` (`detail` why), `turn_lost`, `turn_resumed`, `refused` (`detail` what the player was told, `command` the command refused, `note` its numbers: `12.1 m to walk, 9.0 m left`), `joined`, `fell`, `gone`, `up_again`, `condition_held`, `condition_ended`, `condition_still_held`, `cooldown_held`, `cooldown_released`, `speed_set`, `fight_over`. Each has `ms` (real), `world_ms` (the fight's clock), `round`, and `id` (unpadded, `0x82`, as the log and Eluvian write ids) and `name` when about a creature. A game's start appends a `session_started` line with its process id; the file starts over past 5 MB. Assert on these rather than the log's prose: they are what a test server (Eluvian) will carry.
+Beside the log, `turnbased.events.jsonl` has the machine's events as JSON, a line each (`src/core/Events.h`): `fight_began`, `round_started`, `turn_started` (`detail` yours or AI, `value` tenths of a meter to move), `turn_ended` (`detail` why), `turn_lost`, `turn_resumed`, `refused` (`detail` what the player was told, `command` the command refused, `note` its numbers: `12.1 m to walk, 9.0 m left`), `joined`, `fell`, `gone`, `up_again`, `condition_held`, `condition_ended`, `condition_still_held`, `cooldown_held`, `cooldown_released`, `speed_set`, `turn_handed_over` (party control changed mid-turn: `detail` the player's or its AI's), `settings_changed`, `condition_expired` (a hold ran out by itself), `action_given_back` (a command failed without acting: `detail` the failure, `command`), `fight_over`. A `turn_lost` opens a turn that its `turn_ended` closes, with no `turn_started`. Each has `ms` (real), `world_ms` (the fight's clock), `round`, and `id` (unpadded, `0x82`, as the log and Eluvian write ids) and `name` when about a creature. A game's start appends a `session_started` line with its process id; the file starts over past 5 MB. Assert on these rather than the log's prose: they are what a test server (Eluvian) will carry.
 
 DAOLib's probe can stay deployed beside the mod: both hook `QueueCommand` and the pause key, and chain.
 
@@ -104,6 +104,31 @@ Once a fight plays as above. Build the movie (`python tools\movie.py`), deploy (
 - **`party = tactics`**: companions play their own turns; the hero stays selected on theirs.
 - **`camera_follow = true`** (experimental): the camera should centre on whoever's turn it is. If the game crashes on the first turn with this on, turn it off and send the crash log.
 - **`round_min_seconds = 6`**: the world runs on briefly at the end of short rounds, nobody acting.
+
+## Through Eluvian
+
+Eluvian (`C:\project\DAOEluvianMCP`, eluvian-agent's) is the development bench's MCP server inside the game: with `eluvian.dll` in `daolib\plugins`, an agent drives a fight by HTTP rather than the mouse. Its general tools (inspect creatures, order, script, events, wait_for, scenario) are in its `dev/PLAYBOOK.md`; the mod registers its own on the first frame (`src/plugin/Plugin.cpp`), and `turnbased.log` says `registered with Eluvian (build N): 4 of 4 ...`. Ids everywhere are unpadded strings, `"0x82"`, as Eluvian's own.
+
+**`inspect kind=turnbased.state`**, the fight now (`src/core/State.h`):
+
+| Field | What |
+|---|---|
+| `active`, `phase`, `round`, `world_ms` | whether a fight is on; the machine's phase (`awaiting order`, `AI thinking`, `executing`, `settling`, `turn start`, `idle`, ...); the round; the fight's clock in the world's milliseconds |
+| `current` | `{id, name, side, yours}` of whose turn it is (`side` party, ally or enemy; `yours` when the player plays it), null between turns |
+| `actions_left`, `movement_left`, `movement_max` | what the current creature has left |
+| `speed`, `speed_took` | the game's speed the mod last set (`ai_turn_speed` in an AI's turn, else 1), and whether the game took it (null before any) |
+| `held_by_effect`, `last_refusal` | the current creature held in an effect's command; the last refusal logged |
+| `order` | the turns to come, the current first: `{id, name, side, rank, health, energy, mana, down, current, yours, round}` (health and energy 0 to 1, `mana` for a mage's) |
+| `held` | creatures a condition holds: `{id, name, condition, turns_owed, on_clock}` |
+| `cooldowns` | abilities held for turns: `{id, ability, turns}` |
+
+`player_turn` mirrors `current.yours` for one build more, then goes.
+
+**Tools.** `turnbased_end_turn` (no arguments): ends the player's turn, as Space or End; an error when it is not a turn the player plays. `turnbased_seed {"seed": 42}`: initiative's rolls from now on (a joiner's, the next fight's). `turnbased_settings`: no arguments reads `turnbased.ini`; `{"section": "turns", "key": "ai_turn_speed", "value": "2"}` sets one and applies it at once, answering the parse's warnings. The game's speed is the mod's: set it through `ai_turn_speed`, not Eluvian.
+
+**Events**, on Eluvian's bus as `turnbased.<event>`, the same as `turnbased.events.jsonl`'s lines (above): each `{ms, world_ms, round, event, id?, name?, detail?, command?, note?, value}`. `turnbased.refused` is `{id, name, detail, command, note}`: `detail` the player's floaty (`Too far`, `Not Dog's turn`, `No action left`, `No movement left`, `Held`), `command` the command refused, `note` the numbers (`12.1 m to walk, 9.0 m left`). Wait on `turnbased.turn_started` with `detail` `yours` for the player's turn, `turnbased.turn_ended` for its end, `turnbased.fight_over` for the end.
+
+**What a real mouse still has to do** (Eluvian's `order` goes through the queued command, not explore mode's click): the order lines and "the order queued no command"; a talent asking for its target (the quickbar's message); Space and the bar's End button themselves (the tool reaches the same end of turn).
 
 ## What to send back
 

@@ -19,7 +19,7 @@ Dragon Age: Origins fights in real time with pause. This mod makes a fight a seq
 2. **A party member's turn.** The game stays paused and that character is selected ("Alistair's turn" in gold over them). The player gives an order exactly as in the base game: click an enemy, pick an ability, click the ground. The game unpauses while it plays out, then pauses again. The player can move and act in either order until both are spent, or press the pause key to end the turn early. Ordering anyone else gets "Not Morrigan's turn".
 3. **An AI combatant's turn** (enemies, allies, and companions under the `tactics` setting). Its name floats over it (red for enemies), the game runs, its AI chooses and acts, and the turn passes. Nothing else moves meanwhile.
 4. A combatant who falls loses its turns. Fallen enemies leave the order at the end of the round; fallen party members stay in it, marked down, since they can be revived. A creature that joins mid-fight (reinforcements) stops whatever it was doing and waits for its first turn: this round if its initiative place is still to come, next round if it has passed.
-5. When no enemy is left standing, the fight ends, the game unpauses, and real time resumes. The game then leaves combat mode on its own, as it always does.
+5. When no enemy is left standing, the fight ends, the game unpauses, and real time resumes, the hero selected again (the last turn's companion stayed selected in play, 2026-09-30). The game then leaves combat mode on its own, as it always does.
 
 ## Movement: how far
 

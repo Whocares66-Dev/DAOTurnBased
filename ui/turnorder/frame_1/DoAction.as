@@ -435,7 +435,7 @@ function drawEndTurn(bar, x)
     clip.face(0);
     var text = label(clip, "caption", 5, 0, 0, END_W, END_H, 15, GOLD, "center", true);
     text.text = "End";
-    centre(text, 0, END_H);
+    centreWord(text, 0, END_H);
     clip.onRollOver = function()
     {
         this.face(1);
@@ -540,17 +540,24 @@ function caption()
     strip._visible = line.length > 0;
 }
 
-// A field's text centred up and down in a band: GFx puts a line at the
-// field's top, two pixels in.
+// A field's text centred up and down in a band, by its line: GFx puts a
+// line at the field's top, two pixels in. The round's number sat centred in
+// its ring this way in play; raised by the letters' measure it sat high
+// (the user, 2026-09-30).
 function centre(field, top, height)
 {
     field._height = field.textHeight + 4;
-    // The letters, not the line: the game's fonts leave a deep descent under
-    // the baseline, and a line centred sat its word low on the End button
-    // in play (the user, 2026-09-30, twice). The caps' middle is taken at
-    // two fifths of the ascent above the baseline, which sits two pixels in
-    // plus the ascent. Without the font's extent, the line raised by a sixth
-    // of its height, which is what the descent took in play.
+    field._y = top + (height - field.textHeight) / 2 - 2;
+}
+
+// A word centred on a button by its letters, not its line: End sat low on
+// its button by the line in play (the user, 2026-09-30, twice), the game's
+// title font leaving a deep descent under the baseline. The caps' middle is
+// taken at two fifths of the ascent above the baseline; without the font's
+// extent, the line raised by a sixth of its height.
+function centreWord(field, top, height)
+{
+    field._height = field.textHeight + 4;
     var extent = field.getNewTextFormat().getTextExtent(field.text);
     if (extent != undefined && extent.ascent > 0)
     {
