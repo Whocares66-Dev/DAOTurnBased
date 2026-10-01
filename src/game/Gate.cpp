@@ -469,17 +469,14 @@ namespace
 // command events, 38eea39, not yet seen in play): the failures that did
 // nothing. A target destroyed or a timeout may have acted, and a creature
 // disabled is its condition's business.
-bool DidNothing(CommandType type, std::int32_t result)
+bool DidNothing(std::int32_t result)
 {
-    // A door or a chest not used is not used at all: the engine's plain
-    // COMMAND_FAILED. Aedan's three tries at a door mid-fight each cost
-    // his action, the door shut (the seventh play test, 2026-10-01). For an
-    // attack or a talent the plain failure is not known to have done
-    // nothing.
-    if (type == CommandType::UseObject && result == k::COMMAND_FAILED)
-    {
-        return true;
-    }
+    // Not the result -1 a use of an object ends with. It ended so all five
+    // times in the seventh play test (2026-10-01): three tries at a door
+    // mid-fight that left it shut, and the two that opened it, the hero's
+    // outside a fight and a soldier's. So -1 there is how the command ends,
+    // not a failure, and giving the action back for it (3550cce did, for an
+    // hour) made every object used in a fight free.
     switch (result)
     {
     case k::COMMAND_FAILED_INVALID_PATH:
@@ -506,12 +503,12 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
         // Every failure, to read what a command that seemed to do nothing
         // ended with (an archer's shot charged its cooldown for nothing, the
         // fourth play test).
-        // A result DAOLib has no name for (the plain COMMAND_FAILED, -1) by
-        // its number: the line ended in nothing.
+        // A result DAOLib has no name for by its number (-1 for a use of
+        // an object, 2 for an animation): the line ended in nothing.
         const std::string_view named = dao::commands::ResultName(result);
-        const std::string why = named.empty() ? std::format("COMMAND_FAILED ({})", result) : std::string{named};
+        const std::string why = named.empty() ? std::format("result {}", result) : std::string{named};
         spdlog::debug("{:#x}: {} ended {}", object, Name(type), why);
-        if (!DidNothing(type, result))
+        if (!DidNothing(result))
         {
             return;
         }
