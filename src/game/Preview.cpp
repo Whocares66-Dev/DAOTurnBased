@@ -7,6 +7,7 @@
 #include "dao/Gui.h"
 #include "dao/Log.h"
 #include "dao/Script.h"
+#include "dao/Vfx.h"
 #include "dao/World.h"
 #include "dao/generated/ScriptApi.h"
 
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <exception>
 #include <optional>
+#include <span>
 #include <utility>
 
 namespace tb::game
@@ -33,21 +35,29 @@ namespace api = dao::script::api;
 constexpr float kMoved = 0.25f;
 constexpr std::uint32_t kSearchEveryMs = 150;
 
-// The rings on the ground: round the path's end about as wide as a
-// creature's own selection ring, and round where the movement runs out,
-// half that. Each a polygon of so many points, the first to the east and
-// the fifth to the north, which the movie rounds. At an end in reach the
-// movie lays the game's own movement marker by the ring instead of drawing
-// it: the star of vfx_movetarget.dds, its arms to the ring's east and
-// north.
+// The game's own marker for where a move goes (the user, 2026-10-01: "the
+// game has its own marker for indicating where to walk. Can we use that?",
+// and of a star the movie drew flat over the scene, "we should draw the
+// indicator on the ground, not flat on the screen, which looks weird"):
+// vfx_base's row 30000, "Movement Indicator", the star the game puts where
+// a move click lands (model SR_MOV, beside the selection rings' SR_PTY and
+// SR_EMY; its art vfx_movetarget.dds; a lasting effect laid on the ground).
+// Placed in the world at an end in reach through DAOLib's dao/Vfx.h, moved
+// after the cursor, taken away with the preview.
 //
-// The marker is the movie's, not an effect in the world. It was one, for
-// an hour: vfx_base's row 30000, "Movement Indicator", placed at the end
-// through DAOLib's dao/Vfx.h. But its model (SR_MOV) is a selection
-// reticle and has a shape the cursor's pick meets, so under the cursor it
-// took the pick from the ground: the preview, with no ground, took it
-// away, the ground came back, and it blinked a second on, a second off
-// (the sixteenth play test, 2026-10-01).
+// It is left out of the cursor's pick (SetPickable): SR_MOV is a selection
+// reticle and has a shape the cursor's ray meets, and it sits under the
+// cursor. The first try had it picked, and the preview blinked and moves
+// were lost; most of that proved to be the movie's own drawing under the
+// cursor (ui/turnorder, hitTestDisable; the sixteenth play test), and what
+// part the effect had was not told apart.
+constexpr std::int32_t kMoveMarker = 30000;
+
+// The rings on the ground, the movie's: round a path's end that is too
+// far, about as wide as a creature's own selection ring, and round where
+// the movement runs out, half that; and round an end in reach only if the
+// marker could not be placed. Each a polygon of so many points, which the
+// movie rounds.
 constexpr float kEndRing = 0.45f;
 constexpr float kStopRing = 0.22f;
 constexpr int kRingPoints = 16;
@@ -144,8 +154,121 @@ void Preview::Install()
     });
 }
 
+void Preview::ShowMarker(const Vec3 &at)
+{
+    const dao::CCArea *area = dao::world::CurrentArea();
+    if (area == nullptr)
+    {
+        marker_ = kNoObject;
+        return;
+    }
+    if (marker_ != kNoObject && markerArea_ == area->Id() && dao::vfx::Move(marker_, Of(at)))
+    {
+        return;
+    }
+    // None yet, or it went with its area.
+    marker_ = dao::vfx::Place(kMoveMarker, Of(at));
+    markerArea_ = area->Id();
+    if (marker_ != kNoObject)
+    {
+        dao::vfx::SetPickable(marker_, false);
+    }
+    if (!std::exchange(markerSaid_, true))
+    {
+        spdlog::debug("the preview's end is the game's movement marker (effect {:#x}), left out of the cursor's pick",
+                      marker_);
+    }
+}
+
+void Preview::HideMarker()
+{
+    if (marker_ == kNoObject)
+    {
+        return;
+    }
+    // In the area it was placed in only: in another it is gone with the
+    // first, and its id may be another effect's.
+    const dao::CCArea *area = dao::world::CurrentArea();
+    if (area != nullptr && markerArea_ == area->Id())
+    {
+        dao::vfx::Remove(marker_);
+    }
+    marker_ = kNoObject;
+}
+
+// Does the path shown stand for the walk the game makes? Shown, the path
+// is the pathfinder's whole answer then; ordered, the creature asks the
+// pathfinder itself, a stretch at a time as it goes (its own path, DAOLib's
+// CurrentPath, is only the next waypoint or two: lib-agent, 2026-10-01), so
+// the two are not set point against point. Instead, when the creature a
+// path was shown for walks within a moment of it, where it is each frame is
+// measured against the path shown, and when it stands again the log says
+// how far from it the walk went at most. More than half a meter, with
+// nobody else moving, is a stray, said at info. A walk that ends elsewhere
+// than the path's end is not judged: the click was elsewhere, or it was a
+// walk to something's reach.
+void Preview::Compare(std::uint32_t nowMs)
+{
+    constexpr std::uint32_t kStillFresh = 1500;
+    constexpr float kSameEnd = 1.0f;
+    constexpr float kStray = 0.5f;
+    if (shown_.size() < 2)
+    {
+        return;
+    }
+    const bool atRest = AtRest(shownFor_);
+    if (!walking_)
+    {
+        if (atRest)
+        {
+            if (nowMs - shownAt_ > kStillFresh)
+            {
+                shown_.clear(); // shown, and no walk came of it
+            }
+            return;
+        }
+        walking_ = true;
+        walked_ = 0.0f;
+        farthest_ = 0.0f;
+        farthestAt_ = 0.0f;
+        last_ = Of(api::GetPosition(shownFor_));
+    }
+    const Vec3 here = Of(api::GetPosition(shownFor_));
+    walked_ += Distance(last_, here);
+    last_ = here;
+    if (const float apart = PathApart(std::span<const Vec3>(&here, 1), shown_); apart > farthest_)
+    {
+        farthest_ = apart;
+        farthestAt_ = walked_;
+    }
+    if (!atRest)
+    {
+        return;
+    }
+    // It stands again: the walk is over.
+    const float ends = Flat(here, shown_.back());
+    if (ends > kSameEnd)
+    {
+        spdlog::debug("{:#x} walked {:.1f} m to another place than the path shown ({:.1f} m from its end): not "
+                      "judged against it",
+                      shownFor_, walked_, ends);
+    }
+    else
+    {
+        const bool stray = farthest_ > kStray;
+        spdlog::log(stray ? spdlog::level::info : spdlog::level::debug,
+                    "the walk taken against the path shown for {:#x}: {:.1f} m walked, {:.1f} m shown; at most "
+                    "{:.2f} m from the path, {:.1f} m along{}",
+                    shownFor_, walked_, PathLength(shown_), farthest_, farthestAt_,
+                    stray ? ": the walk strays from what was shown" : "");
+    }
+    walking_ = false;
+    shown_.clear();
+}
+
 void Preview::Clear()
 {
+    HideMarker();
     searched_ = false;
     path_.clear();
     if (!std::exchange(drawn_, false))
@@ -211,6 +334,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
     {
         return;
     }
+    Compare(nowMs);
     const bool waiting = enabled && view.active && view.playerTurn && view.phase == Phase::AwaitingOrder &&
                          view.current != kNoObject && view.movementLeft > 0.0f;
     const dao::GameModeExplore *explore = waiting ? ExploreMode() : nullptr;
@@ -240,6 +364,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
     {
         // No path there as the game finds it: nothing is promised, so
         // nothing is drawn.
+        HideMarker();
         if (std::exchange(drawn_, false))
         {
             const std::lock_guard lock(mutex_);
@@ -257,6 +382,16 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
     shown.length = split.length;
     shown.meters = view.movementLeft;
     shown.reach = OnScreen(split.reach);
+    // Where the move would go, the game's marker; past the movement left
+    // none, since it says "it will walk here" and it would not.
+    if (split.TooFar())
+    {
+        HideMarker();
+    }
+    else
+    {
+        ShowMarker(path_.back());
+    }
     // Only if the reach is whole: a line broken behind the camera has no
     // second half to join.
     if (shown.reach.size() == split.reach.size())
@@ -266,13 +401,19 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled)
         {
             shown.stopRing = RingOnScreen(split.reach.back(), kStopRing);
         }
-        if (shown.beyond.size() == split.beyond.size())
+        if (shown.beyond.size() == split.beyond.size() && (split.TooFar() || marker_ == kNoObject))
         {
             shown.endRing = RingOnScreen(path_.back(), kEndRing);
         }
     }
     std::wstring encoded = EncodePreview(shown);
     drawn_ = true;
+    if (!walking_)
+    {
+        shown_ = path_;
+        shownFor_ = view.current;
+        shownAt_ = nowMs;
+    }
     const std::lock_guard lock(mutex_);
     encoded_ = std::move(encoded);
 }

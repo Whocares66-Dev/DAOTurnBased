@@ -17,11 +17,11 @@
 //
 // Where a move would go, the path ends in the game's own movement marker
 // (the user, 2026-10-01: "the game has its own marker for indicating where
-// to walk. Can we use that?"): the star the game puts where a move click
-// lands, drawn by the movie from the game's texture and laid on the ground
-// by a ring this gives it (src/game/Preview.cpp has why it is not the
-// effect itself). Past the movement left there is no marker: it says "it
-// will walk here", and it would not.
+// to walk. Can we use that?"; and "on the ground, not flat on the screen"):
+// the effect the game puts where a move click lands, placed in the world at
+// the path's end and moved after the cursor (src/game/Preview.cpp). Past
+// the movement left there is no marker: it says "it will walk here", and it
+// would not.
 #pragma once
 
 #include "core/TurnMachine.h"
@@ -52,6 +52,9 @@ class Preview
   private:
     void Clear();
     void Search(ObjectId walker, const Vec3 &from, const Vec3 &to, std::uint32_t nowMs);
+    void Compare(std::uint32_t nowMs);
+    void ShowMarker(const Vec3 &at);
+    void HideMarker();
 
     std::mutex mutex_;
     std::wstring encoded_; // what the movie is given
@@ -66,7 +69,24 @@ class Preview
     std::uint32_t searchedAt_ = 0;
     std::vector<Vec3> path_; // empty: the game finds no path there
     int logged_ = 0;
-    int searches_ = 0; // since the last fifty were told of
+    // The game's movement marker at the path's end, while one is placed,
+    // and the area it was placed in: an effect goes with its area, and its
+    // id is not asked after in another.
+    ObjectId marker_ = kNoObject;
+    ObjectId markerArea_ = kNoObject;
+    bool markerSaid_ = false;
+
+    // The path last shown, kept a moment after: if its creature then
+    // walks, where it goes is measured against it (Compare).
+    std::vector<Vec3> shown_;
+    ObjectId shownFor_ = kNoObject;
+    std::uint32_t shownAt_ = 0;
+    bool walking_ = false; // the walk that came of it is under way
+    Vec3 last_;            // where the walker was last frame
+    float walked_ = 0;     // meters, so far
+    float farthest_ = 0;   // from the path shown, at most
+    float farthestAt_ = 0; // and how far along the walk that was
+    int searches_ = 0;     // since the last fifty were told of
     std::uint64_t searchMs_ = 0;
     std::uint64_t slowestMs_ = 0;
 };

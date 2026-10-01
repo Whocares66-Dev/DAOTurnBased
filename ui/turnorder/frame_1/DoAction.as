@@ -663,10 +663,13 @@ var lastPreview = null;
 // past the movement left.
 function samplePreview()
 {
-    // In reach, the common case: the line ends in the game's marker.
-    var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 1, "5.8", "6.5"].join(FIELD);
+    // Too far, which shows the most: in reach the line ends in the game's
+    // own marker, which is the world's and not this movie's to draw.
+    var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 2, "13.6", "6.5"].join(FIELD);
     var reach = [300, 262, 470, 250, 560, 214, 640, 200].join(FIELD);
-    return head + CARD + reach + CARD + CARD + CARD + sampleRing(640, 200, 26).join(FIELD);
+    var beyond = [640, 200, 720, 186, 800, 204, 900, 196].join(FIELD);
+    return head + CARD + reach + CARD + beyond + CARD + sampleRing(640, 200, 15).join(FIELD) + CARD +
+           sampleRing(900, 196, 26).join(FIELD);
 }
 
 // A ring on the ground as the camera sees it: flattened.
@@ -713,7 +716,8 @@ function previewPoints(record, scale, offsetX, offsetY)
 // drawn again and again, wide and faint to narrow and bright: a soft halo
 // in the colour, the colour itself, and a pale thread of light down its
 // middle, as the bar's gold rings have. Smoothed, since a path's corners
-// are the pathfinder's, not a walk's.
+// are the pathfinder's, not a walk's: a few pixels at each corner only, so
+// the line stays on the route.
 //
 // The colours are the game's own movement marker's, which the path ends in
 // (the user: "make the line match that style"): vfx_movetarget.dds, the
@@ -732,9 +736,11 @@ var RED_HEART = 0xFFE6DA;
 // edge, 3 the heart), alpha.
 var GLOW = [[9, 0, 14], [24, 1, 5], [17, 1, 8], [11.5, 1, 13], [7.5, 1, 22], [4.6, 2, 100], [2.4, 3, 100]];
 
-// A path through its points, bent at each rather than cornered: straight to
-// the middle of each step, curved from middle to middle round the point
-// between. Closed, it is a ring: middle to middle all the way round.
+// A path through its points, its corners rounded a little. Closed, it is a
+// ring: curved from the middle of each side to the middle of the next, all
+// the way round.
+var CORNER = 7; // stage pixels of a corner that are rounded
+var CLEAR = 14; // stage pixels the line ends short of the cursor: half its widest glow, and two
 function tracePath(clip, points, closed)
 {
     var n = points.length;
@@ -749,17 +755,52 @@ function tracePath(clip, points, closed)
         }
         return;
     }
+    // The route itself, straight from point to point, and only its
+    // corners rounded, within CORNER pixels of each: curved from middle to
+    // middle, a long step's corner was drawn a meter inside the route, as
+    // if the walk cut through what it goes round (the user, 2026-10-01:
+    // "does a path represent a path that the character will actually
+    // take? If not, it might be misleading").
     clip.moveTo(points[0].x, points[0].y);
     for (var j = 1; j < n - 1; j++)
     {
-        if (j == 1)
+        var a = points[j - 1];
+        var b = points[j];
+        var c = points[j + 1];
+        var before = Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
+        var after = Math.sqrt((c.x - b.x) * (c.x - b.x) + (c.y - b.y) * (c.y - b.y));
+        var r = Math.min(CORNER, Math.min(before, after) / 2);
+        if (!(r > 0.5))
         {
-            clip.lineTo((points[0].x + points[1].x) / 2, (points[0].y + points[1].y) / 2);
+            clip.lineTo(b.x, b.y);
+            continue;
         }
-        clip.curveTo(points[j].x, points[j].y, (points[j].x + points[j + 1].x) / 2,
-                     (points[j].y + points[j + 1].y) / 2);
+        clip.lineTo(b.x + (a.x - b.x) * r / before, b.y + (a.y - b.y) * r / before);
+        clip.curveTo(b.x, b.y, b.x + (c.x - b.x) * r / after, b.y + (c.y - b.y) * r / after);
     }
     clip.lineTo(points[n - 1].x, points[n - 1].y);
+}
+
+// A line ended `by` pixels short of its last point: its glow is as wide as
+// it is long, and nothing of the movie's is to lie on the cursor's own
+// pixel (drawPreview has why). The last steps go if they are shorter.
+function shortened(points, by)
+{
+    var out = points.slice();
+    while (out.length >= 2)
+    {
+        var a = out[out.length - 2];
+        var b = out[out.length - 1];
+        var step = Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
+        if (step > by)
+        {
+            out[out.length - 1] = {x: b.x + (a.x - b.x) * by / step, y: b.y + (a.y - b.y) * by / step};
+            return out;
+        }
+        by -= step;
+        out.pop();
+    }
+    return out;
 }
 
 // `thin` for a ring: the same glow at about half the width.
@@ -777,72 +818,6 @@ function glow(clip, points, red, closed, thin)
     }
 }
 
-// The game's own movement marker at an end in reach: the star the game
-// puts where a move click lands (vfx_movetarget.dds, the art of vfx_base's
-// "Movement Indicator"), loaded as the bar's art is. It lies on the ground:
-// the plugin gives a ring round the end as its points on the screen, the
-// first to the east and the fifth to the north, and from where those two
-// fall the star is turned (its arms to the east and north, as the game's
-// lies fixed in the world) and then squashed as the camera's angle squashes
-// the ground. A clip in a clip: the inner turned, the outer scaled. It
-// breathes a little, as the game's does.
-var STAR_ART = 100;    // the star's clip, in its own pixels
-var STAR_REACH = 1.6;  // the texture's half width, in ring radii: its arms end short of its edge
-var starPhase = 0;
-
-function star(clip)
-{
-    if (clip.star == undefined)
-    {
-        var outer = clip.createEmptyMovieClip("star", 3);
-        var turned = outer.createEmptyMovieClip("turned", 1);
-        art(turned, "vfx_movetarget", 1, -STAR_ART / 2, -STAR_ART / 2, STAR_ART, STAR_ART);
-        outer._visible = false;
-        outer.age = 0;
-    }
-    return clip.star;
-}
-
-// Whether the texture came: in the game a name it has not leaves the clip
-// empty, and the ring is drawn instead.
-function starLoaded(clip)
-{
-    return clip.star.turned.art1.image._width > 0;
-}
-
-function layStar(clip, ring, at)
-{
-    var outer = star(clip);
-    // East and north of the end, on the screen.
-    var ex = ring[0].x - at.x;
-    var ey = ring[0].y - at.y;
-    var nx = ring[4].x - at.x;
-    var ny = ring[4].y - at.y;
-    var across = Math.sqrt(ex * ex + nx * nx); // a ring's radius, sideways
-    var down = Math.sqrt(ey * ey + ny * ny);   // and up the screen: less, by the camera's angle
-    outer._x = at.x;
-    outer._y = at.y;
-    outer.turned._rotation = Math.atan2(-nx, ex) * 180 / Math.PI;
-    outer.across = 2 * STAR_REACH * across * 100 / STAR_ART;
-    outer.down = 2 * STAR_REACH * down * 100 / STAR_ART;
-    outer._xscale = outer.across;
-    outer._yscale = outer.down;
-    outer._visible = true;
-}
-
-function breathe()
-{
-    var outer = _root.preview.star;
-    if (outer == undefined || !outer._visible)
-    {
-        return;
-    }
-    starPhase += 0.16;
-    var swell = 1 + 0.07 * Math.sin(starPhase);
-    outer._xscale = outer.across * swell;
-    outer._yscale = outer.down * swell;
-}
-
 // The length, on a small dark plate as the bar's caption is, so it reads
 // on any ground.
 function previewLabel(clip, text, colour, at)
@@ -855,7 +830,10 @@ function previewLabel(clip, text, colour, at)
     var x = at.x - w / 2;
     var y = at.y - 44;
     clip.lineStyle(undefined); // the glow's last line would outline the plate
-    panel(clip, x, y, w, h, 8);
+    // Two soft layers, not the bar's nine: at this size those showed as
+    // rings inside one another (the sixteenth play test's pictures).
+    roundedBox(clip, x - 1, y - 1, w + 2, h + 2, 9, 0x000000, 28);
+    roundedBox(clip, x, y, w, h, 8, 0x000000, 46);
     field._x = x;
     field._width = w;
     centre(field, y, h);
@@ -875,10 +853,20 @@ function drawPreview(text)
         // Under the bar, over the sample's backdrop.
         clip = _root.createEmptyMovieClip("preview", 5);
         label(clip, "length", 1, 0, 0, 160, 24, 15, GOLD, "center", false);
+        // Not there for the mouse. The preview's end is under the cursor,
+        // and the game asks its interface first whether the mouse is over a
+        // movie's shape: if so the cursor has no ground and a click is the
+        // interface's. With the end drawn on the cursor's pixel the preview
+        // blinked and eight clicks of eight to move were lost (the
+        // sixteenth play test, 2026-10-01; the cause read by lib-agent from
+        // the mode's pick, 0x0070EAA0). hitTestDisable is Scaleform's own,
+        // an extension, which the game's movies turn on as here.
+        _global.gfxExtensions = true;
+        clip.hitTestDisable = true;
+        clip.length.hitTestDisable = true;
     }
     clip.clear();
     clip.length._visible = false;
-    star(clip)._visible = false;
     var records = text.split(CARD);
     var head = records[0].split(FIELD);
     var viewW = Number(head[1]);
@@ -899,6 +887,19 @@ function drawPreview(text)
     var endRing = previewPoints(records[4], scale, offsetX, offsetY);
     var tooFar = head[3] == "2";
     var end = beyond.length > 0 ? beyond[beyond.length - 1] : reach[reach.length - 1];
+    // The line stops short of its end, which is the cursor's pixel: the
+    // clip is not there for the mouse (above), and if that did not hold in
+    // some build of the game, a shape on that pixel would take the cursor's
+    // ground again. The game's marker lies there in reach, a ring round it
+    // too far, and the plate above it.
+    if (tooFar)
+    {
+        beyond = shortened(beyond, CLEAR);
+    }
+    else
+    {
+        reach = shortened(reach, CLEAR);
+    }
     // Red under gold, so the gold's glow lies over where they meet.
     glow(clip, beyond, true, false, false);
     glow(clip, reach, false, false, false);
@@ -907,14 +908,11 @@ function drawPreview(text)
         glow(clip, endRing, true, true, true);
         glow(clip, stopRing, false, true, true);
     }
-    else if (endRing.length >= 5 && end != undefined && (!inGame || starLoaded(clip) || clip.star.age < 30))
-    {
-        // In reach: the game's own marker, where the move would go.
-        clip.star.age++;
-        layStar(clip, endRing, end);
-    }
     else
     {
+        // In reach the end is the game's own movement marker, which the
+        // plugin places in the world, on the ground; a ring comes for the
+        // end only if that could not be placed.
         glow(clip, endRing, false, true, true);
     }
     if (end != undefined)
@@ -933,6 +931,5 @@ _root.onEnterFrame = function()
         draw(ask());
     }
     drawPreview(askPreview());
-    breathe();
 };
 draw(ask());

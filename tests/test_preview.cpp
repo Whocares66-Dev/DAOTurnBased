@@ -219,3 +219,40 @@ TEST_CASE("a ring lies flat round its centre, its points evenly about it", "[pre
     CHECK(Distance(ring[0], ring[1]) == Approx(Distance(ring[7], ring[8])));
     CHECK(RingAround(centre, 0.5f, 0).empty());
 }
+
+TEST_CASE("a walk along the path shown is not apart from it", "[preview]")
+{
+    CHECK(PathLength(kPath) == Approx(10.0f));
+    CHECK(PathApart(kPath, kPath) == Approx(0.0f));
+    // The same way in more points, and a walk that begins a step in.
+    const std::vector<Vec3> finer{Vec3{0, 0, 0}, Vec3{3, 0, 0}, Vec3{6, 0, 0}, Vec3{6, 2, 0}, Vec3{6, 4, 0}};
+    CHECK(PathApart(finer, kPath) == Approx(0.0f));
+    const std::vector<Vec3> later{Vec3{2, 0, 0}, Vec3{6, 0, 0}, Vec3{6, 4, 0}};
+    CHECK(PathApart(later, kPath) == Approx(0.0f));
+}
+
+TEST_CASE("a walk that leaves the path shown is as far apart as it strays", "[preview]")
+{
+    // Round the corner by another way: out to (8, 0) and back in.
+    const std::vector<Vec3> wide{Vec3{0, 0, 0}, Vec3{8, 0, 0}, Vec3{6, 4, 0}};
+    CHECK(PathApart(wide, kPath) == Approx(2.0f));
+    // Its points on the path, a step of it across the corner: the step's middle is off.
+    const std::vector<Vec3> across{Vec3{0, 0, 0}, Vec3{2, 0, 0}, Vec3{6, 4, 0}};
+    CHECK(PathApart(across, kPath) == Approx(2.0f)); // (4, 2) is 2 m from either leg
+    // Past the path's end.
+    const std::vector<Vec3> beyond{Vec3{6, 4, 0}, Vec3{6, 7, 0}};
+    CHECK(PathApart(beyond, kPath) == Approx(3.0f));
+    // Height counts: a walk a floor above is not on the path.
+    const std::vector<Vec3> above{Vec3{3, 0, 3}};
+    CHECK(PathApart(above, kPath) == Approx(3.0f));
+}
+
+TEST_CASE("no walk, or no path shown, is not apart", "[preview]")
+{
+    CHECK(PathApart({}, kPath) == 0.0f);
+    CHECK(PathApart(kPath, {}) == 0.0f);
+    CHECK(PathLength({}) == 0.0f);
+    const std::vector<Vec3> one{Vec3{1, 1, 0}};
+    CHECK(PathLength(one) == 0.0f);
+    CHECK(PathApart(kPath, one) == Approx(Distance(Vec3{6, 4, 0}, Vec3{1, 1, 0}))); // from its one point
+}

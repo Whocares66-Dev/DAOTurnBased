@@ -55,6 +55,17 @@ struct PathSplit
 // preview is red past exactly there.
 [[nodiscard]] PathSplit SplitPath(std::span<const Vec3> path, float meters);
 
+// A path's length along its points.
+[[nodiscard]] float PathLength(std::span<const Vec3> path);
+
+// How far a walk strays from a path shown: the farthest that any of the
+// walk's points, or the middle of any of its steps, lies from the shown
+// path. For setting the walk the game makes against the preview it was
+// ordered by (the user, 2026-10-01: "does a path represent a path that the
+// character will actually take? If not, it might be misleading"). Nothing
+// (0) for a walk of no points or a path shown of none.
+[[nodiscard]] float PathApart(std::span<const Vec3> walked, std::span<const Vec3> shown);
+
 // `count` points of a ring lying flat round `centre`, for the game layer to
 // place on the screen: seen from the camera it is the ellipse a ring on the
 // ground is.

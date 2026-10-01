@@ -722,6 +722,18 @@ MUTANTS = [
         "",
     ),
     Mutant(
+        "a walk's step across a corner is not seen to leave the path shown",
+        PREVIEW,
+        "            const float middle = ToPath(Between(walked[i - 1], walked[i], 0.5f), shown);",
+        "            const float middle = ToPath(walked[i], shown);",
+    ),
+    Mutant(
+        "a walk is measured from the path's lines, not its steps",
+        PREVIEW,
+        "        along = along < 0.0f ? 0.0f : (along > 1.0f ? 1.0f : along);",
+        "        along = along < 0.0f ? 0.0f : along;",
+    ),
+    Mutant(
         "a preview too far is said to be in reach",
         PREVIEW,
         "view.beyond.empty() ? 1 : 2",
