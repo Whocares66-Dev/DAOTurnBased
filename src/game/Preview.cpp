@@ -56,15 +56,20 @@ constexpr std::uint32_t kSearchEveryMs = 150;
 // part the effect had was not told apart.
 constexpr std::int32_t kMoveMarker = 30000;
 
-// Past the movement left there is no marker. The user asked for a red one
-// there ("how about red rings and a red marker after the move limit? Then
-// it's easy to see how long player can move"), and it was tried: the same
-// row placed in a colour (DAOLib's tint for a placed effect, 61e471e). The
-// call was made and the star stayed gold (the twentieth play test,
-// 2026-10-01): its material, GeneralGui.mat, takes no tint. A gold star at
-// an end too far says "it will walk here" of a move the machine refuses,
-// so there is none: the end has a red ring, and a red star wants a texture
-// and a row of our own.
+// Past the movement left the marker is there too, red (the user,
+// 2026-10-01: "how about red rings and a red marker after the move limit?
+// Then it's easy to see how long player can move"): the same row placed in
+// a colour (DAOLib's Place with a tint, 61e471e). The tint is a material
+// parameter that only one semantic of the reticles' material reads
+// ("ReticalTint" of GeneralGui.mat), and the marker's material objects say
+// the other: placed in red as the game ships it, the star stayed gold (the
+// twentieth play test). So the mod ships the two material objects with
+// that semantic (ui/override/move_indicator.mao, move_icon.mao, which
+// tools/deploy.ps1 puts in the override folder; lib-agent's finding). The
+// game's own marker passes no colour and should look as it did. Until the
+// red is seen in play the red ring stays round a too-far end as well: a
+// gold star alone there would promise a move the machine refuses.
+constexpr dao::vfx::Tint kTooFar{1.0F, 0.16F, 0.10F, 1.0F};
 
 // The path on the ground (`[feedback] move_preview_ground`; the user,
 // 2026-10-01: "should the line be drawn on the ground as well?"). A line
@@ -93,7 +98,7 @@ constexpr float kRedMarkScale = 0.13f; // the red ones a little larger, being di
 constexpr float kMarkEvery = 0.2f;
 constexpr float kMarksFrom = 0.7f;    // meters along: clear of the walker's ring
 constexpr float kMarksShortOf = 0.4f; // of the end: clear of the marker there
-// The ring round a too-far end, which has no marker: half a creature's.
+// The ring round a too-far end, under its red marker: half a creature's.
 // At a creature's size it was seen, but it is an enemy's ring, pointed
 // mark and all, and at a glance an enemy stood there; and it hid the red
 // marks leading to it (the nineteenth play test's second look).
@@ -201,47 +206,68 @@ void Preview::Install()
     });
 }
 
-// The game's marker at the path's end, where the move would go.
-void Preview::ShowMarker(const Vec3 &at)
+// The game's marker at the path's end: gold where the move would go, red
+// where it is too far. Two effects, since an effect's colour is given when
+// it is placed: the one wanted is moved or placed, the other taken away.
+void Preview::ShowMarker(const Vec3 &at, bool tooFar)
 {
     const dao::CCArea *area = dao::world::CurrentArea();
     if (area == nullptr)
     {
         marker_ = kNoObject;
+        farMarker_ = kNoObject;
         return;
     }
-    if (marker_ != kNoObject && markerArea_ == area->Id() && dao::vfx::Move(marker_, Of(at)))
+    const bool here = markerArea_ == area->Id();
+    ObjectId &wanted = tooFar ? farMarker_ : marker_;
+    ObjectId &other = tooFar ? marker_ : farMarker_;
+    if (other != kNoObject)
+    {
+        if (here)
+        {
+            dao::vfx::Remove(other);
+        }
+        other = kNoObject;
+    }
+    if (wanted != kNoObject && here && dao::vfx::Move(wanted, Of(at)))
     {
         return;
     }
     // None yet, or it went with its area.
-    marker_ = dao::vfx::Place(kMoveMarker, Of(at));
+    wanted = dao::vfx::Place(kMoveMarker, Of(at), 1.0F, std::nullopt,
+                             tooFar ? std::optional<dao::vfx::Tint>(kTooFar) : std::nullopt);
     markerArea_ = area->Id();
-    if (marker_ != kNoObject)
+    if (wanted != kNoObject)
     {
-        dao::vfx::SetPickable(marker_, false);
+        dao::vfx::SetPickable(wanted, false);
     }
-    if (!std::exchange(markerSaid_, true))
+    bool &said = tooFar ? farMarkerSaid_ : markerSaid_;
+    if (!std::exchange(said, true))
     {
-        spdlog::debug("the preview's end is the game's movement marker (effect {:#x}), left out of the cursor's pick",
-                      marker_);
+        spdlog::debug("the preview's end is the game's movement marker{} (effect {:#x}), left out of the cursor's "
+                      "pick",
+                      tooFar ? ", placed in red for an end too far" : "", wanted);
     }
 }
 
 void Preview::HideMarker()
 {
-    if (marker_ == kNoObject)
+    if (marker_ == kNoObject && farMarker_ == kNoObject)
     {
         return;
     }
-    // In the area it was placed in only: in another it is gone with the
-    // first, and its id may be another effect's.
+    // In the area they were placed in only: in another they are gone with
+    // the first, and their ids may be other effects'.
     const dao::CCArea *area = dao::world::CurrentArea();
-    if (area != nullptr && markerArea_ == area->Id())
+    const bool here = area != nullptr && markerArea_ == area->Id();
+    for (ObjectId *marker : {&marker_, &farMarker_})
     {
-        dao::vfx::Remove(marker_);
+        if (here && *marker != kNoObject)
+        {
+            dao::vfx::Remove(*marker);
+        }
+        *marker = kNoObject;
     }
-    marker_ = kNoObject;
 }
 
 // `marks` made to lie at `at`: those there are moved if their place has
@@ -523,16 +549,9 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     const PathSplit outside = SplitPath(split.reach, kLineFrom);
     const std::vector<Vec3> &lineReach = outside.TooFar() ? outside.beyond : split.reach;
     shown.reach = OnScreen(lineReach);
-    // Where the move would go, the game's marker; past the movement left
-    // none, since it says "it will walk here" and it would not.
-    if (split.TooFar())
-    {
-        HideMarker();
-    }
-    else
-    {
-        ShowMarker(path_.back());
-    }
+    // The game's marker at the end: gold where the move would go, red past
+    // the movement left.
+    ShowMarker(path_.back(), split.TooFar());
     // The path in the world: marks along it, in the marker's area (which
     // ShowMarker keeps; with no marker placed the area is asked here).
     const dao::CCArea *area = dao::world::CurrentArea();

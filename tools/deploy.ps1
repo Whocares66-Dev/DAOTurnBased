@@ -15,8 +15,10 @@
     into Documents\BioWare\Dragon Age\packages\core\override\, the folder the game reads
     loose resources from, where its resource system finds a screen's movie as it finds
     its own (DAOLib's dev/GUI.md). The bar shows with `turn_bar = true` in turnbased.ini.
+    The files of ui\override go there too: two material objects of the game's, changed
+    so that the movement marker can be placed in red.
 
-    -Remove deletes turnbased.dll, its .pdb and the movie; the loader stays for other
+    -Remove deletes turnbased.dll, its .pdb, the movie and those files; the loader stays for other
     plugins. DAOLib's own `deploy.ps1 -Remove` returns the game to stock. The settings
     and logs are in Documents\BioWare\Dragon Age\daolib\ and stay.
 
@@ -45,9 +47,13 @@ $plugin = Join-Path $plugins 'turnbased.dll'
 $pluginPdb = Join-Path $plugins 'turnbased.pdb'
 $override = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'BioWare\Dragon Age\packages\core\override'
 $movie = Join-Path $override 'turnorder.swf'
+# The mod's loose resources beside the movie: ui\override\*.mao, material objects of the
+# game's given the semantic that takes a colour (dev/UI.md, "The movement preview").
+$looseSource = Join-Path $repo 'ui\override'
+$loose = @(Get-ChildItem -File $looseSource -ErrorAction SilentlyContinue)
 
 if ($Remove) {
-    foreach ($f in @($plugin, $pluginPdb, $movie)) {
+    foreach ($f in @($plugin, $pluginPdb, $movie) + @($loose | ForEach-Object { Join-Path $override $_.Name })) {
         if (Test-Path $f) { Remove-Item -Force $f; Show-Ok "removed $f" }
     }
     Show-Info 'the loader (version.dll) stays; DAOLib''s deploy.ps1 -Remove takes it out'
@@ -78,6 +84,11 @@ if (Test-Path $builtMovie) {
 }
 else {
     Show-Warn 'no build\ui\turnorder.swf (python tools\movie.py): the turn bar has no movie to show'
+}
+if ($loose.Count -gt 0) {
+    New-Item -ItemType Directory -Force $override | Out-Null
+    foreach ($f in $loose) { Copy-Item -Force $f.FullName (Join-Path $override $f.Name) }
+    Show-Ok "loose   -> $override ($(($loose | ForEach-Object { $_.Name }) -join ', '))"
 }
 $docs = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'BioWare\Dragon Age\daolib'
 Show-Info "settings: $(Join-Path $docs 'turnbased.ini') (written on first run)"
