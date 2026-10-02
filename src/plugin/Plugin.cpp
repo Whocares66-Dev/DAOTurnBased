@@ -61,6 +61,7 @@ struct State
     std::unique_ptr<tb::game::Bridge> bridge; // the scripts' thread's alone
     tb::KeyChord toggleKey;
     bool toggleWasDown = false;
+    bool inFront = true; // the game's window had the keyboard at the last frame
     ToggleKey toggle = ToggleKey::Polled;
     bool optionsAsked = false; // the options' section was given to DAOLib, and what became of it is not known yet
     std::uint32_t lastSettingsCheck = 0;
@@ -389,10 +390,8 @@ void ServeBar(std::uint32_t now)
     if (g.bar.TakeEndTurn())
     {
         const std::lock_guard lock(g.mutex);
-        if (!g.machine->OnPauseKey())
-        {
-            spdlog::debug("the bar's end turn outside a turn-based fight");
-        }
+        spdlog::debug(g.machine->OnPauseKey() ? "the turn was ended by the turn bar's End"
+                                              : "the bar's end turn outside a turn-based fight");
     }
     if (const auto focus = g.bar.TakeFocus())
     {
@@ -436,6 +435,14 @@ void Tick()
     }
     const auto now = static_cast<std::uint32_t>(GetTickCount64());
     ReloadIfChanged(now);
+    // When the game's window loses and gains the front, for setting beside
+    // what follows in the log: a pause the game makes of itself then, taken
+    // for the pause key, would end a turn.
+    if (const bool inFront = GameInFront(); inFront != g.inFront)
+    {
+        g.inFront = inFront;
+        spdlog::debug("the game's window {} the front", inFront ? "has" : "has lost");
+    }
     PollToggle();
     WatchOptions();
     tb::Needs needs;
@@ -515,6 +522,7 @@ void EndTurnTool(void * /*context*/, const char * /*args*/, EluvianReply *reply)
     }
     if (ended)
     {
+        spdlog::debug("the turn was ended by the turnbased_end_turn tool");
         reply->ok(reply, R"({"ended":true})");
         return;
     }

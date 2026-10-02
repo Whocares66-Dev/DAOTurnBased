@@ -16,6 +16,7 @@
 #include "dao/World.h"
 #include "dao/generated/ScriptApi.h"
 
+#include <Windows.h>
 #include <intrin.h>
 
 #include <algorithm>
@@ -477,6 +478,15 @@ bool __fastcall PauseKey(void *controller, int edx, const dao::messages::UserTog
     }
     if (taken)
     {
+        // Said with whether the game's window had the keyboard: a turn once
+        // ended "end turn pressed" with no key pressed, a moment after the
+        // window came back to the front (the twenty-second play test,
+        // 2026-10-01), and three things can end a turn so. A pause message
+        // with the window not in front is not the player's key.
+        DWORD process = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), &process);
+        spdlog::debug("the turn was ended by the game's pause message{}",
+                      process == GetCurrentProcessId() ? "" : ", the game's window not in front");
         return true; // handled: the game neither pauses nor unpauses
     }
     return g_pauseKey.Original()(controller, edx, message);
