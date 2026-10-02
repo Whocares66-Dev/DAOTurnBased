@@ -524,11 +524,11 @@ portraits = true
 ; cursor, gold as far as the movement left reaches and red beyond, before a
 ; click. The path is the game's own pathfinder's.
 move_preview = true
-; The path as small marks laid on the ground, every 0.4 m, the game's own
-; selection rings made small: gold in reach, red beyond. They lie in the
-; world, behind whoever stands in front of them. Off: a glowing line, drawn
-; over the scene. The marker at the path's end is on the ground either way.
-move_preview_ground = false
+; The path as small rings laid on the ground, the game's own selection
+; rings made small: gold in reach, red beyond. They lie in the world,
+; behind whoever stands in front of them. Off: a glowing line, drawn over
+; the scene. The marker at the path's end is on the ground either way.
+move_preview_ground = true
 
 [keys]
 ; Turn turn-based combat on or off, outside combat. The game's pause key

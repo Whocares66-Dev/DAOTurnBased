@@ -188,7 +188,7 @@ Whose a command is comes from the command itself: the player's orders carry a fl
 | `[feedback] turn_bar` | false | The turn order bar; off until seen in play |
 | `[feedback] portraits` | true | With the bar: render portraits for combatants the game has none for |
 | `[feedback] move_preview` | true | With the bar: the path to the cursor, gold in reach and red beyond (`dev/UI.md`) |
-| `[feedback] move_preview_ground` | false | The path as marks on the ground, not a line over the scene (`dev/UI.md`) |
+| `[feedback] move_preview_ground` | true | The path as small rings on the ground; off, a line over the scene (`dev/UI.md`) |
 | `[keys] toggle` | Ctrl+T | the key until bound in the game's controls |
 
 ## For script mods: events

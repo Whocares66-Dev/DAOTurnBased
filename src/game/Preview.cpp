@@ -56,6 +56,14 @@ constexpr std::uint32_t kSearchEveryMs = 150;
 // part the effect had was not told apart.
 constexpr std::int32_t kMoveMarker = 30000;
 
+// Past the movement left the marker is there too, red (the user,
+// 2026-10-01: "how about red rings and a red marker after the move limit?
+// Then it's easy to see how long player can move"): the same row placed in
+// a colour, which DAOLib's Place gives the effect's model in place of the
+// row's own (61e471e; its first use, not seen in play before this). Until
+// it is seen to take, the small red ring stays round a too-far end as well.
+constexpr dao::vfx::Tint kTooFar{1.0F, 0.16F, 0.10F, 1.0F};
+
 // The rings on the ground, the movie's: round a path's end that is too
 // far, about as wide as a creature's own selection ring, and round where
 // the movement runs out, half that; and round an end in reach only if the
@@ -73,16 +81,21 @@ constexpr std::int32_t kMoveMarker = 30000;
 // the marks are spread to keep their number down.
 constexpr std::int32_t kPartyRing = 30005; // "Party Member", SR_PTY
 constexpr std::int32_t kEnemyRing = 30011; // "Enemy", SR_EMY
-// At 0.14 and every 0.4 m a mark was a thin outline a tenth of the walker's
-// ring across: clear close to, a few pixels beyond five or six meters, and
-// the red ones hardly to be made out (the nineteenth play test). Half as
-// large again, and the too-far end's ring a creature's size.
-constexpr float kMarkScale = 0.21f;
-constexpr float kMarkEvery = 0.5f;
-constexpr float kMarksFrom = 0.8f;    // meters along: clear of the walker's ring
-constexpr float kMarksShortOf = 0.5f; // of the end: clear of the marker there
-constexpr float kEndRingScale = 1.0f;
-constexpr std::size_t kMostMarks = 60;
+// Small and many, a dotted line (the user, 2026-10-01, of rings 0.21 of a
+// creature's every 0.5 m: "wonder if we can make the rings smaller. A
+// larger number of smaller rings is basically a dotted line"). At 0.14
+// every 0.4 m the trail was too slight far off (the nineteenth play test);
+// closer together, it is the line of them that is seen, not each.
+constexpr float kMarkScale = 0.10f;
+constexpr float kMarkEvery = 0.2f;
+constexpr float kMarksFrom = 0.7f;    // meters along: clear of the walker's ring
+constexpr float kMarksShortOf = 0.4f; // of the end: clear of the marker there
+// The ring round a too-far end: twice a mark. At a creature's size it was
+// seen, but it is an enemy's ring, pointed mark and all, and at a glance an
+// enemy stood there; and it hid the red marks leading to it (the nineteenth
+// play test's second look).
+constexpr float kEndRingScale = 0.45f;
+constexpr std::size_t kMostMarks = 150;
 
 // The movie's line begins at the edge of the walker's own selection ring,
 // not at its feet: drawn over the scene it lay across the walker's shin
@@ -185,98 +198,133 @@ void Preview::Install()
     });
 }
 
-void Preview::ShowMarker(const Vec3 &at)
+// The game's marker at the path's end: gold where the move would go, red
+// where it is too far. Two effects, since an effect's colour is given when
+// it is placed: the one wanted is moved or placed, the other taken away.
+void Preview::ShowMarker(const Vec3 &at, bool tooFar)
 {
     const dao::CCArea *area = dao::world::CurrentArea();
     if (area == nullptr)
     {
         marker_ = kNoObject;
+        farMarker_ = kNoObject;
         return;
     }
-    if (marker_ != kNoObject && markerArea_ == area->Id() && dao::vfx::Move(marker_, Of(at)))
+    const bool here = markerArea_ == area->Id();
+    ObjectId &wanted = tooFar ? farMarker_ : marker_;
+    ObjectId &other = tooFar ? marker_ : farMarker_;
+    if (other != kNoObject)
+    {
+        if (here)
+        {
+            dao::vfx::Remove(other);
+        }
+        other = kNoObject;
+    }
+    if (wanted != kNoObject && here && dao::vfx::Move(wanted, Of(at)))
     {
         return;
     }
     // None yet, or it went with its area.
-    marker_ = dao::vfx::Place(kMoveMarker, Of(at));
+    wanted = dao::vfx::Place(kMoveMarker, Of(at), 1.0F, std::nullopt,
+                             tooFar ? std::optional<dao::vfx::Tint>(kTooFar) : std::nullopt);
     markerArea_ = area->Id();
-    if (marker_ != kNoObject)
+    if (wanted != kNoObject)
     {
-        dao::vfx::SetPickable(marker_, false);
+        dao::vfx::SetPickable(wanted, false);
     }
-    if (!std::exchange(markerSaid_, true))
+    bool &said = tooFar ? farMarkerSaid_ : markerSaid_;
+    if (!std::exchange(said, true))
     {
-        spdlog::debug("the preview's end is the game's movement marker (effect {:#x}), left out of the cursor's pick",
-                      marker_);
+        spdlog::debug("the preview's end is the game's movement marker{} (effect {:#x}), left out of the cursor's "
+                      "pick",
+                      tooFar ? ", tinted red for an end too far" : "", wanted);
     }
 }
 
 void Preview::HideMarker()
 {
-    if (marker_ == kNoObject)
+    if (marker_ == kNoObject && farMarker_ == kNoObject)
     {
         return;
     }
-    // In the area it was placed in only: in another it is gone with the
-    // first, and its id may be another effect's.
+    // In the area they were placed in only: in another they are gone with
+    // the first, and their ids may be other effects'.
     const dao::CCArea *area = dao::world::CurrentArea();
-    if (area != nullptr && markerArea_ == area->Id())
+    const bool here = area != nullptr && markerArea_ == area->Id();
+    for (ObjectId *marker : {&marker_, &farMarker_})
     {
-        dao::vfx::Remove(marker_);
+        if (here && *marker != kNoObject)
+        {
+            dao::vfx::Remove(*marker);
+        }
+        *marker = kNoObject;
     }
-    marker_ = kNoObject;
 }
 
-// `marks` made to lie at `at`: those there are moved, more are placed, the
-// rest are taken away.
-void Preview::Lay(std::vector<ObjectId> &marks, std::int32_t row, float scale, const std::vector<Vec3> &at)
+// `marks` made to lie at `at`: those there are moved if their place has
+// changed, more are placed, the rest are taken away.
+void Preview::Lay(Marks &marks, std::int32_t row, float scale, const std::vector<Vec3> &at)
 {
     for (std::size_t i = 0; i < at.size(); ++i)
     {
-        if (i < marks.size() && dao::vfx::Move(marks[i], Of(at[i])))
+        if (i < marks.ids.size())
         {
-            continue;
+            // Most frames nothing has moved: the cursor rests.
+            if (Distance(marks.at[i], at[i]) < 0.005f)
+            {
+                continue;
+            }
+            if (dao::vfx::Move(marks.ids[i], Of(at[i])))
+            {
+                marks.at[i] = at[i];
+                continue;
+            }
         }
         const ObjectId placed = dao::vfx::Place(row, Of(at[i]), scale);
         if (placed != kNoObject)
         {
             dao::vfx::SetPickable(placed, false);
         }
-        if (i < marks.size())
+        if (i < marks.ids.size())
         {
-            marks[i] = placed;
+            marks.ids[i] = placed;
+            marks.at[i] = at[i];
         }
         else
         {
-            marks.push_back(placed);
+            marks.ids.push_back(placed);
+            marks.at.push_back(at[i]);
         }
     }
-    while (marks.size() > at.size())
+    while (marks.ids.size() > at.size())
     {
-        dao::vfx::Remove(marks.back());
-        marks.pop_back();
+        dao::vfx::Remove(marks.ids.back());
+        marks.ids.pop_back();
+        marks.at.pop_back();
     }
 }
 
 void Preview::HideMarks()
 {
-    if (reachMarks_.empty() && beyondMarks_.empty() && endMarks_.empty())
+    if (reachMarks_.ids.empty() && beyondMarks_.ids.empty() && endMarks_.ids.empty())
     {
         return;
     }
     // As the marker: in their own area only.
     const dao::CCArea *area = dao::world::CurrentArea();
     const bool here = area != nullptr && markerArea_ == area->Id();
-    for (std::vector<ObjectId> *marks : {&reachMarks_, &beyondMarks_, &endMarks_})
+    for (Marks *marks : {&reachMarks_, &beyondMarks_, &endMarks_})
     {
         if (here)
         {
-            for (const ObjectId mark : *marks)
+            for (const ObjectId mark : marks->ids)
             {
                 dao::vfx::Remove(mark);
             }
         }
-        marks->clear();
+        marks->ids.clear();
+        marks->at.clear();
     }
 }
 
@@ -493,16 +541,9 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     const PathSplit outside = SplitPath(split.reach, kLineFrom);
     const std::vector<Vec3> &lineReach = outside.TooFar() ? outside.beyond : split.reach;
     shown.reach = OnScreen(lineReach);
-    // Where the move would go, the game's marker; past the movement left
-    // none, since it says "it will walk here" and it would not.
-    if (split.TooFar())
-    {
-        HideMarker();
-    }
-    else
-    {
-        ShowMarker(path_.back());
-    }
+    // The game's marker at the end: gold where the move would go, red past
+    // the movement left.
+    ShowMarker(path_.back(), split.TooFar());
     // The path in the world: marks along it, in the marker's area (which
     // ShowMarker keeps; with no marker placed the area is asked here).
     const dao::CCArea *area = dao::world::CurrentArea();
@@ -516,9 +557,11 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
         if (markerArea_ != area->Id())
         {
             // Another area than the marks were laid in: they went with it.
-            reachMarks_.clear();
-            beyondMarks_.clear();
-            endMarks_.clear();
+            for (Marks *marks : {&reachMarks_, &beyondMarks_, &endMarks_})
+            {
+                marks->ids.clear();
+                marks->at.clear();
+            }
             markerArea_ = area->Id();
         }
         const float reachEnd = PathLength(split.reach);
@@ -536,7 +579,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
         if (!std::exchange(marksSaid_, true))
         {
             spdlog::debug("the preview's path is marked on the ground: {} in reach, {} beyond, one every {:.2f} m",
-                          reachMarks_.size(), beyondMarks_.size(), every);
+                          reachMarks_.ids.size(), beyondMarks_.ids.size(), every);
         }
     }
     // Only if the reach is whole: a line broken behind the camera has no

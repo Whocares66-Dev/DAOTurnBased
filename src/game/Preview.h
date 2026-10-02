@@ -20,8 +20,11 @@
 // to walk. Can we use that?"; and "on the ground, not flat on the screen"):
 // the effect the game puts where a move click lands, placed in the world at
 // the path's end and moved after the cursor (src/game/Preview.cpp). Past
-// the movement left there is no marker: it says "it will walk here", and it
-// would not.
+// the movement left the marker is red, and so is the path from where the
+// movement runs out, so that how far the creature can go is seen (the
+// user). The path itself is small rings on the ground, a dotted line of
+// the game's own selection rings, or with the setting off a line the movie
+// draws.
 #pragma once
 
 #include "core/TurnMachine.h"
@@ -55,9 +58,16 @@ class Preview
     void Clear();
     void Search(ObjectId walker, const Vec3 &from, const Vec3 &to, std::uint32_t nowMs);
     void Compare(std::uint32_t nowMs);
-    void ShowMarker(const Vec3 &at);
+    // Effects placed along the path, and where each lies.
+    struct Marks
+    {
+        std::vector<ObjectId> ids;
+        std::vector<Vec3> at;
+    };
+
+    void ShowMarker(const Vec3 &at, bool tooFar);
     void HideMarker();
-    void Lay(std::vector<ObjectId> &marks, std::int32_t row, float scale, const std::vector<Vec3> &at);
+    void Lay(Marks &marks, std::int32_t row, float scale, const std::vector<Vec3> &at);
     void HideMarks();
 
     std::mutex mutex_;
@@ -78,16 +88,18 @@ class Preview
     // The game's movement marker at the path's end, while one is placed,
     // and the area it was placed in: an effect goes with its area, and its
     // id is not asked after in another.
-    ObjectId marker_ = kNoObject;
+    ObjectId marker_ = kNoObject;    // gold, at an end in reach
+    ObjectId farMarker_ = kNoObject; // red, at an end too far
     ObjectId markerArea_ = kNoObject;
     bool markerSaid_ = false;
+    bool farMarkerSaid_ = false;
 
     // The path's marks on the ground, in reach and beyond, and the ring
     // round a too-far end: effects placed once and moved, of the marker's
     // area.
-    std::vector<ObjectId> reachMarks_;
-    std::vector<ObjectId> beyondMarks_;
-    std::vector<ObjectId> endMarks_;
+    Marks reachMarks_;
+    Marks beyondMarks_;
+    Marks endMarks_;
     bool marksSaid_ = false;
 
     // The path last shown, kept a moment after: if its creature then

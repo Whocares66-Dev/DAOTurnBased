@@ -194,11 +194,12 @@ TEST_CASE("the movement preview is on by default and can be turned off", "[setti
     CHECK(off.warnings.empty());
 }
 
-TEST_CASE("the preview's marks on the ground are off by default and can be turned on", "[settings]")
+TEST_CASE("the preview's path is marked on the ground by default, and can be a line instead", "[settings]")
 {
-    CHECK_FALSE(tb::Settings{}.movePreviewGround);
-    CHECK_FALSE(tb::ParseSettings(tb::DefaultSettingsFile()).settings.movePreviewGround);
-    const tb::ParsedSettings on = tb::ParseSettings("[feedback]\nmove_preview_ground = true\n");
-    CHECK(on.settings.movePreviewGround);
-    CHECK(on.warnings.empty());
+    // The user, 2026-10-01, of the two seen in play: "let's try the rings".
+    CHECK(tb::Settings{}.movePreviewGround);
+    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.movePreviewGround);
+    const tb::ParsedSettings line = tb::ParseSettings("[feedback]\nmove_preview_ground = false\n");
+    CHECK_FALSE(line.settings.movePreviewGround);
+    CHECK(line.warnings.empty());
 }
