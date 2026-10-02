@@ -501,7 +501,7 @@ int ToggleGamePause(dao::script::CommandCall &call)
 struct Order
 {
     const char *what;
-    std::uintptr_t handler;
+    dao::AddressId handler; // an id of DAOLib's address library, not an address (8b027c6 on)
 };
 namespace handler = dao::messages::handler;
 constexpr std::array kOrders{
@@ -539,9 +539,12 @@ template <std::size_t I> struct OrderWatch
     }
 };
 
-template <class Fn> bool Place(dao::Detour<Fn> &detour, std::uintptr_t address, Fn hook, const char *what)
+template <class Fn> bool Place(dao::Detour<Fn> &detour, dao::AddressId id, Fn hook, const char *what)
 {
-    if (detour.Attach(address, hook))
+    // Where the id is in the game that is running: the GOG build's and
+    // EA's differ.
+    const std::uintptr_t address = dao::Module::Address(id);
+    if (detour.Attach(id, hook))
     {
         spdlog::info("detoured {} at {:#010x}", what, address);
         return true;

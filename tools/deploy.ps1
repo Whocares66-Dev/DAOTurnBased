@@ -70,6 +70,17 @@ Copy-Item -Force $builtPlugin $plugin
 $builtPdb = [IO.Path]::ChangeExtension($builtPlugin, '.pdb')
 if (Test-Path $builtPdb) { Copy-Item -Force $builtPdb $pluginPdb }
 Show-Ok "plugin  -> $plugin"
+# DAOLib's address library, one file per build of the game (DAOLib 8b027c6 on): the loader
+# and the plugin read the one for the game they are in, and the loader loads nothing
+# without it. As DAOLib's own deploy.ps1 does.
+$builtAddresses = Join-Path $build 'daolib\addresses'
+if (-not (Test-Path (Join-Path $builtAddresses '*.bin'))) { throw "No address files in $builtAddresses; the build makes them" }
+$addresses = Join-Path $Game 'daolib\addresses'
+New-Item -ItemType Directory -Force $addresses | Out-Null
+foreach ($file in Get-ChildItem -Path $builtAddresses -Filter '*.bin') {
+    Copy-Item -Force $file.FullName (Join-Path $addresses $file.Name)
+}
+Show-Ok "addresses -> $addresses"
 $builtMovie = Join-Path $repo 'build\ui\turnorder.swf'
 if (Test-Path $builtMovie) {
     New-Item -ItemType Directory -Force $override | Out-Null

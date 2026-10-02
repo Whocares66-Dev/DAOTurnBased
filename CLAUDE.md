@@ -14,7 +14,8 @@ DAOLib's `CLAUDE.md` has the game, the one exe build every address is from, the 
 
 `extern/DAOLib` is a git submodule (DAOLib's own repository), built with this one through `add_subdirectory(... EXCLUDE_FROM_ALL)`, which gives `DAOLib::daolib` and `add_daolib_plugin`: the way Skyrim plugins build CommonLibSSE. DAOLib's dependencies come through this repository's `vcpkg.json`.
 
-- After cloning: `git submodule update --init`.
+- After cloning: `git submodule update --init --recursive` (DAOLib has a submodule of its own, `extern/DAOAddressLibrary`, since `8b027c6`).
+- Since DAOLib `8b027c6` (2026-10-01) the game's addresses are IDs, looked up at run time in a file for the running build of the game: the same dll runs in GOG's game and EA's. The build packs those files into `build\<preset>\daolib\addresses` (`daoaddr_data`, which `turnbased` depends on) and `tools/deploy.ps1` copies them to `bin_ship\daolib\addresses`; without the one for the running exe the loader loads nothing. The plugin API is 2: the loader and every plugin in the game's folder must be of the same API, so a deploy across that line is agreed with the other plugins' sessions (Eluvian's) first.
 - A change DAOLib needs is made in DAOLib's own repository (the sibling checkout `..\DAOLib`, with its own session and its own rules in its `CLAUDE.md`), committed and pushed there; then the submodule is moved to that commit here. To build against the sibling's working tree meanwhile, configure with `-DDAOLIB_DIR=../DAOLib`; without a submodule, CMake falls back to it.
 - What the mod wants from DAOLib goes into `dev/DAOLIB_NEEDS.md`, not straight into DAOLib's tree, unless the user asks for it.
 
@@ -64,7 +65,7 @@ The machine is not thread-safe by itself: `src/plugin/Plugin.cpp` holds a mutex 
 
 A change to `src/core`'s logic also runs `build\core\tests\tb_tests.exe "[fights-long]"` (a thousand random fights, half a minute) and `python tools\mutants.py` (each mutant must be caught; a new promise gets a mutant). `-Preset core-cov -Coverage` shows what the tests never run. `dev/TESTING.md` has what each found.
 
-Last green 2026-10-01, all of it, against DAOLib `61e471e`: 209 tests (the Python tools' among them), 1,000 fights, 146 of 146 mutants caught, ASan clean, clang-tidy clean, /analyze clean; the movie built and its sample seen in Ruffle. Run the mutants after a change to the random fights' arena too: a change to its draws can stop the default seeds reaching a rare case (`dev/TESTING.md`).
+Last green 2026-10-01, all of it, against DAOLib `8b027c6`: 209 tests (the Python tools' among them), 1,000 fights, 146 of 146 mutants caught, ASan clean, clang-tidy clean, /analyze clean; the movie built and its sample seen in Ruffle. Run the mutants after a change to the random fights' arena too: a change to its draws can stop the default seeds reaching a rare case (`dev/TESTING.md`).
 
 ## Writing files from the shell
 
