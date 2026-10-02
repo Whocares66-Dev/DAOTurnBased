@@ -46,41 +46,58 @@ std::mutex *g_mutex = nullptr;
 // tables, or the engine did (effects, weapon draws, animations, jumps,
 // SetActive). DAOLib's Addresses.h lists QueueCommand's ten callers
 // (kCCObject_QueueCommand), read 2026-09-30.
-constexpr std::uint32_t kFromAddCommand = 0x0066E1B4;       // CVirtualMachineCommands' AddCommand
-constexpr std::uint32_t kFromClientAddCommand = 0x006DA2C4; // CClientVirtualMachineCommands' AddCommand
+//
+// A caller is told by the function its return address lies in, by that
+// function's id in DAOLib's address library (dao::Module::Containing,
+// e9c65f2), which is the same in every build of the game: until 2026-10-01
+// these were the ten return addresses themselves, numbers of GOG's build
+// that EA's would have matched nothing. Ten sites, seven functions
+// (DAOLib's tools/address_ids.py on each address; three have no name yet).
+constexpr dao::AddressId kFromAddCommand{13455}; // ScriptCommand::ADDCOMMAND, the scripts' AddCommand
+constexpr dao::AddressId kFromClientAddCommand = dao::addr::kCClientVirtualMachineCommands_AddCommand;
 constexpr std::array kKnownCallers{
-    kFromAddCommand,           kFromClientAddCommand,     std::uint32_t{0x0073D054}, std::uint32_t{0x006A22AE},
-    std::uint32_t{0x006A23C5}, std::uint32_t{0x006A3A19}, std::uint32_t{0x00661A7E}, std::uint32_t{0x00661B1B},
-    std::uint32_t{0x006D694C}, std::uint32_t{0x006D69CC},
+    kFromAddCommand,
+    kFromClientAddCommand,
+    dao::addr::kCCObject_QueueNewCommand,
+    dao::AddressId{14452},
+    dao::AddressId{14453},
+    dao::AddressId{14488},
+    dao::AddressId{13252},                               // ScriptCommand::SETACTIVE, two sites
+    dao::addr::kCClientVirtualMachineCommands_SetActive, // two sites
 };
 
-Source SourceOf(const dao::Command &command, std::uint32_t caller)
+// The function QueueCommand was called from, or nothing for a return
+// address outside the game's code.
+using Caller = std::optional<dao::Module::Place>;
+
+Source SourceOf(const dao::Command &command, const Caller &caller)
 {
     if (command.PlayerIssued())
     {
         return Source::Player;
     }
-    if (caller == kFromAddCommand || caller == kFromClientAddCommand)
+    if (caller && (caller->id == kFromAddCommand || caller->id == kFromClientAddCommand))
     {
         return Source::Script;
     }
     return Source::Engine;
 }
 
-// A caller not among the ten, logged once each: DAOLib's reading missed it.
-void NoteCaller(std::uint32_t caller, CommandType type)
+// A caller not among the seven, logged once each: DAOLib's reading missed
+// it.
+void NoteCaller(const Caller &caller, std::uintptr_t from, CommandType type)
 {
-    if (std::ranges::find(kKnownCallers, caller) != kKnownCallers.end())
+    if (caller && std::ranges::find(kKnownCallers, caller->id) != kKnownCallers.end())
     {
         return;
     }
     static std::mutex mutex;
-    static std::set<std::uint32_t> seen;
+    static std::set<std::uintptr_t> seen;
     const std::lock_guard lock(mutex);
-    if (seen.insert(caller).second)
+    if (seen.insert(from).second)
     {
-        spdlog::warn("QueueCommand called from {:#010x}, not one of the ten callers DAOLib knows (a {})", caller,
-                     Name(type));
+        spdlog::warn("QueueCommand called from {:#010x}, in none of the functions DAOLib knows to call it (a {})",
+                     dao::Module::ImageAddress(from), Name(type));
     }
 }
 
@@ -351,13 +368,14 @@ dao::Detour<QueueCommandFn> g_queue;
 
 int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command, int addToFront, int overrideBehaviour)
 {
-    const std::uint32_t caller = dao::Module::Preferred(reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+    const auto from = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    const Caller caller = dao::Module::Containing(from);
     if (self != nullptr && command != nullptr)
         try
         {
             const auto type = static_cast<CommandType>(static_cast<int>(command->Type()));
             const Source source = SourceOf(*command, caller);
-            NoteCaller(caller, type);
+            NoteCaller(caller, from, type);
             const dao::CCCreature *creature = self->AsCreature();
             const std::optional<Reached> reached = source == Source::Player && type == CommandType::Attack
                                                        ? WalkToTarget(*self, *command, true)

@@ -198,11 +198,9 @@ target_compile_definitions(
     PRIVATE TB_VERSION_STRING="${PROJECT_VERSION}"
 )
 # DAOLib's address library packs its files, one per build of the game, into
-# build\<preset>\daolib\addresses (DAOLib 8b027c6 on): the loader and the
-# plugin read the one for the running game, and tools/deploy.ps1 copies them
-# beside the loader. Its target is not in ALL here, DAOLib being
-# EXCLUDE_FROM_ALL.
-add_dependencies(turnbased daoaddr_data)
+# build\<preset>\daolib\addresses: the loader and the plugin read the one
+# for the running game, and tools/deploy.ps1 copies them beside the loader.
+# daolib depends on them itself (DAOLib 8ecb9ac), so linking it makes them.
 
 # `cmake --build --preset debug` builds the loader too, so build\<preset>\
 # is a game folder's worth of files: version.dll, daolib\plugins\*.dll.

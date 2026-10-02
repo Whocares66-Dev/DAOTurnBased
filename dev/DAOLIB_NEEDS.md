@@ -43,9 +43,9 @@ Things the mod already relies on that DAOLib has read but not seen work. `dev/TE
 1. **The top byte of the command's first word**, not read yet (the rest of the layout is done, above).
 2. **An event when a command starts and when it ends**, for any creature. `COMMAND_COMPLETE` reaches `OnScriptEvent` only sometimes (DAOLib's `dev/LIBRARY.md`, the fifth session). The mod polls instead: busy for two frames running means done.
 
-## For EA's build of the game: who called, by more than a number
+## For EA's build of the game: who called, by more than a number (done)
 
-DAOLib `8b027c6` (2026-10-01) names the game's functions and globals by id, and the mod, ported to it the same day, runs under its API 2 loader in the GOG game (seen to start, every detour placed). One thing in the mod is still GOG's alone: the gate tells who queued a command by the return address of `CCObject::QueueCommand`'s caller, ten numbers of its own in `src/game/Gate.cpp` (the scripts' `AddCommand`, the client's, and eight more), which are places inside functions and have no id. In EA's game they match nothing, and every command would seem to come from an unknown caller. Wanted: a way to say which function a return address lies in across builds (the function's id and its size, or a list of call sites by id). Asked of lib-agent; the GOG game, the only one the mod is deployed to, is unaffected.
+DAOLib `8b027c6` (2026-10-01) names the game's functions and globals by id, and the mod, ported to it the same day, runs under its API 2 loader in the GOG game (seen to start, every detour placed). One thing in the mod was GOG's alone: the gate tells who queued a command by the return address of `CCObject::QueueCommand`'s caller, ten numbers of its own, places inside functions with no id. **Done** (DAOLib `e9c65f2`, `dao::Module::Containing`: the id of the function a running address lies in): the gate compares that id, ten sites being seven functions. Three of the seven have no name in the address library (ids 14452, 14453, 14488). Not seen in EA's game; the mod is deployed to GOG's only.
 
 ## The UI (`dev/UI.md`)
 
