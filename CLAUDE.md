@@ -27,7 +27,6 @@ src/game/     every call into the engine, through DAOLib: Bridge (observe, apply
               SettingsFile. Verified by playing.
 src/plugin/   DAOLib_Load and the frame callback that runs the machine
 ui/turnorder/ the turn bar's movie, ActionScript 2 (frame_1/DoAction.as)
-ui/override/  loose resources deployed beside the movie: two material objects of the game's (dev/UI.md)
 tests/        Catch2 over src/core: scripted cases in a stand-in for the game (World.h), and random
               fights checked against the design's promises every frame (test_fights.cpp)
 tools/        build.ps1 (DAOLib's, for this tree), deploy.ps1, mutants.py (break the core on purpose),
