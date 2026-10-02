@@ -20,6 +20,9 @@
     plugins. DAOLib's own `deploy.ps1 -Remove` returns the game to stock. The settings
     and logs are in Documents\BioWare\Dragon Age\daolib\ and stay.
 
+    Neither is done while another agent's claim on the game stands (game.claim.json
+    beside the logs, Eluvian's README.md, "The claim"); -Owner is who deploys.
+
 .EXAMPLE
     .\tools\deploy.ps1                 # debug build into the GOG install
     .\tools\deploy.ps1 -Preset release
@@ -30,7 +33,8 @@ param(
     [ValidateSet('debug', 'release')]
     [string] $Preset = 'debug',
     [switch] $Remove,
-    [string] $Game = 'C:\Program Files (x86)\GOG Galaxy\Games\Dragon Age Origins\bin_ship'
+    [string] $Game = 'C:\Program Files (x86)\GOG Galaxy\Games\Dragon Age Origins\bin_ship',
+    [string] $Owner = 'turn-based-agent'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,6 +43,25 @@ $repo = Split-Path -Parent $PSScriptRoot
 
 if (-not (Test-Path (Join-Path $Game 'DAOrigins.exe'))) { throw "No DAOrigins.exe in $Game" }
 if (Get-Process -Name DAOrigins -ErrorAction SilentlyContinue) { throw 'DAOrigins.exe is running; close it first' }
+
+# Several agents share the game and its folder, and a test may leave a loader and plugins of
+# its own in place between two runs. game.claim.json says who holds them, the one claim every
+# agent's scripts honour (the user's decision, 2026-10-02; Eluvian's README.md, "The claim"):
+# while one stands that is not this caller's, nothing is copied or taken out. -Owner says who
+# is deploying. The old name too, which a bridge started before the shared name still writes.
+$claimFolder = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'BioWare\Dragon Age\daolib'
+foreach ($claimFile in @((Join-Path $claimFolder 'game.claim.json'), (Join-Path $claimFolder 'eluvian.claim.json'))) {
+    if (Test-Path $claimFile) {
+        try {
+            $claim = Get-Content $claimFile -Raw | ConvertFrom-Json
+            $left = [double]$claim.until - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+            if ($left -gt 0 -and $claim.owner -ne $Owner) {
+                throw "the game and its folder are claimed by $($claim.owner) for another $([math]::Round($left / 60, 1)) minutes ($($claim.note)); nothing deployed"
+            }
+        }
+        catch [System.ArgumentException] { Show-Info "$claimFile is not readable; taken as no claim" }
+    }
+}
 
 $plugins = Join-Path $Game 'daolib\plugins'
 $plugin = Join-Path $plugins 'turnbased.dll'
