@@ -237,21 +237,15 @@ int RollInitiative(Rng &rng, float dexterity, const Settings &settings)
     return rng.Roll(settings.initiativeDie) + static_cast<int>(bonus);
 }
 
-float Reach(float weaponRange, float targetPersonalSpace)
+float Reach(float weaponRange, float attackerSpace, float targetSpace)
 {
-    if (weaponRange > 0.0f)
+    const auto space = [](float meters) { return std::isfinite(meters) && meters > 0.0f ? meters : 0.0f; };
+    const float spaces = space(attackerSpace) + space(targetSpace);
+    if (std::isfinite(weaponRange) && weaponRange > 0.0f)
     {
-        return weaponRange;
+        return std::min(weaponRange, kLongestRange) + spaces;
     }
-    if (targetPersonalSpace > 2.0f)
-    {
-        return kBigTargetReach;
-    }
-    if (targetPersonalSpace > 1.0f)
-    {
-        return kMeleeReach + targetPersonalSpace / 2.0f;
-    }
-    return kMeleeReach;
+    return spaces + kMeleeGap + kSwingPlay;
 }
 
 float WalkToReach(float distance, float reach)

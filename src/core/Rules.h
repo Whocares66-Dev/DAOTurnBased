@@ -110,17 +110,24 @@ inline constexpr std::int32_t kUseTypeMode = 2;
 // the game uses those on the caster, and so do they here.
 [[nodiscard]] bool AsksForTarget(std::int32_t targetType, std::int32_t useType);
 
-// How far a creature strikes from, as the game's AI judges it
-// (_AI_IsTargetInMeleeRange, ai_main_h_2.nss): AI_MELEE_RANGE, 3.5 m
-// (core_h.nss), and for a big target half its personal space more (the
-// appearance table's PerSpace, 1-2 for bears, drakes, the broodmother),
-// or 12 m past 2 (a high dragon's 3). A ranged weapon reaches its range in
-// the items table instead (Range: 45 m for bows, crossbows and staves; 0
-// for every melee weapon). Read 2026-09-30 from the scripts and
-// tools/gda.py's dumps of bitm_base and apr_base.
-inline constexpr float kMeleeReach = 3.5f;
-inline constexpr float kBigTargetReach = 12.0f;
-[[nodiscard]] float Reach(float weaponRange, float targetPersonalSpace);
+// How far apart, centre to centre, a creature's walk to strike ends: the
+// engine's, read in the exe by DAOLib (2026-10-02, its dev/TURN_BASED.md,
+// "How close a melee attack strikes from"). In melee, the attacker's
+// personal space and the target's (the appearance table's PerSpace: a
+// person 0.35, a child 0.30, a giant spider 0.70) and 1.2 m, the
+// creature's in-reach test (ID 14499); the swing's set-up stands the
+// attacker there with 0.15 m of play (ID 17720), and the walk ends that
+// much further out. Lyna on a giant spider: 0.35 + 0.70 + 1.2 + 0.15 =
+// 2.4 m, as play test 23 measured; two people, 2.05 m. A ranged weapon
+// reaches its Range (bitm_base: 45 m for bows, crossbows and staves; 0 for
+// every melee weapon, which so adds nothing), at most 60 m, and both
+// personal spaces. Until then this was the AI's judgement of a melee
+// target, AI_MELEE_RANGE's 3.5 m, and the game walked a metre further
+// than the gate and the preview said.
+inline constexpr float kMeleeGap = 1.2f;
+inline constexpr float kSwingPlay = 0.15f;
+inline constexpr float kLongestRange = 60.0f;
+[[nodiscard]] float Reach(float weaponRange, float attackerSpace, float targetSpace);
 
 // Meters a creature must walk before it can strike a target this far away.
 [[nodiscard]] float WalkToReach(float distance, float reach);

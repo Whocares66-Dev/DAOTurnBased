@@ -171,17 +171,8 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     }
     const ObjectId attacker = self.Id();
     const float distance = api::GetDistanceBetween(attacker, *target);
-    float weaponRange = 0.0f;
     std::int32_t weaponType = -1;
-    const ObjectId weapon = api::GetItemInEquipSlot(k::INVENTORY_SLOT_MAIN, attacker);
-    if (api::IsObjectValid(weapon) != 0)
-    {
-        weaponType = api::GetBaseItemType(weapon);
-        weaponRange = dao::gda::GetFloat(dao::script::Table::Items, weaponType, "Range").value_or(0.0f);
-    }
-    const float space =
-        dao::gda::GetFloat(dao::script::Table::Appearance, api::GetAppearanceType(*target), "PerSpace").value_or(0.0f);
-    const float reach = Reach(weaponRange, space);
+    const float reach = ReachOf(attacker, *target, &weaponType);
     // Around what stands between them: the path to where the target stands.
     // Only for a creature at rest, as it is when the player gives an order.
     // The game's own second go at an attack comes while the creature is at
@@ -612,6 +603,27 @@ void DropHeldCast(ObjectId creature)
     {
         g_heldCasts.erase(creature);
     }
+}
+
+float ReachOf(ObjectId attacker, ObjectId target, std::int32_t *weaponType)
+{
+    float weaponRange = 0.0f;
+    std::int32_t type = -1;
+    const ObjectId weapon = api::GetItemInEquipSlot(k::INVENTORY_SLOT_MAIN, attacker);
+    if (api::IsObjectValid(weapon) != 0)
+    {
+        type = api::GetBaseItemType(weapon);
+        weaponRange = dao::gda::GetFloat(dao::script::Table::Items, type, "Range").value_or(0.0f);
+    }
+    if (weaponType != nullptr)
+    {
+        *weaponType = type;
+    }
+    const auto space = [](ObjectId creature) {
+        return dao::gda::GetFloat(dao::script::Table::Appearance, api::GetAppearanceType(creature), "PerSpace")
+            .value_or(0.0f);
+    };
+    return Reach(weaponRange, space(attacker), space(target));
 }
 
 void SetPathCheck(bool on)

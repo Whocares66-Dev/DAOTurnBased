@@ -1,6 +1,8 @@
 #include "game/Preview.h"
 
 #include "core/Preview.h"
+#include "core/Rules.h"
+#include "game/Gate.h"
 
 #include "dao/ClientExoApp.h"
 #include "dao/GameModes.h"
@@ -27,6 +29,7 @@ namespace
 {
 
 namespace api = dao::script::api;
+namespace k = dao::script::constants;
 
 // The cursor's point must move this far for the path to be searched again,
 // and a search is not made more often than this: the pathfinder's search is
@@ -394,16 +397,19 @@ void Preview::Clear()
     encoded_ = EncodeNoPreview();
 }
 
-void Preview::Search(ObjectId walker, const Vec3 &from, const Vec3 &to, std::uint32_t nowMs)
+void Preview::Search(ObjectId walker, const Vec3 &from, const Vec3 &to, ObjectId toward, std::uint32_t nowMs)
 {
     walker_ = walker;
+    toward_ = toward;
     from_ = from;
     to_ = to;
     searched_ = true;
     searchedAt_ = nowMs;
     path_.clear();
     const ULONGLONG began = GetTickCount64();
-    const std::optional<dao::world::WalkPath> found = dao::world::FindPath(walker, Of(to));
+    // To a creature, with its own obstacle lifted, as the gate searches
+    // for an attack's walk.
+    const std::optional<dao::world::WalkPath> found = dao::world::FindPath(walker, Of(to), toward);
     const ULONGLONG took = GetTickCount64() - began;
     if (found && !found->waypoints.empty())
     {
@@ -464,27 +470,42 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     const bool waiting = enabled && view.active && view.playerTurn && view.phase == Phase::AwaitingOrder &&
                          view.current != kNoObject && view.movementLeft >= TurnMachine::kMinStep;
     const dao::GameModeExplore *explore = waiting ? ExploreMode() : nullptr;
-    // The ground only, for now: over a creature or a door the cursor's point
-    // is the object's, and the preview of an attack's walk is still to do.
-    // And ground a move would go to: a click on rubble is not an order at
-    // all (the engine's own test, which its move click makes), and a path
-    // drawn to it promised one. In play a red end there, clicked, was not
-    // refused "Too far": no command came (the fifteenth play test,
-    // 2026-10-01).
-    const std::optional<dao::Vector> ground =
-        explore != nullptr && !explore->CursorObject() && explore->CursorGroundWalkable() ? explore->CursorGround()
-                                                                                          : std::nullopt;
-    if (!ground || !AtRest(view.current))
+    const std::optional<ObjectId> object = explore != nullptr ? explore->CursorObject() : std::nullopt;
+    // Over an enemy, with an action left: the walk an attack on it would
+    // take (the user's first list: "the same for an attack: gold if the
+    // target can be reached this turn, red if not, before the player
+    // clicks"). Over anything else that is an object (a door, a chest, a
+    // friend) the click is no walk the preview knows, and nothing is drawn.
+    const ObjectId target = object && view.actionsLeft > 0 && api::GetObjectType(*object) == k::OBJECT_TYPE_CREATURE &&
+                                    api::IsDead(*object) == 0 && api::IsObjectHostile(view.current, *object) != 0
+                                ? *object
+                                : kNoObject;
+    // Otherwise the ground, and ground a move would go to: a click on
+    // rubble is not an order at all (the engine's own test, which its move
+    // click makes), and a path drawn to it promised one. In play a red end
+    // there, clicked, was not refused "Too far": no command came (the
+    // fifteenth play test, 2026-10-01).
+    std::optional<dao::Vector> point;
+    if (target != kNoObject)
+    {
+        point = api::GetPosition(target);
+    }
+    else if (explore != nullptr && !object && explore->CursorGroundWalkable())
+    {
+        point = explore->CursorGround();
+    }
+    if (!point || !AtRest(view.current))
     {
         Clear();
         return;
     }
     const Vec3 from = Of(api::GetPosition(view.current));
-    const Vec3 to = Of(*ground);
-    const bool stale = !searched_ || walker_ != view.current || Flat(from_, from) > 0.1f || Flat(to_, to) > kMoved;
-    if (stale && (!searched_ || walker_ != view.current || nowMs - searchedAt_ >= kSearchEveryMs))
+    const Vec3 to = Of(*point);
+    const bool another = !searched_ || walker_ != view.current || toward_ != target;
+    const bool stale = another || Flat(from_, from) > 0.1f || Flat(to_, to) > kMoved;
+    if (stale && (another || nowMs - searchedAt_ >= kSearchEveryMs))
     {
-        Search(view.current, from, to, nowMs);
+        Search(view.current, from, to, target, nowMs);
     }
     if (path_.size() < 2)
     {
@@ -510,28 +531,53 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     // is cut, and the plate gives the gate's number.
     const float order = route_ + Flat(routeEnd_, to);
     const float drawn = PathLength(path_);
-    const PathSplit split = SplitPath(path_, view.movementLeft + (drawn - order));
+    // What is walked: all of a move's path; of an attack's, as far as where
+    // the attacker can strike, by the gate's own sum (WalkToTarget: the
+    // path or the straight line, whichever is longer, less the reach).
+    float walk = order;
+    std::vector<Vec3> walked = path_;
+    if (target != kNoObject)
+    {
+        const float distance = api::GetDistanceBetween(view.current, target);
+        walk = WalkToReach(std::max(order, distance), ReachOf(view.current, target));
+        walked = SplitPath(path_, walk + (drawn - order)).reach;
+        if (walk < 0.05f || walked.size() < 2)
+        {
+            // In reach where it stands: no walk to show.
+            HideMarker();
+            HideMarks();
+            if (std::exchange(drawn_, false))
+            {
+                const std::lock_guard lock(mutex_);
+                encoded_ = EncodeNoPreview();
+            }
+            return;
+        }
+    }
+    const bool attack = target != kNoObject;
+    const PathSplit split = SplitPath(walked, view.movementLeft + (PathLength(walked) - walk));
     PreviewView shown;
     if (const std::optional<dao::world::ViewSize> size = dao::world::ScreenSize())
     {
         shown.width = size->width;
         shown.height = size->height;
     }
-    shown.length = order;
+    shown.length = walk;
     shown.meters = view.movementLeft;
     // The drawn line leaves out its first stretch, inside the walker's ring.
     const PathSplit outside = SplitPath(split.reach, kLineFrom);
     const std::vector<Vec3> &lineReach = outside.TooFar() ? outside.beyond : split.reach;
     shown.reach = OnScreen(lineReach);
     // Where the move would go, the game's marker; past the movement left
-    // none, since it says "it will walk here" and it would not.
-    if (split.TooFar())
+    // none, since it says "it will walk here" and it would not. An attack's
+    // walk ends at its target, which has its own ring.
+    if (split.TooFar() || attack)
     {
         HideMarker();
     }
     else
     {
-        ShowMarker(path_.back());
+        ShowMarker(walked.back());
     }
     // The path in the world: marks along it, in the marker's area (which
     // ShowMarker keeps; with no marker placed the area is asked here).
@@ -557,14 +603,17 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
         const float beyondEnd = PathLength(split.beyond);
         // Spread, if they would be too many.
         const float every = std::max(kMarkEvery, (reachEnd + beyondEnd) / static_cast<float>(kMostMarks));
-        const float reachTo = split.TooFar() ? reachEnd : reachEnd - kMarksShortOf;
+        // Short of the marker at a move's end, and of the ring round a
+        // too-far one; an attack's walk has neither.
+        const float reachTo = split.TooFar() || attack ? reachEnd : reachEnd - kMarksShortOf;
+        const float beyondTo = attack ? beyondEnd : beyondEnd - kMarksShortOf;
         Lay(reachMarks_, kPartyRing, kMarkScale, AlongPath(split.reach, every, kMarksFrom, reachTo));
         // The red ones go on in step from where the gold ones end.
         const float into = every - std::fmod(std::max(0.0f, reachEnd - kMarksFrom), every);
         Lay(beyondMarks_, kEnemyRing, kRedMarkScale,
-            split.TooFar() ? AlongPath(split.beyond, every, into, beyondEnd - kMarksShortOf) : std::vector<Vec3>{});
+            split.TooFar() ? AlongPath(split.beyond, every, into, beyondTo) : std::vector<Vec3>{});
         Lay(endMarks_, kEnemyRing, kEndRingScale,
-            split.TooFar() ? std::vector<Vec3>{path_.back()} : std::vector<Vec3>{});
+            split.TooFar() && !attack ? std::vector<Vec3>{walked.back()} : std::vector<Vec3>{});
         if (!std::exchange(marksSaid_, true))
         {
             spdlog::debug("the preview's path is marked on the ground: {} in reach, {} beyond, one every {:.2f} m",
@@ -580,16 +629,17 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
         {
             shown.stopRing = RingOnScreen(split.reach.back(), kStopRing);
         }
-        if (shown.line && shown.beyond.size() == split.beyond.size() && (split.TooFar() || marker_ == kNoObject))
+        if (shown.line && !attack && shown.beyond.size() == split.beyond.size() &&
+            (split.TooFar() || marker_ == kNoObject))
         {
-            shown.endRing = RingOnScreen(path_.back(), kEndRing);
+            shown.endRing = RingOnScreen(walked.back(), kEndRing);
         }
     }
     std::wstring encoded = EncodePreview(shown);
     drawn_ = true;
     if (!walking_)
     {
-        shown_ = path_;
+        shown_ = walked;
         shownFor_ = view.current;
         shownAt_ = nowMs;
     }

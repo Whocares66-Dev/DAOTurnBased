@@ -24,7 +24,10 @@
 // that how far the creature can go is seen (the user), and its end has a
 // red ring and no marker: the marker could not be made red. The path
 // itself is small rings on the ground, a dotted line of the game's own
-// selection rings, or with the setting off a line the movie draws.
+// selection rings, or with the setting off a line the movie draws. Over an
+// enemy the path is an attack's walk: to where the attacker can strike, by
+// the reach the gate judges the attack by, gold if that is within the
+// movement left and red if not.
 #pragma once
 
 #include "core/TurnMachine.h"
@@ -56,7 +59,7 @@ class Preview
 
   private:
     void Clear();
-    void Search(ObjectId walker, const Vec3 &from, const Vec3 &to, std::uint32_t nowMs);
+    void Search(ObjectId walker, const Vec3 &from, const Vec3 &to, ObjectId toward, std::uint32_t nowMs);
     void Compare(std::uint32_t nowMs);
     // Effects placed along the path, and where each lies.
     struct Marks
@@ -77,8 +80,9 @@ class Preview
 
     // The path last found, the frame callback's alone.
     ObjectId walker_ = kNoObject;
-    Vec3 from_; // where the walker stood
-    Vec3 to_;   // the cursor's point it was found for
+    ObjectId toward_ = kNoObject; // the creature the path is to, for an attack's; none for a move's
+    Vec3 from_;                   // where the walker stood
+    Vec3 to_;                     // the cursor's point it was found for
     bool searched_ = false;
     std::uint32_t searchedAt_ = 0;
     std::vector<Vec3> path_; // empty: the game finds no path there

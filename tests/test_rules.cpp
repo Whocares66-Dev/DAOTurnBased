@@ -126,16 +126,16 @@ TEST_CASE("movement is meters, times speed under the speed rule, clamped", "[rul
     CHECK(tb::MovementBudget(settings, 1.0f, 40.0f) == Approx(20.0f));
 }
 
-TEST_CASE("reach is the AI's: 3.5 m, more for a big target, a ranged weapon's range", "[rules]")
+TEST_CASE("reach is the engine's: both personal spaces and 1.2 m, or a ranged weapon's range", "[rules]")
 {
-    CHECK(tb::Reach(0.0f, 0.35f) == Approx(3.5f)); // an elf
-    CHECK(tb::Reach(0.0f, 1.0f) == Approx(3.5f));  // a black bear: not past 1
-    CHECK(tb::Reach(0.0f, 1.8f) == Approx(4.4f));  // the broodmother: half its space more
-    CHECK(tb::Reach(0.0f, 2.0f) == Approx(4.5f));
-    CHECK(tb::Reach(0.0f, 3.0f) == Approx(12.0f));  // a high dragon
-    CHECK(tb::Reach(45.0f, 3.0f) == Approx(45.0f)); // a bow, whatever the target
-    CHECK(tb::WalkToReach(10.0f, 3.5f) == Approx(6.5f));
-    CHECK(tb::WalkToReach(2.0f, 3.5f) == Approx(0.0f));
+    CHECK(tb::Reach(0.0f, 0.35f, 0.70f) == Approx(2.4f));  // Lyna on a giant spider, as play test 23 measured
+    CHECK(tb::Reach(0.0f, 0.35f, 0.35f) == Approx(2.05f)); // two people
+    CHECK(tb::Reach(0.0f, 0.35f, 3.0f) == Approx(4.7f));   // a high dragon
+    CHECK(tb::Reach(0.0f, -1.0f, std::numeric_limits<float>::quiet_NaN()) == Approx(1.35f)); // no space to read
+    CHECK(tb::Reach(45.0f, 0.35f, 0.70f) == Approx(46.05f));                                 // a bow, and both spaces
+    CHECK(tb::Reach(500.0f, 0.0f, 0.0f) == Approx(60.0f));                                   // at most 60 m
+    CHECK(tb::WalkToReach(10.0f, 2.4f) == Approx(7.6f));
+    CHECK(tb::WalkToReach(2.0f, 2.4f) == Approx(0.0f));
 }
 
 TEST_CASE("a creature's pace is its appearance's combat speed against a person's", "[rules]")

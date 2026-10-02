@@ -176,10 +176,22 @@ MUTANTS = [
         "closing in is its turn.\n        if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + 999.0f)",
     ),
     Mutant(
-        "reach ignores a big target",
+        "reach ignores the attacker's size",
         RULES,
-        "if (targetPersonalSpace > 1.0f)",
-        "if (targetPersonalSpace > 100.0f)",
+        "const float spaces = space(attackerSpace) + space(targetSpace);",
+        "const float spaces = 0.0f * space(attackerSpace) + space(targetSpace);",
+    ),
+    Mutant(
+        "reach forgets the swing's play",
+        RULES,
+        "    return spaces + kMeleeGap + kSwingPlay;",
+        "    return spaces + kMeleeGap;",
+    ),
+    Mutant(
+        "a ranged weapon reaches past 60 m",
+        RULES,
+        "        return std::min(weaponRange, kLongestRange) + spaces;",
+        "        return weaponRange + spaces;",
     ),
     Mutant(
         "the bar's string keeps a name's separators",
