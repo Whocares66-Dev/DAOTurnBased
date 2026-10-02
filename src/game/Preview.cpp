@@ -56,19 +56,16 @@ constexpr std::uint32_t kSearchEveryMs = 150;
 // part the effect had was not told apart.
 constexpr std::int32_t kMoveMarker = 30000;
 
-// Past the movement left the marker is there too, red (the user,
-// 2026-10-01: "how about red rings and a red marker after the move limit?
-// Then it's easy to see how long player can move"): the same row placed in
-// a colour, which DAOLib's Place gives the effect's model in place of the
-// row's own (61e471e; its first use, not seen in play before this). Until
-// it is seen to take, the small red ring stays round a too-far end as well.
-constexpr dao::vfx::Tint kTooFar{1.0F, 0.16F, 0.10F, 1.0F};
+// Past the movement left there is no marker. The user asked for a red one
+// there ("how about red rings and a red marker after the move limit? Then
+// it's easy to see how long player can move"), and it was tried: the same
+// row placed in a colour (DAOLib's tint for a placed effect, 61e471e). The
+// call was made and the star stayed gold (the twentieth play test,
+// 2026-10-01): its material, GeneralGui.mat, takes no tint. A gold star at
+// an end too far says "it will walk here" of a move the machine refuses,
+// so there is none: the end has a red ring, and a red star wants a texture
+// and a row of our own.
 
-// The rings on the ground, the movie's: round a path's end that is too
-// far, about as wide as a creature's own selection ring, and round where
-// the movement runs out, half that; and round an end in reach only if the
-// marker could not be placed. Each a polygon of so many points, which the
-// movie rounds.
 // The path on the ground (`[feedback] move_preview_ground`; the user,
 // 2026-10-01: "should the line be drawn on the ground as well?"). A line
 // in the world is not to be had: an effect is scaled by one number, so no
@@ -80,21 +77,27 @@ constexpr dao::vfx::Tint kTooFar{1.0F, 0.16F, 0.10F, 1.0F};
 // marker; a too-far end has the red ring at its size. If a path is long
 // the marks are spread to keep their number down.
 constexpr std::int32_t kPartyRing = 30005; // "Party Member", SR_PTY
-constexpr std::int32_t kEnemyRing = 30011; // "Enemy", SR_EMY
+// The red is the enemy's ring as it is when targeted: by their textures
+// the plain enemy ring (30011, vfx_selbad.dds) is two and a half times
+// dimmer than the party's gold one and thin, and as small marks it was a
+// faint smudge (the twentieth play test); the targeted one (vfx_selbad2.dds)
+// is half as bright again, wider, and has pale highlights.
+constexpr std::int32_t kEnemyRing = 30012; // "Enemy Targeted", SR_EMYt
 // Small and many, a dotted line (the user, 2026-10-01, of rings 0.21 of a
 // creature's every 0.5 m: "wonder if we can make the rings smaller. A
 // larger number of smaller rings is basically a dotted line"). At 0.14
 // every 0.4 m the trail was too slight far off (the nineteenth play test);
 // closer together, it is the line of them that is seen, not each.
 constexpr float kMarkScale = 0.10f;
+constexpr float kRedMarkScale = 0.13f; // the red ones a little larger, being dimmer
 constexpr float kMarkEvery = 0.2f;
 constexpr float kMarksFrom = 0.7f;    // meters along: clear of the walker's ring
 constexpr float kMarksShortOf = 0.4f; // of the end: clear of the marker there
-// The ring round a too-far end: twice a mark. At a creature's size it was
-// seen, but it is an enemy's ring, pointed mark and all, and at a glance an
-// enemy stood there; and it hid the red marks leading to it (the nineteenth
-// play test's second look).
-constexpr float kEndRingScale = 0.45f;
+// The ring round a too-far end, which has no marker: half a creature's.
+// At a creature's size it was seen, but it is an enemy's ring, pointed
+// mark and all, and at a glance an enemy stood there; and it hid the red
+// marks leading to it (the nineteenth play test's second look).
+constexpr float kEndRingScale = 0.5f;
 constexpr std::size_t kMostMarks = 150;
 
 // The movie's line begins at the edge of the walker's own selection ring,
@@ -198,68 +201,47 @@ void Preview::Install()
     });
 }
 
-// The game's marker at the path's end: gold where the move would go, red
-// where it is too far. Two effects, since an effect's colour is given when
-// it is placed: the one wanted is moved or placed, the other taken away.
-void Preview::ShowMarker(const Vec3 &at, bool tooFar)
+// The game's marker at the path's end, where the move would go.
+void Preview::ShowMarker(const Vec3 &at)
 {
     const dao::CCArea *area = dao::world::CurrentArea();
     if (area == nullptr)
     {
         marker_ = kNoObject;
-        farMarker_ = kNoObject;
         return;
     }
-    const bool here = markerArea_ == area->Id();
-    ObjectId &wanted = tooFar ? farMarker_ : marker_;
-    ObjectId &other = tooFar ? marker_ : farMarker_;
-    if (other != kNoObject)
-    {
-        if (here)
-        {
-            dao::vfx::Remove(other);
-        }
-        other = kNoObject;
-    }
-    if (wanted != kNoObject && here && dao::vfx::Move(wanted, Of(at)))
+    if (marker_ != kNoObject && markerArea_ == area->Id() && dao::vfx::Move(marker_, Of(at)))
     {
         return;
     }
     // None yet, or it went with its area.
-    wanted = dao::vfx::Place(kMoveMarker, Of(at), 1.0F, std::nullopt,
-                             tooFar ? std::optional<dao::vfx::Tint>(kTooFar) : std::nullopt);
+    marker_ = dao::vfx::Place(kMoveMarker, Of(at));
     markerArea_ = area->Id();
-    if (wanted != kNoObject)
+    if (marker_ != kNoObject)
     {
-        dao::vfx::SetPickable(wanted, false);
+        dao::vfx::SetPickable(marker_, false);
     }
-    bool &said = tooFar ? farMarkerSaid_ : markerSaid_;
-    if (!std::exchange(said, true))
+    if (!std::exchange(markerSaid_, true))
     {
-        spdlog::debug("the preview's end is the game's movement marker{} (effect {:#x}), left out of the cursor's "
-                      "pick",
-                      tooFar ? ", tinted red for an end too far" : "", wanted);
+        spdlog::debug("the preview's end is the game's movement marker (effect {:#x}), left out of the cursor's pick",
+                      marker_);
     }
 }
 
 void Preview::HideMarker()
 {
-    if (marker_ == kNoObject && farMarker_ == kNoObject)
+    if (marker_ == kNoObject)
     {
         return;
     }
-    // In the area they were placed in only: in another they are gone with
-    // the first, and their ids may be other effects'.
+    // In the area it was placed in only: in another it is gone with the
+    // first, and its id may be another effect's.
     const dao::CCArea *area = dao::world::CurrentArea();
-    const bool here = area != nullptr && markerArea_ == area->Id();
-    for (ObjectId *marker : {&marker_, &farMarker_})
+    if (area != nullptr && markerArea_ == area->Id())
     {
-        if (here && *marker != kNoObject)
-        {
-            dao::vfx::Remove(*marker);
-        }
-        *marker = kNoObject;
+        dao::vfx::Remove(marker_);
     }
+    marker_ = kNoObject;
 }
 
 // `marks` made to lie at `at`: those there are moved if their place has
@@ -541,9 +523,16 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     const PathSplit outside = SplitPath(split.reach, kLineFrom);
     const std::vector<Vec3> &lineReach = outside.TooFar() ? outside.beyond : split.reach;
     shown.reach = OnScreen(lineReach);
-    // The game's marker at the end: gold where the move would go, red past
-    // the movement left.
-    ShowMarker(path_.back(), split.TooFar());
+    // Where the move would go, the game's marker; past the movement left
+    // none, since it says "it will walk here" and it would not.
+    if (split.TooFar())
+    {
+        HideMarker();
+    }
+    else
+    {
+        ShowMarker(path_.back());
+    }
     // The path in the world: marks along it, in the marker's area (which
     // ShowMarker keeps; with no marker placed the area is asked here).
     const dao::CCArea *area = dao::world::CurrentArea();
@@ -572,7 +561,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
         Lay(reachMarks_, kPartyRing, kMarkScale, AlongPath(split.reach, every, kMarksFrom, reachTo));
         // The red ones go on in step from where the gold ones end.
         const float into = every - std::fmod(std::max(0.0f, reachEnd - kMarksFrom), every);
-        Lay(beyondMarks_, kEnemyRing, kMarkScale,
+        Lay(beyondMarks_, kEnemyRing, kRedMarkScale,
             split.TooFar() ? AlongPath(split.beyond, every, into, beyondEnd - kMarksShortOf) : std::vector<Vec3>{});
         Lay(endMarks_, kEnemyRing, kEndRingScale,
             split.TooFar() ? std::vector<Vec3>{path_.back()} : std::vector<Vec3>{});
