@@ -43,6 +43,10 @@ Things the mod already relies on that DAOLib has read but not seen work. `dev/TE
 1. **The top byte of the command's first word**, not read yet (the rest of the layout is done, above).
 2. **An event when a command starts and when it ends**, for any creature. `COMMAND_COMPLETE` reaches `OnScriptEvent` only sometimes (DAOLib's `dev/LIBRARY.md`, the fifth session). The mod polls instead: busy for two frames running means done.
 
+## For EA's build of the game: who called, by more than a number
+
+DAOLib `8b027c6` (2026-10-01) names the game's functions and globals by id, and the mod, ported to it the same day, runs under its API 2 loader in the GOG game (seen to start, every detour placed). One thing in the mod is still GOG's alone: the gate tells who queued a command by the return address of `CCObject::QueueCommand`'s caller, ten numbers of its own in `src/game/Gate.cpp` (the scripts' `AddCommand`, the client's, and eight more), which are places inside functions and have no id. In EA's game they match nothing, and every command would seem to come from an unknown caller. Wanted: a way to say which function a return address lies in across builds (the function's id and its size, or a list of call sites by id). Asked of lib-agent; the GOG game, the only one the mod is deployed to, is unaffected.
+
 ## The UI (`dev/UI.md`)
 
 The turn order bar, the movement preview and the on/off switch are made of the game's own Scaleform UI. The bar's side is read now (above), not yet seen in play. In order of need:
