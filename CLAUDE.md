@@ -53,6 +53,8 @@ The machine is not thread-safe by itself: `src/plugin/Plugin.cpp` holds a mutex 
 .\tools\deploy.ps1                              # into the game (closed); -Remove takes the plugin out
 ```
 
+`-Test` runs the tests as many at a time as the build's jobs (`ctest --parallel`, since 2026-10-03: each test is a process of its own with nothing shared; 20 s became 8), as the mutants run side by side.
+
 `build\debug\` is a game folder's worth of files: `version.dll` (DAOLib's loader) and `daolib\plugins\turnbased.dll`. The format and lint targets are DAOLib's `cmake/Quality.cmake` run over this tree, with this tree's `.clang-format` and `.clang-tidy` (DAOLib's, copied); they are the plugin presets', since they read its compile database. The core presets (`core`, `core-asan`, `core-cov`) build `src/core` and `tests` alone, as SkyrimFollowerTactics' do. `core-cov` is 64-bit with clang-cl, since LLVM ships the coverage runtime for x64 only, and fetches Catch2 rather than use vcpkg's x86 one.
 
 ## Before every commit

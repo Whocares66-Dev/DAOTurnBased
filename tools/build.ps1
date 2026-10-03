@@ -177,7 +177,10 @@ try {
 
     if ($Test) {
         Show-Line "`n== test ($Preset) ==" -Colour Cyan
-        ctest --preset $Preset
+        # As many at a time as the build's jobs (the user's ask of every
+        # repository, 2026-10-03: tests and mutants in parallel where
+        # possible). Each test is a process of its own with nothing shared.
+        ctest --preset $Preset --parallel $parallel
         if ($LASTEXITCODE -ne 0) { throw "tests failed ($LASTEXITCODE)" }
     }
 
