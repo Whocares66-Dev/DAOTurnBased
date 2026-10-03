@@ -2157,7 +2157,7 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
             stoodAt_ = actor.position;
             stoodSince_ = clock_;
         }
-        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs : kStoodMs))
+        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs : kStoodMs))
         {
             const Combatant *current = order_.Current();
             const bool waited = budget_.lastKind == CommandKind::Action && ActionToGiveBack() &&
@@ -2241,7 +2241,7 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
             return;
         }
         const std::uint32_t limit =
-            static_cast<std::uint32_t>(settings_.maxActionMs) * (ownEffectSince_ ? kOwnEffectPatience : 1);
+            Patience(static_cast<std::uint32_t>(settings_.maxActionMs)) * (ownEffectSince_ ? kOwnEffectPatience : 1);
         if (clock_ - executingSince_ > limit)
         {
             fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
@@ -2982,6 +2982,22 @@ float TurnMachine::TurnSpeed() const
     // The fight's one speed, everyone's turns alike; within what the game's
     // clock is known to take.
     return std::clamp(settings_.fightSpeed, 0.1f, 8.0f);
+}
+
+// The machine's patience with the engine, on its own clock. That clock runs
+// with the fight's speed (clock_, Step), so that the waits that are the
+// machine's own (settling, an AI's thinking) shorten with it. What it waits
+// for the engine to do does not all shorten: a walk in the open goes 1.9
+// times as fast at twice the speed and 2.7 at three (the playthrough's logs,
+// 2026-10-03), but a creature working its way through a crowd crept on at
+// about the wall clock's pace at any speed. Counted on the fast clock,
+// max_action_ms was four seconds of wall clock at three times the speed, and
+// 122 of a night's 1,394 turns at Redcliffe ended "took too long" where none
+// of 1,220 had at twice (issue 16). So these are of the wall's time: at a
+// speed of s, s times as long on the machine's clock; never less than given.
+std::uint32_t TurnMachine::Patience(std::uint32_t ms) const
+{
+    return static_cast<std::uint32_t>(std::lround(static_cast<float>(ms) * std::max(1.0f, speedSet_)));
 }
 
 bool TurnMachine::TurnSpent() const

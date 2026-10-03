@@ -729,8 +729,8 @@ MUTANTS = [
     Mutant(
         "a creature standing at a walk is left to max_action_ms",
         MACHINE,
-        "        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs : kStoodMs))",
-        "        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs : kStoodMs * 1000))",
+        "        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs : kStoodMs))",
+        "        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs : kStoodMs * 1000))",
     ),
     Mutant(
         "a swing on the spot is taken for standing at a walk",
@@ -974,6 +974,18 @@ MUTANTS = [
         'Interrupt(status.id, !status.exists ? "gone" : status.down ? "fell" : "held", fx);',
         # (fx named, so that the mutant compiles under /W4 /WX.)
         'Interrupt(status.id, !status.exists ? "gone" : status.down ? "fell" : "held", (static_cast<void>(fx), pending_));',
+    ),
+    Mutant(
+        "the machine's patience with the engine shortens as the fight's speed rises",
+        MACHINE,
+        "std::lround(static_cast<float>(ms) * std::max(1.0f, speedSet_))",
+        "std::lround(static_cast<float>(ms))",
+    ),
+    Mutant(
+        "an action that never ends is given the fast clock's patience, not the wall's",
+        MACHINE,
+        "Patience(static_cast<std::uint32_t>(settings_.maxActionMs)) * (ownEffectSince_ ? kOwnEffectPatience : 1);",
+        "static_cast<std::uint32_t>(settings_.maxActionMs) * (ownEffectSince_ ? kOwnEffectPatience : 1);",
     ),
     Mutant(
         "those that waited outside a fight are never told it is over",
@@ -1783,14 +1795,14 @@ MUTANTS = [
     Mutant(
         "an attack standing short of its target is given as long as a walk",
         MACHINE,
-        "        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs : kStoodMs))",
-        "        else if (clock_ - stoodSince_ >= kStoodMs + (short_ ? 1000 : 0))",
+        "        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs : kStoodMs))",
+        "        else if (clock_ - stoodSince_ >= Patience(kStoodMs + (short_ ? 1000 : 0)))",
     ),
     Mutant(
         "an attack standing short of its target is stopped at once",
         MACHINE,
-        "        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs : kStoodMs))",
-        "        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs / 4 : kStoodMs))",
+        "        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs : kStoodMs))",
+        "        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs / 4 : kStoodMs))",
     ),
     Mutant(
         "a party member's lost turn is said in grey",

@@ -678,6 +678,7 @@ class TurnMachine
     void AgeOwnClock(ObjectId who, std::uint32_t clockMs, std::vector<Effect> &fx);
     [[nodiscard]] bool OwnClocks() const;
     [[nodiscard]] bool GettingUp() const;
+    [[nodiscard]] std::uint32_t Patience(std::uint32_t ms) const;
     [[nodiscard]] bool EngineConjures(const CommandRequest &request) const;
 
   public:

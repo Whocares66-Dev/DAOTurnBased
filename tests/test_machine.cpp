@@ -315,6 +315,31 @@ TEST_CASE("an action that never ends is stopped after max_action_ms", "[machine]
     CHECK(w.Current() == kGenlock);
 }
 
+TEST_CASE("the machine's patience with the engine is of the wall's time, whatever the fight's speed", "[machine]")
+{
+    // Issue 16: the machine's clock runs with the fight's speed, so at three
+    // times the speed max_action_ms was a third as long on the wall, and a
+    // creature working its way through a crowd, which the speed does not
+    // hurry, was cut off: 122 of a night's 1,394 turns at Redcliffe.
+    for (const float speed : {1.0f, 3.0f})
+    {
+        CAPTURE(speed);
+        Settings settings = Fixed();
+        settings.maxActionMs = 2000;
+        settings.fightSpeed = speed;
+        World w{settings};
+        w.StartFight();
+        CHECK(w.Order(kHero, CommandType::UseAbility, Source::Player) == Verdict::Allow);
+        w.applied.clear(); // the fight's beginning cleared everyone's commands
+        w.RunFor(1900);
+        CHECK(w.Current() == kHero);
+        CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+        w.RunFor(200);
+        CHECK(w.Did(EffectKind::ClearCommands, kHero));
+        CHECK(w.Current() == kGenlock);
+    }
+}
+
 TEST_CASE("under tactics the companions play their own turns, the hero is still the player's", "[machine]")
 {
     Settings settings = Fixed();
