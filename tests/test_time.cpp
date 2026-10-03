@@ -1825,15 +1825,18 @@ TEST_CASE("an action's own effect stopped as too long leaves its target owing no
     CHECK(w.machine.View().timeLeftMs == 4000);
 }
 
-TEST_CASE("with own clocks, an action's own effect moves the shared clock too, the round that much the less", "[time]")
+TEST_CASE("with own clocks, an action's own effect leaves the shared clock to the round", "[time]")
 {
+    // The Elven Ruins' gas, an area of 30 s, ended in its fifth round when
+    // an ogre's grab moved the shared clock 14 s in one (2026-10-02).
     World w(Timed(), GenlockFirst());
     const std::int64_t shared = w.agedMs;
     Grab(w, 2400);
-    // Its steps moved the shared clock as they moved the two creatures'.
-    CHECK(w.agedMs - shared >= 2400);
-    CHECK(w.agedMs - shared < 3000);
-    // The round's 4 s in all, on the shared clock.
+    // Its steps moved the two creatures' clocks, not the shared one.
+    CHECK(w.agedMs == shared);
+    CHECK(w.agedOwn[kGenlock] >= 2400);
+    CHECK(w.agedOwn[kHero] >= 2400);
+    // The round's 4 s, on the shared clock, as the next round begins.
     for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
     {
         if (w.machine.GetPhase() == Phase::AwaitingOrder)
@@ -1943,4 +1946,41 @@ TEST_CASE("a creature that falls while it owes time held owes nothing when it is
     REQUIRE(w.Current() == kHero);
     CHECK(w.machine.View().timeLeftMs == 4000);
     CHECK_FALSE(w.Said(L"Hero loses the turn"));
+}
+
+TEST_CASE("with own clocks, a turn's end gives what its creature's clock brought due a beat to land, the world running",
+          "[time]")
+{
+    // The Elven Ruins' gas, 2026-10-02: Lyna's poison, brought due as her
+    // turn ended and her clock ran the rest of its seconds, came in the first
+    // moment of Tamlen's turn, the world held still between the two.
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    w.Get(kHero).timersHeld = true;
+    w.Frame();
+    REQUIRE(w.paused); // the player's turn, held still
+    (void)w.machine.OnEndTurn();
+    w.Frame();
+    // Over, the next not begun, the world running meanwhile.
+    CHECK(w.machine.GetPhase() == Phase::TurnStart);
+    CHECK_FALSE(w.paused);
+    w.RunFor(200);
+    CHECK(w.machine.GetPhase() == Phase::TurnStart);
+    CHECK_FALSE(w.paused);
+    w.RunFor(300);
+    CHECK(w.machine.GetPhase() != Phase::TurnStart);
+    CHECK(w.Current() == kGenlock);
+}
+
+TEST_CASE("with own clocks, a turn's end with nothing held for its creature goes on to the next at once", "[time]")
+{
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    w.Frame();
+    (void)w.machine.OnEndTurn();
+    w.RunFor(64);
+    CHECK(w.machine.GetPhase() != Phase::TurnStart);
+    CHECK(w.Current() == kGenlock);
 }

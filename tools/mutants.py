@@ -1564,8 +1564,8 @@ MUTANTS = [
     Mutant(
         "pause: the player's pause is not kept by the machine",
         MACHINE,
-        "    const bool want = WantsPaused(phase_, settings_) || playerPaused_;",
-        "    const bool want = WantsPaused(phase_, settings_);",
+        "    const bool want = (WantsPaused(phase_, settings_) && !Landing()) || playerPaused_;",
+        "    const bool want = WantsPaused(phase_, settings_) && !Landing();",
     ),
     Mutant(
         "pause: an order given while paused leaves the game paused",
@@ -1970,16 +1970,13 @@ MUTANTS = [
         "    budget_.agedOwnMs += 0;",
     ),
     Mutant(
-        "own clocks: an action's own effect does not move the shared clock",
+        "own clocks: an action's own effect moves the shared clock, areas' with it",
         MACHINE,
-        "                Effect shared = Effect::Of(EffectKind::AgeTime);\n                shared.b = static_cast<std::int32_t>(ran);\n                fx.push_back(shared);",
-        "                Effect shared = Effect::Of(EffectKind::AgeTime);\n                shared.b = static_cast<std::int32_t>(ran);",
-    ),
-    Mutant(
-        "own clocks: the round's shared worth is not lessened by an action's own effect",
-        MACHINE,
-        "                fx.push_back(shared);\n                roundAgedMs_ += ran;",
-        "                fx.push_back(shared);",
+        "                // its fifth round (no hands, 2026-10-02).\n                budget_.agedOwnMs += ran;",
+        "                // its fifth round (no hands, 2026-10-02).\n                budget_.agedOwnMs += ran;\n"
+        "                Effect shared = Effect::Of(EffectKind::AgeTime);\n"
+        "                shared.b = static_cast<std::int32_t>(ran);\n                fx.push_back(shared);\n"
+        "                roundAgedMs_ += ran;",
     ),
     Mutant(
         "an action stopped as too long leaves its target owing it",
@@ -2046,6 +2043,30 @@ MUTANTS = [
         MACHINE,
         "            if (c->down)\n            {\n                grabbedMs_.erase(c->id);\n            }",
         "            if (c->down && false)\n            {\n                grabbedMs_.erase(c->id);\n            }",
+    ),
+    Mutant(
+        "a turn's end gives what its creature's clock brought due no beat",
+        MACHINE,
+        "land = seenActor_ && seenActor_->id == current->id && seenActor_->timersHeld;",
+        "land = seenActor_ && seenActor_->id == current->id && seenActor_->timersHeld && false;",
+    ),
+    Mutant(
+        "every turn's end waits a beat, whatever is held",
+        MACHINE,
+        "land = seenActor_ && seenActor_->id == current->id && seenActor_->timersHeld;",
+        "land = true;",
+    ),
+    Mutant(
+        "the beat between turns holds the world still",
+        MACHINE,
+        "(WantsPaused(phase_, settings_) && !Landing()) || playerPaused_",
+        "WantsPaused(phase_, settings_) || playerPaused_",
+    ),
+    Mutant(
+        "the beat between turns never ends",
+        MACHINE,
+        "lastNow_ - *landFromNow_ < kLandMs",
+        "lastNow_ - *landFromNow_ < kLandMs * 1000",
     ),
 ]
 

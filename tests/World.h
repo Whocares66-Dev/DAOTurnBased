@@ -43,6 +43,7 @@ struct Creature
     CommandType current = CommandType::Invalid;
     Vec3 position;
     bool conjureHeld = false; // at a conjure the game layer holds
+    bool timersHeld = false;  // its scripts' timers held (a poison's ticks)
     int rank = 0;             // CREATURE_RANK_*: an enemy's Combat Tactics is by it, with time
     int tactics = 0;          // Combat Tactics' rank, a party member's
     int survival = 0;         // Survival's rank
@@ -170,8 +171,8 @@ class World
         if (needs.actor != kNoObject)
         {
             const Creature &c = Get(needs.actor);
-            obs.actor =
-                ActorObservation{c.id, c.exists, c.down, c.busy, c.moving, c.current, c.position, c.conjureHeld};
+            obs.actor = ActorObservation{c.id,      c.exists,   c.down,        c.busy,      c.moving,
+                                         c.current, c.position, c.conjureHeld, c.timersHeld};
         }
         for (const ObjectId id : needs.statuses)
         {

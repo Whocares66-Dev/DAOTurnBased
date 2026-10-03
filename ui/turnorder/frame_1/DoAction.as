@@ -42,7 +42,6 @@ var GOLD = 0xF0C850;
 var PARCHMENT = 0xE8DFC8;
 var INK = 0x14100C;
 var SIDE_COLOURS = [0x3C8CD8, 0x4CA84C, 0xC83C32]; // party, ally, enemy
-var RANK_COLOURS = [0, 0, 0, 0xFFFF00, 0xFF6600, 0xFF6600]; // creatureranks.gda: lieutenant, boss, elite boss
 var RANK_WORDS = ["", "", "", "a lieutenant", "a boss", "an elite boss"];
 
 // Whether the plugin is there to ask. In the game the call answers; in a
@@ -324,9 +323,9 @@ function drawCard(bar, card, index, x)
     clip._x = x;
     clip._y = TOP;
     clip.id = card.id;
-    // Under the pointer: its name, and what its gem says (a lieutenant's is
-    // yellow, a boss's orange: "a yellow dot under it I did not understand",
-    // play test 29).
+    // Under the pointer: its name, and its rank (a gem of the rank's colour
+    // said it until 2026-10-02: "a yellow dot under it I did not
+    // understand", play test 29).
     clip.fullName = card.name + (RANK_WORDS[card.rank] ? ", " + RANK_WORDS[card.rank] : "");
     var mid = CARD_W / 2;
     var orb = 74 * ART;
@@ -371,13 +370,11 @@ function drawCard(bar, card, index, x)
     box(energyLevel, 0, CARD_H * (1 - energyShare), CARD_W, CARD_H * energyShare + 1, 0xFFFFFF, 100);
     energy.setMask(energyLevel);
     art(clip, "Portraits_I3C", 16, 0, 0, CARD_W, CARD_H);
-    // A lieutenant's or a boss's gem, at the foot.
-    if (RANK_COLOURS[card.rank])
-    {
-        var gem = clip.createEmptyMovieClip("gem", 17);
-        circle(gem, mid, CARD_H - 3, 4, RANK_COLOURS[card.rank], 100);
-        ring(gem, mid, CARD_H - 3, 4, 1, INK, 100);
-    }
+    // No rank gem at the foot: a dot of the game's rank colour (yellow, a
+    // lieutenant's) asked what it was of the tester and of the user, who
+    // took it out (2026-10-02: "let's remove the dot. later we'll add a card
+    // on hover that shows stats of actor"). The caption under the pointer
+    // still says the rank.
     if (card.yours)
     {
         // The game's gold arrow (the inventory's sort button's, inventory_I2F1),
@@ -616,10 +613,10 @@ function build(state)
         // eight pixels higher the pointer's tip lay on the bar's left end
         // (seen in play, 2026-10-02).
         captionTop += 8;
-        // Under the current card, which is the first: centred on the strip
-        // it lay under cards three to six of nine, away from whose bar it
-        // is (play test 31). With three or four cards the two are the same.
-        barMiddle = Math.min(width / 2, TIME_W / 2);
+        // Centred under the medallions, as the strip is on the screen. For
+        // an evening it began under the current card, the first (play test
+        // 31: with nine cards it lay under cards three to six); the user,
+        // 2026-10-02: "time bar and text below isn't horizontally centered".
         buildTime(bar, barMiddle, captionTop);
         captionTop += TIME_H + 8;
     }

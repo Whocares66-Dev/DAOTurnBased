@@ -644,6 +644,11 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
 
 void TurnMachine::StepTurnStart(const Observation &obs, std::vector<Effect> &fx)
 {
+    if (Landing())
+    {
+        return;
+    }
+    landFromNow_.reset();
     if (!obs.scan)
     {
         wantScan_ = true;
@@ -2066,15 +2071,14 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
             }
             if (own)
             {
-                // And the shared clock, as before own clocks, the round's
-                // worth that much the less: what ends such an action is not
-                // always on its creature or its target. A spider's
-                // Overwhelm, both their clocks moved by its steps, never
-                // ended and was stopped after 36 s (play test 33).
-                Effect shared = Effect::Of(EffectKind::AgeTime);
-                shared.b = static_cast<std::int32_t>(ran);
-                fx.push_back(shared);
-                roundAgedMs_ += ran;
+                // Not the shared clock, which is areas' and moves 4 s as each
+                // round begins. It moved here too for an evening, since a
+                // spider's Overwhelm, both creatures' clocks moved by its
+                // steps, never ended (play test 33): no effect had aged by
+                // its owner's own clock, DAOLib reading owners wrongly (its
+                // 10ac778). With it an ogre's grab moved the shared clock
+                // 14 s in a round, and the Elven Ruins' gas, 30 s, ended in
+                // its fifth round (no hands, 2026-10-02).
                 budget_.agedOwnMs += ran;
                 // And its target's clock, by the same step: its command ends
                 // only when the effect on its victim does, on the victim's
@@ -2480,6 +2484,7 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
 void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
 {
     HoldUsed(fx);
+    bool land = false;
     if (const Combatant *current = order_.Current(); current != nullptr && Timed() && std::exchange(clockRuns_, false))
     {
         // Its clock moves a turn's seconds a turn, whatever was spent,
@@ -2494,6 +2499,7 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
             age.b = static_cast<std::int32_t>(rest);
             fx.push_back(age);
             budget_.agedOwnMs += rest;
+            land = seenActor_ && seenActor_->id == current->id && seenActor_->timersHeld;
         }
     }
     clockSeenMs_ = 0;
@@ -2521,6 +2527,15 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
         roundPending_ = true;
     }
     LeaveTurn();
+    if (land)
+    {
+        landFromNow_ = lastNow_;
+    }
+}
+
+bool TurnMachine::Landing() const
+{
+    return phase_ == Phase::TurnStart && landFromNow_ && lastNow_ - *landFromNow_ < kLandMs;
 }
 
 void TurnMachine::LeaveTurn()
@@ -2532,6 +2547,7 @@ void TurnMachine::LeaveTurn()
     handoverWanted_.reset();
     pendingEndNow_.reset();
     delayRequested_ = false;
+    landFromNow_.reset();
     budget_.spend.SpendAllActions();
     // Nothing to resume: a turn left open by a conversation and ended as
     // the fight came back (a cast kept just before it) is over, and the
@@ -2879,7 +2895,7 @@ void TurnMachine::EnforcePause(const Observation &obs, std::vector<Effect> &fx) 
     {
         return;
     }
-    const bool want = WantsPaused(phase_, settings_) || playerPaused_;
+    const bool want = (WantsPaused(phase_, settings_) && !Landing()) || playerPaused_;
     if (want != obs.paused)
     {
         fx.push_back(Effect::Of(want ? EffectKind::Pause : EffectKind::Unpause));

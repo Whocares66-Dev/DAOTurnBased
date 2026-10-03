@@ -85,6 +85,7 @@ struct ActorObservation
     CommandType current = CommandType::Invalid;
     Vec3 position;
     bool conjureHeld = false; // at a conjure the game layer holds (Verdict::Conjure)
+    bool timersHeld = false;  // its scripts' timers held for it (a damage over time's ticks)
 };
 
 // What holds a creature, as far as turns go: disabled, it cannot act
@@ -651,6 +652,9 @@ class TurnMachine
     void OverAtOnce(std::vector<Effect> &fx);
     void TellTurnStart(const Combatant &who, std::vector<Effect> &fx);
     void LeaveTurn();
+    // Between two turns, the world running for what the last one's clock
+    // brought due to land on its creature (landFromNow_).
+    [[nodiscard]] bool Landing() const;
     // With time: the current creature's clock has moved on (its bar spent,
     // or its turn over); what counts on it is moved with it.
     void MoveClock(std::vector<Effect> &fx);
@@ -759,6 +763,16 @@ class TurnMachine
     // its creature's kept for the next: a beat for "Lands next turn" to be
     // read before the next turn's announcement lands on it (play test 27).
     std::optional<std::uint32_t> pendingEndNow_;
+    // With own clocks: a turn's end ran its creature's clock the rest of
+    // the way at this time (the real clock's), and something is held for
+    // it (a poison). What that brought due comes on the game's next update;
+    // with the world held still between turns, that was the next turn's
+    // first moment, on another's turn: Lyna's poison from the Elven Ruins'
+    // gas landed as Tamlen's turn began (2026-10-02). The next turn waits
+    // kLandMs with the world running, and it lands on its own creature,
+    // the camera still there.
+    std::optional<std::uint32_t> landFromNow_;
+    static constexpr std::uint32_t kLandMs = 300;
     static constexpr std::uint32_t kPendingSayMs = 800;
     // Meters a walk to a kept attack's target may run past what was paid
     // for: the game's walk ends a little inside the reach, by its own path.

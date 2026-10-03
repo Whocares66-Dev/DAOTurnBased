@@ -468,6 +468,7 @@ ActorObservation Bridge::Actor(ObjectId id)
     const dao::Vector position = api::GetPosition(id);
     actor.position = {position.x, position.y, position.z};
     actor.conjureHeld = dao::commands::ConjureHeld(id) && dao::commands::Conjure(id).has_value();
+    actor.timersHeld = dao::timers::Waiting(id) > 0;
     return actor;
 }
 

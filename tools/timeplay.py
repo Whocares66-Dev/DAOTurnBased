@@ -1541,7 +1541,315 @@ def scenario_inferno(game: Game) -> None:
     end_fight(game)
 
 
+# The Elven Ruins' gas: the round plate before the mirror door, its
+# PLC_TRAP_TYPE 207, TRAP_GAS_TOXIC in traps.gda (trap_gas_toxic.ncs: an area
+# of 30 s, a damage over time on whoever is in it). Read 2026-10-02 from the
+# area's placeables (GetLocalInt in the game) and the table in 2da.erf. The
+# plates by the metal doors are fireballs (205), the two small ones flames
+# (416).
+GAS_PLATE = [-71.52, -0.01, 0.04]
+# The ruins' triggers that start a talk or a cutscene: put in the statue room
+# by SetPosition, the party stood in bed110tr_statue_room and Tamlen's talk at
+# the statue began, which the user had to click through (2026-10-02). Their
+# tags from the area (bed110ar_elven_ruins.are).
+RUINS_TALKS = (
+    "bed110tr_statue_room",
+    "bed110tr_mirror_room",
+    "bed110tr_mirror",
+    "bed110tr_mirror_door",
+    "bed110tr_skeleton",
+    "bed110tr_bereskarn",
+    "bed110tr_duncan",
+)
+
+
+def through_talk(game: Game, seconds: float = 20.0) -> None:
+    """Goes through a conversation or cutscene on the screen, as the user would
+    have to: a cutscene skipped, a conversation's first reply taken."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        mode = game.tool("health").get("mode")
+        if mode == "cutscene":
+            print(
+                f"{stamp()} a cutscene: {game.tool('dialogue', {'action': 'skip_cutscene'})}"
+            )
+        elif mode == "dialog":
+            shown = game.tool("inspect", {"kind": "dialogue"})
+            replies = (shown.get("dialogue") or shown).get("replies") or []
+            if replies and (replies[0].get("text") or "").strip():
+                game.tool("dialogue", {"action": "choose", "place": 0})
+            else:
+                game.tool("dialogue", {"action": "continue"})
+            print(f"{stamp()} a conversation: gone through a line")
+        else:
+            return
+        time.sleep(1.0)
+
+
+def scenario_gastrap(game: Game) -> None:
+    """The toxic gas the user met in the Elven Ruins, in a fight.
+
+    The user, playing, 2026-10-02: "there's a environmental poison trap that
+    keeps hitting the party even during turn-based combat... elven ruins, yes,
+    near the undead". It is the statue room's plate (GAS_PLATE), and the
+    cloud rises at the statue, the trap's target, not at the plate (the user
+    saw it, 2026-10-02). Lyna and Tamlen are put in the room by SetPosition,
+    Tamlen by the statue, in the cloud; an ogre is brought, not skeletons,
+    which poison may not touch (the user: "not sure if skeletons are affected
+    by poison"). On Lyna's turn she walks onto the plate. Then, five times a
+    second, everyone's health is read with the round, whose turn and its
+    phase; a party turn is held three seconds with nobody acting, then ended.
+    A drop on the ogre's turn is a blow, and the victim is healed to keep the
+    count clean. Wanted: no drop on a party member while a party turn waits
+    on an order, the gas's on its victims' own turns, gone after about eight
+    rounds (30 s).
+    """
+    for tag in RUINS_TALKS:
+        found = game.tool("script", {"command": "GetObjectByTag", "args": [tag]})
+        trigger = found.get("value")
+        if trigger:
+            game.tool("script", {"command": "SetObjectActive", "args": [trigger, 0]})
+        print(f"{stamp()} off: {tag} {trigger}")
+    for who, spot in ((HERO, [-66.0, 1.5, 0.0]), (TAMLEN, [-63.5, -1.0, 0.0])):
+        answer = game.tool("script", {"command": "SetPosition", "args": [who, spot, 1]})
+        print(f"{stamp()} put {who} at {spot}: {str(answer)[:100]}")
+    time.sleep(2.0)
+    through_talk(game)
+    print(
+        f"{stamp()} Lyna at {position_of(game, HERO)}, Tamlen at {position_of(game, TAMLEN)}"
+    )
+    cursor = game.tool("health").get("cursor", 0)
+    enemies: list[str] = []
+    for spot in ([-55.0, 0.0, 0.0],):
+        spawned = game.tool(
+            "stage", {"action": "spawn", "template": "ogre_default", "point": spot}
+        )
+        creature = spawned.get("creature") or {}
+        if creature.get("id"):
+            enemies.append(creature["id"])
+        print(
+            f"{stamp()} spawn an ogre at {spot}: {creature.get('id')} {creature.get('name')} "
+            f"moved {spawned.get('moved')} {spawned.get('error', '')}"
+        )
+    began = game.tool(
+        "wait_for",
+        {"topic": "turnbased.fight_began", "since": cursor, "timeoutMs": 8000},
+        timeout=60,
+    )
+    if not began.get("found"):
+        # Put there by SetPosition, nobody has seen anybody yet (seen
+        # 2026-10-02): Lyna's attack begins the fight.
+        hostiles = game.hostiles(HERO)
+        print(
+            f"{stamp()} no fight yet; hostiles: {[(c['id'], round(c.get('distance', -1), 1)) for c in hostiles]}"
+        )
+        if hostiles:
+            answer = game.tool(
+                "order", {"action": "attack", "id": HERO, "target": hostiles[0]["id"]}
+            )
+            print(
+                f"{stamp()} Lyna attacks: {str(answer)[:200]}; mode {game.tool('health').get('mode')}"
+            )
+        began = game.tool(
+            "wait_for",
+            {"topic": "turnbased.fight_began", "since": cursor, "timeoutMs": 20000},
+            timeout=60,
+        )
+    print(f"{stamp()} the fight began: {began.get('found')}")
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    answer = game.tool("order", {"action": "move", "id": HERO, "point": GAS_PLATE})
+    print(f"{stamp()} Lyna onto the plate: {str(answer)[:120]}")
+    # The statue's own script answers the plate, and it can talk (bed110ip_statue.ncs).
+    time.sleep(2.0)
+    through_talk(game)
+    print(f"{stamp()} Lyna at {position_of(game, HERO)}")
+    party = (HERO, TAMLEN)
+    everyone = party + tuple(enemies)
+
+    def read(who: str) -> dict:
+        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        return creature.get("creature", creature)
+
+    last = {who: (read(who).get("health") or {}).get("current") for who in everyone}
+    clock = time.time()
+    drops: list[dict] = []
+    waited: dict = {}
+    seen_round = None
+    while time.time() - clock < 360.0:
+        state = game.state()
+        if not state.get("active"):
+            if game.tool("health").get("mode") in ("dialog", "cutscene"):
+                through_talk(game)
+                continue
+            print(f"{stamp()} the fight is over")
+            break
+        current = state.get("current") or {}
+        rnd = state.get("round", 0)
+        waiting = bool(current.get("yours")) and state.get("phase") == "awaiting order"
+        key = (rnd, current.get("id"))
+        settled = waiting and time.time() - waited.get(key, time.time()) >= 1.5
+        if rnd != seen_round:
+            seen_round = rnd
+            for who in everyone:
+                creature = read(who)
+                kinds = sorted(
+                    {str(e.get("type")) for e in creature.get("effects") or []}
+                )
+                print(
+                    f"{stamp()} round {rnd}: {who} {creature.get('name')} effects {kinds}"
+                )
+        for who in everyone:
+            creature = read(who)
+            health = (creature.get("health") or {}).get("current")
+            if (
+                health is not None
+                and last.get(who) is not None
+                and health < last[who] - 0.01
+            ):
+                drop = {
+                    "at": round(time.time() - clock, 1),
+                    "round": rnd,
+                    "turn": current.get("id"),
+                    "turn_name": current.get("name"),
+                    "phase": state.get("phase"),
+                    "waiting": settled,
+                    "who": who,
+                    "damage": round(last[who] - health, 1),
+                }
+                drops.append(drop)
+                print(f"{stamp()}   drop: {drop}")
+                # Everyone kept standing, to see the gas through to its end
+                # (Lyna fell to it in round 8 when it was let be, 2026-10-02).
+                max_health(game, who)
+                health = (read(who).get("health") or {}).get("current")
+            last[who] = health
+        if waiting:
+            first = waited.setdefault(key, time.time())
+            if time.time() - first >= 3.0:
+                game.tool("turnbased_end_turn", {})
+        if drops and rnd - drops[0]["round"] >= 12:
+            break
+        time.sleep(0.2)
+    # The party does nothing after Lyna's walk, so the ogre's every drop is
+    # the gas's; a party member's on a party turn is the gas's too.
+    gas = [d for d in drops if d["who"] in enemies or d["turn"] in party]
+    own = [d for d in gas if d["turn"] == d["who"]]
+    elsewhere = [d for d in gas if d["turn"] != d["who"]]
+    leaks = [d for d in drops if d["waiting"]]
+    by_round: dict = {}
+    for d in gas:
+        by_round[d["round"]] = by_round.get(d["round"], 0) + 1
+    print(f"{stamp()} the gas's drops by round: {by_round}")
+    print(f"{stamp()} on the victim's own turn: {len(own)}; on another's: {elsewhere}")
+    print(f"{stamp()} drops while a party turn waited: {leaks}")
+    end_fight(game)
+
+
+def scenario_regen(game: Game) -> None:
+    """Regeneration on each creature's own clock: when health comes back, by whose turn.
+
+    In a fight a creature regains health once each 2 s of its clock
+    (DAOLib's dao/Clock.h, UpdateRegeneration), and with own clocks that
+    clock moves only as its own turn is spent. Lyna and Tamlen are put at half
+    health in the first hall's fight; nobody in the party acts, each party
+    turn held a second and a half, then ended. Five times a second their
+    health is read with the round, whose turn, its phase and how far into it.
+    A spider's bite is a fall; a rise is regeneration. One set back to half
+    by this script is not counted. Wanted: each one's rises as its own turn
+    ends (its clock run the rest of its 4 s at once: two of them), within a
+    moment of it, none further into another's turn.
+    """
+    begin_spiders(game)
+    party = (HERO, TAMLEN)
+    names = {HERO: "Lyna", TAMLEN: "Tamlen"}
+
+    def health_of(who: str) -> dict:
+        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        return creature.get("creature", creature).get("health") or {}
+
+    def half(who: str) -> None:
+        most = health_of(who).get("max") or 100.0
+        game.tool("stage", {"action": "health", "id": who, "value": most / 2})
+
+    for who in party:
+        half(who)
+        # What each regains, by properties.gda's NonCombatEffect and
+        # CombatEffect for health (14 and 28; dao/Clock.h).
+        regen = {
+            prop: game.tool(
+                "script", {"command": "GetCreatureProperty", "args": [who, prop, 1]}
+            ).get("value")
+            for prop in (14, 28)
+        }
+        print(
+            f"{stamp()} {names[who]}'s health regeneration, out of and in combat: {regen}"
+        )
+    last = {who: health_of(who).get("current") for who in party}
+    clock = time.time()
+    first_round = None
+    turn_key = None
+    turn_began = time.time()
+    rises: list[dict] = []
+    waited: dict = {}
+    while time.time() - clock < 300.0:
+        state = game.state()
+        if not state.get("active"):
+            print(f"{stamp()} the fight is over")
+            break
+        current = state.get("current") or {}
+        rnd = state.get("round", 0)
+        if first_round is None:
+            first_round = rnd
+        key = (rnd, current.get("id"))
+        if key != turn_key:
+            # Each one's health at each turn's start, with whose turn it is
+            # (DAOLib's session asked for it, 2026-10-02: the creature's
+            # update tells the regeneration hook whose stats they are).
+            at = {names[who]: health_of(who).get("current") for who in party}
+            print(f"{stamp()} round {rnd}, {current.get('name')}'s turn begins: {at}")
+            turn_key = key
+            turn_began = time.time()
+        for who in party:
+            health = health_of(who)
+            now = health.get("current")
+            if now is not None and last.get(who) is not None and now > last[who] + 0.01:
+                rise = {
+                    "round": rnd,
+                    "turn": current.get("name"),
+                    "own": current.get("id") == who,
+                    "phase": state.get("phase"),
+                    "into": round(time.time() - turn_began, 1),
+                    "who": names[who],
+                    "gain": round(now - last[who], 2),
+                }
+                rises.append(rise)
+                print(f"{stamp()}   rise: {rise}")
+            if now is not None and now < (health.get("max") or 100.0) * 0.3:
+                half(who)
+                now = health_of(who).get("current")
+            last[who] = now
+        if current.get("yours") and state.get("phase") == "awaiting order":
+            first = waited.setdefault(key, time.time())
+            if time.time() - first >= 1.5:
+                game.tool("turnbased_end_turn", {})
+        if rnd - (first_round or rnd) >= 6:
+            break
+        time.sleep(0.2)
+    late = [r for r in rises if not r["own"] and r["into"] > 1.0]
+    for who in names.values():
+        mine = [r for r in rises if r["who"] == who]
+        print(
+            f"{stamp()} {who}: {len(mine)} rises over {len({r['round'] for r in mine})} rounds"
+        )
+    print(f"{stamp()} rises more than a second into another's turn: {late}")
+    end_fight(game)
+
+
 SCENARIOS = {
+    "regen": scenario_regen,
+    "gastrap": scenario_gastrap,
     "inferno": scenario_inferno,
     "bonus": scenario_bonus,
     "overwhelm": scenario_overwhelm,
