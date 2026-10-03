@@ -535,6 +535,13 @@ class TurnMachine
     // How long a turn waits on an effect's command it found its creature
     // in before the turn is lost (heldByEffect_).
     static constexpr std::uint32_t kEffectGraceMs = 2000;
+    // How long a creature may take to get up from a hold the machine ended
+    // as its turn began (GettingUp) before an effect's command it is still
+    // at counts as holding it. A knockdown's rise was over two seconds (play
+    // test 33's re-check); seven turns after an ended condition were all
+    // over, action and all, within two and a half (the playthrough of issue
+    // 3, 2026-10-03).
+    static constexpr std::uint32_t kGetUpMs = 5000;
     // An action whose time the engine was read to take, a second or more,
     // and whose command was over in under a quarter of it, did not play:
     // its time is given back (OverAtOnce).

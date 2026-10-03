@@ -2213,7 +2213,16 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         // ceiling had the first turn and stood out max_action_ms, twelve
         // seconds of the game's time, before anyone moved (a run with no
         // hands, 2026-10-02).
-        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 && !GettingUp())
+        // Getting up from a hold the machine ended has a length (kGetUpMs).
+        // Still at an effect's command past it, the creature is held by that
+        // effect, whatever it is: one the statuses do not name, laid on it
+        // beside the stun that was ended, or the engine's command for the
+        // ended one not over. With no length, nothing bounded the turn but
+        // max_action_ms: a hurlock alpha, its stun ended as its turn began,
+        // stood twelve seconds of the game's time at "execute effect" (issue
+        // 11, the highway to Lothering, 2026-10-03).
+        const bool rising = GettingUp() && clock_ - executingSince_ < kGetUpMs;
+        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 && !rising)
         {
             heldByEffect_ = true;
         }

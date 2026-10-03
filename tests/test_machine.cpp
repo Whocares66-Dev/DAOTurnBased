@@ -930,6 +930,54 @@ TEST_CASE("a condition that has had its turns is ended at the start of the creat
     CHECK(w.Get(kGenlock).condition == Condition::None);
 }
 
+TEST_CASE("getting up from an ended condition has a length: still held past it, the turn is lost",
+          "[machine][conditions]")
+{
+    // Issue 11: a hurlock alpha's stun was ended as its turn began, and
+    // something else held it at an effect's command still. Getting up from
+    // an ended hold was exempt from "held by an effect" for the whole turn,
+    // so it stood max_action_ms, twelve seconds of the game's time.
+    World w;
+    w.StartFight();
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.RunFor(600);
+    w.onPoke = [&](ObjectId) {}; // held: its AI has nothing to choose
+    for (int i = 0; i < 400 && w.machine.Order().Round() < 2; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            CHECK(w.machine.OnEndTurn());
+        }
+        w.RunFor(100);
+    }
+    // The engine has it at an effect's command the statuses do not name.
+    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    w.applied.clear();
+    for (int i = 0; i < 400 && w.Current() != kGenlock; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            CHECK(w.machine.OnEndTurn());
+        }
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kGenlock);
+    w.Frame();
+    REQUIRE(w.Did(EffectKind::EndConditions, kGenlock));
+    // While it may be getting up it is not taken for held (a knockdown's
+    // rise is over two seconds, the grace of any other turn).
+    w.RunFor(static_cast<int>(TurnMachine::kEffectGraceMs) + 500);
+    CHECK(w.Current() == kGenlock);
+    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+    // Past that it is held, and the turn is lost: at five seconds, not twelve.
+    w.RunFor(static_cast<int>(TurnMachine::kGetUpMs - TurnMachine::kEffectGraceMs));
+    CHECK(w.Said(L"Genlock loses the turn"));
+    CHECK(w.Current() != kGenlock);
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock)); // the effect is the engine's
+    CHECK(std::ranges::none_of(w.log,
+                               [](const std::string &line) { return line.find("still at a") != std::string::npos; }));
+}
+
 TEST_CASE("a creature held as the fight begins loses its first turn", "[machine][conditions]")
 {
     // Pinning Shot or a howl before the fight's first turn: its statuses are

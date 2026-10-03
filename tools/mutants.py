@@ -963,6 +963,12 @@ MUTANTS = [
         "(kind == CommandKind::Action || kind == CommandKind::Move || gear))",
     ),
     Mutant(
+        "getting up from an ended condition has no length: still held, the turn stands out max_action_ms",
+        MACHINE,
+        "const bool rising = GettingUp() && clock_ - executingSince_ < kGetUpMs;",
+        "const bool rising = GettingUp();",
+    ),
+    Mutant(
         "those that waited outside a fight are never told it is over",
         MACHINE,
         "    for (const ObjectId id : outside_)\n    {\n        fx.push_back(Effect::Of(EffectKind::PokeAi, id));\n    }\n"
@@ -1885,14 +1891,14 @@ MUTANTS = [
     Mutant(
         "an effect not seen as the turn began holds its creature for max_action_ms",
         MACHINE,
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 && !GettingUp())",
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands < 0 && !GettingUp())",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 && !rising)",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands < 0 && !rising)",
     ),
     Mutant(
         "its own action's effect is taken for one that holds it",
         MACHINE,
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 && !GettingUp())",
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && !GettingUp())",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 && !rising)",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && !rising)",
     ),
     Mutant(
         "own clocks: a creature's effects do not move as its bar is spent",
