@@ -965,9 +965,14 @@ function describe(state)
         // is whole: a turn ended early gave the next 5.0 s with no word of
         // why (play test 28).
         var saved = state.rolled > 0 && Math.abs(Number(state.time) - Number(state.timeLeft)) < 0.05;
-        return state.timeLeft + " s left, " + state.movementLeft + " m to walk" +
-               (paid ? " (" + tenths(state.paid) + " s paid for last turn's action)"
-                     : saved ? " (" + tenths(state.rolled) + " s saved from last turn)" : "");
+        // The note stands with the seconds it is about, before the walk (the
+        // user, 2026-10-03, of "4.3 s left, 20.9 m to walk (0.3 s saved from
+        // last turn)": 'Should say "4.3 s left (0.3 s rollover); 20.9 m to
+        // walk"').
+        var note = paid ? tenths(state.paid) + " s paid for last turn's action"
+                        : saved ? tenths(state.rolled) + " s rollover" : "";
+        return note.length > 0 ? state.timeLeft + " s left (" + note + "); " + state.movementLeft + " m to walk"
+                               : state.timeLeft + " s left, " + state.movementLeft + " m to walk";
     }
     return state.movementLeft + " of " + state.movementMax + " m to move";
 }
