@@ -15,6 +15,8 @@
     into Documents\BioWare\Dragon Age\packages\core\override\, the folder the game reads
     loose resources from, where its resource system finds a screen's movie as it finds
     its own (DAOLib's dev/GUI.md). The bar shows with `turn_bar = true` in turnbased.ini.
+    A movie older than its source (ui\turnorder, tools\movie.py) stops the deploy, since
+    the plugin and the movie are a pair; -StaleMovie deploys it all the same.
 
     -Remove deletes turnbased.dll, its .pdb and the movie; the loader stays for other
     plugins. DAOLib's own `deploy.ps1 -Remove` returns the game to stock. The settings
@@ -34,7 +36,8 @@ param(
     [string] $Preset = 'debug',
     [switch] $Remove,
     [string] $Game = 'C:\Program Files (x86)\GOG Galaxy\Games\Dragon Age Origins\bin_ship',
-    [string] $Owner = 'turn-based-agent'
+    [string] $Owner = 'turn-based-agent',
+    [switch] $StaleMovie
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,6 +87,21 @@ foreach ($f in @($builtPlugin, $builtLoader)) {
     if (-not (Test-Path $f)) { throw "No $f; run .\tools\build.ps1 -Preset $Preset first" }
 }
 
+# The movie is built apart from the dll (tools\movie.py: Java and FFDec), so a tree with a
+# plugin just built can hold a movie of days before; deployed, it went over the newer one in
+# the game with a plain OK, the bar a day behind the plugin that feeds it (issue 5, the
+# playthrough, 2026-10-02). They are a pair (TB_GetView's fields, dev/UI.md): a movie older
+# than its own source stops the deploy before anything is copied.
+$builtMovie = Join-Path $repo 'build\ui\turnorder.swf'
+if ((Test-Path $builtMovie) -and -not $StaleMovie) {
+    $movieSources = @(Get-ChildItem -Path (Join-Path $repo 'ui\turnorder') -Recurse -File) +
+    @(Get-Item (Join-Path $PSScriptRoot 'movie.py'))
+    $newest = $movieSources | Sort-Object LastWriteTimeUtc | Select-Object -Last 1
+    if ($newest.LastWriteTimeUtc -gt (Get-Item $builtMovie).LastWriteTimeUtc) {
+        throw "build\ui\turnorder.swf is older than $($newest.FullName.Substring($repo.Length + 1)); run python tools\movie.py first (or -StaleMovie to deploy it as it is); nothing deployed"
+    }
+}
+
 New-Item -ItemType Directory -Force $plugins | Out-Null
 Copy-Item -Force $builtLoader (Join-Path $Game 'version.dll')
 $loaderPdb = Join-Path $build 'version.pdb'
@@ -116,7 +134,6 @@ foreach ($file in Get-ChildItem -Path $addresses -Filter 'daoaddresses-*.bin') {
     }
 }
 Show-Ok "addresses -> $addresses"
-$builtMovie = Join-Path $repo 'build\ui\turnorder.swf'
 if (Test-Path $builtMovie) {
     New-Item -ItemType Directory -Force $override | Out-Null
     Copy-Item -Force $builtMovie $movie
