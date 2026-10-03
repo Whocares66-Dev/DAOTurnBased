@@ -24,7 +24,18 @@ var FIELD = String.fromCharCode(31);
 // by name (build/research/portrait_art/README.md, 2026-09-30).
 var CARD_W = 60;
 var CARD_H = 60;
-var GAP = 5;
+// 5 until 2026-10-03: with twelve in the order (Redcliffe's square) Delay
+// and End lay under the minimap, and the user asked for the portraits "just
+// a little bit" closer, "not too much though or else it'll look too cramped"
+// (issue 14). What the gap alone cannot do the strip does by giving way to
+// the left (build).
+var GAP = 3;
+// What the minimap takes of the stage's right end, with a little air: its
+// frame's left edge measured at 1405 of 1600 screen pixels (1124 of the
+// stage's 1280) in that fight's picture.
+var MINIMAP = 164;
+// Not into the party's own portraits down the left side either.
+var PARTY_BAR = 96;
 var ART = CARD_W / 114;
 var END_W = 78; // End, on the inventory's leather button (190 x 32 at full size)
 var END_H = 30;
@@ -41,14 +52,20 @@ var CURRENT_SCALE = 143;
 var GOLD = 0xF0C850;
 var PARCHMENT = 0xE8DFC8;
 var INK = 0x14100C;
-var SIDE_COLOURS = [0x3C8CD8, 0x4CA84C, 0xC83C32]; // party, ally, enemy
+// A glow behind a medallion by its side (issue 13; the user, 2026-10-03:
+// "a red glow around the portraits of enemies ... and a blue glow around
+// allies that are not the party"): none for the party, whose mark is the
+// gold arrow under its cards. The red and the blue are those of the rings
+// the game draws on the ground under an enemy and under an ally.
+var SIDE_GLOW = [null, 0x3C9CF0, 0xE82C1C]; // party, ally, enemy (core's Side)
 var RANK_WORDS = ["", "", "", "a lieutenant", "a boss", "an elite boss"];
 
 // Whether the plugin is there to ask. In the game the call answers; in a
 // Flash player on its own, ExternalInterface is not available, or the
 // player is told to show the sample (the parameter sample=1, as
 // tools/snapshot.ps1 passes it).
-var inGame = flash.external.ExternalInterface.available && _root.sample != "1" && _root.sample != "time";
+var inGame = flash.external.ExternalInterface.available && _root.sample != "1" && _root.sample != "time" &&
+             _root.sample != "many";
 var lastView = null;
 var lastCards = null;
 var ticks = 0;
@@ -61,7 +78,7 @@ function sampleView()
     // round 3's up to the current (core/TurnOrder.h, Upcoming).
     // With a turn a bar of time (sample=time): 3.1 s left of a bar of 5.5, a
     // turn being 4.
-    var timed = _root.sample == "time" || _root.time == "1";
+    var timed = _root.sample == "time" || _root.sample == "many" || _root.time == "1";
     var head = (timed ? [BAR_VERSION, 1, 2, 257, 1, 1, "14.4", "14.4", 1, "3.1", "5.5", "4.0", "0.0", 2, "1.0", 0]
                       : [BAR_VERSION, 1, 2, 257, 1, 1, "9.0", "9.0", 0, "0.0", "0.0", "4.0", "0.0", 1, "0.0", 0])
                    .join(FIELD);
@@ -75,6 +92,27 @@ function sampleView()
         [256, 0, 100, 100, 0, 0, 1, 3, "Warden", "player", "gui_portrait_09", 70, 0],
         [512, 2, 4, 80, 0, 0, 0, 3, "Hurlock Emissary", "e", "gui_portrait_49", 55, 1]
     ];
+    if (_root.sample == "many")
+    {
+        // A village's defence (sample=many): twelve in the order, militia
+        // beside the party and walking corpses against them, as Redcliffe's
+        // square had them when Delay and End lay under the minimap (issue
+        // 14); one of them with a plain attack kept (issue 15).
+        cards = [
+            [257, 0, 0, 65, 0, 1, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0, "0.0"],
+            [256, 0, 100, 100, 0, 0, 1, 2, "Warden", "player", "gui_portrait_09", 70, 0],
+            [513, 2, 2, 40, 0, 0, 0, 2, "Walking Corpse", "c", "gui_portrait_49", 100, 0, "0.0"],
+            [259, 0, 0, 80, 0, 0, 1, 2, "Sten", "gen00fl_sten", "gui_portrait_09", 60, 0, "1.2", 0, -1, "ico_attack", "Attack"],
+            [514, 2, 2, 100, 0, 0, 0, 2, "Walking Corpse", "c", "gui_portrait_49", 100, 0, "0.8", 0, -1, "ico_attack", "Attack"],
+            [768, 1, 2, 90, 0, 0, 0, 2, "Militia", "m", "gui_portrait_09", 80, 0],
+            [769, 1, 2, 75, 0, 0, 0, 2, "Tomas", "t", "gui_portrait_09", 80, 0],
+            [515, 2, 2, 60, 0, 0, 0, 2, "Walking Corpse", "c", "gui_portrait_49", 100, 0],
+            [770, 1, 2, 100, 0, 0, 0, 2, "Dwyn", "d", "gui_portrait_09", 80, 0],
+            [258, 0, 0, 100, 0, 0, 1, 2, "Morrigan", "gen00fl_morrigan", "gui_portrait_49", 30, 1],
+            [771, 1, 2, 55, 0, 0, 0, 2, "Militiaman", "m", "gui_portrait_09", 80, 0],
+            [516, 2, 2, 100, 0, 0, 0, 3, "Walking Corpse", "c", "gui_portrait_49", 100, 0]
+        ];
+    }
     var text = head;
     for (var i = 0; i < cards.length; i++)
     {
@@ -330,6 +368,19 @@ function drawCard(bar, card, index, x)
     var mid = CARD_W / 2;
     var orb = 74 * ART;
     var orbAt = 20 * ART;
+    // Whose side it is on, by a glow behind the medallion: under all of its
+    // art, so the gold ring and the arcs are as they were and the colour
+    // stands about them. GFx 3 has no filters for shapes: the glow is rings
+    // drawn wider and fainter outwards, as the movement preview's line is.
+    var hue = SIDE_GLOW[card.side];
+    if (hue != null && hue != undefined)
+    {
+        var halo = clip.createEmptyMovieClip("side", 0);
+        for (var g = 0; g < 5; g++)
+        {
+            ring(halo, mid, CARD_H / 2, 24.5 + g * 1.1, 2 + g, hue, 52 - g * 10);
+        }
+    }
     art(clip, "Portraits_IC2", 1, 0, 0, CARD_W, CARD_H);
     // The current turn's: the party bar's own glow (SelectedPlayer), at the
     // frame's own size as the party bar has it, over the backplate's rim and
@@ -596,7 +647,14 @@ function build(state)
             drawButton(bar, "delay", 501, "Delay", "TB_Delay", buttonsAt, middle - apart, state.delay == 1);
         }
     }
-    bar._x = Math.round((Stage.width - width) / 2);
+    // Centred, unless its buttons would then reach under the minimap: with
+    // a long order the strip stands as far left of the middle as keeps them
+    // clear (issue 14), and no farther than the party's own portraits. By
+    // the buttons' place whether they are shown or not, so that the strip
+    // does not shift as the turn passes from the player to an AI.
+    var centred = Math.round((Stage.width - width) / 2);
+    var clear = Math.round(Stage.width - MINIMAP - (x + GAP + 10 + END_W));
+    bar._x = Math.max(Math.min(centred, clear), Math.min(centred, PARTY_BAR));
     // Behind the medallions alone, a translucent black panel, square with
     // rounded corners and edges that fade out (the user: no tapering ends,
     // as the top menu's bar had); a small one of the same under the
@@ -1013,7 +1071,7 @@ function samplePreview()
     // own marker, which is the world's and not this movie's to draw.
     // With a turn a bar of time (sample=time): what the order would cost,
     // and that it fits.
-    var timed = _root.sample == "time" || _root.time == "1";
+    var timed = _root.sample == "time" || _root.sample == "many" || _root.time == "1";
     var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 2, "13.6", "6.5", 1, timed ? "1.9" : "0.0", 0, timed ? 513 : 0]
                    .join(FIELD);
     var reach = [300, 262, 470, 250, 560, 214, 640, 200].join(FIELD);

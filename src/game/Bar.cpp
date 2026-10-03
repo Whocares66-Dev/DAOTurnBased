@@ -89,6 +89,12 @@ namespace
 {
 constexpr std::wstring_view kScreen = L"TurnOrder";
 constexpr std::wstring_view kMovie = L"turnorder";
+// The game's icon for a plain attack: what its party bar shows beside a
+// portrait while its creature attacks. Read from the running game,
+// 2026-10-03: the data tree's Party.Members.<n>.CurrentActionIcon is
+// "ic_attack" with CurrentAction "Attacking" (a walk's is "ico_MovetoPoint",
+// a talent's its own "tlt_ico_..."), loaded by portraits.gfx as any icon.
+constexpr std::wstring_view kAttackIcon = L"ic_attack";
 } // namespace
 
 void BarLink::KeepScreen(bool fighting)
@@ -155,8 +161,23 @@ void BarLink::Publish(const TurnView &view)
     TurnView shown = view;
     for (CardView &card : shown.upcoming)
     {
-        if (card.owedMs == 0 || card.pendingAbility < 0)
+        if (card.owedMs == 0)
         {
+            continue;
+        }
+        if (card.pendingAbility < 0)
+        {
+            // A plain attack kept for its creature's next turn (core keeps
+            // attacks and abilities, nothing else): the game's own icon for
+            // an attack, the one its party bar shows beside a portrait for
+            // the command being carried out. Left off after play test 28
+            // ("with four spiders every card had a badge"); the user,
+            // 2026-10-03, with a turn a bar of time: "There's an icon for
+            // plain attack. What actor has that queued up for the next
+            // round, that should also indicate in the top right hand corner
+            // of the portrait, as with a pending talent" (issue 15).
+            card.pendingIcon = std::wstring{kAttackIcon};
+            card.pendingName = L"Attack";
             continue;
         }
         auto known = abilityArt_.find(card.pendingAbility);
