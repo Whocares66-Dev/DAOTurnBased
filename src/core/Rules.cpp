@@ -285,6 +285,17 @@ float MovementRate(std::span<const float> potencies)
     return rate;
 }
 
+bool InThePartysFight(const Sighting &sighting, const Settings &settings)
+{
+    if (!settings.joinBySight || sighting.fightsParty)
+    {
+        return true;
+    }
+    // A distance that is no distance (the engine's answer for an object it
+    // cannot place) keeps the creature out, as an unseen one is kept.
+    return sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;
+}
+
 bool AsksForTarget(std::int32_t targetType, std::int32_t useType)
 {
     return useType != kUseTypeMode && (targetType & ~kTargetSelf) != 0;

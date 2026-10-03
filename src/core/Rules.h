@@ -101,6 +101,20 @@ inline constexpr float kPersonCombatSpeed = 4.66f;
 // out. 1 with none.
 [[nodiscard]] float MovementRate(std::span<const float> potencies);
 
+// What the game layer saw of a creature in combat within the radius, for
+// whether it is in the party's fight (Combatant::engaged).
+struct Sighting
+{
+    bool fightsParty = false; // it or a party member is the other's attack target
+    bool seen = false;        // in a room the game shows; where there are none, in a party member's line of sight
+    float meters = 0.0f;      // to the nearest party member
+};
+
+// Whether such a creature takes turns with the party (Settings::joinBySight
+// and joinRadius): one fighting the party always; one only fighting near
+// it, if it is seen and within joinRadius. Without joinBySight, everyone.
+[[nodiscard]] bool InThePartysFight(const Sighting &sighting, const Settings &settings);
+
 // The ability table's TargetType is a mask (TARGET_TYPE_*, the scripts'
 // constants): self 1, friendly 2, hostile 4, placeable 8, area 16, ground
 // 32, body 64. UseType 2 is a mode (Shield Wall), turned on and off.

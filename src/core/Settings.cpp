@@ -210,6 +210,7 @@ const std::vector<Entry> &Entries()
         {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
         {"turns", "join_by_sight", Bool(&Settings::joinBySight)},
+        {"turns", "join_radius", Float(&Settings::joinRadius, 5.0f, 200.0f)},
         {"turns", "charge",
          [](Settings &s, std::string_view text) -> std::string {
              // "10002:1, 13000:2": an ability's id and its turns.
@@ -593,6 +594,12 @@ combat_radius = 50
 ; camera to black rooms. Once in, it stays in. false: everyone in combat
 ; within combat_radius takes turns.
 join_by_sight = true
+; And of those you can see, one that is not fighting the party (neither
+; attacking a party member nor attacked by one) joins only within this many
+; meters of a party member: out of doors a battle of wolves and darkspawn
+; 45 m away is in plain sight, and is not yours. It waits as it is until
+; your fight is over, or until it comes for you.
+join_radius = 30
 ; A spell with a long casting time charges before it is cast: one whose
 ; conjuring time is a turn's worth or more (cooldown_seconds_per_turn)
 ; charges that many turns and is cast at the start of its caster's turn

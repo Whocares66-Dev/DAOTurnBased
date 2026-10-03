@@ -27,6 +27,7 @@ TEST_CASE("the default file parses to the defaults, with nothing to warn of", "[
     CHECK(parsed.settings.aiFollowUpMs == defaults.aiFollowUpMs);
     CHECK(parsed.settings.maxActionMs == defaults.maxActionMs);
     CHECK(parsed.settings.combatRadius == defaults.combatRadius);
+    CHECK(parsed.settings.joinRadius == defaults.joinRadius);
     CHECK(parsed.settings.orderRunMs == defaults.orderRunMs);
     CHECK(parsed.settings.aiPoke == defaults.aiPoke);
     CHECK(parsed.settings.floaties == defaults.floaties);

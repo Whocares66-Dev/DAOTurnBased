@@ -2015,11 +2015,27 @@ TEST_CASE("the fight is over when the last enemy fighting the party falls, other
 {
     World w = WithOutsider();
     w.StartFight();
+    // Told to choose, the one outside finds the machine idle and its
+    // command its own again: checked at the moment it is told.
+    std::vector<ObjectId> told;
+    std::vector<Verdict> answers;
+    w.onPoke = [&](ObjectId id) {
+        if (id == 0x202)
+        {
+            told.push_back(id);
+            answers.push_back(w.Order(id, CommandType::Attack, Source::Script));
+        }
+    };
     w.Get(kGenlock).down = true;
     w.Get(kHurlock).down = true;
     PassTurns(w, 200);
     CHECK_FALSE(w.machine.Active());
-    // The one outside is the game's again, in real time.
+    // The one outside is the game's again, in real time, and its AI is
+    // told so once: its held command was its only one (the Korcari Wilds'
+    // wolves and darkspawn stood commandless after the party's fight).
+    CHECK(told == std::vector<ObjectId>{0x202});
+    CHECK(answers == std::vector<Verdict>{Verdict::Allow});
+    w.onPoke = nullptr;
     CHECK(w.Order(0x202, CommandType::Attack, Source::Script) == Verdict::Allow);
     w.applied.clear();
     w.RunFor(3000);

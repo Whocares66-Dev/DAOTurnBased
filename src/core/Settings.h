@@ -150,6 +150,15 @@ struct Settings
     // distance alone, and whose own rule this is). Off: everyone in combat
     // within the radius, as before.
     bool joinBySight = true;
+    // And of those seen, one that neither attacks a party member nor is
+    // attacked by one joins only this near to the party. In the open every
+    // room in the radius is one the party has seen: in the Korcari Wilds a
+    // hurlock, an archer and four wolves fighting each other 45 m off
+    // joined a fight of four darkspawn, thirteen in the order and eighteen
+    // rounds (issue 6, the playthrough; the user, 2026-10-03: "50/30 split
+    // seems reasonable to me"). Who attacks the party joins from anywhere
+    // in combatRadius, as an archer must.
+    float joinRadius = 30.0f;
     AiPoke aiPoke = AiPoke::CommandComplete;
 
     // What a turn is (dev/REBALANCE.md, "Current specification"): a bar of

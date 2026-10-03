@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <unordered_set>
 #include <utility>
 
@@ -211,22 +212,27 @@ namespace
 //   not yet watched in play.
 // - Where the area has no room for it, a party member's line of sight to
 //   it (CheckLineOfSightObject's question: walls and doors block).
-bool Engaged(ObjectId id, const std::vector<ObjectId> &party, const std::optional<dao::world::Room> &room)
+// And how far it is from the nearest party member: seen is not enough out
+// of doors, where every room in the radius is shown and a battle of wolves
+// and darkspawn 45 m off joined the party's (issue 6). What these make of
+// it is core's (InThePartysFight).
+Sighting Sight(ObjectId id, const std::vector<ObjectId> &party, const std::optional<dao::world::Room> &room)
 {
+    Sighting sighting;
     const ObjectId target = api::GetAttackTarget(id);
+    sighting.meters = std::numeric_limits<float>::infinity();
     for (const ObjectId member : party)
     {
         if (target == member || api::GetAttackTarget(member) == id)
         {
-            return true;
+            sighting.fightsParty = true;
         }
+        sighting.meters = std::min(sighting.meters, api::GetDistanceBetween(member, id));
     }
-    if (room)
-    {
-        return room->Shown();
-    }
-    return std::ranges::any_of(party,
-                               [&](ObjectId member) { return static_cast<bool>(dao::world::LineOfSight(member, id)); });
+    sighting.seen = room ? room->Shown() : std::ranges::any_of(party, [&](ObjectId member) {
+        return static_cast<bool>(dao::world::LineOfSight(member, id));
+    });
+    return sighting;
 }
 } // namespace
 
@@ -298,15 +304,20 @@ std::vector<Combatant> Bridge::Scan()
         if (settings_.joinBySight)
         {
             const std::optional<dao::world::Room> room = byRooms ? dao::world::RoomOf(id) : std::nullopt;
-            c.engaged = Engaged(id, members, room);
+            const Sighting sighting = Sight(id, members, room);
+            c.engaged = InThePartysFight(sighting, settings_);
             if (!c.engaged)
             {
                 ++outside;
                 if (spdlog::should_log(spdlog::level::debug))
                 {
+                    // Seen and still outside: fighting someone else, too far
+                    // off to be the party's.
                     rooms +=
-                        room ? std::format(" {:#x} room {} seen {} load {}", id, room->number, room->seen, room->load)
-                             : std::format(" {:#x} no room, out of sight", id);
+                        sighting.seen
+                            ? std::format(" {:#x} seen, {:.0f} m off, not fighting the party", id, sighting.meters)
+                        : room ? std::format(" {:#x} room {} seen {} load {}", id, room->number, room->seen, room->load)
+                               : std::format(" {:#x} no room, out of sight", id);
                 }
             }
         }

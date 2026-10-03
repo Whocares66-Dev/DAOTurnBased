@@ -957,6 +957,31 @@ MUTANTS = [
         "        request.type == CommandType::SwitchWeaponSets;",
     ),
     Mutant(
+        "those that waited outside a fight are never told it is over",
+        MACHINE,
+        "    for (const ObjectId id : outside_)\n    {\n        fx.push_back(Effect::Of(EffectKind::PokeAi, id));\n    }\n"
+        "    outside_.clear();\n    order_.Clear();",
+        "    outside_.clear();\n    order_.Clear();",
+    ),
+    Mutant(
+        "a battle in sight that is not the party's joins its fight however far",
+        RULES,
+        "    return sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;",
+        "    return sighting.seen;",
+    ),
+    Mutant(
+        "a creature near the party joins its fight unseen",
+        RULES,
+        "    return sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;",
+        "    return std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;",
+    ),
+    Mutant(
+        "a creature attacking the party from afar waits outside its fight",
+        RULES,
+        "    if (!settings.joinBySight || sighting.fightsParty)",
+        "    if (!settings.joinBySight)",
+    ),
+    Mutant(
         "effects are never aged a round",
         MACHINE,
         "        e.b = static_cast<std::int32_t>(left);\n        fx.push_back(e);",

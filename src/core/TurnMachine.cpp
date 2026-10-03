@@ -2629,6 +2629,18 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
     resume_ = false;
     Signal(fx, events::kCombatEnd, kNoObject, order_.Round(), 0);
     fx.push_back(Effect::Of(EffectKind::Unpause));
+    // Those that waited outside are the game's again, and are told so: the
+    // one command each tried was held, and an AI whose command was held
+    // tries no other by itself. In the Korcari Wilds a hurlock, an archer
+    // and four wolves at each other's throats 45 m off stood as they were,
+    // in combat and commandless, half a minute after the party's fight was
+    // over (issue 6, the playthrough, 2026-10-03). Their AI chooses now, in
+    // real time, the machine idle by the time the game layer tells them.
+    for (const ObjectId id : outside_)
+    {
+        fx.push_back(Effect::Of(EffectKind::PokeAi, id));
+    }
+    outside_.clear();
     order_.Clear();
     held_.clear();
     budget_ = Budget{};

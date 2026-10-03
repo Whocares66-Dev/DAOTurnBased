@@ -160,6 +160,44 @@ TEST_CASE("a creature's pace is its appearance's combat speed against a person's
     CHECK(tb::MovementBudget(settings, 60.0f, 10.0f) == Approx(9.0f));
 }
 
+TEST_CASE("a battle near the party that is not the party's waits outside its fight", "[rules]")
+{
+    // The Korcari Wilds, issue 6: a hurlock and four wolves fighting each
+    // other 45 m off, in plain sight, joined the party's fight of four.
+    const tb::Settings settings;
+    REQUIRE(settings.joinBySight);
+    REQUIRE(settings.joinRadius == Approx(30.0f));
+    const auto sighting = [](bool fightsParty, bool seen, float meters) {
+        tb::Sighting s;
+        s.fightsParty = fightsParty;
+        s.seen = seen;
+        s.meters = meters;
+        return s;
+    };
+    // Seen, fighting someone else: by how near.
+    CHECK_FALSE(tb::InThePartysFight(sighting(false, true, 45.0f), settings));
+    CHECK_FALSE(tb::InThePartysFight(sighting(false, true, 30.5f), settings));
+    CHECK(tb::InThePartysFight(sighting(false, true, 30.0f), settings));
+    CHECK(tb::InThePartysFight(sighting(false, true, 12.0f), settings));
+    // Fighting the party: from anywhere the radius reaches (an archer), seen
+    // or not (through a door, from a room still black).
+    CHECK(tb::InThePartysFight(sighting(true, true, 45.0f), settings));
+    CHECK(tb::InThePartysFight(sighting(true, false, 45.0f), settings));
+    // Not seen and not on the party: outside, however near (the next room).
+    CHECK_FALSE(tb::InThePartysFight(sighting(false, false, 6.0f), settings));
+    // A distance that is none keeps it out.
+    CHECK_FALSE(tb::InThePartysFight(sighting(false, true, std::numeric_limits<float>::quiet_NaN()), settings));
+    CHECK_FALSE(tb::InThePartysFight(sighting(false, true, std::numeric_limits<float>::infinity()), settings));
+    // The setting moves the line.
+    tb::Settings wide;
+    wide.joinRadius = 50.0f;
+    CHECK(tb::InThePartysFight(sighting(false, true, 45.0f), wide));
+    // Without the rule of sight, everyone in the radius.
+    tb::Settings everyone;
+    everyone.joinBySight = false;
+    CHECK(tb::InThePartysFight(sighting(false, false, 45.0f), everyone));
+}
+
 TEST_CASE("haste and slows multiply a creature's pace", "[rules]")
 {
     CHECK(tb::MovementRate({}) == Approx(1.0f));
