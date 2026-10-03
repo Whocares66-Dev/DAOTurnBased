@@ -975,6 +975,12 @@ MUTANTS = [
         "",
     ),
     Mutant(
+        "the bar shows twelve turns ahead again, its buttons under the minimap",
+        "src/core/TurnMachine.h",
+        "static constexpr std::size_t kShown = 10;",
+        "static constexpr std::size_t kShown = 12;",
+    ),
+    Mutant(
         "those of the fight still standing when it ends are never told it is over",
         MACHINE,
         "        if (c.side != Side::Party && !c.down && !held)",

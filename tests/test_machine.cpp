@@ -751,6 +751,24 @@ TEST_CASE("new settings apply from the next turn", "[machine]")
     CHECK(w.machine.View().movementMax == 14.0f);
 }
 
+TEST_CASE("the bar shows ten turns ahead, however many are fighting", "[machine]")
+{
+    // Issue 14: twelve portraits put the bar's buttons under the minimap.
+    // The user, 2026-10-03: "let's make it 10 instead of 12 ... Large fights
+    // like these are going to overflow anyway".
+    auto fight = StandardFight();
+    for (ObjectId id = 0x300; id < 0x30a; ++id)
+    {
+        fight.push_back(Make(id, Side::Enemy, false, L"Walking Corpse", 10.0f));
+    }
+    World w(Fixed(), fight);
+    w.StartFight();
+    const TurnView view = w.machine.View();
+    REQUIRE(w.machine.Order().All().size() > TurnView::kShown);
+    CHECK(view.upcoming.size() == 10);
+    CHECK(view.upcoming.front().current);
+}
+
 TEST_CASE("the pause key is the game's outside a turn-based fight", "[machine]")
 {
     World w;

@@ -24,18 +24,15 @@ var FIELD = String.fromCharCode(31);
 // by name (build/research/portrait_art/README.md, 2026-09-30).
 var CARD_W = 60;
 var CARD_H = 60;
-// 5 until 2026-10-03: with twelve in the order (Redcliffe's square) Delay
-// and End lay under the minimap, and the user asked for the portraits "just
-// a little bit" closer, "not too much though or else it'll look too cramped"
-// (issue 14). What the gap alone cannot do the strip does by giving way to
-// the left (build).
-var GAP = 3;
-// What the minimap takes of the stage's right end, with a little air: its
-// frame's left edge measured at 1405 of 1600 screen pixels (1124 of the
-// stage's 1280) in that fight's picture.
-var MINIMAP = 164;
-// Not into the party's own portraits down the left side either.
-var PARTY_BAR = 96;
+// With twelve in the order (Redcliffe's square, 2026-10-03) Delay and End
+// lay under the minimap. For an hour the cards stood 3 apart and the strip
+// gave way to the left of the middle; then the user: "Maybe instead of
+// shifting the portraits we have 10 instead of 12? ... Large fights like
+// these are going to overflow anyway", and "let's make it 10". The bar
+// shows ten (core's TurnView::kShown), the gap is what it was, the strip is
+// centred, and its buttons end 30 screen pixels short of the minimap at
+// 1600 x 1000 (issue 14).
+var GAP = 5;
 var ART = CARD_W / 114;
 var END_W = 78; // End, on the inventory's leather button (190 x 32 at full size)
 var END_H = 30;
@@ -94,22 +91,19 @@ function sampleView()
     ];
     if (_root.sample == "many")
     {
-        // A village's defence (sample=many): twelve in the order, militia
+        // A village's defence (sample=many): ten in the bar, militia
         // beside the party and walking corpses against them, as Redcliffe's
-        // square had them when Delay and End lay under the minimap (issue
-        // 14); one of them with a plain attack kept (issue 15).
+        // square had them (issue 14); two with a plain attack kept (issue 15).
         cards = [
             [257, 0, 0, 65, 0, 1, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0, "0.0"],
             [256, 0, 100, 100, 0, 0, 1, 2, "Warden", "player", "gui_portrait_09", 70, 0],
             [513, 2, 2, 40, 0, 0, 0, 2, "Walking Corpse", "c", "gui_portrait_49", 100, 0, "0.0"],
-            [259, 0, 0, 80, 0, 0, 1, 2, "Sten", "gen00fl_sten", "gui_portrait_09", 60, 0, "1.2", 0, -1, "ico_attack", "Attack"],
-            [514, 2, 2, 100, 0, 0, 0, 2, "Walking Corpse", "c", "gui_portrait_49", 100, 0, "0.8", 0, -1, "ico_attack", "Attack"],
+            [259, 0, 0, 80, 0, 0, 1, 2, "Sten", "gen00fl_sten", "gui_portrait_09", 60, 0, "1.2", 0, -1, "ic_attack", "Attack"],
+            [514, 2, 2, 100, 0, 0, 0, 2, "Walking Corpse", "c", "gui_portrait_49", 100, 0, "0.8", 0, -1, "ic_attack", "Attack"],
             [768, 1, 2, 90, 0, 0, 0, 2, "Militia", "m", "gui_portrait_09", 80, 0],
-            [769, 1, 2, 75, 0, 0, 0, 2, "Tomas", "t", "gui_portrait_09", 80, 0],
             [515, 2, 2, 60, 0, 0, 0, 2, "Walking Corpse", "c", "gui_portrait_49", 100, 0],
             [770, 1, 2, 100, 0, 0, 0, 2, "Dwyn", "d", "gui_portrait_09", 80, 0],
             [258, 0, 0, 100, 0, 0, 1, 2, "Morrigan", "gen00fl_morrigan", "gui_portrait_49", 30, 1],
-            [771, 1, 2, 55, 0, 0, 0, 2, "Militiaman", "m", "gui_portrait_09", 80, 0],
             [516, 2, 2, 100, 0, 0, 0, 3, "Walking Corpse", "c", "gui_portrait_49", 100, 0]
         ];
     }
@@ -647,14 +641,7 @@ function build(state)
             drawButton(bar, "delay", 501, "Delay", "TB_Delay", buttonsAt, middle - apart, state.delay == 1);
         }
     }
-    // Centred, unless its buttons would then reach under the minimap: with
-    // a long order the strip stands as far left of the middle as keeps them
-    // clear (issue 14), and no farther than the party's own portraits. By
-    // the buttons' place whether they are shown or not, so that the strip
-    // does not shift as the turn passes from the player to an AI.
-    var centred = Math.round((Stage.width - width) / 2);
-    var clear = Math.round(Stage.width - MINIMAP - (x + GAP + 10 + END_W));
-    bar._x = Math.max(Math.min(centred, clear), Math.min(centred, PARTY_BAR));
+    bar._x = Math.round((Stage.width - width) / 2);
     // Behind the medallions alone, a translucent black panel, square with
     // rounded corners and edges that fade out (the user: no tapering ends,
     // as the top menu's bar had); a small one of the same under the

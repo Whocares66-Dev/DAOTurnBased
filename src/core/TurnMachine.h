@@ -324,6 +324,13 @@ struct TurnView
     // longer than a turn's seconds.
     std::uint32_t rolledMs = 0;
     std::vector<CardView> upcoming; // the current turn first
+    // How many turns the bar shows ahead, the current one first. Twelve
+    // until 2026-10-03: with twelve the bar's buttons lay under the minimap,
+    // and the user, of the strip made to give way for them: "Maybe instead
+    // of shifting the portraits we have 10 instead of 12? ... Large fights
+    // like these are going to overflow anyway, 12 is not even enough to show
+    // everything", then "let's make it 10" (issue 14).
+    static constexpr std::size_t kShown = 10;
 };
 
 // The machine's whole state, as a test server reads it (eluvian-agent's
