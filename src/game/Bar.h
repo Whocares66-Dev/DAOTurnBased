@@ -86,11 +86,12 @@ class BarLink
     bool delay_ = false;
     bool movieLetGo_ = false;
     // The game's own "Paused" banner (the floaty layer's PauseIndicator_mc,
-    // top centre: where the turn bar is) hidden through a fight, and shown
-    // again after: on the interface's thread, from the movie's own calls.
+    // top centre: where the turn bar is) hidden through a fight, as the
+    // bar's movie asks for its view, and shown again on the first frame with
+    // no fight (FollowFight).
     void HideGameBanner(bool hide);
     std::atomic<bool> fightShown_{false}; // the view last published is a fight's
-    bool bannerHidden_ = false;           // the interface's thread's
+    std::atomic<bool> bannerHidden_{false};
     bool bannerSaid_ = false;
     std::optional<ObjectId> focus_;
     bool installed_ = false;

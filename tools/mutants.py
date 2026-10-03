@@ -1210,8 +1210,8 @@ MUTANTS = [
     Mutant(
         "time: Interrupted is said as a fight ends",
         MACHINE,
-        '    if (why == "held" || why == "struck" || (!Timed() && why != "the fight over"))',
-        '    if (why == "held" || why == "struck" || why == "the fight over" || (!Timed() && why != "the fight over"))',
+        '    if (why == "held" || why == "struck" || why == kConjureCleared || (!Timed() && why != "the fight over"))',
+        '    if (why == "held" || why == "struck" || why == kConjureCleared || why == "the fight over" || (!Timed() && why != "the fight over"))',
     ),
     Mutant(
         "time: a cooldown does not move with its user's clock",
@@ -1678,8 +1678,8 @@ MUTANTS = [
     Mutant(
         "no way through is said for a line of sight",
         MACHINE,
-        '        const bool sight = why.find("LINE_OF_SIGHT") != std::string_view::npos;',
-        '        const bool sight = why.find("LINE_OF_SIGHT") == std::string_view::npos && !way;',
+        '        const bool sight = why.find("LINE_OF_SIGHT") != std::string_view::npos;\n        Floaty(pending_, who, way ? L"No way through" : sight ? L"No line of sight" : L"Nothing happened", kGold);\n    }\n    return true;\n}',
+        '        const bool sight = why.find("LINE_OF_SIGHT") == std::string_view::npos && !way;\n        Floaty(pending_, who, way ? L"No way through" : sight ? L"No line of sight" : L"Nothing happened", kGold);\n    }\n    return true;\n}',
     ),
     Mutant(
         "an AI given its action back twice is asked a third time",
@@ -1890,6 +1890,60 @@ MUTANTS = [
         MACHINE,
         "                    victim != kNoObject && victim != acting->id && order_.Find(victim) != nullptr)",
         "                    victim != kNoObject && victim == acting->id && order_.Find(victim) != nullptr)",
+    ),
+    Mutant(
+        "the engine's conjuring: a spell that conjures is kept in the gate",
+        MACHINE,
+        "        return engine ? Verdict::Conjure : Verdict::Hold;",
+        "        return Verdict::Hold;",
+    ),
+    Mutant(
+        "the engine's conjuring: a spell with no conjure is given to the engine",
+        MACHINE,
+        "           request.abilityType == kAbilitySpell && !request.sustained && request.conjureAnim > 0 &&",
+        "           request.abilityType == kAbilitySpell && !request.sustained && request.conjureAnim >= 0 &&",
+    ),
+    Mutant(
+        "the engine's conjuring: the setting is not asked",
+        MACHINE,
+        "    return Timed() && settings_.engineConjure && request.type == CommandType::UseAbility &&",
+        "    return Timed() && request.type == CommandType::UseAbility &&",
+    ),
+    Mutant(
+        "the engine's conjuring: the mod's own rule still interrupts",
+        MACHINE,
+        "    if (Timed() && settings_.engineConjure)\n    {\n        return false;\n    }",
+        "    if (Timed() && settings_.engineConjure && false)\n    {\n        return false;\n    }",
+    ),
+    Mutant(
+        "the engine's conjuring: the turn does not end at the held conjure",
+        MACHINE,
+        "    if (budget_.conjureWaiting && (actor.conjureHeld || !actor.busy))",
+        "    if (budget_.conjureWaiting && (!actor.busy))",
+    ),
+    Mutant(
+        "the engine's conjuring: a cleared conjure is not lost",
+        MACHINE,
+        "    Interrupt(caster, kConjureCleared, pending_);\n    return true;",
+        "    return true;",
+    ),
+    Mutant(
+        "the engine's conjuring: a failure before the conjure leaves it pending",
+        MACHINE,
+        "        std::erase_if(charges_, [&](const Charge &c) { return c.caster == who && c.engine; });",
+        "        std::erase_if(charges_, [&](const Charge &c) { return c.caster == who && c.engine && false; });",
+    ),
+    Mutant(
+        "the engine's conjuring: its landing waits at the gate",
+        MACHINE,
+        "    if (landing_->engine)\n    {",
+        "    if (landing_->engine && false)\n    {",
+    ),
+    Mutant(
+        "the engine's conjuring: another order is let through while its spell goes to its conjure",
+        MACHINE,
+        "    if (budget_.conjureWaiting && kind != CommandKind::Free)",
+        "    if (budget_.conjureWaiting && kind == CommandKind::Involuntary)",
     ),
 ]
 

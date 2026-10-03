@@ -897,8 +897,13 @@ TEST_CASE("with time, a walk longer than the whole bar is stopped, and its actio
     CHECK(w.machine.State().charging.empty());
 }
 
-TEST_CASE("a blow over the threshold interrupts a pending spell, and nothing else", "[time]")
+TEST_CASE("without the engine's conjuring, a blow over the threshold interrupts a pending spell, and nothing else",
+          "[time]")
 {
+    // The mod's own copy of the game's rule, with Settings::engineConjure
+    // off; on, the installed rules_core judges the engine's own conjuring.
+    Settings mine = Timed();
+    mine.engineConjure = false;
     const auto pending = [](World &w, std::int32_t abilityType) {
         CommandRequest spell;
         spell.object = kHero;
@@ -911,7 +916,7 @@ TEST_CASE("a blow over the threshold interrupts a pending spell, and nothing els
         return w.Queue(spell);
     };
     {
-        World w(Timed());
+        World w(mine);
         std::vector<TurnEvent> events;
         w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
         w.StartFight();
@@ -933,7 +938,7 @@ TEST_CASE("a blow over the threshold interrupts a pending spell, and nothing els
     }
     {
         // A talent pending is not a spell being conjured.
-        World w(Timed());
+        World w(mine);
         w.StartFight();
         REQUIRE(pending(w, kAbilityTalent) == Verdict::Hold);
         w.RunFor(100);
@@ -1093,7 +1098,9 @@ TEST_CASE("with time, an action over at once did not play: its time is given bac
 
 TEST_CASE("a pending action lost says so in the mod's own words, in gold", "[time]")
 {
-    World w(Timed());
+    Settings mine = Timed();
+    mine.engineConjure = false; // the mod's own rule loses it here
+    World w(mine);
     w.StartFight();
     CommandRequest spell;
     spell.object = kHero;
@@ -1532,4 +1539,135 @@ TEST_CASE("with own clocks, an action's own effect moves its creature's clock an
     CHECK(w.agedOwn[kHero] - hero >= 3000);
     CHECK(w.agedOwn[kHero] - hero < 3600);
     CHECK(w.agedOwn[kCompanion] == companion); // nobody else's
+}
+
+namespace
+{
+// A spell that conjures (its conjure animation and its speed's count, as
+// DescribeAbility reads them), longer than a bar.
+CommandRequest Conjured(ObjectId caster, float seconds = 5.5f, std::int32_t conjureAnim = 245)
+{
+    CommandRequest spell;
+    spell.object = caster;
+    spell.type = CommandType::UseAbility;
+    spell.source = Source::Player;
+    spell.inCombat = true;
+    spell.ability = 10211;
+    spell.abilityType = kAbilitySpell;
+    spell.actionSeconds = seconds;
+    spell.conjureAnim = conjureAnim;
+    spell.conjureSeconds = conjureAnim > 0 ? 1.0f : 0.0f;
+    return spell;
+}
+} // namespace
+
+TEST_CASE("the engine's own conjuring: a spell that does not fit is begun at once, held, and lands as it is paid",
+          "[time]")
+{
+    // The user, 2026-10-02: "Hooking into the game's own logic is the right
+    // thing to do", "Animating the character midcast is also the right thing
+    // to do".
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    // Walking into range first, the engine's own walk: no other order meanwhile,
+    // which would queue behind the spell and run after its cast.
+    REQUIRE(w.Queue(Conjured(kHero)) == Verdict::Conjure);
+    w.Get(kHero).conjureHeld = false;
+    w.Frame();
+    REQUIRE(w.Current() == kHero);
+    CHECK(Act(w, kHero, CommandType::MoveToLocation, Source::Player, 0.0f, 2.0f) == Verdict::Block);
+    w.Get(kHero).conjureHeld = true;
+    CHECK(w.heldConjures.contains(kHero));
+    CHECK_FALSE(w.heldCasts.contains(kHero)); // not kept in the gate: the engine's
+    w.RunFor(100);
+    // At its held conjure: the turn is over, 1.5 s of the spell owed.
+    CHECK(w.Current() != kHero);
+    REQUIRE(w.machine.State().charging.size() == 1);
+    CHECK(w.machine.State().charging.front().owedMs == 1500);
+    // A blow is the installed rules_core's to judge, not the mod's.
+    CHECK_FALSE(w.machine.OnDamaged(kHero, 99.0f, true, 20.0f));
+    CHECK(w.heldConjures.contains(kHero));
+    // Its next turn pays what it owes and lets the conjure complete.
+    UntilTurnOf(w, kHero);
+    CHECK_FALSE(w.heldConjures.contains(kHero));
+    CHECK_FALSE(w.Get(kHero).conjureHeld);
+    CHECK(w.machine.GetPhase() == Phase::Executing); // the cast runs
+    w.Finish(kHero);
+    w.RunFor(600);
+    CHECK(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(w.machine.View().timeLeftMs == 2500); // 4 s, less the 1.5 s it owed
+    CHECK(w.machine.State().charging.empty());
+}
+
+TEST_CASE("the engine's own conjuring cleared before its time is paid: the spell is lost, and nothing more is owed",
+          "[time]")
+{
+    World w(Timed());
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    REQUIRE(w.Queue(Conjured(kHero)) == Verdict::Conjure);
+    w.RunFor(100);
+    REQUIRE(w.Current() != kHero);
+    // Struck in the genlock's turn, rules_core clears it: its command ends.
+    CHECK(w.machine.OnConjureCleared(kHero));
+    w.Frame();
+    CHECK(w.Said(L"Spell lost"));
+    CHECK(w.machine.State().charging.empty());
+    CHECK(std::ranges::any_of(events, [](const TurnEvent &e) {
+        return e.kind == EventKind::ActionDropped && e.who == kHero && e.detail == "interrupted while conjuring";
+    }));
+    CHECK_FALSE(w.machine.OnConjureCleared(kHero)); // once
+    // Its next turn is whole.
+    UntilTurnOf(w, kHero);
+    CHECK(w.machine.View().timeLeftMs == 4000);
+    // Nobody else's conjure: nothing.
+    CHECK_FALSE(w.machine.OnConjureCleared(kGenlock));
+}
+
+TEST_CASE("the engine's own conjuring is for spells that conjure; the rest are kept, and no blow interrupts them",
+          "[time]")
+{
+    // A spell with no conjure, longer than what is left: kept in the gate as
+    // before, and not interrupted by a blow (the game interrupts only a
+    // conjuring).
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Queue(Conjured(kHero, 5.5f, 0)) == Verdict::Hold);
+    // A speed's count with no conjure animation: the engine does not conjure
+    // it either (most talents with a Speed have none).
+    World speed(Timed());
+    speed.StartFight();
+    CommandRequest counted = Conjured(kHero, 5.5f, 0);
+    counted.conjureSeconds = 1.0f;
+    CHECK(speed.Queue(counted) == Verdict::Hold);
+    w.RunFor(100);
+    CHECK_FALSE(w.machine.OnDamaged(kHero, 99.0f, true, 20.0f));
+    CHECK(w.heldCasts.contains(kHero));
+    // With the setting off, a conjuring spell is kept as before.
+    Settings mine = Timed();
+    mine.engineConjure = false;
+    World off(mine);
+    off.StartFight();
+    CHECK(off.Queue(Conjured(kHero)) == Verdict::Hold);
+    // And a spell that fits is let through as ever.
+    World fits(Timed());
+    fits.StartFight();
+    CHECK(fits.Queue(Conjured(kHero, 3.0f)) == Verdict::Allow);
+}
+
+TEST_CASE("the engine's own conjuring that fails before it conjures is not pending", "[time]")
+{
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Queue(Conjured(kHero)) == Verdict::Conjure);
+    // No way to its target: the engine fails it before its conjure.
+    w.Get(kHero).conjureHeld = false;
+    CHECK(w.machine.OnCommandFailed(kHero, CommandType::UseAbility, 10211, "COMMAND_FAILED_INVALID_PATH"));
+    w.Finish(kHero);
+    w.RunFor(300);
+    CHECK(w.machine.State().charging.empty());
+    CHECK(w.Current() == kHero); // its action given back, its turn goes on
 }

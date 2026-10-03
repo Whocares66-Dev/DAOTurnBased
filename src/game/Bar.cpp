@@ -197,7 +197,7 @@ void BarLink::Publish(const TurnView &view)
 // (PauseBorder_mc) is left as it is.
 void BarLink::HideGameBanner(bool hide)
 {
-    if (bannerHidden_ == hide)
+    if (bannerHidden_.load() == hide)
     {
         return;
     }
@@ -214,13 +214,22 @@ void BarLink::HideGameBanner(bool hide)
     }
     const bool set = movie.SetVariable("_root.PauseIndicator_mc._visible", dao::gui::Value::Bool(!hide),
                                        dao::gui::Movie::SetType::Normal);
-    bannerHidden_ = hide;
+    bannerHidden_.store(hide);
     spdlog::info("the game's Paused banner is {}: {}", hide ? "hidden behind the turn bar" : "shown again",
                  set ? "set" : "the call did not run");
 }
 
 void BarLink::FollowFight(const TurnView &view, std::uint32_t nowMs)
 {
+    // The fight over (or a conversation in it): the game's banner is the
+    // game's again. Here, on the frame, since the bar's movie stops asking
+    // for its view as the bar goes, and its "cleared" call did not come:
+    // after a fight a pause in real time showed no banner at all (play test
+    // 32).
+    if (!view.active && bannerHidden_.load())
+    {
+        HideGameBanner(false);
+    }
     const std::size_t known = portraits_.Tried();
     portraits_.Follow(view, nowMs);
     if (known > 0 && portraits_.Tried() == 0)

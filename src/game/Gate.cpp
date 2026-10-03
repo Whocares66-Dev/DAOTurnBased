@@ -6,6 +6,7 @@
 #include "dao/Addresses.h"
 #include "dao/Animation.h"
 #include "dao/CommandEvents.h"
+#include "dao/Conjure.h"
 #include "dao/Events.h"
 #include "dao/Gda.h"
 #include "dao/Hook.h"
@@ -129,6 +130,9 @@ std::atomic<bool> g_pathCheck{true};
 // Casts kept while they charge (Gate.h, HeldCast), by their caster. The
 // gate and the bridge's effects both run on the scripts' thread.
 std::unordered_map<ObjectId, HeldCast> g_heldCasts;
+// Spells given to the engine to conjure while their time is unpaid (core:
+// Verdict::Conjure), by their caster.
+std::set<ObjectId> g_engineConjures;
 
 // A move farther than its path can go this turn is refused ("Too far")
 // rather than walked until its meters run out: the user's call, 2026-10-01
@@ -599,7 +603,18 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
                                   kept.ability, kept.placed ? "" : "nothing, not ");
                 }
             }
-            if (verdict != Verdict::Allow)
+            if (verdict == Verdict::Conjure)
+            {
+                // The engine's own cast: let through, its conjure held until
+                // its time is paid (ReleaseEngineConjure), its caster drawing
+                // the spell in meanwhile, and the installed rules_core free to
+                // interrupt it.
+                dao::commands::HoldConjure(self->Id());
+                g_engineConjures.insert(self->Id());
+                spdlog::info("{:#x}: its spell (ability {}) conjures, held until its time is paid", self->Id(),
+                             request.ability);
+            }
+            if (verdict != Verdict::Allow && verdict != Verdict::Conjure)
             {
                 // The queue always takes a command it is given, and no caller
                 // frees one after (DAOLib's reading of all ten, 2026-09-30), so
@@ -806,6 +821,45 @@ std::optional<HeldCast> PeekHeldCast(ObjectId creature)
     return kept != g_heldCasts.end() ? std::optional<HeldCast>{kept->second} : std::nullopt;
 }
 
+bool ReleaseEngineConjure(ObjectId caster)
+{
+    if (!g_engineConjures.contains(caster))
+    {
+        return false;
+    }
+    // Fed what is left of it, then let go: it completes on its next update,
+    // and the cast and its impact run in real time, in its caster's turn.
+    if (const std::optional<dao::commands::Conjuring> conjure = dao::commands::Conjure(caster))
+    {
+        dao::commands::FeedConjure(caster, std::max(0.0f, conjure->duration - conjure->elapsed));
+        spdlog::info("{:#x}: its held conjure let complete ({:.2f} of {:.2f} s had run)", caster, conjure->elapsed,
+                     conjure->duration);
+    }
+    dao::commands::HoldConjure(caster, false);
+    return true;
+}
+
+bool DropEngineConjure(ObjectId caster)
+{
+    if (caster == kNoObject)
+    {
+        // The fight over: each runs on, in real time, as the game would.
+        for (const ObjectId held : g_engineConjures)
+        {
+            dao::commands::HoldConjure(held, false);
+        }
+        g_engineConjures.clear();
+        return false;
+    }
+    if (g_engineConjures.erase(caster) == 0)
+    {
+        return false;
+    }
+    dao::commands::HoldConjure(caster, false);
+    api::ClearAllCommands(caster, 1);
+    return true;
+}
+
 void DropHeldCast(ObjectId creature)
 {
     if (creature == kNoObject)
@@ -897,6 +951,22 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
         if (result == dao::commands::kSuccess && type == CommandType::Attack)
         {
             LearnSwing(object);
+        }
+        // A held conjure's command over: cast (its time paid, released), or
+        // cleared before (rules_core's damage rule, a knockdown): then the
+        // spell is lost, as the game has it.
+        if (type == CommandType::UseAbility && g_engineConjures.erase(object) > 0)
+        {
+            dao::commands::HoldConjure(object, false);
+            if (result != dao::commands::kSuccess)
+            {
+                const std::lock_guard lock(mutex);
+                if (machine.OnConjureCleared(object))
+                {
+                    spdlog::info("{:#x}: its held conjure ended {}: the spell is lost", object,
+                                 dao::commands::ResultName(result));
+                }
+            }
         }
         if (result == dao::commands::kSuccess || result == dao::commands::kCleared)
         {

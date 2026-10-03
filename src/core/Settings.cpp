@@ -204,6 +204,7 @@ const std::vector<Entry> &Entries()
         {"turns", "speed", Float(&Settings::fightSpeed, 0.25f, 4.0f)},
         {"turns", "delay", Bool(&Settings::delay)},
         {"turns", "own_clocks", Bool(&Settings::ownClocks)},
+        {"turns", "engine_conjure", Bool(&Settings::engineConjure)},
         {"turns", "give_back_unplayed", Bool(&Settings::giveBackUnplayed)},
         {"movement", "path_check", Bool(&Settings::pathCheck)},
         {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
@@ -564,6 +565,12 @@ delay = true
 ; its victim's turn, a buff of 20 seconds lasts five of its owner's turns.
 ; false: everyone's effects age together as each round begins.
 own_clocks = true
+; With clock = time: a spell that conjures (Inferno, Chain Lightning) and has
+; not the time left this turn is begun at once, and its caster conjures
+; through the other turns until its time is paid: the game's own conjuring,
+; which a blow can interrupt by the game's own rule. false: the spell waits
+; unbegun until its time is paid.
+engine_conjure = true
 ; With time: an action that ended at once, in under a quarter of the time it
 ; takes, did not happen (a spell at a target the game would not take), and
 ; its time is given back, once a turn.

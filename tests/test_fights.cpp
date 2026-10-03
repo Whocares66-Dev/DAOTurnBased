@@ -80,8 +80,9 @@ struct Task
     float walk = 0.0f;
     std::int32_t workMs = 0;
     ObjectId target = kNoObject;
-    bool story = false; // given during a conversation: the cutscene's, not a turn's
-    bool held = false;  // a condition's command: it lasts as long as the condition
+    bool story = false;     // given during a conversation: the cutscene's, not a turn's
+    bool held = false;      // a condition's command: it lasts as long as the condition
+    bool conjuring = false; // the engine's own spell, held in its conjure until released
 };
 
 // Counts over every fight, so a run shows the generator reached the states
@@ -118,6 +119,9 @@ struct Coverage
     // With a turn a bar of time.
     int kept = 0;           // actions that did not fit, kept for a later turn
     int landed = 0;         // kept actions given again and let through
+    int conjured = 0;       // spells given to the engine to conjure, held
+    int conjureLanded = 0;  // of them, let complete as their time was paid
+    int conjureCleared = 0; // of them, cleared by the game before (rules_core, a knockdown)
     int wholeTurns = 0;     // turns spent whole on what a kept action owed
     int owed = 0;           // actions that ran and owed time to the next turn
     int choseAgain = 0;     // an AI told to choose again, its bar not spent
@@ -161,6 +165,13 @@ class Arena
             Task task{CommandType::MoveToObject};
             task.walk = Between(rng_, 0.5f, 8.0f);
             tasks_[id] = task;
+        };
+        world_.onConjureReleased = [this](ObjectId id) {
+            const auto found = tasks_.find(id);
+            Must(found != tasks_.end() && found->second.conjuring, "a conjure let complete that was not held");
+            Must(id == world_.Current(), "a conjure let complete out of its caster's turn");
+            found->second.conjuring = false;
+            ++coverage_.conjureLanded;
         };
         world_.onReleased = [this](ObjectId id, const CommandRequest &request, Verdict verdict) {
             if (verdict != Verdict::Allow)
@@ -462,9 +473,29 @@ class Arena
             item = true;
             seconds = Between(rng_, 1.0f, 6.0f);
         }
+        // A spell that conjures (Settings::engineConjure): one longer than
+        // what is left goes to the engine at once, held in its conjure.
+        bool conjures = false;
+        if (timed && !item && type == CommandType::UseAbility && !sustained && Chance(rng_, 0.5))
+        {
+            conjures = true;
+            seconds = Between(rng_, 2.5f, 7.0f);
+        }
+        CommandRequest spell;
+        spell.object = id;
+        spell.type = CommandType::UseAbility;
+        spell.source = source;
+        spell.inCombat = world_.Get(id).fighting;
+        spell.ability = ability;
+        spell.cooldownSeconds = cooldown;
+        spell.abilityType = kAbilitySpell;
+        spell.conjureAnim = 245;
+        spell.conjureSeconds = 1.0f;
+        spell.actionSeconds = seconds;
         const std::uint32_t timeLeft = active ? world_.machine.View().timeLeftMs : 0;
         const Verdict verdict =
-            item ? world_.Order(id, CommandType::UseItem, source, std::nullopt, seconds)
+            item       ? world_.Order(id, CommandType::UseItem, source, std::nullopt, seconds)
+            : conjures ? world_.Queue(spell)
             : type == CommandType::UseAbility
                 ? world_.UseAbility(id, source, ability, cooldown, sustained, on)
                 : world_.Order(id, type, source, told ? std::optional{walk} : std::nullopt, seconds);
@@ -484,6 +515,20 @@ class Arena
         if (active && verdict == Verdict::Block && id != current)
         {
             ++coverage_.blockedOutOfTurn;
+        }
+        if (verdict == Verdict::Conjure)
+        {
+            Must(active && timed && conjures, "a spell given to the engine to conjure with no time to pay");
+            Must(id == current, "a spell given to the engine to conjure out of turn");
+            ++coverage_.conjured;
+            Task task{CommandType::UseAbility};
+            task.walk = Chance(rng_, 0.7) ? 0.0f : Between(rng_, 0.5f, 6.0f);
+            task.workMs = 600; // its cast, once let complete
+            task.conjuring = true;
+            // At its conjure once it has walked into range: the turn waits.
+            world_.Get(id).conjureHeld = task.walk <= 0.0f;
+            tasks_[id] = task;
+            return;
         }
         if (verdict != Verdict::Allow)
         {
@@ -533,6 +578,9 @@ class Arena
             task.target = Pick(rng_, opponents);
         }
         task.story = world_.mode == Mode::Dialog;
+        // What the engine puts in front of a spell held in its conjure (a
+        // knockdown's effect) clears it, as the game does.
+        ConjureBroken(id);
         tasks_[id] = task;
     }
 
@@ -579,6 +627,24 @@ class Arena
         else
         {
             Try(id, CommandType::Wait, Source::Script);
+        }
+    }
+
+    // A spell held in its conjure broken by what the engine did to its
+    // caster: its command ends, and the game layer says so (Gate.cpp's
+    // OnEnd, OnConjureCleared).
+    void ConjureBroken(ObjectId id)
+    {
+        const auto prior = tasks_.find(id);
+        if (prior == tasks_.end() || !prior->second.conjuring)
+        {
+            return;
+        }
+        world_.heldConjures.erase(id);
+        world_.Get(id).conjureHeld = false;
+        if (world_.machine.OnConjureCleared(id))
+        {
+            ++coverage_.conjureCleared;
         }
     }
 
@@ -829,6 +895,23 @@ class Arena
             {
                 continue;
             }
+            if (task.conjuring)
+            {
+                // At its held conjure; a blow over its caster's threshold, or
+                // a knockdown, clears it now and then in another's turn, as
+                // the game's own rules_core would.
+                c.conjureHeld = true;
+                if (id != world_.Current() && world_.machine.Active() && Chance(rng_, 0.0004))
+                {
+                    tasks_.erase(found);
+                    world_.heldConjures.erase(id);
+                    c.conjureHeld = false;
+                    world_.Finish(id);
+                    Must(world_.machine.OnConjureCleared(id), "a held conjure cleared that the machine did not know");
+                    ++coverage_.conjureCleared;
+                }
+                continue;
+            }
             task.workMs -= static_cast<std::int32_t>(kFrameMs);
             if (task.workMs > 0)
             {
@@ -892,6 +975,7 @@ class Arena
                 // It interrupts what its victim was doing. Now and then one
                 // the statuses do not name (an ogre's grab, say): the
                 // creature is held all the same.
+                ConjureBroken(id);
                 tasks_.erase(id);
                 world_.Finish(id);
                 const bool already = world_.Get(id).condition == Condition::Disabled;
@@ -1280,7 +1364,10 @@ class Arena
                     break;
                 }
                 const Creature &c = world_.Get(id);
-                if (id != current && !c.down && Classify(task.type) != CommandKind::Involuntary)
+                // (A spell held in its conjure, the engine's own, waits
+                // through the others' turns: its caster draws it in.)
+                if (id != current && !c.down && Classify(task.type) != CommandKind::Involuntary &&
+                    !(task.conjuring && c.conjureHeld))
                 {
                     const std::string what =
                         "someone other than the current combatant is acting: " + std::to_string(id) + " at a " +
@@ -1464,6 +1551,13 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     CHECK(coverage.rounds > 240);
     CHECK(coverage.kept > 250);
     CHECK(coverage.landed > 170);
+    // Spells the engine conjured, held: some let complete as their time was
+    // paid, some cleared by the game before.
+    // (2026-10-02: 65 given to the engine to conjure, 14 let complete as
+    // their time was paid, 32 cleared by the game before.)
+    CHECK(coverage.conjured > 22);
+    CHECK(coverage.conjureLanded > 4);
+    CHECK(coverage.conjureCleared > 10);
     CHECK(coverage.wholeTurns > 20);
     CHECK(coverage.owed > 5);
     CHECK(coverage.choseAgain > 24);

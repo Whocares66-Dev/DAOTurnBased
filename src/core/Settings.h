@@ -107,6 +107,16 @@ struct Settings
     // important next thing"). Off: everyone's age together, a round's worth
     // as each round begins, as before DAOLib could move one creature's.
     bool ownClocks = true;
+    // With time: a spell that conjures and does not fit is the engine's own
+    // cast from the start, held in its conjure (DAOLib's HoldConjure) while
+    // its time is unpaid, its caster drawing the spell in through the others'
+    // turns, and the installed rules_core interrupts it as the game does,
+    // shipped or mended (the user, 2026-10-02: "Hooking into the game's own
+    // logic is the right thing to do", "Animating the character midcast is
+    // also the right thing to do"). Off: the gate keeps it and gives it
+    // again when its time is paid, and the mod's own copy of the game's rule
+    // interrupts it.
+    bool engineConjure = true;
     // With time: an action that was over in a fraction of the time the
     // engine was read to take for it did not play, and its time is given
     // back (TurnMachine::OverAtOnce). A switch, should it ever give back

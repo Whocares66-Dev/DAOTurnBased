@@ -42,9 +42,10 @@ struct Creature
     bool moving = false;
     CommandType current = CommandType::Invalid;
     Vec3 position;
-    int rank = 0;     // CREATURE_RANK_*: an enemy's Combat Tactics is by it, with time
-    int tactics = 0;  // Combat Tactics' rank, a party member's
-    int survival = 0; // Survival's rank
+    bool conjureHeld = false; // at a conjure the game layer holds
+    int rank = 0;             // CREATURE_RANK_*: an enemy's Combat Tactics is by it, with time
+    int tactics = 0;          // Combat Tactics' rank, a party member's
+    int survival = 0;         // Survival's rank
 };
 
 inline Creature Make(ObjectId id, Side side, bool hero, std::wstring name, float dexterity)
@@ -169,7 +170,8 @@ class World
         if (needs.actor != kNoObject)
         {
             const Creature &c = Get(needs.actor);
-            obs.actor = ActorObservation{c.id, c.exists, c.down, c.busy, c.moving, c.current, c.position};
+            obs.actor =
+                ActorObservation{c.id, c.exists, c.down, c.busy, c.moving, c.current, c.position, c.conjureHeld};
         }
         for (const ObjectId id : needs.statuses)
         {
@@ -247,6 +249,15 @@ class World
         {
             heldCasts[id] = request; // as the game layer keeps it
         }
+        if (verdict == Verdict::Conjure)
+        {
+            // The engine's own cast, at once at its held conjure.
+            Creature &conjuring = Get(id);
+            conjuring.busy = true;
+            conjuring.current = type;
+            conjuring.conjureHeld = true;
+            heldConjures.insert(id);
+        }
         if (verdict == Verdict::Allow)
         {
             Creature &started = Get(id);
@@ -312,6 +323,8 @@ class World
     std::unordered_map<ObjectId, std::int64_t> agedOwn;     // each creature's own
     std::unordered_set<ObjectId> onOwnClock;                // as DAOLib's dao::clock::OwnClock leaves it
     std::unordered_map<ObjectId, CommandRequest> heldCasts; // casts the game layer keeps while they charge
+    std::unordered_set<ObjectId> heldConjures;              // the engine's casts, held in their conjure
+    std::function<void(ObjectId)> onConjureReleased;        // a held conjure let complete
     std::vector<Verdict> released;                          // what each cast given again was answered
     std::function<void(ObjectId)> onPoke;                   // what an AI does when told to choose
     std::function<void(const Effect &)> onEffect;           // sees every effect as it is applied
@@ -351,6 +364,13 @@ class World
                 break;
             case EffectKind::ClearCommands:
                 Finish(e.target);
+                if (heldConjures.erase(e.target) > 0)
+                {
+                    // A held conjure's command cleared: the game layer hears
+                    // it end (Gate.cpp's OnEnd) and says so.
+                    Get(e.target).conjureHeld = false;
+                    (void)machine.OnConjureCleared(e.target);
+                }
                 break;
             case EffectKind::EndConditions:
                 Get(e.target).condition = Condition::None;
@@ -405,6 +425,17 @@ class World
                 }
                 break;
             case EffectKind::ReleaseCast:
+                if (heldConjures.erase(e.target) > 0)
+                {
+                    // Its conjure let complete: the cast runs, and ends as a
+                    // test or the arena finishes it.
+                    Get(e.target).conjureHeld = false;
+                    if (onConjureReleased)
+                    {
+                        onConjureReleased(e.target);
+                    }
+                    break;
+                }
                 // The game layer gives the cast it kept, as a script's; not
                 // one whose target is gone, which it says with the next
                 // frame's observation.
@@ -429,10 +460,20 @@ class World
                 if (e.target == kNoObject)
                 {
                     heldCasts.clear();
+                    for (const ObjectId held : heldConjures)
+                    {
+                        Get(held).conjureHeld = false; // let run on
+                    }
+                    heldConjures.clear();
                 }
                 else
                 {
                     heldCasts.erase(e.target);
+                    if (heldConjures.erase(e.target) > 0)
+                    {
+                        Get(e.target).conjureHeld = false;
+                        Finish(e.target); // its command cleared
+                    }
                 }
                 break;
             default:

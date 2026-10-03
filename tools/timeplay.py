@@ -1219,7 +1219,158 @@ def scenario_dot(game: Game) -> None:
     end_fight(game)
 
 
+DIRTY_FIGHTING = 603  # ABI_base
+
+
+def scenario_conjure(game: Game) -> None:
+    """Three casts in the game's own real time, for DAOLib's conjure probe.
+
+    Run with `--clock off`: the mod keeps a spell it has not been paid for in
+    its gate, so with it on the engine never conjures it. DAOLib's probe
+    (its probe.log's `conjure:` lines) logs each sub-action of the command as
+    it runs: which is the conjure, its times, IsConjuring, the mana. Wanted
+    for holding a spell in its conjure on its caster's clock, so that the
+    installed rules_core interrupts it (the user, 2026-10-02: an interrupted
+    spell loses its mana; the caster animates mid-cast).
+
+    1. Chain Lightning with only the hall's spiders near: their bites (7 or
+       8) are under Lyna's threshold (16), so it is not interrupted.
+    2. Chain Lightning again with an ogre at her side: its blows (about 23)
+       are over it, so rules_core should interrupt it.
+    3. A talent of hers, which does not conjure, for comparison.
+    The times of each are printed, to set against the probe's lines.
+    """
+    cursor = begin_spiders(game, wait=False)
+    for spell in KEPT_SPELLS:
+        game.tool("script", {"command": "AddAbility", "args": [HERO, spell]})
+    mana = lambda: (
+        (
+            game.tool("inspect", {"kind": "creature", "id": HERO}).get("creature") or {}
+        ).get("mana")
+        or {}
+    ).get("current")
+
+    def cast(label: str, ability: int, seconds: float = 9.0) -> None:
+        if game.tool("health").get("paused"):
+            game.tool("game", {"action": "unpause"})
+        max_health(game, HERO)
+        targets = game.hostiles(HERO)
+        if not targets:
+            print(f"{stamp()} {label}: nobody to cast at")
+            return
+        target = min(targets, key=lambda c: c.get("distance", 99.0))
+        before = mana()
+        print(
+            f"{stamp()} {label}: ability {ability} at {target.get('name')} {target['id']}, mana {before}"
+        )
+        answer = game.tool(
+            "order",
+            {
+                "action": "ability",
+                "id": HERO,
+                "ability": ability,
+                "target": target["id"],
+            },
+        )
+        print(f"{stamp()}   ordered: {str(answer)[:120]}")
+        began = time.time()
+        while time.time() - began < seconds:
+            if game.tool("health").get("paused"):
+                game.tool("game", {"action": "unpause"})
+            lyna = game.tool("inspect", {"kind": "creature", "id": HERO})
+            lyna = lyna.get("creature", lyna)
+            print(
+                f"{stamp()}   {time.time() - began:4.1f} s: command {lyna.get('command')}, "
+                f"mana {((lyna.get('mana') or {}).get('current'))}"
+            )
+            time.sleep(0.5)
+
+    cast("1. Chain Lightning, spiders only", KEPT_SPELLS[0])
+    spawned = game.tool(
+        "stage", {"action": "spawn", "template": "ogre_default", "point": [6, 1, 0]}
+    )
+    print(
+        f"{stamp()} an ogre at her side: {(spawned.get('creature') or {}).get('id')} {spawned.get('error', '')}"
+    )
+    time.sleep(4.0)  # let it come and swing
+    # Chain Lightning again, its cooldown taken off: Inferno and the other
+    # spells that conjure are aimed at the ground, not at a creature.
+    game.tool(
+        "stage",
+        {"action": "cooldown", "id": HERO, "ability": KEPT_SPELLS[0], "seconds": 0},
+    )
+    cast("2. Chain Lightning, the ogre striking", KEPT_SPELLS[0], seconds=10.0)
+    # A talent that is used, not a passive one: Dirty Fighting, given.
+    game.tool("script", {"command": "AddAbility", "args": [HERO, DIRTY_FIGHTING]})
+    cast("3. a talent, Dirty Fighting", DIRTY_FIGHTING, seconds=5.0)
+    show_events(game, cursor)
+    end_fight(game)
+
+
+def scenario_lands(game: Game) -> None:
+    """A spell held in its conjure through the others' turns, and cast as its time is paid.
+
+    With Settings::engineConjure: Lyna's Chain Lightning, longer than her
+    bar, goes to the engine at once and she conjures through the spiders'
+    turns (their bites, 7 or 8, are under her threshold of 16, so the game
+    does not interrupt it); on her next turn its time is paid, the conjure is
+    let complete and the bolt flies. Pictures while she conjures in another's
+    turn and as it lands; the log says "held until its time is paid" and "let
+    complete". The target's health is read before and after.
+    """
+    cursor = begin_spiders(game)
+    game.tool("script", {"command": "AddAbility", "args": [HERO, KEPT_SPELLS[0]]})
+
+    def health_of(who: str) -> float | None:
+        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = creature.get("creature", creature)
+        return (creature.get("health") or {}).get("current")
+
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    max_health(game, HERO)
+    targets = game.hostiles(HERO)
+    if not targets:
+        return
+    target = min(targets, key=lambda c: c.get("distance", 99.0))
+    before = health_of(target["id"])
+    answer = game.tool(
+        "order",
+        {
+            "action": "ability",
+            "id": HERO,
+            "ability": KEPT_SPELLS[0],
+            "target": target["id"],
+        },
+    )
+    print(
+        f"{stamp()} Chain Lightning at {target['name']} {target['id']} (health {before}): {str(answer)[:100]}"
+    )
+    # Another's turn: a picture of her conjuring through it.
+    for _ in range(80):
+        current = game.state().get("current") or {}
+        if current and current.get("id") != HERO:
+            break
+        time.sleep(0.1)
+    time.sleep(1.0)
+    picture(game, "lands-1-conjuring-in-anothers-turn")
+    # Her next turn: the conjure let complete, the bolt.
+    state = wait_turn(game, HERO, seconds=120.0)
+    max_health(game, HERO)
+    time.sleep(0.6)
+    picture(game, "lands-2-her-turn-the-bolt")
+    time.sleep(2.0)
+    after = health_of(target["id"])
+    print(f"{stamp()} {target['name']}'s health: {before} before, {after} after")
+    print(f"{stamp()} her turn now: {left(game.state())}")
+    show_events(game, cursor, names=("Lyna",))
+    end_fight(game)
+
+
 SCENARIOS = {
+    "lands": scenario_lands,
+    "conjure": scenario_conjure,
     "dot": scenario_dot,
     "stealth": scenario_stealth,
     "hover": scenario_hover,

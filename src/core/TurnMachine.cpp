@@ -524,6 +524,9 @@ void TurnMachine::StepSuspended(const Observation &obs, std::vector<Effect> &fx)
         // doing stops now, as at the fight's start, the one whose turn it is
         // included (a cutscene's orders are not its choices). Its turn then
         // goes on with what it had left.
+        // (A spell held in its conjure with them: the conversation may have
+        // given its caster orders of its own, and the spell is lost, said as
+        // its command ends, OnConjureCleared.)
         for (const Combatant &c : order_.All())
         {
             if (!c.down)
@@ -967,6 +970,9 @@ std::optional<Verdict> TurnMachine::PayAction(const Combatant &who, const Comman
     if (walkMs + cost > left && keepable)
     {
         const std::uint32_t owed = walkMs + cost - left;
+        // A spell that conjures is the engine's own cast from now: it walks
+        // into range itself, and conjures, held, through the others' turns.
+        const bool engine = EngineConjures(request);
         // A walk to its target is taken now, paid out of this turn (it
         // fits: the walk alone was judged above), and the action lands
         // from there: a creature that stood where it was while its attack
@@ -976,17 +982,32 @@ std::optional<Verdict> TurnMachine::PayAction(const Combatant &who, const Comman
         if (approach)
         {
             budget_.spend.Prepay(walk);
-            budget_.spend.Pend();
-            budget_.spend.Credit(kApproachSlack);
+            if (!engine)
+            {
+                budget_.spend.Pend();
+                budget_.spend.Credit(kApproachSlack);
+            }
         }
-        else
+        else if (!engine)
         {
             budget_.spend.SpendAllActions();
         }
+        // (The engine's own: the rest of the bar is spent as its caster
+        // reaches the held conjure, StepExecuting; failed before, nothing.)
         std::erase_if(charges_, [&](const Charge &c) { return c.caster == who.id; });
         charges_.push_back(Charge{who.id, request.ability, 1, owed, request.type, true,
-                                  request.type == CommandType::UseAbility && request.abilityType == kAbilitySpell});
-        if (approach)
+                                  request.type == CommandType::UseAbility && request.abilityType == kAbilitySpell,
+                                  engine});
+        if (engine)
+        {
+            // The turn is at it until its caster stands at the conjure the
+            // game layer holds (StepExecuting), its walk the engine's.
+            budget_.conjureWaiting = true;
+            phase_ = Phase::Executing;
+            executingSince_ = clock_;
+            idleTicks_ = 0;
+        }
+        else if (approach)
         {
             // The walk comes with the next frame's effects, as a charged
             // cast's release does (LandCast): the turn is at it from now,
@@ -1031,7 +1052,7 @@ std::optional<Verdict> TurnMachine::PayAction(const Combatant &who, const Comman
             Floaty(pending_, who.id, L"Lands next turn", kGold);
         }
         MoveClock(pending_);
-        return Verdict::Hold;
+        return engine ? Verdict::Conjure : Verdict::Hold;
     }
     budget_.spend.Prepay(walk);
     const std::uint32_t owed = budget_.spend.SpendAction(cost);
@@ -1077,11 +1098,45 @@ void TurnMachine::ChargeOnArrival(std::vector<Effect> &fx)
     MoveClock(fx);
 }
 
+// Whether the mod's own copy of the game's interruption rule judges a blow
+// on this creature: a spell of its pending that the gate keeps. Not with the
+// engine's own conjuring (Settings::engineConjure), where the installed
+// rules_core judges it, and a spell kept for want of time that does not
+// conjure is not interruptible in the game either.
 bool TurnMachine::Conjuring(ObjectId who) const
 {
+    if (Timed() && settings_.engineConjure)
+    {
+        return false;
+    }
     const auto charge = std::ranges::find(charges_, who, &Charge::caster);
     return Active() && ((charge != charges_.end() && charge->kept && charge->spell) ||
                         (landing_ && landing_->caster == who && landing_->spell));
+}
+
+// A spell that conjures, with time and the setting: the engine's own cast,
+// held in its conjure. Its conjuring is read from its conjure animation and
+// its speed's count (DescribeAbility); a spell with neither does not conjure
+// (sub-action 7 of no length, DAOLib's probe, 2026-10-02).
+bool TurnMachine::EngineConjures(const CommandRequest &request) const
+{
+    return Timed() && settings_.engineConjure && request.type == CommandType::UseAbility &&
+           request.abilityType == kAbilitySpell && !request.sustained && request.conjureAnim > 0 &&
+           request.conjureSeconds > 0.0f;
+}
+
+bool TurnMachine::OnConjureCleared(ObjectId caster)
+{
+    const auto charge = std::ranges::find(charges_, caster, &Charge::caster);
+    if (charge == charges_.end() || !charge->engine)
+    {
+        return false;
+    }
+    const Combatant *c = order_.Find(caster);
+    Log(LogLevel::Info, std::format("{}'s conjuring was cleared before its time was paid",
+                                    c != nullptr ? Utf8(c->name) : std::string{"?"}));
+    Interrupt(caster, kConjureCleared, pending_);
+    return true;
 }
 
 bool TurnMachine::OnDamaged(ObjectId target, float damage, bool physical, float threshold)
@@ -1223,6 +1278,12 @@ bool TurnMachine::LandCast(const Combatant &who, std::vector<Effect> &fx)
     Effect release = Effect::Of(EffectKind::ReleaseCast, who.id);
     release.a = landing_->ability;
     fx.push_back(release);
+    if (landing_->engine)
+    {
+        // The engine's own cast, its conjure let complete: nothing comes back
+        // through the gate, and the turn waits for the cast to end.
+        landing_.reset();
+    }
     phase_ = Phase::Executing;
     executingSince_ = clock_;
     idleTicks_ = 0;
@@ -1279,7 +1340,7 @@ void TurnMachine::Interrupt(ObjectId who, std::string_view why, std::vector<Effe
     // own over a creature whose swing a blow breaks, three times in one
     // fight over ordinary bites, and the two could not be told apart (play
     // test 28).
-    if (why == "held" || why == "struck" || (!Timed() && why != "the fight over"))
+    if (why == "held" || why == "struck" || why == kConjureCleared || (!Timed() && why != "the fight over"))
     {
         // In the gold of the mod's other words: small and white it was found
         // over the ogre's pale body only because the log said when to look
@@ -1857,6 +1918,19 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     TrackMovement(actor, fx);
     if (phase_ != Phase::Executing)
     {
+        return;
+    }
+    // A spell given to the engine to conjure: the turn is over once its
+    // caster stands at the held conjure, the rest of its time owed to its
+    // next turn. Over before it got there (cast at once, a conjure of no
+    // length): what it owed is still paid as its next turn begins, and the
+    // release then has nothing to let go.
+    if (budget_.conjureWaiting && (actor.conjureHeld || !actor.busy))
+    {
+        budget_.conjureWaiting = false;
+        budget_.spend.SpendAllActions();
+        MoveClock(fx);
+        EndTurn(fx, actor.conjureHeld ? "its spell conjuring" : "its spell cast at once");
         return;
     }
     if (budget_.onArrivalMs > 0 && actor.busy && !actor.moving && Classify(actor.current) == CommandKind::Action)
@@ -2875,6 +2949,21 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     // this turn's.
     const bool landing = landing_ && landing_->caster == who->id && request.type == landing_->type &&
                          request.ability == landing_->ability;
+    // Its spell given to the engine and on its way to its conjure: an order
+    // now would queue behind it and run after its cast, in another's turn.
+    if (budget_.conjureWaiting && kind != CommandKind::Free)
+    {
+        if (player && asked)
+        {
+            Refuse(who->id, L"Casting", request.type);
+        }
+        if (Logs(refusals))
+        {
+            Refused(refusals, std::format("{}: {} held, its spell is on its way to its conjure", Utf8(who->name),
+                                          Name(request.type)));
+        }
+        return Verdict::Block;
+    }
     // Held in an effect's command: an order would queue behind it and run
     // in someone else's turn (Eleanor's ability, pinned, 2026-09-30).
     if (heldByEffect_ && kind != CommandKind::Free)
@@ -3195,6 +3284,24 @@ bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t a
     if (Classify(type) == CommandKind::Action)
     {
         budget_.onArrivalMs = 0; // it never ran: nothing to take
+    }
+    // A spell given to the engine to conjure that failed before it got there
+    // (no path, no line of sight): nothing of it is pending.
+    if (budget_.conjureWaiting && type == CommandType::UseAbility)
+    {
+        budget_.conjureWaiting = false;
+        std::erase_if(charges_, [&](const Charge &c) { return c.caster == who && c.engine; });
+        // Nothing of the bar was spent on it yet: the turn goes on.
+        Log(LogLevel::Info, std::format("{}'s spell failed before its conjure ({}): nothing of it is pending",
+                                        Utf8(current->name), why));
+        Emit(EventKind::ActionGivenBack, who, std::string{why}, 0, Name(type));
+        if (PlayerControls(*current))
+        {
+            const bool way = why.find("PATH") != std::string_view::npos;
+            const bool sight = why.find("LINE_OF_SIGHT") != std::string_view::npos;
+            Floaty(pending_, who, way ? L"No way through" : sight ? L"No line of sight" : L"Nothing happened", kGold);
+        }
+        return true;
     }
     // A talent that never ran is not held on cooldown: an archer's was, for
     // a shot nobody took (the fourth play test, 19:21:52).

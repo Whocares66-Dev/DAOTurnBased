@@ -9,6 +9,7 @@
 #include "dao/Abilities.h"
 #include "dao/ClientExoApp.h"
 #include "dao/Clock.h"
+#include "dao/Conjure.h"
 #include "dao/Effects.h"
 #include "dao/GameModes.h"
 #include "dao/Gda.h"
@@ -466,6 +467,7 @@ ActorObservation Bridge::Actor(ObjectId id)
     actor.moving = api::IsMoving(id) != 0;
     const dao::Vector position = api::GetPosition(id);
     actor.position = {position.x, position.y, position.z};
+    actor.conjureHeld = dao::commands::ConjureHeld(id) && dao::commands::Conjure(id).has_value();
     return actor;
 }
 
@@ -562,6 +564,10 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             Poke(e.target);
             break;
         case EffectKind::ReleaseCast:
+            if (ReleaseEngineConjure(e.target))
+            {
+                break; // the engine's own cast, let complete (Gate.cpp): nothing kept to give
+            }
             // The cast its creature charged (core: "Casts that charge"),
             // given to it as a script gives a command: it comes back
             // through the gate, which lets it through for nothing. Its
@@ -626,6 +632,7 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             break;
         case EffectKind::DropCast:
             DropHeldCast(e.target);
+            (void)DropEngineConjure(e.target);
             break;
         case EffectKind::Approach:
             // With a turn a bar of time, an attack that did not fit is kept

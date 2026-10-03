@@ -84,6 +84,7 @@ struct ActorObservation
     bool moving = false; // the engine's IsMoving
     CommandType current = CommandType::Invalid;
     Vec3 position;
+    bool conjureHeld = false; // at a conjure the game layer holds (Verdict::Conjure)
 };
 
 // What holds a creature, as far as turns go: disabled, it cannot act
@@ -237,6 +238,11 @@ enum class Verdict : std::uint8_t
     // that charges (TurnMachine::ChargeTurns). EffectKind::ReleaseCast asks
     // for it, DropCast forgets it.
     Hold,
+    // Let through now, the engine's own cast, and its conjure held by the
+    // game layer (DAOLib's HoldConjure) until ReleaseCast lets it complete,
+    // or DropCast clears it: a spell that conjures, with time
+    // (Settings::engineConjure).
+    Conjure,
 };
 
 enum class ToggleResult : std::uint8_t
@@ -479,6 +485,12 @@ class TurnMachine
     // damage over `threshold` (core/Rules.h, InterruptThreshold), as the
     // game interrupts one being conjured. Answers whether it was.
     bool OnDamaged(ObjectId target, float damage, bool physical, float threshold);
+    // A spell held in its conjure by the engine (Verdict::Conjure) whose
+    // command ended before its time was paid: cleared by the installed
+    // rules_core's damage rule, or by something that holds its caster. The
+    // spell is lost: what its time paid stays spent, the rest is not owed.
+    // Answers whether there was one.
+    bool OnConjureCleared(ObjectId caster);
     // Whether a blow could interrupt anything of this creature's: asked
     // before the threshold is worked out, which costs script calls.
     [[nodiscard]] bool Conjuring(ObjectId who) const;
@@ -569,6 +581,9 @@ class TurnMachine
         // effect), so the turn's end moves them the rest of a turn's
         // seconds and no further.
         std::uint32_t agedOwnMs = 0;
+        // A spell let through to conjure (Verdict::Conjure): the turn ends
+        // as its caster reaches the conjure the game layer holds.
+        bool conjureWaiting = false;
         bool refunded = false; // an action given back once already this turn
         int givenBack = 0;     // how many times this turn
         bool retried = false;  // an AI told to choose again, its failed action given back
@@ -641,6 +656,7 @@ class TurnMachine
     // its effects, regeneration and timers (the game layer's to move).
     void AgeOwnClock(ObjectId who, std::uint32_t clockMs, std::vector<Effect> &fx);
     [[nodiscard]] bool OwnClocks() const;
+    [[nodiscard]] bool EngineConjures(const CommandRequest &request) const;
 
   public:
     // What the acting creature's last command let through was aimed at, while
@@ -798,7 +814,8 @@ class TurnMachine
         std::uint32_t owedMs = 0;
         CommandType type = CommandType::UseAbility;
         bool kept = true;
-        bool spell = false; // a spell being conjured: a blow may interrupt it (OnDamaged)
+        bool spell = false;  // a spell being conjured: a blow may interrupt it (OnDamaged)
+        bool engine = false; // the engine's own command, held in its conjure (Verdict::Conjure)
     };
     std::vector<Charge> charges_;
     std::optional<Charge> landing_; // given again this turn, and not yet come through the gate
@@ -904,6 +921,8 @@ class TurnMachine
     // An attack whose creature stands this far short of where its walk was
     // to end is not swinging: it cannot get there.
     static constexpr float kStuckShort = 1.0f;
+    // Why a spell the engine conjured, held, was lost (OnConjureCleared).
+    static constexpr std::string_view kConjureCleared = "interrupted while conjuring";
     // And is given this long standing there, not kStoodMs: nobody else moves
     // in its turn, so what blocks it will not clear, and the engine's own
     // answer comes only after seconds (blocked spiders' turns were 4 to 6 s

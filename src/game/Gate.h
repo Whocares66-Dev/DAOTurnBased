@@ -71,5 +71,10 @@ struct HeldCast
 // The same, left kept: for the walk to its target (EffectKind::Approach).
 [[nodiscard]] std::optional<HeldCast> PeekHeldCast(ObjectId creature);
 void DropHeldCast(ObjectId creature);
+// Spells given to the engine to conjure, held (core: Verdict::Conjure;
+// DAOLib's dao/Conjure.h): released, their conjure let complete; dropped,
+// their command cleared (kNoObject: every one, let run on, the fight over).
+bool ReleaseEngineConjure(ObjectId caster); // true: it was one
+bool DropEngineConjure(ObjectId caster);
 
 } // namespace tb::game
