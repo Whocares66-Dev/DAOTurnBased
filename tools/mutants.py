@@ -943,6 +943,20 @@ MUTANTS = [
         "    if (player && !landing && !approaching && request.source == Source::Unknown &&",
     ),
     Mutant(
+        "a character's own AI changes its weapons on the player's turn",
+        MACHINE,
+        "        request.type == CommandType::SwitchWeaponSets || "
+        "(request.type == CommandType::UseAbility && request.sustained);",
+        "        (request.type == CommandType::UseAbility && request.sustained);",
+    ),
+    Mutant(
+        "a character's own AI turns its modes on and off on the player's turn",
+        MACHINE,
+        "        request.type == CommandType::SwitchWeaponSets || "
+        "(request.type == CommandType::UseAbility && request.sustained);",
+        "        request.type == CommandType::SwitchWeaponSets;",
+    ),
+    Mutant(
         "effects are never aged a round",
         MACHINE,
         "        e.b = static_cast<std::int32_t>(left);\n        fx.push_back(e);",

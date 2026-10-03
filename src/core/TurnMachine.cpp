@@ -3120,8 +3120,19 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     // AI_DetermineCombatRound_Partial), and in play that ended a pinned
     // character's turn before the player had chosen (2026-09-30, 11:30).
     const bool approaching = approach_ && kind == CommandKind::Move && request.source == Source::Script;
+    // Nor does it choose the character's weapons, free as they are. A
+    // follower that is not the controlled one changes to melee with an
+    // enemy at hand and turns its bow's mode off for it
+    // (AI_DetermineCombatRound, ai_main_h_2.nss: the controlled one's
+    // partial AI never does), and a turn that opens with a kept action
+    // landing has that full AI run before the character is selected: in the
+    // playthrough Lyna and Tamlen left their bows unasked, and every order
+    // after walked into melee (issue 4, 2026-10-02). The game's own rules
+    // turn a mode off by its script's event, not by a command.
+    const bool gear =
+        request.type == CommandType::SwitchWeaponSets || (request.type == CommandType::UseAbility && request.sustained);
     if (player && !landing && !approaching && request.source == Source::Script &&
-        (kind == CommandKind::Action || kind == CommandKind::Move))
+        (kind == CommandKind::Action || kind == CommandKind::Move || gear))
     {
         // At debug: the AI tries again each time a command of its ends.
         if (Logs(LogLevel::Debug))

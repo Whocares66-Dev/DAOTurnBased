@@ -1205,6 +1205,39 @@ TEST_CASE("on the player's turn the character's own AI does not spend it", "[mac
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
 }
 
+TEST_CASE("on the player's turn the character's own AI does not change its weapons", "[machine]")
+{
+    // Seen in play (issue 4): after a kept shot landed with a spider at
+    // hand, the follower AI put Lyna on her daggers and turned Tamlen's bow
+    // mode off, both free and both let through.
+    constexpr std::int32_t kRapidShot = 3071;
+    World w;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kHero, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Block);
+    CHECK(w.UseAbility(kHero, Source::Script, kRapidShot, 0.0f, true, true) == Verdict::Block);
+    w.RunFor(500);
+    CHECK(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    // The player's own are free as ever, by the weapon button and the quickbar.
+    CHECK(w.Order(kHero, CommandType::SwitchWeaponSets, Source::Player) == Verdict::Allow);
+    w.Finish(kHero);
+    CHECK(w.UseAbility(kHero, Source::Player, kRapidShot, 0.0f, true, false) == Verdict::Allow);
+    w.Finish(kHero);
+    w.RunFor(500);
+    CHECK(w.Current() == kHero);
+    // And an AI's on its own turn is its own to make.
+    CHECK(w.machine.OnEndTurn());
+    int allowed = 0;
+    w.onPoke = [&](ObjectId id) {
+        allowed += w.Order(id, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow ? 1 : 0;
+    };
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    CHECK(allowed == 1);
+}
+
 TEST_CASE("a refusal repeated every frame is logged once a second", "[machine]")
 {
     // The player steering with the keys out of turn: a drive a frame.
