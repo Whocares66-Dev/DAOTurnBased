@@ -4,7 +4,9 @@
 #include "core/Text.h"
 
 #include "dao/Addresses.h"
+#include "dao/Animation.h"
 #include "dao/CommandEvents.h"
+#include "dao/Events.h"
 #include "dao/Gda.h"
 #include "dao/Hook.h"
 #include "dao/Log.h"
@@ -303,91 +305,117 @@ void SayAiAttack(const dao::CCObject &self, const dao::Command &command)
 // ability table (UseType 2 is sustained: Shield Wall, Powerful Swings,
 // Flaming Weapons, Stealth; 4 activated; read 2026-09-30), and whether a
 // sustained one is on already, so that this use turns it off.
-void DescribeAbility(const dao::CCObject &self, const dao::Command &command, CommandRequest &request)
+void DescribeAbilityOf(ObjectId user, std::int32_t ability, CommandRequest &request)
 {
-    const std::optional<std::int32_t> ability = command.Ability();
-    if (!ability)
+    request.ability = ability;
+    request.cooldownSeconds =
+        dao::gda::GetFloat(dao::script::Table::AbilitiesTalents, ability, "Cooldown").value_or(0.0f);
+    constexpr std::int32_t kSustained = 2;
+    request.sustained =
+        dao::gda::GetInt(dao::script::Table::AbilitiesTalents, ability, "UseType").value_or(0) == kSustained;
+    // Script commands: on the scripts' thread only, where the queue has
+    // been seen called from (the player's orders and the AI's).
+    const bool onScripts = GetCurrentThreadId() == dao::script::ScriptThreadId();
+    if (request.sustained && onScripts)
+    {
+        request.sustainedOn = api::IsModalAbilityActive(user, ability) != 0;
+    }
+    // Its conjuring: the ability's Speed is a row of the game's table of
+    // conjuring speeds (spellconjuringspeeds.gda, read 2026-10-01), whose
+    // own Speed is a count of loops of the conjure animation (0 instant, 1
+    // fast, 2 normal, 4 slow, 6 ritual), and there is no conjuring without
+    // a conjure animation (dev/REBALANCE.md, "Conjuring time").
+    const std::int32_t speed = dao::gda::GetInt(dao::script::Table::AbilitiesTalents, ability, "Speed").value_or(0);
+    request.conjureSeconds = static_cast<float>(
+        std::max(0, dao::gda::GetInt(dao::script::Table::SpellConjuringspeed, speed, "Speed").value_or(0)));
+    request.abilityType = dao::gda::GetInt(dao::script::Table::AbilitiesTalents, ability, "AbilityType").value_or(0);
+    request.conjureAnim = dao::gda::GetInt(dao::script::Table::AbilitiesTalents, ability, "ConjureAnim").value_or(0);
+    if (!onScripts)
     {
         return;
     }
-    request.ability = *ability;
-    request.cooldownSeconds =
-        dao::gda::GetFloat(dao::script::Table::AbilitiesTalents, *ability, "Cooldown").value_or(0.0f);
-    constexpr std::int32_t kSustained = 2;
-    request.sustained =
-        dao::gda::GetInt(dao::script::Table::AbilitiesTalents, *ability, "UseType").value_or(0) == kSustained;
-    // A script command: on the scripts' thread only, where the queue has
-    // been seen called from (the player's orders and the AI's).
-    if (request.sustained && GetCurrentThreadId() == dao::script::ScriptThreadId())
+    constexpr std::int32_t kStaff = 16; // BASE_ITEM_TYPE_STAFF
+    const ObjectId weapon = api::GetItemInEquipSlot(k::INVENTORY_SLOT_MAIN, user);
+    const bool armed = api::IsObjectValid(weapon) != 0;
+    const std::int32_t weaponType = armed ? api::GetBaseItemType(weapon) : -1;
+    request.staff = armed && weaponType == kStaff;
+    // With a turn a bar of time, what it takes (core: AbilitySeconds), by
+    // its user's own animations (DAOLib's dao/Animation.h, a420055, and its
+    // play test): the cast, the conjuring before it, or for an archery
+    // talent with no cast animation a shot. An item's is its drink, and a
+    // mode turned off nothing: the core's. Nothing known: the core's
+    // stand-in.
+    if (request.abilityType == kAbilityItem || (request.sustained && request.sustainedOn))
     {
-        request.sustainedOn = api::IsModalAbilityActive(self.Id(), *ability) != 0;
+        return;
     }
-    // Its conjuring time: the ability's Speed is a row of the game's table
-    // of conjuring speeds (spellconjuringspeeds.gda, read 2026-10-01: 1
-    // instant 0 s, 2 fast 1 s, 3 normal 2 s, 4 slow 4 s, 5 ritual 6 s). That
-    // Speed is that row is read from the two tables' names and values, not
-    // from a script.
-    const std::int32_t speed = dao::gda::GetInt(dao::script::Table::AbilitiesTalents, *ability, "Speed").value_or(0);
-    request.conjureSeconds = static_cast<float>(
-        std::max(0, dao::gda::GetInt(dao::script::Table::SpellConjuringspeed, speed, "Speed").value_or(0)));
-    // With a turn a bar of time (core: ActionCostMs): that Speed is a count
-    // of loops of its conjure animation, and there is no conjuring without
-    // one (dev/REBALANCE.md, "Conjuring time"); a spell conjures faster with
-    // a staff in hand; an item's use (a potion) is a drink.
-    request.abilityType = dao::gda::GetInt(dao::script::Table::AbilitiesTalents, *ability, "AbilityType").value_or(0);
-    request.conjureAnim = dao::gda::GetInt(dao::script::Table::AbilitiesTalents, *ability, "ConjureAnim").value_or(0);
-    if (GetCurrentThreadId() == dao::script::ScriptThreadId())
+    const dao::animation::Ability lengths = dao::animation::OfAbility(user, ability);
+    AbilityFacts facts;
+    facts.cast = lengths.cast;
+    facts.conjure = lengths.conjure;
+    facts.conjureLoop = lengths.conjureLoop;
+    facts.loops = request.conjureAnim != 0 ? static_cast<int>(request.conjureSeconds) : 0;
+    facts.ranged = armed && dao::gda::GetFloat(dao::script::Table::Items, weaponType, "Range").value_or(0.0f) > 0.0f;
+    facts.hero = api::IsHero(user) != 0;
+    facts.talent = request.abilityType == kAbilityTalent;
+    request.actionSeconds = AbilitySeconds(facts);
+}
+
+void DescribeAbility(const dao::CCObject &self, const dao::Command &command, CommandRequest &request)
+{
+    if (const std::optional<std::int32_t> ability = command.Ability())
     {
-        constexpr std::int32_t kStaff = 16; // BASE_ITEM_TYPE_STAFF
-        const ObjectId weapon = api::GetItemInEquipSlot(k::INVENTORY_SLOT_MAIN, self.Id());
-        request.staff = api::IsObjectValid(weapon) != 0 && api::GetBaseItemType(weapon) == kStaff;
+        DescribeAbilityOf(self.Id(), *ability, request);
     }
 }
 
-// With a turn a bar of time (core: ActionCostMs): an attack's swing by the
-// game's own formula (CalculateAttackTiming, core_h.nss, read 2026-10-02;
-// core: SwingSeconds), from the weapon style, the main hand's dspeed in the
-// item stats table and the attack speed modifier (creature property 31). A
-// bow's, an unarmed one's and a creature's that is not a humanoid's are
-// their animations': 0 here, and the core's stand-in. Script calls: on the
-// scripts' thread only.
+// With a turn a bar of time (core: ActionCostMs, AttackSeconds): what a
+// plain attack of this creature's takes. A humanoid's melee swing by the
+// game's own formula (CalculateAttackTiming, core_h.nss: the weapon style,
+// the main hand's dspeed in the item stats table, the attack speed
+// modifier, creature property 31), which the engine plays the swing to; a
+// shot; a creature's, or an unarmed humanoid's, by its attack animation's
+// length (DAOLib's dao::animation::Length). 0 where nothing is read: the
+// core's stand-in. Script calls: on the scripts' thread only.
 float SwingSecondsOf(ObjectId attacker)
 {
-    if (GetCurrentThreadId() != dao::script::ScriptThreadId() || api::IsHumanoid(attacker) == 0)
+    if (GetCurrentThreadId() != dao::script::ScriptThreadId())
     {
         return 0.0f;
     }
+    AttackFacts facts;
+    facts.humanoid = api::IsHumanoid(attacker) != 0;
+    facts.hero = api::IsHero(attacker) != 0;
     const ObjectId weapon = api::GetItemInEquipSlot(k::INVENTORY_SLOT_MAIN, attacker);
-    if (api::IsObjectValid(weapon) == 0)
+    facts.armed = api::IsObjectValid(weapon) != 0;
+    if (facts.armed)
     {
-        return 0.0f;
+        const std::int32_t type = api::GetBaseItemType(weapon);
+        facts.ranged = dao::gda::GetFloat(dao::script::Table::Items, type, "Range").value_or(0.0f) > 0.0f;
+        facts.weaponSpeed = dao::gda::GetFloat(dao::script::Table::Itemstats, type, "dspeed").value_or(0.0f);
     }
-    const std::int32_t type = api::GetBaseItemType(weapon);
-    if (dao::gda::GetFloat(dao::script::Table::Items, type, "Range").value_or(0.0f) > 0.0f)
-    {
-        return 0.0f; // a bow, a crossbow, a staff
-    }
-    WeaponStyle style = WeaponStyle::Ranged;
     switch (api::GetWeaponStyle(attacker))
     {
-    case k::WEAPONSTYLE_NONE:
-        style = WeaponStyle::None;
-        break;
     case k::WEAPONSTYLE_SINGLE:
-        style = WeaponStyle::Single;
+        facts.style = WeaponStyle::Single;
         break;
     case k::WEAPONSTYLE_DUAL:
-        style = WeaponStyle::Dual;
+        facts.style = WeaponStyle::Dual;
         break;
     case k::WEAPONSTYLE_TWOHANDED:
-        style = WeaponStyle::TwoHanded;
+        facts.style = WeaponStyle::TwoHanded;
         break;
     default:
+        facts.style = WeaponStyle::None;
         break;
     }
     constexpr std::int32_t kAttackSpeedModifier = 31; // PROPERTY_ATTRIBUTE_ATTACK_SPEED_MODIFIER
-    return SwingSeconds(style, dao::gda::GetFloat(dao::script::Table::Itemstats, type, "dspeed").value_or(0.0f),
-                        api::GetCreatureProperty(attacker, kAttackSpeedModifier, k::PROPERTY_VALUE_TOTAL));
+    facts.attackSpeedModifier = api::GetCreatureProperty(attacker, kAttackSpeedModifier, k::PROPERTY_VALUE_TOTAL);
+    if (!(facts.humanoid && facts.armed))
+    {
+        facts.animation = dao::animation::Length(attacker, dao::animation::kAttack);
+    }
+    return tb::AttackSeconds(facts);
 }
 
 // The engine's frames have no unwind data, so no exception may leave a hook
@@ -427,9 +455,16 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             const Source source = SourceOf(*command, caller);
             NoteCaller(caller, from, type);
             const dao::CCCreature *creature = self->AsCreature();
-            const std::optional<Reached> reached = source == Source::Player && type == CommandType::Attack
-                                                       ? WalkToTarget(*self, *command, true)
-                                                       : std::nullopt;
+            // The walk to an attack's target: the player's, to refuse one
+            // out of reach; and an AI's, with a turn a bar of time, so that
+            // a walk and a swing that do not both fit are told apart from
+            // ones that do (core: TurnMachine::PayAction; an AI's walk
+            // unknown, a spider 13.6 m off paid its swing, walked, was
+            // stopped a step short and lost the turn: play test 25's duel).
+            const std::optional<Reached> reached =
+                type == CommandType::Attack && (source == Source::Player || source == Source::Script)
+                    ? WalkToTarget(*self, *command, true)
+                    : std::nullopt;
             if (source == Source::Script && type == CommandType::Attack)
             {
                 SayAiAttack(*self, *command);
@@ -459,7 +494,7 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
                 const std::lock_guard lock(*g_mutex);
                 verdict = g_machine->OnCommand(request);
             }
-            if (verdict == Verdict::Block && reached && reached->walk > 0.0f)
+            if (verdict == Verdict::Block && source == Source::Player && reached && reached->walk > 0.0f)
             {
                 // Why an attack was too far, at info: whether a bow was read
                 // as one is what the first refusals in play left open.
@@ -539,9 +574,9 @@ bool __fastcall PauseKey(void *controller, int edx, const dao::messages::UserTog
         // with the window not in front is not the player's key.
         DWORD process = 0;
         GetWindowThreadProcessId(GetForegroundWindow(), &process);
-        spdlog::debug("the turn was ended by the game's pause message{}",
-                      process == GetCurrentProcessId() ? "" : ", the game's window not in front");
-        return true; // handled: the game neither pauses nor unpauses
+        spdlog::debug("the game's pause message taken: the pause through a fight is the machine's{}",
+                      process == GetCurrentProcessId() ? "" : " (the game's window not in front)");
+        return true; // handled: the machine pauses and unpauses for the player
     }
     return g_pauseKey.Original()(controller, edx, message);
 }
@@ -656,6 +691,12 @@ std::optional<HeldCast> TakeHeldCast(ObjectId creature)
     return cast;
 }
 
+std::optional<HeldCast> PeekHeldCast(ObjectId creature)
+{
+    const auto kept = g_heldCasts.find(creature);
+    return kept != g_heldCasts.end() ? std::optional<HeldCast>{kept->second} : std::nullopt;
+}
+
 void DropHeldCast(ObjectId creature)
 {
     if (creature == kNoObject)
@@ -687,6 +728,22 @@ float ReachOf(ObjectId attacker, ObjectId target, std::int32_t *weaponType)
             .value_or(0.0f);
     };
     return Reach(weaponRange, space(attacker), space(target));
+}
+
+float AttackSeconds(ObjectId attacker)
+{
+    CommandRequest request;
+    request.type = CommandType::Attack;
+    request.actionSeconds = SwingSecondsOf(attacker);
+    return static_cast<float>(ActionCostMs(request)) / 1000.0f;
+}
+
+float AbilitySecondsOf(ObjectId user, std::int32_t ability)
+{
+    CommandRequest request;
+    request.type = CommandType::UseAbility;
+    DescribeAbilityOf(user, ability, request);
+    return static_cast<float>(ActionCostMs(request)) / 1000.0f;
 }
 
 void SetPathCheck(bool on)
@@ -750,11 +807,87 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
     });
 }
 
+// A blow that interrupts a spell (core: TurnMachine::OnDamaged): the
+// scripts' EVENT_TYPE_DAMAGED, sent once the damage is done (events_h.nss,
+// SendEventOnDamaged: the damage, its type, the attacker; DAOLib's
+// dao/Events.h, read 2026-10-02), heard on
+// the scripts' thread before the target's own script. Seen in play
+// 2026-10-02 (timeplay's interrupt): spiders' bites of 7 and 8 on Lyna with
+// Chain Lightning pending, her threshold 16, and the spell held. The threshold is the
+// game's own (core/Rules.h, InterruptThreshold), worked out only for a
+// creature with a spell pending.
+void WatchDamage(TurnMachine &machine, std::mutex &mutex)
+{
+    dao::events::OnScriptEvent(dao::script::EventType::Damaged, [&machine, &mutex](ObjectId target,
+                                                                                   const dao::CScriptEvent &event) {
+        try
+        {
+            constexpr std::int32_t kPhysical = 1; // DAMAGE_TYPE_PHYSICAL
+            const float damage = event.Float(0);
+            const std::int32_t type = event.Integer(0);
+            if (!(damage > 0.0f))
+            {
+                return;
+            }
+            if (type != kPhysical)
+            {
+                // Said too, at the log's finest: a staff's bolt and Drain
+                // Life on a caster with a spell pending were not physical,
+                // and nothing in the log said they had been heard (the first
+                // run of timeplay's interrupt, 2026-10-02).
+                if (spdlog::should_log(spdlog::level::debug))
+                {
+                    const std::lock_guard lock(mutex);
+                    if (machine.Conjuring(target))
+                    {
+                        spdlog::debug("{:#x} takes {:.0f} of damage type {} with a spell pending: not a blow, it holds",
+                                      target, damage, type);
+                    }
+                }
+                return;
+            }
+            {
+                const std::lock_guard lock(mutex);
+                if (!machine.Conjuring(target))
+                {
+                    return;
+                }
+            }
+            // ABILITY_SKILL_COMBAT_TRAINING_1 to _4 (2da_constants_h.nss).
+            constexpr std::int32_t kCombatTraining1 = 100100;
+            int training = 0;
+            for (int rank = 1; rank <= 4; ++rank)
+            {
+                if (api::HasAbility(target, kCombatTraining1 + rank - 1) != 0)
+                {
+                    training = rank;
+                }
+            }
+            const bool party = api::IsHero(target) != 0 || api::IsFollower(target) != 0;
+            const int level =
+                static_cast<int>(api::GetCreatureProperty(target, k::PROPERTY_SIMPLE_LEVEL, k::PROPERTY_VALUE_TOTAL));
+            const float threshold = InterruptThreshold(party, training, level, api::GetCreatureRank(target));
+            bool interrupted = false;
+            {
+                const std::lock_guard lock(mutex);
+                interrupted = machine.OnDamaged(target, damage, true, threshold);
+            }
+            spdlog::info("{:#x} struck for {:.0f} by {:#x} with a spell pending (threshold {:.0f}): {}", target, damage,
+                         event.Creator(), threshold, interrupted ? "interrupted" : "it holds");
+        }
+        catch (...)
+        {
+            Report("a blow on a creature with a spell pending");
+        }
+    });
+}
+
 } // namespace
 
 bool InstallGate(TurnMachine &machine, std::mutex &mutex)
 {
     WatchCommandEnds(machine, mutex);
+    WatchDamage(machine, mutex);
     g_machine = &machine;
     g_mutex = &mutex;
     const bool queue = Place(g_queue, dao::addr::kCCObject_QueueCommand, &QueueCommand, "CCObject::QueueCommand");

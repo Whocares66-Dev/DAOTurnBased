@@ -41,6 +41,15 @@ enum class EventKind : std::uint8_t
     CastCharging,       // who: a slow cast begun or a turn spent on it; value: the ability; detail: turns still to go
     CastLanded,         // who: the charged cast is cast, at its turn's start; value: the ability
     CastInterrupted,    // who: the charge is lost; value: the ability; detail: why
+    // With a turn a bar of time (Settings::turnClock): an action that did
+    // not fit what was left of its creature's bar.
+    ActionPending, // who: begun, or a turn spent on it; detail: the time it still owes; command; value: its ability
+    ActionLanded,  // who: its time paid, it is given to its creature as its turn begins; command; value: its ability
+    ActionDropped, // who: it will not land; detail: why; command; value: its ability
+    // A party member's turn put off to the round's end, nothing of it spent
+    // (Settings::delay): the turn_started before it is closed by this, and
+    // another turn_started follows when its turn comes.
+    TurnDelayed, // who
 };
 
 // snake_case, as the bus's topics take it: "turn_started".
@@ -61,7 +70,7 @@ struct EventDescription
 [[nodiscard]] EventDescription Describe(EventKind kind);
 
 // Every kind, in order, for listing them.
-inline constexpr EventKind kLastEventKind = EventKind::CastInterrupted;
+inline constexpr EventKind kLastEventKind = EventKind::TurnDelayed;
 
 struct TurnEvent
 {

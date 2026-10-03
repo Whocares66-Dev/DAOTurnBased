@@ -1,0 +1,1076 @@
+"""A fight played with a turn a bar of time, with no hands on the game.
+
+Through Eluvian, the development bench's MCP server (the sibling checkout
+..\\DAOEluvianMCP), as tools/sweep.py does: its bridge claims and launches
+the game into a save, and its tools are called over HTTP in the game. The
+mod is set to `[turns] clock = time` for the run and put back after.
+
+What it plays is a scenario by name, each a small script over the same
+helpers: the player's orders go through Eluvian's `order` (the engine's own
+click functions, so they pass the gate as the player's), the bar is read
+from `inspect turnbased.state` (`time_ms`, `time_left_ms`), and the turns
+from the mod's events. It prints a transcript: what each order cost, what
+each turn rolled over, what was kept for the next turn; and copies
+turnbased.log beside the build for the write-up (dev/PLAYTEST-*.md).
+
+    python tools\\timeplay.py                   # the smoke: a fight with the spiders
+    python tools\\timeplay.py --scenario stun   # another, by name
+    python tools\\timeplay.py --keep            # leave the game running at the end
+
+It LAUNCHES THE GAME (Lyna's autosave 2, loaded only: nothing is saved) and
+quits it at the end; it refuses to go on under another's claim or in a game
+it did not launch. The object ids are that save's.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import winreg
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+BASE = "http://127.0.0.1:8930"
+# forceLoad: the user removed the game's other mods (2026-10-02, "force load if
+# necessary"); Eluvian presses Force Load only if the load asks for content, and
+# refuses to save after it.
+SAVE = {"character": "Lyna", "kind": "auto", "number": 2, "forceLoad": True}
+HERO = "0x82"
+TAMLEN = "0x10d"
+DAGGER = "0x14b"  # Dar'Misu, in Lyna's pack
+SPIDER = "bed110cr_weak_spider"
+
+
+def documents() -> Path:
+    """The user's Documents folder, which may not be under the profile (OneDrive)."""
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER,
+        r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+    ) as key:
+        value, _ = winreg.QueryValueEx(key, "Personal")
+    return Path(winreg.ExpandEnvironmentStrings(value))
+
+
+def clock_in_file() -> str:
+    """The turn's clock as turnbased.ini has it; the default where it has none."""
+    ini = documents() / "BioWare" / "Dragon Age" / "daolib" / "turnbased.ini"
+    if ini.exists():
+        for line in ini.read_text(encoding="utf-8", errors="replace").splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == "clock" and value.strip() in ("time", "actions"):
+                return value.strip()
+    return "time"
+
+
+def stamp() -> str:
+    return time.strftime("%H:%M:%S")
+
+
+class Game:
+    """Eluvian: the bridge for the game's process and the claim, HTTP for the game."""
+
+    def __init__(self, eluvian: Path, owner: str) -> None:
+        self.bridge_script = eluvian / "tools" / "eluvian_bridge.py"
+        self.owner = owner
+        self.clock = (
+            "time"  # what the run plays by: time, actions, or off (the mod off)
+        )
+
+    def bridge(self, tool: str, arguments: dict | None = None) -> dict:
+        done = subprocess.run(
+            [
+                sys.executable,
+                str(self.bridge_script),
+                "--call",
+                tool,
+                json.dumps(arguments or {}),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=400,
+            check=False,
+        )
+        try:
+            answer = json.loads(done.stdout)
+        except ValueError:
+            return {"isError": True, "answer": {"error": done.stdout[-400:]}}
+        return answer
+
+    def tool(
+        self, name: str, arguments: dict | None = None, timeout: float = 60
+    ) -> dict:
+        request = urllib.request.Request(
+            f"{BASE}/api/tool/{name}",
+            data=json.dumps(arguments or {}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as error:
+            try:
+                return json.load(error)
+            except ValueError:
+                return {"error": f"HTTP {error.code}"}
+        except (urllib.error.URLError, TimeoutError) as error:
+            return {"error": str(error)}
+
+    def state(self) -> dict:
+        answer = self.tool("inspect", {"kind": "turnbased.state"})
+        return answer.get("state", answer)
+
+    def setting(self, section: str, key: str, value: str) -> None:
+        answer = self.tool(
+            "turnbased_settings", {"section": section, "key": key, "value": value}
+        )
+        print(
+            f"{stamp()} setting [{section}] {key} = {value}: {answer.get('warnings', answer)}"
+        )
+
+    def hostiles(self, near: str = HERO) -> list[dict]:
+        answer = self.tool(
+            "inspect", {"kind": "creatures", "side": "hostile", "near": near}
+        )
+        return [c for c in answer.get("creatures", []) if not c.get("dead")]
+
+    def events(self, since: int) -> tuple[list[dict], int]:
+        out: list[dict] = []
+        while True:
+            with urllib.request.urlopen(
+                f"{BASE}/api/events?since={since}&limit=1000", timeout=30
+            ) as response:
+                page = json.load(response)
+            out += page["events"]
+            since = page.get("next", since)
+            if not page.get("truncated"):
+                return out, since
+
+
+def left(state: dict) -> str:
+    return (
+        f"{state.get('time_left_ms', 0) / 1000:.2f} of {state.get('time_ms', 0) / 1000:.2f} s, "
+        f"{state.get('movement_left', 0):.1f} m"
+    )
+
+
+def settle(game: Game, who: str, seconds: float = 14.0) -> dict:
+    """Waits until the turn waits on an order again, or is no longer `who`'s."""
+    deadline = time.time() + seconds
+    state = game.state()
+    while time.time() < deadline:
+        state = game.state()
+        current = (state.get("current") or {}).get("id")
+        if not state.get("active") or current != who:
+            return state
+        if state.get("phase") == "awaiting order":
+            return state
+        time.sleep(0.2)
+    return state
+
+
+def player_turn(game: Game, who: str, name: str, orders: int = 4) -> None:
+    """One of the player's turns: attacks on the nearest hostile until the turn is over."""
+    for n in range(orders):
+        before = game.state()
+        if (before.get("current") or {}).get("id") != who or not before.get("active"):
+            return
+        if before.get("phase") != "awaiting order":
+            before = settle(game, who)
+            if (before.get("current") or {}).get("id") != who:
+                return
+        targets = game.hostiles(who)
+        if not targets:
+            print(f"{stamp()}   {name}: no hostile left")
+            return
+        target = min(targets, key=lambda c: c.get("distance", 99.0))
+        answer = game.tool(
+            "order", {"action": "attack", "id": who, "target": target["id"]}
+        )
+        after = settle(game, who)
+        still = (after.get("current") or {}).get("id") == who and after.get("active")
+        spent = before.get("time_left_ms", 0) - (
+            after.get("time_left_ms", 0) if still else 0
+        )
+        print(
+            f"{stamp()}   {name} order {n + 1}: attack {target['name']} {target['id']} "
+            f"({target.get('distance', -1):.1f} m), taken {answer.get('taken', answer.get('error'))}; "
+            f"before {left(before)}; "
+            + (
+                f"after {left(after)} (spent {spent / 1000:.2f} s)"
+                if still
+                else f"the turn ended (last refusal: {after.get('last_refusal')!r})"
+            )
+        )
+        if not still:
+            return
+    print(f"{stamp()}   {name}: {orders} orders given; ending the turn")
+    game.tool("turnbased_end_turn", {})
+
+
+SHOWN = (
+    "turn_started",
+    "turn_ended",
+    "turn_lost",
+    "refused",
+    "cast_charging",
+    "cast_landed",
+    "cast_interrupted",
+    "action_pending",
+    "action_landed",
+    "action_dropped",
+    "action_given_back",
+    "fight_began",
+    "fight_over",
+    "condition_held",
+    "condition_ended",
+)
+
+
+def show_events(game: Game, cursor: int, names: tuple | None = None) -> int:
+    """Prints the mod's events since `cursor` (those about `names`, if given)."""
+    events, cursor = game.events(cursor)
+    for e in events:
+        p = e.get("payload", {})
+        shown = e.get("topic", "").startswith("turnbased.") and p.get("event") in SHOWN
+        if shown and (names is None or p.get("name") in names):
+            fields = ("round", "name", "detail", "command", "note", "value")
+            print("   event", p.get("event"), {k: p[k] for k in fields if k in p})
+    return cursor
+
+
+def fight(game: Game, rounds: int, cursor: int) -> int:
+    """Plays the fight on: the party's turns by `player_turn`, the rest watched."""
+    party = {HERO: "Lyna", TAMLEN: "Tamlen"}
+    deadline = time.time() + 60.0 * rounds
+    last = None
+    while time.time() < deadline:
+        state = game.state()
+        if not state.get("active"):
+            print(f"{stamp()} the fight is over")
+            break
+        if state.get("round", 0) > rounds:
+            print(f"{stamp()} round {state.get('round')}: enough")
+            break
+        current = state.get("current") or {}
+        key = (state.get("round"), current.get("id"))
+        if key != last and current:
+            last = key
+            print(
+                f"{stamp()} round {state.get('round')}: {current.get('name')} ({current.get('side')}), "
+                f"{state.get('phase')}, {left(state)}"
+            )
+        if current.get("yours") and current.get("id") in party:
+            if state.get("phase") == "awaiting order":
+                max_health(game, current["id"])
+                player_turn(game, current["id"], party[current["id"]])
+            else:
+                time.sleep(0.2)
+        else:
+            time.sleep(0.3)
+    cursor = show_events(game, cursor)
+    return cursor
+
+
+def max_health(game: Game, who: str) -> None:
+    creature = game.tool("inspect", {"kind": "creature", "id": who})
+    creature = creature.get("creature", creature)
+    most = (creature.get("health") or {}).get("max")
+    if most:
+        game.tool("stage", {"action": "health", "id": who, "value": most})
+
+
+def end_fight(game: Game) -> None:
+    for _ in range(20):
+        if game.tool("health").get("mode") != "combat":
+            return
+        for c in game.hostiles():
+            game.tool("stage", {"action": "kill", "id": c["id"]})
+        time.sleep(1.5)
+
+
+# What the duel adds to the hall's two spiders: (template, dx, dy) from (5, 0).
+DUEL_EXTRA: list[tuple[str, float, float]] = [(SPIDER, 6, 3)]
+
+
+def begin_spiders(game: Game, wait: bool = True) -> int:
+    """Lyna on her dagger walks into the first hall, and its two spiders drop."""
+    print(
+        f"{stamp()} equip the dagger:",
+        game.tool("script", {"command": "EquipItem", "args": [HERO, DAGGER]}),
+    )
+    cursor = game.tool("health").get("cursor", 0)
+    print(
+        f"{stamp()} walk in:",
+        game.tool("order", {"action": "move", "id": HERO, "point": [5, 0, 0]}).get(
+            "taken"
+        ),
+    )
+    if not wait:
+        # The mod off: the fight is the game's own, and no event says so.
+        for _ in range(60):
+            if game.tool("health").get("mode") == "combat":
+                break
+            time.sleep(0.25)
+        print(f"{stamp()} the fight began (the game's own)")
+        return cursor
+    began = game.tool(
+        "wait_for",
+        {"topic": "turnbased.fight_began", "since": cursor, "timeoutMs": 30000},
+        timeout=60,
+    )
+    print(f"{stamp()} the fight began: {began.get('found')}")
+    return cursor
+
+
+def scenario_smoke(game: Game) -> None:
+    """A fight through: what each attack costs, what is kept, what rolls over."""
+    cursor = begin_spiders(game)
+    fight(game, rounds=5, cursor=cursor)
+    end_fight(game)
+
+
+def scenario_stun(game: Game) -> None:
+    """Holds by their own time: a stun of 2 s on Lyna between her turns, one of 6 s on a spider."""
+    cursor = begin_spiders(game)
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    max_health(game, HERO)
+    spiders = game.hostiles(HERO)
+    victim = spiders[0]["id"]
+    print(
+        f"{stamp()} Lyna's turn: stun {victim} for 6 s (a turn lost, and half the next):",
+        str(
+            game.tool(
+                "stage",
+                {"action": "effect", "id": victim, "effect": "stun", "seconds": 6},
+            )
+        )[:160],
+    )
+    time.sleep(1.2)
+    held = game.state().get("held")
+    print(f"{stamp()} held: {held}")
+    attack(game, HERO, "one attack")
+    game.tool("turnbased_end_turn", {})
+    # On someone else's turn: Lyna stunned for 2 s, half her next bar.
+    for _ in range(100):
+        current = (game.state().get("current") or {}).get("id")
+        if current and current != HERO:
+            break
+        time.sleep(0.1)
+    print(
+        f"{stamp()} on {current}'s turn: stun Lyna for 2 s:",
+        str(
+            game.tool(
+                "stage",
+                {"action": "effect", "id": HERO, "effect": "stun", "seconds": 2},
+            )
+        )[:160],
+    )
+    time.sleep(1.2)
+    print(f"{stamp()} held: {game.state().get('held')}")
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    print(f"{stamp()} Lyna's next turn: {left(state)} (2.00 of 4.00 s expected)")
+    max_health(game, HERO)
+    attack(game, HERO, "one attack")
+    game.tool("turnbased_end_turn", {})
+    state = wait_turn(game, HERO)
+    if state is not None:
+        print(f"{stamp()} and the turn after: {left(state)}; held {state.get('held')}")
+    show_events(game, cursor)
+    end_fight(game)
+
+
+def scenario_crowd(game: Game) -> None:
+    """Six more spiders round the party: a long fight, for pace and the enemies' turns."""
+    cursor = begin_spiders(game)
+    here = game.tool("inspect", {"kind": "creature", "id": HERO})
+    here = here.get("creature", here).get("position", {"x": 5, "y": 0, "z": 0})
+    for dx, dy in ((4, 0), (-4, 0), (0, 4), (0, -4), (3, 3), (-3, -3)):
+        spawned = game.tool(
+            "stage",
+            {
+                "action": "spawn",
+                "template": SPIDER,
+                "point": [here["x"] + dx, here["y"] + dy, here["z"]],
+            },
+        )
+        print(f"{stamp()} spawn: {str(spawned)[:120]}")
+    fight(game, rounds=6, cursor=cursor)
+    end_fight(game)
+
+
+def wait_turn(game: Game, who: str, seconds: float = 90.0) -> dict | None:
+    """Waits for `who`'s turn to wait on an order; None if the fight ends first."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        state = game.state()
+        if not state.get("active"):
+            return None
+        current = state.get("current") or {}
+        if current.get("id") == who and state.get("phase") == "awaiting order":
+            return state
+        # Tamlen's turns are passed: this scenario is Lyna's.
+        if (
+            current.get("yours")
+            and current.get("id") != who
+            and state.get("phase") == "awaiting order"
+        ):
+            game.tool("turnbased_end_turn", {})
+        time.sleep(0.25)
+    return None
+
+
+def attack(game: Game, who: str, label: str) -> dict:
+    """One attack on the nearest hostile, and the state once it has settled."""
+    before = game.state()
+    targets = game.hostiles(who)
+    if not targets:
+        print(f"{stamp()}   {label}: no hostile left")
+        return before
+    target = min(targets, key=lambda c: c.get("distance", 99.0))
+    game.tool("order", {"action": "attack", "id": who, "target": target["id"]})
+    after = settle(game, who)
+    print(
+        f"{stamp()}   {label}: attack {target['name']} {target['id']} ({target.get('distance', -1):.1f} m); "
+        f"before {left(before)}; after {left(after)}; current {(after.get('current') or {}).get('name')}, "
+        f"{after.get('phase')}"
+    )
+    after["_target"] = target["id"]
+    return after
+
+
+def scenario_bar(game: Game) -> None:
+    """Combat Tactics on Lyna, a turn ended early, a kept attack whose target falls, a move too far."""
+    for rank in range(4):
+        answer = game.tool(
+            "script", {"command": "AddAbility", "args": [HERO, 100110 + rank]}
+        )
+        print(f"{stamp()} Combat Tactics {rank + 1}: {answer}")
+    cursor = begin_spiders(game)
+    # More spiders, so the fight outlasts the scenario.
+    for dx, dy in ((6, 3), (6, -3), (-6, 3)):
+        game.tool(
+            "stage", {"action": "spawn", "template": SPIDER, "point": [5 + dx, dy, 0]}
+        )
+
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    max_health(game, HERO)
+    print(
+        f"{stamp()} turn 1, rank 4 of Combat Tactics: {left(state)} (5.00 s expected)"
+    )
+    attack(game, HERO, "one attack")
+    state = game.state()
+    print(
+        f"{stamp()} ending the turn early with {left(state)}: 2.00 s at most rolls over"
+    )
+    game.tool("turnbased_end_turn", {})
+    time.sleep(1.0)
+
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    max_health(game, HERO)
+    print(
+        f"{stamp()} turn 2: {left(state)} (the bar 5.00 s and what rolled over, 7.00 s at most)"
+    )
+    kept = None
+    for n in range(6):
+        after = attack(game, HERO, f"attack {n + 1}")
+        if (after.get("current") or {}).get("id") != HERO:
+            kept = after.get("_target")
+            break
+    print(
+        f"{stamp()} the turn ended on a kept attack at {kept}; killing its target before it lands"
+    )
+    if kept:
+        print(
+            f"{stamp()} kill:",
+            str(game.tool("stage", {"action": "kill", "id": kept}))[:160],
+        )
+
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    max_health(game, HERO)
+    print(
+        f"{stamp()} turn 3, the kept attack's target gone: {left(state)}; last refusal {state.get('last_refusal')!r}"
+    )
+    here = game.tool("inspect", {"kind": "creature", "id": HERO})
+    here = here.get("creature", here).get("position", {"x": 5, "y": 0, "z": 0})
+    far = game.tool(
+        "order",
+        {"action": "move", "id": HERO, "point": [here["x"] + 40, here["y"], here["z"]]},
+    )
+    time.sleep(1.0)
+    state = game.state()
+    print(
+        f"{stamp()} a move 40 m off: {str(far)[:120]}; then {left(state)}; last refusal {state.get('last_refusal')!r}"
+    )
+    near = game.tool(
+        "order",
+        {"action": "move", "id": HERO, "point": [here["x"] + 3, here["y"], here["z"]]},
+    )
+    after = settle(game, HERO)
+    print(f"{stamp()} a move 3 m off: {str(near)[:80]}; then {left(after)}")
+    show_events(game, cursor, names=("Lyna", None))
+    end_fight(game)
+
+
+def scenario_abilities(game: Game) -> None:
+    """Each of Lyna's talents once: that it passes the gate, and what it costs."""
+    listed = game.tool("inspect", {"kind": "abilities", "id": HERO})
+    abilities = listed.get("talents", []) + listed.get("spells", [])
+    print(
+        f"{stamp()} Lyna's talents and spells ({listed.get('count')} abilities in all):"
+    )
+    for a in abilities:
+        print("   ", a)
+    cursor = begin_spiders(game)
+    for dx, dy in ((6, 3), (6, -3), (-6, 3), (-6, -3)):
+        game.tool(
+            "stage", {"action": "spawn", "template": SPIDER, "point": [5 + dx, dy, 0]}
+        )
+    usable = [a for a in abilities if a.get("id")]
+    for a in usable[:8]:
+        state = wait_turn(game, HERO)
+        if state is None:
+            return
+        max_health(game, HERO)
+        targets = game.hostiles(HERO)
+        if not targets:
+            return
+        target = min(targets, key=lambda c: c.get("distance", 99.0))
+        answer = game.tool(
+            "order",
+            {
+                "action": "ability",
+                "id": HERO,
+                "ability": a["id"],
+                "target": target["id"],
+            },
+        )
+        after = settle(game, HERO)
+        print(
+            f"{stamp()}   {a.get('name')} ({a['id']}) on {target['id']}: {str(answer)[:100]}; "
+            f"before {left(state)}; after {left(after)}; current {(after.get('current') or {}).get('name')}; "
+            f"last refusal {after.get('last_refusal')!r}"
+        )
+        if (after.get("current") or {}).get("id") == HERO:
+            game.tool("turnbased_end_turn", {})
+        time.sleep(0.5)
+    fight(game, rounds=0, cursor=cursor)
+    end_fight(game)
+
+
+def party_health(game: Game) -> dict[str, float]:
+    """Each party member's share of health left (0 when down)."""
+    out = {}
+    for who, name in ((HERO, "Lyna"), (TAMLEN, "Tamlen")):
+        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = creature.get("creature", creature)
+        health = creature.get("health") or {}
+        dead = creature.get("dead")
+        most = health.get("max") or 1.0
+        out[name] = 0.0 if dead else round((health.get("current") or 0.0) / most, 2)
+    return out
+
+
+def scenario_duel(game: Game) -> None:
+    """The same fight for each way of fighting, measured: the party against six spiders.
+
+    Every party member attacks the nearest hostile whenever it may, nobody is
+    healed, and the fight is run to its end: how long it took on the clock,
+    in rounds, and what it cost the party. With `--clock off` the mod is off
+    and the fight is the game's own real time, the same orders given.
+    """
+    cursor = begin_spiders(game, wait=game.clock != "off")
+    for template, dx, dy in DUEL_EXTRA:
+        game.tool(
+            "stage", {"action": "spawn", "template": template, "point": [5 + dx, dy, 0]}
+        )
+    began = time.time()
+    lowest = party_health(game)
+    rounds = 0
+    turns = 0
+    last = None
+    ordered: dict[str, str] = {}
+    while time.time() - began < 420:
+        health = game.tool("health")
+        if health.get("mode") != "combat":
+            break
+        if health.get("paused") and not game.state().get("active"):
+            game.tool("game", {"action": "unpause"})
+        for name, share in party_health(game).items():
+            lowest[name] = min(lowest[name], share)
+        state = game.state()
+        if state.get("active"):
+            rounds = max(rounds, state.get("round", 0))
+            current = state.get("current") or {}
+            key = (state.get("round"), current.get("id"))
+            if key != last:
+                last = key
+                turns += 1
+            if current.get("yours") and state.get("phase") == "awaiting order":
+                who = current["id"]
+                targets = game.hostiles(who)
+                if targets:
+                    target = min(targets, key=lambda c: c.get("distance", 99.0))
+                    before = state.get("time_left_ms", 0)
+                    game.tool(
+                        "order", {"action": "attack", "id": who, "target": target["id"]}
+                    )
+                    after = settle(game, who)
+                    still = (after.get("current") or {}).get("id") == who
+                    # As built, one that is refused or spends nothing ends the turn.
+                    if (
+                        still
+                        and after.get("time_left_ms", 0) == before
+                        and not after.get("timed")
+                    ):
+                        game.tool("turnbased_end_turn", {})
+                else:
+                    game.tool("turnbased_end_turn", {})
+            else:
+                time.sleep(0.2)
+        else:
+            # Real time: an attack on the nearest for whoever has no living target.
+            alive = {c["id"] for c in game.hostiles()}
+            for who in (HERO, TAMLEN):
+                if ordered.get(who) not in alive:
+                    targets = game.hostiles(who)
+                    if targets:
+                        target = min(targets, key=lambda c: c.get("distance", 99.0))
+                        game.tool(
+                            "order",
+                            {"action": "attack", "id": who, "target": target["id"]},
+                        )
+                        ordered[who] = target["id"]
+            time.sleep(0.4)
+    took = time.time() - began
+    final = party_health(game)
+    print(
+        f"{stamp()} DUEL: {took:.0f} s on the clock, {rounds} rounds, {turns} turns; the party at the end {final}, "
+        f"at its lowest {lowest}; hostiles left {len(game.hostiles())}"
+    )
+    show_events(game, cursor, names=())
+    end_fight(game)
+
+
+def scenario_mixed(game: Game) -> None:
+    """A caster, an archer and something big beside the spiders: what each does with its bar.
+
+    The party is kept alive (health to full on each of its turns), so the
+    enemies' turns can be watched for six rounds: how many actions each takes,
+    what is kept, whether any stalls or is stopped.
+    """
+    cursor = begin_spiders(game)
+    for template, dx, dy in (
+        ("hurlock_emissary_off", 10, 2),
+        ("bandit_human_archer", 12, -2),
+        ("ogre_default", 9, -5),
+    ):
+        spawned = game.tool(
+            "stage",
+            {"action": "spawn", "template": template, "point": [5 + dx, dy, 0]},
+        )
+        creature = spawned.get("creature") or {}
+        print(
+            f"{stamp()} spawn {template}: {creature.get('id')} {creature.get('name')} {spawned.get('error', '')}"
+        )
+    fight(game, rounds=6, cursor=cursor)
+    end_fight(game)
+
+
+# Spells whose conjuring and cast are longer than a 4 s bar, as the first
+# sweep found them (2026-10-02): Chain Lightning 4.99 s, Inferno 3.99 s (kept
+# once the bar has been spent on anything).
+KEPT_SPELLS = (10211, 10002)
+# Where the game's spells begin in its table of abilities, a dozen rows from each.
+SPELL_ROWS = (10000, 10200, 10500, 11000, 11100, 12000, 13000, 14000)
+
+
+def scenario_interrupt(game: Game) -> None:
+    """A spell kept for the next turn, and its caster struck: is it interrupted?
+
+    Lyna is no mage, so she is given spells (the game lets any creature with
+    the ability and the mana or stamina cast): first the two found to conjure
+    longer than a 4 s bar (KEPT_SPELLS), then others that conjure. She casts
+    one at the start of her turn; it is kept and lands on her next turn, and
+    between the two the spiders bite. A bite over her threshold (5 and half
+    her level, with no Combat Training) loses it: the log's "struck for" says
+    what the blow was and whether the spell held, and the events say
+    action_dropped "struck" or action_landed.
+    """
+    cursor = begin_spiders(game)
+    spells: list[dict] = []
+    # Something that hits harder than a weak spider's 7 or 8: her threshold
+    # is 16 with Combat Training's first rank.
+    spawned = game.tool(
+        "stage",
+        {"action": "spawn", "template": "ogre_default", "point": [9, -2, 0]},
+    )
+    print(
+        f"{stamp()} spawn an ogre: {(spawned.get('creature') or {}).get('id')} {spawned.get('error', '')}"
+    )
+
+    # And the game's own spells by their rows (ABI_base's ids: primal 10xxx,
+    # entropy 11xxx, creation 12xxx and on), the ones whose type is a spell:
+    # the emissary's are quick, and a conjuring longer than her bar is what
+    # is looked for.
+    # (GetM2DAInt on table 1, ABI_base: AbilityType 2 is a spell; Speed is
+    # its conjuring speed's row, 0 for none.) The slowest first.
+    def cell(column: str, row: int) -> int:
+        answer = game.tool(
+            "script", {"command": "GetM2DAInt", "args": [1, column, row]}
+        )
+        value = answer.get("value")
+        return value if isinstance(value, int) else 0
+
+    known = {a["id"] for a in spells}
+    slow = []
+    for first in SPELL_ROWS:
+        for row in range(first, first + 12):
+            if row in known or cell("AbilityType", row) != 2:
+                continue
+            speed = cell("Speed", row)
+            if speed > 0 and cell("ConjureAnim", row) != 0:
+                slow.append((speed, row))
+    slow.sort(reverse=True)
+    print(f"{stamp()} spells that conjure, by their speed's row: {slow}")
+    rows = list(KEPT_SPELLS) + [row for _, row in slow if row not in KEPT_SPELLS]
+    spells = [{"id": row, "name": f"spell {row}"} for row in rows[:5]]
+    for a in spells:
+        print(
+            f"{stamp()} give Lyna {a.get('name')}:",
+            str(
+                game.tool("script", {"command": "AddAbility", "args": [HERO, a["id"]]})
+            )[:120],
+        )
+    listed = game.tool("inspect", {"kind": "abilities", "id": HERO})
+    names = {a.get("id"): a.get("name") for a in listed.get("spells", [])}
+    for a in spells:
+        a["name"] = names.get(a["id"], a.get("name"))
+        state = wait_turn(game, HERO)
+        if state is None:
+            return
+        max_health(game, HERO)
+        targets = game.hostiles(HERO)
+        if not targets:
+            return
+        target = min(targets, key=lambda c: c.get("distance", 99.0))
+        answer = game.tool(
+            "order",
+            {
+                "action": "ability",
+                "id": HERO,
+                "ability": a["id"],
+                "target": target["id"],
+            },
+        )
+        after = settle(game, HERO)
+        kept = [c for c in after.get("charging", []) if c.get("id") == HERO]
+        if kept:
+            # Her card carries the pending spell's icon.
+            time.sleep(0.4)
+            picture(game, f"interrupt-kept-{a['id']}")
+        print(
+            f"{stamp()}   {a.get('name')} ({a['id']}) on {target['name']}: {str(answer)[:100]}; "
+            f"before {left(state)}; after {left(after)}; kept {kept}; "
+            f"last refusal {after.get('last_refusal')!r}"
+        )
+        if (after.get("current") or {}).get("id") == HERO and after.get(
+            "phase"
+        ) == "awaiting order":
+            game.tool("turnbased_end_turn", {})
+        time.sleep(0.5)
+        cursor = show_events(game, cursor, names=("Lyna",))
+    end_fight(game)
+
+
+def picture(game: Game, name: str) -> None:
+    """The game's own frame, interface and all, kept beside the build."""
+    shot = game.tool("screenshot", {"image": False, "source": "game"})
+    source = shot.get("file")
+    if not source:
+        print(f"{stamp()} no picture: {str(shot)[:160]}")
+        return
+    out = ROOT / "build" / f"timeplay-{name}.png"
+    shutil.copyfile(source, out)
+    print(f"{stamp()} picture: {out}")
+
+
+def scenario_look(game: Game) -> None:
+    """What the player sees of the bar: pictures of a turn begun, after a swing, and on an enemy's turn."""
+    cursor = begin_spiders(game)
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    max_health(game, HERO)
+    time.sleep(1.5)
+    picture(game, "look-1-turn-begun")
+    attack(game, HERO, "one attack")
+    time.sleep(1.0)
+    picture(game, "look-2-after-a-swing")
+    game.tool("turnbased_end_turn", {})
+    for _ in range(60):
+        current = game.state().get("current") or {}
+        if current and not current.get("yours"):
+            break
+        time.sleep(0.1)
+    time.sleep(0.6)
+    picture(game, "look-3-an-enemys-turn")
+    show_events(game, cursor, names=("Lyna",))
+    end_fight(game)
+    time.sleep(3.0)
+    picture(game, "look-4-the-fight-over")
+
+
+def point_at(game: Game, where: dict, name: str) -> None:
+    """Rests the game's cursor somewhere (Eluvian's pointer: the real mouse stays put) and takes a picture.
+
+    A creature behind the hero, or out of view, has no pixel to point at: the
+    camera is turned to face it, and then a sixth of the way round at a time,
+    until one shows.
+    """
+    answer: dict = {}
+    for turn in range(6):
+        if "target" in where:
+            if turn == 0:
+                game.tool("camera", {"action": "face", "target": where["target"]})
+            else:
+                yaw = (game.tool("camera", {}).get("yawDegrees") or 0.0) + 60.0
+                game.tool("camera", {"action": "turn", "yawDegrees": yaw % 360.0})
+            time.sleep(0.4)
+        answer = game.tool("pointer", {**where, "seconds": 20})
+        if not answer.get("error"):
+            break
+    time.sleep(0.6)  # the preview follows the cursor at ten a second
+    state = game.state()
+    under = game.tool("inspect", {"kind": "cursor"})
+    print(
+        f"{stamp()}   pointer {where}: {str(answer)[:200]}; under it {str(under)[:160]}; "
+        f"{left(state)}; can_delay {state.get('can_delay')}"
+    )
+    picture(game, name)
+
+
+def position_of(game: Game, who: str) -> list[float]:
+    creature = game.tool("inspect", {"kind": "creature", "id": who})
+    creature = creature.get("creature", creature)
+    at = creature.get("position") or [5.0, 0.0, 0.0]
+    if isinstance(at, dict):
+        return [
+            float(at.get("x", 0.0)),
+            float(at.get("y", 0.0)),
+            float(at.get("z", 0.0)),
+        ]
+    return [float(v) for v in at]
+
+
+def scenario_hover(game: Game) -> None:
+    """What only shows under the cursor: the path, the caption's cost, the cost on the game's bar, Delay.
+
+    On Lyna's turn the cursor is rested on a spider (an attack's walk and
+    cost), on the ground near and far (a move's), and on Tamlen (nothing to
+    walk); then a turn is put off with Delay and taken at the round's end.
+    A picture of each, the game's own frame with its interface.
+    """
+    cursor = begin_spiders(game)
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    max_health(game, HERO)
+    time.sleep(1.0)
+    picture(game, "hover-0-turn-begun")
+    targets = game.hostiles(HERO)
+    if targets:
+        near = min(targets, key=lambda c: c.get("distance", 99.0))
+        far = max(targets, key=lambda c: c.get("distance", 0.0))
+        point_at(game, {"target": near["id"]}, "hover-1-attack-near")
+        point_at(game, {"target": far["id"]}, "hover-2-attack-far")
+    at = position_of(game, HERO)
+    point_at(game, {"point": [at[0] + 3, at[1], at[2]]}, "hover-3-move-near")
+    point_at(game, {"point": [at[0] + 14, at[1] + 6, at[2]]}, "hover-4-move-far")
+    print(f"{stamp()}   release:", str(game.tool("pointer", {"release": True}))[:120])
+    # Delay: the turn passes on, and comes back whole at the round's end.
+    print(f"{stamp()}   delay:", str(game.tool("turnbased_delay", {}))[:160])
+    time.sleep(1.0)
+    picture(game, "hover-5-delayed")
+    state = wait_turn(game, HERO)
+    if state is not None:
+        print(
+            f"{stamp()}   her turn again: round {state.get('round')}, {left(state)}, can_delay {state.get('can_delay')}"
+        )
+        # A kept attack, and the cursor on the spider that has it coming.
+        attack(game, HERO, "first attack")
+        attack(game, HERO, "second attack")
+        attack(game, HERO, "third attack (kept, if the bar is short)")
+    cursor = show_events(game, cursor, names=("Lyna",))
+    end_fight(game)
+
+
+# What a run's log is read for afterwards: each line's count, and its first.
+LOG_SIGNS = (
+    "walk runs past its bar",
+    " s taken now",
+    "its icon is",
+    "is dropped: struck",
+    "with a spell pending",
+    "walk to its kept attack's target ends",
+    "Lands next turn",
+    "owed to its next turn",
+    "its own effect",
+    "Out of movement",
+    "turn is put off to the round's end",
+    "[warning]",
+    "[error]",
+)
+
+
+def summary(log: Path) -> None:
+    lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+    print(f"{stamp()} the log's signs ({len(lines)} lines):")
+    for sign in LOG_SIGNS:
+        found = [line for line in lines if sign in line]
+        if found:
+            print(f"    {len(found):4d}  {sign}: {found[0][:170]}")
+
+
+SCENARIOS = {
+    "hover": scenario_hover,
+    "interrupt": scenario_interrupt,
+    "look": scenario_look,
+    "mixed": scenario_mixed,
+    "duel": scenario_duel,
+    "smoke": scenario_smoke,
+    "stun": scenario_stun,
+    "crowd": scenario_crowd,
+    "bar": scenario_bar,
+    "abilities": scenario_abilities,
+}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--scenario", default="smoke", choices=sorted(SCENARIOS))
+    parser.add_argument("--owner", default="turn-based-agent")
+    parser.add_argument("--eluvian", type=Path, default=ROOT.parent / "DAOEluvianMCP")
+    parser.add_argument(
+        "--clock",
+        default="time",
+        choices=["time", "actions", "off"],
+        help="a bar of time, one action and meters, or the mod off: the game's real time",
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="SECTION.KEY=VALUE",
+        help="another setting for the run, put back to --unset's value after",
+    )
+    parser.add_argument(
+        "--keep", action="store_true", help="leave the game running at the end"
+    )
+    parser.add_argument(
+        "--log", type=Path, default=None, help="where to copy turnbased.log"
+    )
+    args = parser.parse_args()
+
+    eluvian = args.eluvian
+    if not eluvian.exists():
+        # From a worktree under .claude\worktrees, the sibling is further up.
+        for parent in ROOT.parents:
+            if (parent / "DAOEluvianMCP").exists():
+                eluvian = parent / "DAOEluvianMCP"
+                break
+    game = Game(eluvian, args.owner)
+    game.clock = args.clock
+
+    claim = game.bridge(
+        "game_claim",
+        {
+            "owner": args.owner,
+            "note": f"timeplay {args.scenario}: a turn as a bar of time",
+            "minutes": 30,
+        },
+    )
+    if claim.get("isError"):
+        print("not claimed:", json.dumps(claim)[:400])
+        return 2
+    launched = False
+    put_back: list[tuple[str, str, str]] = []
+    try:
+        answer = game.bridge(
+            "game_launch",
+            {
+                "owner": args.owner,
+                "logLevel": "debug",
+                "load": SAVE,
+                "waitSeconds": 240,
+            },
+        )
+        data = answer.get("answer", {})
+        if not data.get("launched") or game.tool("health").get("owner") != args.owner:
+            print(
+                "not launched, or the running game is not this run's:",
+                json.dumps(answer)[:600],
+            )
+            return 2
+        launched = True
+        print(f"{stamp()} launched into {SAVE}")
+        if args.clock == "off":
+            game.setting("turnbased", "enabled", "false")
+            put_back.append(("turnbased", "enabled", "true"))
+        else:
+            # Put back as the file had it: the run is not what sets the
+            # player's own choice (a run used to leave `actions` behind).
+            before = clock_in_file()
+            game.setting("turns", "clock", args.clock)
+            put_back.append(("turns", "clock", before))
+        for item in args.set:
+            name, _, value = item.partition("=")
+            section, _, key = name.partition(".")
+            game.setting(section, key, value)
+        time.sleep(2.5)
+        SCENARIOS[args.scenario](game)
+    finally:
+        if launched:
+            for section, key, value in put_back:
+                game.setting(section, key, value)
+            time.sleep(2.5)
+        log = documents() / "BioWare" / "Dragon Age" / "daolib" / "turnbased.log"
+        out = (
+            args.log
+            or ROOT / "build" / f"timeplay-{args.scenario}-{args.clock}-turnbased.log"
+        )
+        if log.exists():
+            out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(log, out)
+            print(f"{stamp()} log copied to {out}")
+            summary(out)
+        if launched and not args.keep:
+            print(
+                f"{stamp()} quit:",
+                json.dumps(game.bridge("game_quit", {"owner": args.owner}))[:200],
+            )
+        print(
+            f"{stamp()} release:",
+            json.dumps(game.bridge("game_release", {"owner": args.owner}))[:200],
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

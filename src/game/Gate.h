@@ -40,6 +40,12 @@ void SetPathCheck(bool on);
 // main hand's base item type, -1 for none. Script calls: on the scripts'
 // thread. The movement preview shows an attack's walk by the same number.
 [[nodiscard]] float ReachOf(ObjectId attacker, ObjectId target, std::int32_t *weaponType = nullptr);
+// With a turn a bar of time, the seconds a plain attack of this creature's
+// costs, as the gate will charge it (the swing by the game's formula, or
+// the core's stand-in). On the scripts' thread.
+[[nodiscard]] float AttackSeconds(ObjectId attacker);
+// And an ability's, as the gate will charge its user for it.
+[[nodiscard]] float AbilitySecondsOf(ObjectId user, std::int32_t ability);
 
 // A cast that charges (core: Verdict::Hold): the gate refuses the command
 // and keeps what it was, the ability, its target and the place, for the
@@ -58,6 +64,8 @@ struct HeldCast
     float z = 0.0f;
 };
 [[nodiscard]] std::optional<HeldCast> TakeHeldCast(ObjectId creature);
+// The same, left kept: for the walk to its target (EffectKind::Approach).
+[[nodiscard]] std::optional<HeldCast> PeekHeldCast(ObjectId creature);
 void DropHeldCast(ObjectId creature);
 
 } // namespace tb::game

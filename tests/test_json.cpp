@@ -16,10 +16,10 @@ using namespace tb::test;
 
 TEST_CASE("a flat object's fields are read, strings unescaped", "[json]")
 {
-    const std::string args = R"( { "section" : "turns", "key":"ai_turn_speed", "value": 2.5, "on": true,
+    const std::string args = R"( { "section" : "turns", "key":"speed", "value": 2.5, "on": true,
                                    "text": "a \"quote\"\nA" } )";
     CHECK(JsonField(args, "section") == "turns");
-    CHECK(JsonField(args, "key") == "ai_turn_speed");
+    CHECK(JsonField(args, "key") == "speed");
     CHECK(JsonField(args, "value") == "2.5");
     CHECK(JsonField(args, "on") == "true");
     CHECK(JsonField(args, "text") == "a \"quote\"\nA");
@@ -62,7 +62,8 @@ TEST_CASE("the machine's state says whose turn, what is held and what cools down
     CHECK(json.find(R"({"id":"0x100","name":"Hero","side":"party")") != std::string::npos);
     CHECK(json.find(R"("held":[{"id":"0x200","name":"Genlock","condition":"disabled","turns_owed":1)") !=
           std::string::npos);
-    CHECK(json.find(R"("cooldowns":[{"id":"0x100","ability":617,"turns":2,"of":2}],"charging":[]})") !=
+    CHECK(json.find(
+              R"("cooldowns":[{"id":"0x100","ability":617,"turns":2,"of":2,"left_ms":0,"of_ms":0}],"charging":[]})") !=
           std::string::npos);
     CHECK(json.ends_with("]}"));
 }

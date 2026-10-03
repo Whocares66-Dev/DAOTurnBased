@@ -106,6 +106,10 @@ struct CombatantStatus
     Condition condition = Condition::None;
     float energy = 1.0f; // mana or stamina, current over maximum
     bool mana = false;   // a mage's is mana, anyone else's stamina
+    // The seconds its condition has left, as the engine holds them when the
+    // game layer can read them (0: not known): with a turn a bar of time, a
+    // hold takes its own time of its victim's turns.
+    float conditionSeconds = 0.0f;
 };
 
 struct Observation
@@ -116,6 +120,10 @@ struct Observation
     std::optional<std::vector<Combatant>> scan; // initiative not rolled; the machine rolls it
     std::optional<ActorObservation> actor;
     std::vector<CombatantStatus> statuses;
+    // Creatures whose kept cast or action the game layer did not give when
+    // asked to (ReleaseCast): its target was gone. What it owed is given
+    // back.
+    std::vector<ObjectId> keptVoid;
 };
 
 enum class EffectKind : std::uint8_t
@@ -136,6 +144,7 @@ enum class EffectKind : std::uint8_t
     GameSpeed,     // the game runs at b thousandths of its speed (1000: as ever)
     ReleaseCast,   // target's held cast of ability a is given to it now: it has charged its turns
     DropCast,      // target's held cast is forgotten (interrupted); no target: everyone's
+    Approach,      // target walks to where it can do the action kept for it (within reach of its target)
 };
 
 [[nodiscard]] const char *Name(EffectKind kind);
@@ -249,6 +258,21 @@ struct CardView
     int round = 0;
     float energy = 1.0f; // mana or stamina
     bool mana = false;
+    // With a turn a bar of time: what an action of its still owes, kept for
+    // its next turn or run already (0: none). The card says so.
+    std::uint32_t owedMs = 0;
+    // It has put its turn off (Delay), and the turn is still to come this
+    // round: the card says "waits". The floaty over it was never seen, the
+    // camera leaving for the next turn in the same frame (play test 28).
+    bool waits = false;
+    // What is pending, where owedMs says something is: the ability's id, or
+    // -1 for an attack. The game layer adds the ability's icon (a texture's
+    // name) and its name as the player reads it, for the card to show: the
+    // icon in the round marker's ring, in place of the seconds, which "does
+    // not really tell us anything" (the user, 2026-10-02).
+    std::int32_t pendingAbility = -1;
+    std::wstring pendingIcon;
+    std::wstring pendingName;
 };
 
 struct TurnView
@@ -265,6 +289,29 @@ struct TurnView
     bool timed = false;
     std::uint32_t timeMs = 0;
     std::uint32_t timeLeftMs = 0;
+    // And a turn's own seconds (the bar's are those, Combat Tactics' and
+    // what rolled over); the pace the current creature walks at, and the
+    // meters it may walk for nothing (the free meter left, and meters
+    // paid for): what a walk would cost (core/Preview.h, CostOf).
+    std::uint32_t turnMs = 0;
+    float paceMps = 0;
+    float paidMeters = 0;
+    // What this turn paid, as it began, for an action begun on the turn
+    // before: why its bar starts short.
+    std::uint32_t pendingPaidMs = 0;
+    // The turn may be put off to the round's end now (TurnMachine::CanDelay);
+    // and whether Delay is offered on this turn at all (the setting, a
+    // party member's turn): the bar keeps the button's place, greyed, when
+    // it is offered and cannot be had, so that End does not move under the
+    // hand (play test 28).
+    bool canDelay = false;
+    bool delayOffered = false;
+    // The player has the game paused (the pause key): the bar says so.
+    // Nothing else on the screen did (play test 29).
+    bool playerPaused = false;
+    // What of this turn's bar rolled over from the turn before: why it is
+    // longer than a turn's seconds.
+    std::uint32_t rolledMs = 0;
     std::vector<CardView> upcoming; // the current turn first
 };
 
@@ -277,6 +324,8 @@ struct HeldView
     Condition seen = Condition::None;
     int turnsOwed = 0;
     bool onClock = false; // ended, and the engine held it still: it runs out on the clock
+    // With a turn a bar of time: the time of its own clock it still owes.
+    std::uint32_t owedMs = 0;
 };
 
 struct CooldownView
@@ -285,6 +334,10 @@ struct CooldownView
     std::int32_t ability = -1;
     int turns = 0; // its user's turns still to wait
     int of = 0;    // of this many in all
+    // With a turn a bar of time: what is left of it on its user's own clock,
+    // and the whole it counts down from, in milliseconds (0 as built).
+    std::uint32_t leftMs = 0;
+    std::uint32_t ofMs = 0;
 };
 
 struct ChargeView
@@ -309,6 +362,7 @@ struct MachineState
     // filled in by the game side; nothing before any was set.
     std::optional<bool> speedTook;
     bool heldByEffect = false;
+    bool playerPaused = false; // the player has the game paused (the pause key)
 };
 
 enum class LogLevel : std::uint8_t
@@ -344,10 +398,34 @@ class TurnMachine
     // refused, answers the order.
     void OnPlayerOrder(std::string_view what);
 
-    // The game's pause key. True if the machine takes it (a turn-based
-    // fight is on), in which case it ends a party member's turn and the
-    // game must not pause or unpause.
+    // The game's pause key (Space). It pauses, as it does in the game: the
+    // user, 2026-10-02, "space bar should still pause the game i think,
+    // instead of end turn. that's what players would expect" (it ended the
+    // turn until then). True if the machine takes it (a turn-based fight is
+    // on): the game must not toggle its pause itself, since the machine
+    // holds the game's pause through a fight and would undo it; the machine
+    // pauses and unpauses for the player instead (PlayerPaused). While the
+    // machine holds the world still for its own reasons (between two turns,
+    // or through the player's choosing with pause_on_player_turn) the key
+    // changes nothing. An order given while paused runs the game again: its
+    // action has to play out.
     [[nodiscard]] bool OnPauseKey();
+    [[nodiscard]] bool PlayerPaused() const
+    {
+        return playerPaused_;
+    }
+
+    // End turn: the turn bar's End, its key, a tool. True if a turn-based
+    // fight is on; a party member's turn that the player plays ends, its
+    // own action first if one is playing out.
+    [[nodiscard]] bool OnEndTurn();
+
+    // Delay (Settings::delay): the party member whose turn it is puts it
+    // off to the round's end. Only before it has spent anything, once a
+    // round, and with somebody standing after it. True if taken; the turn
+    // passes on with the next frame.
+    [[nodiscard]] bool OnDelay();
+    [[nodiscard]] bool CanDelay() const;
 
     // Turn-based on or off: refused while fighting. partyInCombat is the
     // game's own word for it (the hero's combat state), which covers a menu
@@ -392,6 +470,15 @@ class TurnMachine
     // once a turn, as for an approach cut short. True if it was.
     bool OnCommandFailed(ObjectId who, CommandType type, std::int32_t ability, std::string_view why);
 
+    // A creature was struck (the scripts' EVENT_TYPE_DAMAGED, once the
+    // damage is done): a spell it has pending is interrupted by physical
+    // damage over `threshold` (core/Rules.h, InterruptThreshold), as the
+    // game interrupts one being conjured. Answers whether it was.
+    bool OnDamaged(ObjectId target, float damage, bool physical, float threshold);
+    // Whether a blow could interrupt anything of this creature's: asked
+    // before the threshold is worked out, which costs script calls.
+    [[nodiscard]] bool Conjuring(ObjectId who) const;
+
     // Typed events, as they happen (core/Events.h): called under the same
     // lock as everything else, from inside Step and the gate's calls.
     void SetEventSink(EventSink sink)
@@ -431,6 +518,16 @@ class TurnMachine
     // How long a turn waits on an effect's command it found its creature
     // in before the turn is lost (heldByEffect_).
     static constexpr std::uint32_t kEffectGraceMs = 2000;
+    // An action whose time the engine was read to take, a second or more,
+    // and whose command was over in under a quarter of it, did not play:
+    // its time is given back (OverAtOnce).
+    static constexpr std::uint32_t kLeastToldMs = 1000;
+    static constexpr std::uint32_t kOverAtOnce = 4;
+    // An action running on its own effect's time ends when that time has
+    // run, and has this many times max_action_ms to do it in: the pounce
+    // took 9.7 s of the 12 (seen in play, 2026-10-01), and a longer one
+    // would have been cut short.
+    static constexpr std::uint32_t kOwnEffectPatience = 3;
     // The same order again this soon after it was taken is the game's own
     // repeat of it, not the player's: Eleanor's attack, and the dog's, came
     // a second time 31 to 78 ms after the first, was refused for want of an
@@ -445,17 +542,39 @@ class TurnMachine
         // What the turn has to spend and has spent (core/TurnBudget.h): one
         // action and meters as built, or a bar of time.
         TurnBudget spend = TurnBudget::Actions(1, 0.0f);
-        std::uint32_t lastCostMs = 0; // what the last action let through was charged
+        std::uint32_t lastCostMs = 0;    // what the last action let through was charged
+        std::uint32_t pendingPaidMs = 0; // what this turn paid, as it began, for an action kept for it
+        std::uint32_t rolledMs = 0;      // what of its bar rolled over from the turn before
+        // The walk in hand is the mod's own, to a kept attack's target
+        // (EffectKind::Approach): where the meters paid for end, it stops
+        // without a word.
+        bool approachWalk = false;
+        // An action's time, to be taken when its creature gets there: its
+        // walk ran past the bar on the time the action had been charged (an
+        // archer walking for its shot, a path longer than the gate could
+        // tell), and that time went to the walk.
+        std::uint32_t onArrivalMs = 0;
+        // An action whose own effect holds its creature (a spider's
+        // Overwhelm, an ogre's grab) is charged the time it runs: what of
+        // its own cost still covers that time (none: no such effect yet).
+        std::optional<std::uint32_t> ownEffectCover;
         int commands = 0;
         bool outOfMovement = false;
         bool refunded = false; // an action given back once already this turn
+        int givenBack = 0;     // how many times this turn
         bool retried = false;  // an AI told to choose again, its failed action given back
         bool landing = false;  // the turn began with a charged cast: its creature's turn follows it
         CommandKind lastKind = CommandKind::Involuntary;
         std::int32_t lastAbility = -1; // the ability the last command was to use; -1 for any other command
         float movementAtCommand = 0;   // meters walked as the last command was let through
+        float lastWalk = 0; // and the meters it had to walk to its target (an attack's), as the gate was told
         CommandType lastType = CommandType::Invalid; // the last command let through, and when
         std::uint32_t lastAt = 0;
+        // And when on the world's clock, and whether its time was the
+        // engine's own reading (CommandRequest::actionSeconds), not a
+        // stand-in: one over in a fraction of that time did not play.
+        std::uint32_t lastClock = 0;
+        bool lastMeasured = false;
 
         [[nodiscard]] float MovementLeft() const
         {
@@ -495,6 +614,19 @@ class TurnMachine
     [[nodiscard]] bool ActionToGiveBack() const;
     void GiveActionBack();
     [[nodiscard]] std::string BudgetLeft() const;
+    void KeptVoid(ObjectId who);
+    // With time: an action that has run owes `ms` more to its creature's
+    // next turns.
+    void Owe(ObjectId who, std::uint32_t ms, CommandType type, std::int32_t ability);
+    void ChargeOnArrival(std::vector<Effect> &fx);
+    void DelayTurn(std::vector<Effect> &fx);
+    void OverAtOnce(std::vector<Effect> &fx);
+    void TellTurnStart(const Combatant &who, std::vector<Effect> &fx);
+    void LeaveTurn();
+    // With time: the current creature's clock has moved on (its bar spent,
+    // or its turn over); what counts on it is moved with it.
+    void MoveClock(std::vector<Effect> &fx);
+    void AgeCooldowns(ObjectId who, std::uint32_t clockMs, std::vector<Effect> &fx);
     [[nodiscard]] bool LandCast(const Combatant &who, std::vector<Effect> &fx);
     void Interrupt(ObjectId who, std::string_view why, std::vector<Effect> &fx);
     void HoldUsed(std::vector<Effect> &fx);
@@ -502,8 +634,8 @@ class TurnMachine
     void ReleaseCooldowns(std::vector<Effect> &fx);
     void HoldTime(bool held, std::vector<Effect> &fx);
     void SetSpeed(float speed, std::vector<Effect> &fx);
-    // 1 for a turn the player plays, ai_turn_speed for one an AI does.
-    [[nodiscard]] float TurnSpeed(const Combatant &who) const;
+    // The fight's speed ([turns] speed), anyone's turn.
+    [[nodiscard]] float TurnSpeed() const;
     void SpendRound(std::vector<Effect> &fx);
     void HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx);
 
@@ -541,6 +673,11 @@ class TurnMachine
         Condition seen = Condition::None;
         Condition kind = Condition::None;
         int turns = 0;
+        // With a turn a bar of time (dev/REBALANCE.md, "Holds"): a hold
+        // uses up its victim's own time, its seconds as the engine had them
+        // when it landed. What is still owed: a turn's seconds or more is a
+        // turn lost, less is that share of the next turn's bar.
+        std::uint32_t owedMs = 0;
         // Ended by the machine, and the engine held it still (the dog's pin
         // in the desktop play test, 2026-09-30): it runs out on the game's
         // clock, each turn lost while it lasts, no fresh turns owed.
@@ -568,11 +705,32 @@ class TurnMachine
     // gone soon after ran out on the clock; gone any other time while
     // effects' time is held, something took it off (a cure, a dispel).
     std::optional<std::uint32_t> agedAtNow_; // none: no round has aged effects yet
+    // Whose turn is to be handed over once the statuses are fresh: its kept
+    // action will not come (KeptVoid).
+    std::optional<ObjectId> handoverWanted_;
+    // The player's turn ends at this time (the real clock's), an action of
+    // its creature's kept for the next: a beat for "Lands next turn" to be
+    // read before the next turn's announcement lands on it (play test 27).
+    std::optional<std::uint32_t> pendingEndNow_;
+    static constexpr std::uint32_t kPendingSayMs = 800;
+    // Meters a walk to a kept attack's target may run past what was paid
+    // for: the game's walk ends a little inside the reach, by its own path.
+    static constexpr float kApproachSlack = 1.0f;
     static constexpr std::uint32_t kAgeSettleMs = 1500;
     std::string lastRefusal_; // the last refusal logged, and when: repeats within a second are not
     std::uint32_t lastRefusalLogNow_ = 0;
+    // With time: how far the current creature's clock had moved this turn
+    // when what counts on it was last moved (MoveClock).
+    std::uint32_t clockSeenMs_ = 0;
     bool turnBegun_ = false;        // an interlude came in the middle of a turn, not between two
     bool startInterrupted_ = false; // an interlude came before the fight had started
+    // With time, a kept attack's creature walks to its target this turn
+    // (EffectKind::Approach): the walk the game layer gives it is let
+    // through, whoever plays the creature, and the turn ends as it settles.
+    bool approach_ = false;
+    // With time: a turn is on whose creature's clock runs through it (taken,
+    // lost or spent on a pending action; not a fallen one's, passed over).
+    bool clockRuns_ = false;
     // Cooldowns in turns (dev/DESIGN.md): the abilities used in the action
     // under way, held once it has run; and those held, with the turns of
     // their user each still waits.
@@ -582,6 +740,12 @@ class TurnMachine
         std::int32_t ability = -1;
         int turns = 0;
         int of = 0; // the turns it was held for in all: the sweep is turns over this
+        // With a turn a bar of time, the cooldown counts on its user's own
+        // clock, which moves a turn's seconds a turn of its user's, as its
+        // bar is spent (dev/REBALANCE.md, "The creature's own clock"): it
+        // lifts at the moment it runs out, mid-turn included.
+        std::uint32_t leftMs = 0;
+        std::uint32_t ofMs = 0;
     };
     std::vector<Hold> usedNow_;
     std::vector<Hold> holds_;
@@ -606,9 +770,9 @@ class TurnMachine
         std::int32_t ability = -1;
         int turns = 0; // its caster's turns still to go, the next included
         std::uint32_t owedMs = 0;
-        float walk = 0;
         CommandType type = CommandType::UseAbility;
         bool kept = true;
+        bool spell = false; // a spell being conjured: a blow may interrupt it (OnDamaged)
     };
     std::vector<Charge> charges_;
     std::optional<Charge> landing_; // given again this turn, and not yet come through the gate
@@ -623,8 +787,8 @@ class TurnMachine
 
     Phase phase_ = Phase::Idle;
     TurnOrder order_;
-    Budget budget_;
     ObjectId hero_ = kNoObject;
+    Budget budget_;
 
     bool latch_ = false;     // a fight ended while the game still says combat: no new one until hostiles are seen
     bool stoodDown_ = false; // after an error (StandDown): no turns until the game has left combat
@@ -665,6 +829,8 @@ class TurnMachine
     bool wantScan_ = false;
     bool roundPending_ = false; // the order wrapped: the round's start is handled at the next turn's
     bool endTurnRequested_ = false;
+    bool delayRequested_ = false;
+    bool playerPaused_ = false; // the player's own pause (OnPauseKey), over the machine's
     bool passRequested_ = false;
     bool orderPending_ = false;
     bool resume_ = false; // back from a conversation: the current turn goes on as it was
@@ -675,6 +841,10 @@ class TurnMachine
     Mode lastMode_ = Mode::Unknown;
 
     bool haveNow_ = false;
+    bool anyRefusal_ = false;
+    // The statuses are wanted with the next step, whatever their time
+    // (WhatToObserve): before an AI is told to choose again in mid-turn.
+    bool statusWanted_ = false;
     std::uint32_t lastNow_ = 0;
     std::uint32_t clock_ =
         0; // the world's milliseconds the fight has run unpaused (at the game's speed): deadlines count in this
@@ -705,15 +875,20 @@ class TurnMachine
     std::uint32_t stoodSince_ = 0;
     static constexpr std::uint32_t kStoodMs = 2500;
     static constexpr float kStoodStill = 0.05f;
-    // An action running on its own effect's time ends when that time has
-    // run, and has this many times max_action_ms to do it in: the pounce
-    // took 9.7 s of the 12 (seen in play, 2026-10-01), and a longer one
-    // would have been cut short.
-    static constexpr std::uint32_t kOwnEffectPatience = 3;
+    // An attack whose creature stands this far short of where its walk was
+    // to end is not swinging: it cannot get there.
+    static constexpr float kStuckShort = 1.0f;
+    // And is given this long standing there, not kStoodMs: nobody else moves
+    // in its turn, so what blocks it will not clear, and the engine's own
+    // answer comes only after seconds (blocked spiders' turns were 4 to 6 s
+    // still: play test 31).
+    static constexpr std::uint32_t kStuckMs = 1000;
+    // An AI whose actions have been given back this many times in a turn
+    // has nothing it can get to: its turn ends.
+    static constexpr int kGivenBackEnough = 2;
     std::uint32_t lastStatusNow_ = 0;
     std::uint32_t lastLatchScanNow_ = 0;
     std::uint32_t lastRefusalNow_ = 0;
-    bool anyRefusal_ = false;
 
     std::vector<Effect> pending_; // from the gate, handed out by the next Step
 };

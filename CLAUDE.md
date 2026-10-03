@@ -63,9 +63,9 @@ The machine is not thread-safe by itself: `src/plugin/Plugin.cpp` holds a mutex 
 .\tools\build.ps1 -Preset debug-analyze
 ```
 
-A change to `src/core`'s logic also runs `build\core\tests\tb_tests.exe "[fights-long]"` (a thousand random fights, half a minute) and `python tools\mutants.py` (each mutant must be caught; a new promise gets a mutant). `-Preset core-cov -Coverage` shows what the tests never run. `dev/TESTING.md` has what each found.
+A change to `src/core`'s logic also runs `build\core\tests\tb_tests.exe "[fights-long]"` (a thousand random fights, half a minute) and `python tools\mutants.py` (each mutant must be caught; a new promise gets a mutant). The mutants run side by side, each worker breaking its own copy of the core under `build\mutants\wN` at below normal priority: the working tree is only read, so it can be edited while they run and a stopped run leaves nothing broken (`-j N` sets how many at a time). `-Preset core-cov -Coverage` shows what the tests never run. `dev/TESTING.md` has what each found.
 
-Last green 2026-10-02, all of it, against DAOLib `e9c65f2`: 209 tests (the Python tools' among them), 1,000 fights, 148 of 148 mutants caught, ASan clean, clang-tidy clean, /analyze clean; the movie unchanged since it was built and seen in Ruffle. Run the mutants after a change to the random fights' arena too: a change to its draws can stop the default seeds reaching a rare case (`dev/TESTING.md`).
+Last green 2026-10-02, all of it, against DAOLib `c109566`: 314 tests (the Python tools' among them), 2,000 fights (a thousand as built, a thousand with a turn a bar of time), 272 of 272 mutants caught, ASan clean, clang-tidy clean, /analyze clean; the movie built and its sample seen in Ruffle. Run the mutants after a change to the random fights' arena too: a change to its draws can stop the default seeds reaching a rare case (`dev/TESTING.md`).
 
 ## Writing files from the shell
 

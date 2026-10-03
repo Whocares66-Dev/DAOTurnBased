@@ -30,6 +30,7 @@
 // movement left and red if not.
 #pragma once
 
+#include "core/Preview.h"
 #include "core/TurnMachine.h"
 #include "core/Types.h"
 
@@ -59,6 +60,7 @@ class Preview
 
   private:
     void Clear();
+    void ShowCost(const OrderCost &cost);
     void Search(ObjectId walker, const Vec3 &from, const Vec3 &to, ObjectId toward, std::uint32_t nowMs);
     void Compare(std::uint32_t nowMs);
     // Effects placed along the path, and where each lies.
@@ -76,7 +78,8 @@ class Preview
     std::mutex mutex_;
     std::wstring encoded_; // what the movie is given
     bool installed_ = false;
-    bool drawn_ = false; // something is published to draw
+    bool drawn_ = false;        // something is published to draw
+    ObjectId over_ = kNoObject; // the living creature the cursor is over, while an order is waited on
 
     // The path last found, the frame callback's alone.
     ObjectId walker_ = kNoObject;

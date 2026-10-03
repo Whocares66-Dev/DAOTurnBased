@@ -2,6 +2,7 @@
 // the movie draws from, read back the way its ActionScript will.
 #include "core/Bar.h"
 #include "core/Preview.h"
+#include "core/TurnMachine.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -146,7 +147,7 @@ TEST_CASE("the preview's string has a head and two lines of points", "[preview]"
     const std::vector<std::wstring> records = Split(EncodePreview(view), kBarCard);
     REQUIRE(records.size() == 5);
     const std::vector<std::wstring> head = Split(records[0], kBarField);
-    REQUIRE(head.size() == 7);
+    REQUIRE(head.size() == 10);
     CHECK(head[6] == L"1"); // the movie draws the line
     CHECK(head[0] == std::to_wstring(kPreviewVersion));
     CHECK(head[1] == L"1920");
@@ -193,7 +194,7 @@ TEST_CASE("nothing to draw is a head alone, of the same fields", "[preview]")
     const std::wstring nothing = EncodeNoPreview();
     CHECK(Split(nothing, kBarCard).size() == 1);
     const std::vector<std::wstring> head = Split(nothing, kBarField);
-    REQUIRE(head.size() == 7);
+    REQUIRE(head.size() == 10);
     CHECK(head[0] == std::to_wstring(kPreviewVersion));
     CHECK(head[3] == L"0");
     // A path of one point on the screen is nothing to draw either.
@@ -268,7 +269,7 @@ TEST_CASE("a preview marked in the world tells the movie not to draw its line", 
     view.reach = {ScreenDot{10, 20}, ScreenDot{30, 40}};
     view.line = false;
     const std::vector<std::wstring> head = Split(Split(EncodePreview(view), kBarCard)[0], kBarField);
-    REQUIRE(head.size() == 7);
+    REQUIRE(head.size() == 10);
     CHECK(head[6] == L"0");
 }
 
@@ -306,4 +307,49 @@ TEST_CASE("no marks for no spacing, no path, or a path of one point", "[preview]
     // A step of no length is passed over.
     const std::vector<Vec3> twice{Vec3{0, 0, 0}, Vec3{0, 0, 0}, Vec3{2, 0, 0}};
     CHECK(AlongPath(twice, 1.0f, 0.0f, 10.0f).size() == 3);
+}
+
+TEST_CASE("with a turn a bar of time, the preview says what the order would cost", "[preview]")
+{
+    TurnView view;
+    view.timed = true;
+    view.timeLeftMs = 2500;
+    view.paceMps = 5.0f;
+    view.paidMeters = 1.0f; // the free meter
+    // A walk of 6 m, a meter of it free, and a 1.5 s swing: 2.5 s, which fits.
+    OrderCost cost = CostOf(view, 6.0f, 1.5f);
+    CHECK(cost.seconds == Approx(2.5f));
+    CHECK_FALSE(cost.spills);
+    // A meter more: it would land on the next turn.
+    cost = CostOf(view, 7.0f, 1.5f);
+    CHECK(cost.seconds == Approx(2.7f));
+    CHECK(cost.spills);
+    // In reach: the swing alone; within the meters that cost nothing: nothing.
+    CHECK(CostOf(view, 0.0f, 1.5f).seconds == Approx(1.5f));
+    CHECK(CostOf(view, 0.8f, 0.0f).seconds == 0.0f);
+    // As built there is no bar to cost anything of.
+    CHECK(CostOf(TurnView{}, 6.0f, 1.5f).seconds == 0.0f);
+
+    PreviewView shown;
+    shown.width = 1920;
+    shown.height = 1080;
+    shown.reach = {{10, 10}, {20, 20}};
+    shown.cost = 2.5f;
+    shown.spills = true;
+    const std::vector<std::wstring> head = Split(Split(EncodePreview(shown), kBarCard)[0], kBarField);
+    REQUIRE(head.size() == 10);
+    CHECK(head[7] == L"2.5");
+    CHECK(head[8] == L"1");
+    // Nothing to draw, and a cost all the same: an attack on what is in reach.
+    const std::vector<std::wstring> none = Split(EncodeNoPreview(OrderCost{1.5f, false}), kBarField);
+    REQUIRE(none.size() == 10);
+    CHECK(none[3] == L"0");
+    CHECK(none[7] == L"1.5");
+    CHECK(none[8] == L"0");
+    CHECK(none[9] == L"0"); // the cursor over no creature
+    // The creature the cursor is over, with a path and without one.
+    shown.over = 0x201;
+    CHECK(Split(Split(EncodePreview(shown), kBarCard)[0], kBarField)[9] == L"513");
+    CHECK(Split(EncodeNoPreview(OrderCost{}, 0x201), kBarField)[9] == L"513");
+    CHECK(Split(EncodeNoPreview(), kBarField)[7] == L"0.0");
 }

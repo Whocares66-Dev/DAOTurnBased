@@ -138,6 +138,8 @@ const char *Name(EffectKind kind)
         return "release cast";
     case EffectKind::DropCast:
         return "drop cast";
+    case EffectKind::Approach:
+        return "approach";
     }
     return "?";
 }
@@ -267,7 +269,7 @@ Needs TurnMachine::WhatToObserve(std::uint32_t nowMs)
     }
     // Fresh at every turn start: whether a creature is stunned decides
     // whether its turn is taken at all.
-    if (nowMs - lastStatusNow_ >= 500 || phase_ == Phase::TurnStart)
+    if (nowMs - lastStatusNow_ >= 500 || phase_ == Phase::TurnStart || std::exchange(statusWanted_, false))
     {
         lastStatusNow_ = nowMs;
         for (const Combatant &c : order_.All())
@@ -296,6 +298,7 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
             holds_.clear();
             phase_ = Phase::Idle;
         }
+        playerPaused_ = false;
         latch_ = false;
         wantScan_ = false;
         const bool charging = !charges_.empty() || landing_.has_value();
@@ -303,6 +306,7 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         rollover_.clear();
         landing_.reset();
         chargeBegan_ = false;
+        approach_ = false;
         fx.clear(); // their objects may be gone with the world
         if (charging)
         {
@@ -347,6 +351,7 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         // first frame skipped the fight's start, effects' time never held).
         startInterrupted_ = startInterrupted_ || phase_ == Phase::Starting;
         phase_ = Phase::Suspended;
+        playerPaused_ = false;
         SetSpeed(1.0f, fx);
         return fx;
     }
@@ -360,7 +365,7 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
     {
         // The world's time: at an enemy's speed it runs faster, and the
         // waits that count in it (settling, an AI's thinking and follow-up)
-        // with it. In real time they held ai_turn_speed 2 to the same 3 s
+        // with it. In real time they held an AI's turn at twice the speed to the same 3 s
         // an enemy's turn took at 1 (the desktop play test, 2026-09-30).
         const auto worldDt = static_cast<std::uint32_t>(std::lround(static_cast<float>(dt) * speedSet_));
         clock_ += worldDt;
@@ -378,6 +383,16 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         if (const Combatant *current = order_.Current())
         {
             fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));
+            // With time, the rest of this turn is the first of what the
+            // hold takes.
+            if (const auto held = held_.find(current->id); Timed() && held != held_.end())
+            {
+                const std::uint32_t turn = TurnMs();
+                const std::uint32_t rest = turn - std::min(turn, budget_.spend.ClockElapsedMs());
+                held->second.owedMs -= std::min(held->second.owedMs, rest);
+                // Taken by the hold, not banked: nothing of it rolls over.
+                budget_.spend.SpendAllActions();
+            }
         }
         EndTurn(fx, "stunned");
         EnforcePause(obs, fx);
@@ -387,9 +402,46 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
     // turn.
     if (std::exchange(chargeBegan_, false) && Active() && order_.Current() != nullptr)
     {
-        EndTurn(fx, "charging");
+        EndTurn(fx, Timed() ? "its action pending" : "charging");
         EnforcePause(obs, fx);
         return fx;
+    }
+    if (pendingEndNow_ && Active() && order_.Current() != nullptr && lastNow_ >= *pendingEndNow_ &&
+        phase_ != Phase::Executing && phase_ != Phase::Settling)
+    {
+        pendingEndNow_.reset();
+        EndTurn(fx, "its action pending");
+        EnforcePause(obs, fx);
+        return fx;
+    }
+    for (const ObjectId id : obs.keptVoid)
+    {
+        KeptVoid(id);
+    }
+    // A turn whose kept action will not come is handed over as any turn is,
+    // on a look taken with this step: its creature may have been stunned
+    // since its turn began (test_fights.cpp's long run, seed 744 with
+    // time: a stunned party member handed its turn). Stunned, its turn has
+    // ended above.
+    if (handoverWanted_)
+    {
+        const Combatant *current = order_.Current();
+        if (!Active() || current == nullptr || current->id != *handoverWanted_)
+        {
+            handoverWanted_.reset();
+        }
+        else if (lastStatusNow_ == lastNow_)
+        {
+            handoverWanted_.reset();
+            if (std::exchange(budget_.landing, false))
+            {
+                Handover(*current, fx);
+            }
+        }
+        else
+        {
+            statusWanted_ = true;
+        }
     }
 
     switch (phase_)
@@ -511,6 +563,7 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     rollover_.clear();
     landing_.reset();
     chargeBegan_ = false;
+    approach_ = false;
     roundAgedMs_ = 0;
     ownEffectSince_.reset();
     // Only who is fighting the party (Combatant::engaged): the rest wait
@@ -602,7 +655,10 @@ void TurnMachine::StartNextTurn(std::vector<Effect> &fx)
     }
     if (roundPending_)
     {
-        roundPending_ = false;
+        // Pending until the round has begun: a conversation that came while
+        // the world ran on between two rounds (RoundPadding) brought the
+        // fight back to here with the round's start forgotten, its effects
+        // not aged and nobody told (the random fights, seed 27, 2026-10-02).
         const auto minMs = static_cast<std::uint32_t>(settings_.roundMinSeconds * 1000.0f);
         if (roundRunMs_ < minMs)
         {
@@ -615,6 +671,7 @@ void TurnMachine::StartNextTurn(std::vector<Effect> &fx)
             phase_ = Phase::RoundPadding;
             return;
         }
+        roundPending_ = false;
         roundRunMs_ = 0;
         SpendRound(fx);
         Signal(fx, events::kRoundStart, kNoObject, order_.Round(), 0);
@@ -664,6 +721,7 @@ void TurnMachine::StepPadding(std::vector<Effect> &fx)
     {
         return;
     }
+    roundPending_ = false;
     roundRunMs_ = 0;
     SpendRound(fx);
     Signal(fx, events::kRoundStart, kNoObject, order_.Round(), 0);
@@ -678,6 +736,12 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     budget_ = Budget{};
     heldByEffect_ = false;
     budget_.spend = NewSpend(who);
+    if (const auto rolled = rollover_.find(who.id); Timed() && rolled != rollover_.end())
+    {
+        budget_.rolledMs = rolled->second;
+    }
+    clockSeenMs_ = 0;
+    clockRuns_ = true;
     std::string pending;
     if (const auto charge = std::ranges::find(charges_, who.id, &Charge::caster);
         Timed() && charge != charges_.end() && charge->owedMs > 0)
@@ -687,7 +751,7 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
         // nothing. A kept one lands now (LandCast).
         const std::uint32_t owed = std::exchange(charge->owedMs, 0);
         (void)budget_.spend.SpendAction(owed);
-        budget_.spend.Credit(charge->walk);
+        budget_.pendingPaidMs = owed;
         pending = std::format(", {:.2f} s of it paid for its pending {}", static_cast<float>(owed) / 1000.0f,
                               Name(charge->type));
         if (charge->kept)
@@ -706,12 +770,12 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     orderPending_ = false;
 
     HoldAtTurnStart(who, fx);
-    // The game's speed for this turn before the camera moves: twice at
-    // ai_turn_speed 2 the camera's pan to the hero, issued before the speed
-    // went back to 1, never arrived (play tests 2 and 5, 2026-09-30).
-    // Whether the order was why is not known yet: the camera now says
-    // whether a pan got there (src/game/Camera.cpp).
-    SetSpeed(TurnSpeed(who), fx);
+    // The fight's speed, set as its first turn begins and again after a
+    // conversation, before the camera moves: when an AI's turn had a speed
+    // of its own, twice the pan to the hero, issued before the speed went
+    // back to 1, never arrived (play tests 2 and 5, 2026-09-30). The camera
+    // says whether a pan got there (src/game/Camera.cpp).
+    SetSpeed(TurnSpeed(), fx);
 
     if (Timed())
     {
@@ -728,8 +792,10 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     }
     Emit(EventKind::TurnStarted, who.id, PlayerControls(who) ? "yours" : "AI",
          static_cast<std::int32_t>(std::lround(budget_.MovementLeft() * 10.0f)));
-    Signal(fx, events::kTurnStart, who.id, order_.Round(), static_cast<std::int32_t>(who.side));
-    TickCooldowns(who, fx);
+    TellTurnStart(who, fx);
+    // With time, what a pending action took of the bar has moved the clock:
+    // what counts on it moves now, the turn begun and said.
+    MoveClock(fx);
     // An AI's turn is shown once it has chosen (Judge): centring the camera
     // on an enemy just before its AI was told its turn had come left the AI
     // choosing nothing, every turn, in play (2026-09-30).
@@ -888,6 +954,7 @@ std::optional<Verdict> TurnMachine::PayAction(const Combatant &who, const Comman
         // out, its swing never begun.
         Log(LogLevel::Info, std::format("{}: {} with {:.1f} m to walk and {}: it closes in", Utf8(who.name),
                                         Name(request.type), walk, BudgetLeft()));
+        budget_.onArrivalMs = cost; // taken if it gets there after all
         return std::nullopt;
     }
     const std::uint32_t walkMs = budget_.spend.WalkCostMs(walk);
@@ -898,33 +965,80 @@ std::optional<Verdict> TurnMachine::PayAction(const Combatant &who, const Comman
     if (walkMs + cost > left && keepable)
     {
         const std::uint32_t owed = walkMs + cost - left;
-        budget_.spend.SpendAllActions();
+        // A walk to its target is taken now, paid out of this turn (it
+        // fits: the walk alone was judged above), and the action lands
+        // from there: a creature that stood where it was while its attack
+        // pended closed on nobody (play test 25's duel: a spider 13.6 m off
+        // walked, was stopped a step short and lost its turn's time).
+        const bool approach = walk >= kMinStep;
+        if (approach)
+        {
+            budget_.spend.Prepay(walk);
+            budget_.spend.Pend();
+            budget_.spend.Credit(kApproachSlack);
+        }
+        else
+        {
+            budget_.spend.SpendAllActions();
+        }
         std::erase_if(charges_, [&](const Charge &c) { return c.caster == who.id; });
-        charges_.push_back(Charge{who.id, request.ability, 1, owed, walk, request.type, true});
-        // The turn is over: at once, or, with a command of its creature's
-        // still running (an AI queues its next as one ends, and with time
-        // it may have time for it), as that command settles, its bar spent
-        // (StepSettling). Ended at once, the running one went on into the
-        // next creature's turn (test_fights.cpp, seed 1).
-        chargeBegan_ = phase_ != Phase::Executing;
+        charges_.push_back(Charge{who.id, request.ability, 1, owed, request.type, true,
+                                  request.type == CommandType::UseAbility && request.abilityType == kAbilitySpell});
+        if (approach)
+        {
+            // The walk comes with the next frame's effects, as a charged
+            // cast's release does (LandCast): the turn is at it from now,
+            // the world running, and ends as it settles, or as a turn does
+            // whose command never came.
+            pending_.push_back(Effect::Of(EffectKind::Approach, who.id));
+            approach_ = true;
+            if (phase_ != Phase::Executing)
+            {
+                phase_ = Phase::Executing;
+                executingSince_ = clock_;
+                idleTicks_ = 0;
+            }
+        }
+        else
+        {
+            // The turn is over: at once, or, with a command of its
+            // creature's still running (an AI queues its next as one ends,
+            // and with time it may have time for it), as that command
+            // settles, its bar spent (StepSettling). Ended at once, the
+            // running one went on into the next creature's turn
+            // (test_fights.cpp, seed 1).
+            chargeBegan_ = phase_ != Phase::Executing;
+            if (chargeBegan_ && PlayerControls(who))
+            {
+                chargeBegan_ = false;
+                pendingEndNow_ = lastNow_ + kPendingSayMs;
+            }
+        }
         Log(LogLevel::Info,
             std::format("{} begins {} ({:.2f} s{}): {:.2f} s of it is over what is left, and it lands on its next "
-                        "turn",
+                        "turn{}",
                         Utf8(who.name), Name(request.type), static_cast<float>(cost) / 1000.0f,
                         walkMs > 0 ? std::format(" and {:.2f} s of walk", static_cast<float>(walkMs) / 1000.0f) : "",
-                        static_cast<float>(owed) / 1000.0f));
-        Emit(EventKind::CastCharging, who.id, std::format("{:.1f} s more", static_cast<float>(owed) / 1000.0f),
-             request.ability);
-        Floaty(pending_, who.id, L"Next turn", kGold);
+                        static_cast<float>(owed) / 1000.0f, approach ? "; it walks to its target now" : ""));
+        Emit(EventKind::ActionPending, who.id, std::format("{:.1f} s more", static_cast<float>(owed) / 1000.0f),
+             request.ability, Name(request.type));
+        // Said over the player's own, whose order it was; an enemy's every
+        // round was noise (play test 25).
+        if (PlayerControls(who))
+        {
+            Floaty(pending_, who.id, L"Lands next turn", kGold);
+        }
+        MoveClock(pending_);
         return Verdict::Hold;
     }
     budget_.spend.Prepay(walk);
     const std::uint32_t owed = budget_.spend.SpendAction(cost);
     budget_.lastCostMs = cost - owed;
+    MoveClock(pending_);
     if (owed > 0)
     {
         std::erase_if(charges_, [&](const Charge &c) { return c.caster == who.id; });
-        charges_.push_back(Charge{who.id, request.ability, 1, owed, 0.0f, request.type, false});
+        charges_.push_back(Charge{who.id, request.ability, 1, owed, request.type, false});
         Log(LogLevel::Info, std::format("{}: {} runs now and owes {:.2f} s to its next turn", Utf8(who.name),
                                         Name(request.type), static_cast<float>(owed) / 1000.0f));
     }
@@ -936,6 +1050,80 @@ std::optional<Verdict> TurnMachine::PayAction(const Combatant &who, const Comman
                         walkMs > 0 ? std::format(" and its walk {:.2f} s", static_cast<float>(walkMs) / 1000.0f) : ""));
     }
     return std::nullopt;
+}
+
+void TurnMachine::ChargeOnArrival(std::vector<Effect> &fx)
+{
+    const Combatant *current = order_.Current();
+    const std::uint32_t cost = std::exchange(budget_.onArrivalMs, 0);
+    if (current == nullptr || cost == 0)
+    {
+        return;
+    }
+    const std::uint32_t owed = budget_.spend.SpendAction(cost);
+    budget_.lastCostMs = cost - owed;
+    if (owed > 0)
+    {
+        Owe(current->id, owed, budget_.lastType, budget_.lastAbility);
+    }
+    Log(LogLevel::Info,
+        std::format("{} is at its {}: its {:.2f} s taken now{}; {}", Utf8(current->name), Name(budget_.lastType),
+                    static_cast<float>(cost) / 1000.0f,
+                    owed > 0 ? std::format(", {:.2f} s of it owed to its next turn", static_cast<float>(owed) / 1000.0f)
+                             : std::string{},
+                    BudgetLeft()));
+    MoveClock(fx);
+}
+
+bool TurnMachine::Conjuring(ObjectId who) const
+{
+    const auto charge = std::ranges::find(charges_, who, &Charge::caster);
+    return Active() && ((charge != charges_.end() && charge->kept && charge->spell) ||
+                        (landing_ && landing_->caster == who && landing_->spell));
+}
+
+bool TurnMachine::OnDamaged(ObjectId target, float damage, bool physical, float threshold)
+{
+    if (!physical || !(damage > threshold) || !Conjuring(target))
+    {
+        return false;
+    }
+    const Combatant *c = order_.Find(target);
+    Log(LogLevel::Info, std::format("{} is struck for {:.0f} (over {:.0f}) with a spell pending",
+                                    c != nullptr ? Utf8(c->name) : std::string{"?"}, damage, threshold));
+    Interrupt(target, "struck", pending_);
+    return true;
+}
+
+// With time: an action that the engine was read to take seconds, and whose
+// command was over in a fraction of them, did not play, whatever the engine
+// said of it (nothing: no failure came). Lyna's Chain Lightning, 4.99 s on a
+// bar of 5.0, was over in 0.4 s with no bolt, no stamina spent, and her
+// whole turn charged for it (play test 29: its target had not yet joined
+// the fight). Its time is given back, once a turn, as a failed command's
+// is, and its cooldown not held.
+void TurnMachine::OverAtOnce(std::vector<Effect> &fx)
+{
+    const Combatant *current = order_.Current();
+    if (current == nullptr || !Timed() || !settings_.giveBackUnplayed || budget_.lastKind != CommandKind::Action ||
+        !budget_.lastMeasured || budget_.lastCostMs < kLeastToldMs ||
+        clock_ - budget_.lastClock >= budget_.lastCostMs / kOverAtOnce)
+    {
+        return;
+    }
+    // (OnCommandFailed says "Nothing happened" over the player's own.)
+    (void)fx;
+    (void)OnCommandFailed(current->id, budget_.lastType, budget_.lastAbility, "over at once: it did nothing");
+}
+
+void TurnMachine::Owe(ObjectId who, std::uint32_t ms, CommandType type, std::int32_t ability)
+{
+    if (const auto charge = std::ranges::find(charges_, who, &Charge::caster); charge != charges_.end())
+    {
+        charge->owedMs += ms;
+        return;
+    }
+    charges_.push_back(Charge{who, ability, 1, ms, type, false});
 }
 
 bool TurnMachine::ActionToGiveBack() const
@@ -984,8 +1172,9 @@ bool TurnMachine::ChargingTurn(const Combatant &who, std::vector<Effect> &fx)
         Log(LogLevel::Info,
             std::format("round {}: {}'s turn is spent on its pending {} ({:.2f} s more)", order_.Round(),
                         Utf8(who.name), Name(charge->type), static_cast<float>(charge->owedMs) / 1000.0f));
-        Emit(EventKind::CastCharging, who.id,
-             std::format("{:.1f} s more", static_cast<float>(charge->owedMs) / 1000.0f), charge->ability);
+        Emit(EventKind::ActionPending, who.id,
+             std::format("{:.1f} s more", static_cast<float>(charge->owedMs) / 1000.0f), charge->ability,
+             Name(charge->type));
     }
     else
     {
@@ -999,8 +1188,9 @@ bool TurnMachine::ChargingTurn(const Combatant &who, std::vector<Effect> &fx)
                                         Utf8(who.name), charge->ability, charge->turns));
         Emit(EventKind::CastCharging, who.id, std::format("{} more", charge->turns), charge->ability);
     }
-    Signal(fx, events::kTurnStart, who.id, order_.Round(), static_cast<std::int32_t>(who.side));
-    TickCooldowns(who, fx);
+    TellTurnStart(who, fx);
+    clockSeenMs_ = 0;
+    clockRuns_ = true;
     Floaty(fx, who.id, L"Casting", kGold);
     EndTurn(fx, "charging");
     return true;
@@ -1019,7 +1209,15 @@ bool TurnMachine::LandCast(const Combatant &who, std::vector<Effect> &fx)
     landing_ = *charge;
     charges_.erase(charge);
     budget_.landing = true;
-    Log(LogLevel::Info, std::format("{}'s charged cast of ability {} is due", Utf8(who.name), landing_->ability));
+    if (Timed())
+    {
+        Log(LogLevel::Info,
+            std::format("{}'s pending {} lands: its time is paid", Utf8(who.name), Name(landing_->type)));
+    }
+    else
+    {
+        Log(LogLevel::Info, std::format("{}'s charged cast of ability {} is due", Utf8(who.name), landing_->ability));
+    }
     Effect release = Effect::Of(EffectKind::ReleaseCast, who.id);
     release.a = landing_->ability;
     fx.push_back(release);
@@ -1032,8 +1230,11 @@ bool TurnMachine::LandCast(const Combatant &who, std::vector<Effect> &fx)
 void TurnMachine::Interrupt(ObjectId who, std::string_view why, std::vector<Effect> &fx)
 {
     std::int32_t ability = -1;
+    CommandType type = CommandType::UseAbility;
+    bool spell = false;
     if (const auto charge = std::ranges::find(charges_, who, &Charge::caster); charge != charges_.end())
     {
+        spell = charge->spell;
         // What an action that ran (not kept) still owed: forgiven, as what
         // interrupts takes the creature's turn whole.
         if (!charge->kept)
@@ -1042,11 +1243,14 @@ void TurnMachine::Interrupt(ObjectId who, std::string_view why, std::vector<Effe
             return;
         }
         ability = charge->ability;
+        type = charge->type;
         charges_.erase(charge);
     }
     else if (landing_ && landing_->caster == who)
     {
         ability = landing_->ability;
+        type = landing_->type;
+        spell = landing_->spell;
         landing_.reset();
     }
     else
@@ -1054,11 +1258,68 @@ void TurnMachine::Interrupt(ObjectId who, std::string_view why, std::vector<Effe
         return;
     }
     const Combatant *c = order_.Find(who);
-    Log(LogLevel::Info, std::format("{}'s cast of ability {} is interrupted: {}",
-                                    c != nullptr ? Utf8(c->name) : std::string{"?"}, ability, why));
-    Emit(EventKind::CastInterrupted, who, std::string{why}, ability);
+    const std::string name = c != nullptr ? Utf8(c->name) : std::string{"?"};
+    if (Timed())
+    {
+        Log(LogLevel::Info, std::format("{}'s pending {} is dropped: {}", name, Name(type), why));
+        Emit(EventKind::ActionDropped, who, std::string{why}, ability, Name(type));
+    }
+    else
+    {
+        Log(LogLevel::Info, std::format("{}'s cast of ability {} is interrupted: {}", name, ability, why));
+        Emit(EventKind::CastInterrupted, who, std::string{why}, ability);
+    }
     fx.push_back(Effect::Of(EffectKind::DropCast, who));
-    Floaty(fx, who, L"Interrupted", kGrey);
+    // Not as the fight ends: nothing interrupted it (play test 25); nor,
+    // with time, over one that fell or is gone, where every attacker has
+    // an action pending most of the time.
+    // In the mod's own words: the game floats a white "Interrupted!" of its
+    // own over a creature whose swing a blow breaks, three times in one
+    // fight over ordinary bites, and the two could not be told apart (play
+    // test 28).
+    if (why == "held" || why == "struck" || (!Timed() && why != "the fight over"))
+    {
+        // In the gold of the mod's other words: small and white it was found
+        // over the ogre's pale body only because the log said when to look
+        // (play test 29), and in red, under the game's own red number for
+        // the blow, it read worse (play test 30).
+        Floaty(fx, who, spell ? L"Spell lost" : L"Action lost", kGold);
+    }
+}
+
+// The game layer did not give a kept cast or action when asked to: its
+// target was gone. What its creature's turn paid for it as it began is
+// given back; the turn goes on as when a cast does not come (StepSettling).
+void TurnMachine::KeptVoid(ObjectId who)
+{
+    if (!landing_ || landing_->caster != who)
+    {
+        return;
+    }
+    const Combatant *current = order_.Current();
+    const std::uint32_t paid = current != nullptr && current->id == who ? budget_.pendingPaidMs : 0;
+    if (paid > 0)
+    {
+        budget_.spend.GiveActionBack(paid);
+        budget_.pendingPaidMs = 0;
+    }
+    const Combatant *c = order_.Find(who);
+    Log(LogLevel::Info,
+        std::format("{}'s pending {} is dropped: its target is gone{}", c != nullptr ? Utf8(c->name) : std::string{"?"},
+                    Name(landing_->type),
+                    paid > 0 ? std::format("; the {:.2f} s it owed given back", static_cast<float>(paid) / 1000.0f)
+                             : std::string{}));
+    Emit(Timed() ? EventKind::ActionDropped : EventKind::CastInterrupted, who, "its target is gone", landing_->ability,
+         Name(landing_->type));
+    landing_.reset();
+    // Nothing is coming to wait for: the turn is its creature's now, handed
+    // over as any turn is (Step). Left at "executing", a creature held by an
+    // effect no condition names waited out its whole turn there, the grace
+    // never counted (test_fights.cpp's long run, seed 129 with time).
+    if (current != nullptr && current->id == who && budget_.landing)
+    {
+        handoverWanted_ = who;
+    }
 }
 
 // After a conversation or cutscene: the same turn, with what it had left
@@ -1088,24 +1349,44 @@ bool TurnMachine::LoseTurn(const Combatant &who, std::vector<Effect> &fx)
     // Owed turns; or, the condition on the game's clock (condition_turns 0),
     // every turn it still holds the creature: it cannot act, and with
     // effects' time held its command cannot end within the turn.
-    const bool owes = held.kind == Condition::Disabled && held.turns > 0;
-    const bool holds = (settings_.conditionTurns == 0 || held.onClock) && held.seen == Condition::Disabled;
+    // With time, the hold's own seconds: a turn's worth or more is this
+    // turn; less is taken of the turn's bar as it begins (BeginTurn).
+    const std::uint32_t turn = TurnMs();
+    const bool timed = Timed() && held.kind == Condition::Disabled && held.owedMs > 0;
+    const bool owes = timed ? held.owedMs >= turn : !Timed() && held.kind == Condition::Disabled && held.turns > 0;
+    // On the game's clock (condition_turns 0, and with time its seconds not
+    // read either): nothing is owed, and each turn it still holds is lost.
+    const bool holds = (held.onClock || (settings_.conditionTurns == 0 && held.kind == Condition::None)) &&
+                       held.seen == Condition::Disabled;
     if (!owes && !holds)
     {
         return false;
     }
-    if (owes)
+    if (owes && timed)
+    {
+        held.owedMs -= turn;
+    }
+    else if (owes)
     {
         --held.turns;
     }
     budget_ = Budget{};
     budget_.spend.SpendAllActions();
-    Log(LogLevel::Info, std::format("round {}: {}'s turn is lost to its condition ({} more)", order_.Round(),
-                                    Utf8(who.name), held.turns));
-    Emit(EventKind::TurnLost, who.id, {}, held.turns);
-    Signal(fx, events::kTurnStart, who.id, order_.Round(), static_cast<std::int32_t>(who.side));
-    TickCooldowns(who, fx);
-    Floaty(fx, who.id, who.name + L" loses the turn", kGrey);
+    if (Timed())
+    {
+        Log(LogLevel::Info, std::format("round {}: {}'s turn is lost to its condition ({:.1f} s more)", order_.Round(),
+                                        Utf8(who.name), static_cast<float>(held.owedMs) / 1000.0f));
+    }
+    else
+    {
+        Log(LogLevel::Info, std::format("round {}: {}'s turn is lost to its condition ({} more)", order_.Round(),
+                                        Utf8(who.name), held.turns));
+    }
+    Emit(EventKind::TurnLost, who.id, {}, Timed() ? static_cast<std::int32_t>(held.owedMs) : held.turns);
+    TellTurnStart(who, fx);
+    clockSeenMs_ = 0;
+    clockRuns_ = true;
+    Floaty(fx, who.id, who.name + L" loses the turn", who.side == Side::Party ? kGold : kGrey);
     EndTurn(fx, "held by its condition");
     return true;
 }
@@ -1121,7 +1402,18 @@ void TurnMachine::HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx)
         return;
     }
     Held &held = found->second;
-    if (held.turns <= 0 && held.seen != Condition::None)
+    if (Timed() && held.kind == Condition::Disabled && held.owedMs > 0)
+    {
+        // Less than a turn's worth (LoseTurn took the whole turns): that
+        // share of this turn's bar, whatever the bar holds.
+        const std::uint32_t before = budget_.spend.CapacityLeftMs();
+        const std::uint32_t clock = budget_.spend.HoldClock(std::exchange(held.owedMs, 0));
+        Log(LogLevel::Info,
+            std::format("{}'s condition takes {:.2f} s of its turn's clock, {:.2f} s of its bar: {}", Utf8(who.name),
+                        static_cast<float>(clock) / 1000.0f,
+                        static_cast<float>(before - budget_.spend.CapacityLeftMs()) / 1000.0f, BudgetLeft()));
+    }
+    if (held.turns <= 0 && held.owedMs == 0 && held.seen != Condition::None)
     {
         Log(LogLevel::Info, std::format("{}'s condition has had its turns: ended", Utf8(who.name)));
         Emit(EventKind::ConditionEnded, who.id);
@@ -1167,8 +1459,26 @@ void TurnMachine::HoldUsed(std::vector<Effect> &fx)
 
 // A turn of its user passes (taken or lost): what has waited its turns is
 // ready now, before the creature is told its turn has come.
+// A turn's beginning, for what counts turns: the scripts are told, and the
+// cooldowns that count their user's turns count this one. A turn that was
+// put off (Delay) begins a second time in its round, or is then lost to a
+// hold: told and counted once, the first time.
+void TurnMachine::TellTurnStart(const Combatant &who, std::vector<Effect> &fx)
+{
+    if (order_.Delayed(who.id))
+    {
+        return;
+    }
+    Signal(fx, events::kTurnStart, who.id, order_.Round(), static_cast<std::int32_t>(who.side));
+    TickCooldowns(who, fx);
+}
+
 void TurnMachine::TickCooldowns(const Combatant &who, std::vector<Effect> &fx)
 {
+    if (Timed())
+    {
+        return; // on its user's clock: MoveClock
+    }
     for (Hold &h : holds_)
     {
         if (h.creature != who.id)
@@ -1193,11 +1503,66 @@ void TurnMachine::TickCooldowns(const Combatant &who, std::vector<Effect> &fx)
     std::erase_if(holds_, [](const Hold &h) { return h.turns <= 0; });
 }
 
+// With time: the current creature's clock moved on by its share of the bar
+// spent since the last look, or (a turn over) the rest of the way to a
+// turn's seconds.
+void TurnMachine::MoveClock(std::vector<Effect> &fx)
+{
+    const Combatant *current = order_.Current();
+    if (!Timed() || current == nullptr)
+    {
+        return;
+    }
+    const std::uint32_t now = budget_.spend.ClockElapsedMs();
+    if (now > clockSeenMs_)
+    {
+        AgeCooldowns(current->id, now - clockSeenMs_, fx);
+        clockSeenMs_ = now;
+    }
+}
+
+void TurnMachine::AgeCooldowns(ObjectId who, std::uint32_t clockMs, std::vector<Effect> &fx)
+{
+    constexpr std::uint32_t kSweepSteps = 16; // the quickbar's sweep is redrawn this many times over a cooldown
+    for (Hold &h : holds_)
+    {
+        if (h.creature != who || h.ofMs == 0)
+        {
+            continue;
+        }
+        const std::uint32_t before = h.leftMs;
+        h.leftMs -= std::min(h.leftMs, clockMs);
+        if (h.leftMs == 0)
+        {
+            fx.push_back(CooldownOf(h.creature, h.ability, 0));
+            const Combatant *c = order_.Find(who);
+            Log(LogLevel::Info,
+                std::format("{}'s ability {} is ready again", c != nullptr ? Utf8(c->name) : "?", h.ability));
+            Emit(EventKind::CooldownReleased, who, {}, h.ability);
+        }
+        else if (static_cast<std::uint64_t>(before) * kSweepSteps / h.ofMs !=
+                 static_cast<std::uint64_t>(h.leftMs) * kSweepSteps / h.ofMs)
+        {
+            fx.push_back(CooldownOf(
+                h.creature, h.ability,
+                static_cast<std::int32_t>(static_cast<std::uint64_t>(kCooldownHoldSeconds) * h.leftMs / h.ofMs),
+                kCooldownHoldSeconds));
+        }
+    }
+    std::erase_if(holds_, [&](const Hold &h) { return h.creature == who && h.ofMs > 0 && h.leftMs == 0; });
+}
+
 // The fight is over: what still waits goes back to seconds, its turns' worth.
 void TurnMachine::ReleaseCooldowns(std::vector<Effect> &fx)
 {
     for (const Hold &h : holds_)
     {
+        if (h.ofMs > 0)
+        {
+            fx.push_back(CooldownOf(h.creature, h.ability, static_cast<std::int32_t>((h.leftMs + 999) / 1000),
+                                    static_cast<std::int32_t>((h.ofMs + 999) / 1000)));
+            continue;
+        }
         fx.push_back(
             CooldownOf(h.creature, h.ability,
                        static_cast<std::int32_t>(std::ceil(static_cast<float>(h.turns) * CooldownTurnSeconds())),
@@ -1209,8 +1574,8 @@ void TurnMachine::ReleaseCooldowns(std::vector<Effect> &fx)
 // Effects' time in rounds: the clock every temporary effect ages on (DAOLib's
 // dao/Effects.h) held through a fight, so none wears off while someone
 // thinks or the world idles, and moved on a round's worth at each new round.
-// The game's speed (DAOLib's dao::clock::SetSpeed): an AI's turn at
-// ai_turn_speed, as BG3 speeds enemies' turns up; everything else at 1.
+// The game's speed (DAOLib's dao::clock::SetSpeed): a fight's turns at the
+// fight's speed ([turns] speed), conversations and everything else at 1.
 // Written only when it changes, so at the default of 1 never: another
 // plugin setting it (DAOLib's examples/speed) is left alone.
 void TurnMachine::SetSpeed(float speed, std::vector<Effect> &fx)
@@ -1271,7 +1636,7 @@ void TurnMachine::SpendRound(std::vector<Effect> &fx)
 void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
 {
     // Set already as the turn began; again for a turn handed over mid-way.
-    SetSpeed(TurnSpeed(who), fx);
+    SetSpeed(TurnSpeed(), fx);
     if (PlayerControls(who))
     {
         fx.push_back(Effect::Of(EffectKind::Select, who.id));
@@ -1327,6 +1692,11 @@ void TurnMachine::StepAwaiting(const Observation &obs, std::vector<Effect> &fx)
     if (endTurnRequested_)
     {
         EndTurn(fx, "ended by the player");
+        return;
+    }
+    if (std::exchange(delayRequested_, false) && CanDelay())
+    {
+        DelayTurn(fx);
         return;
     }
     if (orderPending_ && obs.nowMs - orderSeenNow_ >= kDispatchAfterMs)
@@ -1442,6 +1812,10 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     {
         return;
     }
+    if (budget_.onArrivalMs > 0 && actor.busy && !actor.moving && Classify(actor.current) == CommandKind::Action)
+    {
+        ChargeOnArrival(fx);
+    }
     // Its own action's effect keeps it there (roundAgedMs_): that effect's
     // time runs with the action. Not one it was held by as its turn began,
     // which costs the turn, nor a stun, which ends it.
@@ -1458,6 +1832,28 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         }
         if (const std::uint32_t ran = clock_ - *ownEffectSince_; ran >= kOwnEffectStepMs)
         {
+            // With time, the action costs the time it runs: its own cost
+            // covers the first of it, the bar the next, and what is over
+            // the bar is owed to its creature's next turns. A spider's
+            // Overwhelm ran 9.3 s for the 2 s it was charged (play test 27:
+            // "the one moment the fight stopped feeling like turns").
+            if (const Combatant *current = order_.Current(); Timed() && current != nullptr)
+            {
+                if (!budget_.ownEffectCover)
+                {
+                    budget_.ownEffectCover = budget_.lastCostMs;
+                }
+                const std::uint32_t free = std::min(*budget_.ownEffectCover, ran);
+                *budget_.ownEffectCover -= free;
+                if (const std::uint32_t over = ran - free; over > 0)
+                {
+                    if (const std::uint32_t owed = budget_.spend.SpendAction(over); owed > 0)
+                    {
+                        Owe(current->id, owed, budget_.lastType, budget_.lastAbility);
+                    }
+                    MoveClock(fx);
+                }
+            }
             ownEffectSince_ = clock_;
             roundAgedMs_ += ran;
             Effect age = Effect::Of(EffectKind::AgeTime);
@@ -1487,28 +1883,50 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     // Standing at a walk it does not take (kStoodMs): stopped. The player's
     // turn goes on, and an action that waited behind the walk and never
     // began is given back; an AI's turn ends as its command does.
+    // An attack too, while its creature stands well short of where its walk
+    // was to end: it is not swinging, it cannot get there (others stand in
+    // the way), and the engine gives up only after ten seconds of the
+    // world's time. A spider stood five seconds of a fight at twice the
+    // speed so (play test 29); stopped, its action is given back and its AI
+    // chooses again, once.
     const CommandKind at = Classify(actor.current);
-    if (actor.busy && !heldByEffect_ && (at == CommandKind::Move || at == CommandKind::Free))
+    const bool short_ = actor.current == CommandType::Attack && budget_.lastType == CommandType::Attack &&
+                        budget_.lastWalk - (budget_.spend.Walked() - budget_.movementAtCommand) > kStuckShort;
+    if (actor.busy && !heldByEffect_ && (at == CommandKind::Move || at == CommandKind::Free || short_))
     {
         if (!stoodAt_ || Distance(*stoodAt_, actor.position) > kStoodStill)
         {
             stoodAt_ = actor.position;
             stoodSince_ = clock_;
         }
-        else if (clock_ - stoodSince_ >= kStoodMs)
+        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs : kStoodMs))
         {
             const Combatant *current = order_.Current();
-            const bool waited =
-                budget_.lastKind == CommandKind::Action && ActionToGiveBack() && budget_.lastType != actor.current;
-            Log(LogLevel::Info,
-                std::format("{} stood {} ms at a {} without a step: stopped{}",
-                            current != nullptr ? Utf8(current->name) : std::string{"?"}, clock_ - stoodSince_,
-                            Name(actor.current), waited ? "; the action waiting behind it is given back" : ""));
+            const bool waited = budget_.lastKind == CommandKind::Action && ActionToGiveBack() &&
+                                (short_ || budget_.lastType != actor.current);
+            Log(LogLevel::Info, std::format("{} stood {} ms at a {} without a step: stopped{}",
+                                            current != nullptr ? Utf8(current->name) : std::string{"?"},
+                                            clock_ - stoodSince_, Name(actor.current),
+                                            !waited  ? ""
+                                            : short_ ? "; it cannot get to its target, and its action is given back"
+                                                     : "; the action waiting behind it is given back"));
             if (waited)
             {
                 GiveActionBack();
                 Emit(EventKind::ActionGivenBack, actor.id, std::format("stood still at a {}", Name(actor.current)), 0,
                      Name(budget_.lastType));
+            }
+            if (short_)
+            {
+                // What was to be taken on arriving is not; an AI chooses
+                // again (StepSettling), and the player is told.
+                budget_.onArrivalMs = 0;
+                budget_.refunded = true;
+                ++budget_.givenBack;
+                if (current != nullptr && PlayerControls(*current))
+                {
+                    Floaty(fx, actor.id, L"No way through", kGold);
+                }
             }
             fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
             stoodAt_.reset();
@@ -1538,7 +1956,8 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
             if (const Combatant *current = order_.Current())
             {
                 Log(LogLevel::Info, std::format("{} is held by an effect: its turn is lost", Utf8(current->name)));
-                Floaty(fx, current->id, current->name + L" loses the turn", kGrey);
+                Floaty(fx, current->id, current->name + L" loses the turn",
+                       current->side == Side::Party ? kGold : kGrey);
             }
             EndTurn(fx, "held by an effect");
             return;
@@ -1559,6 +1978,13 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     {
         return;
     }
+    // Its command is over and did not fail (OnCommandFailed drops what was
+    // to be taken): the action it walked for ran.
+    if (budget_.onArrivalMs > 0)
+    {
+        ChargeOnArrival(fx);
+    }
+    OverAtOnce(fx);
     const Combatant *current = order_.Current();
     const bool player = current != nullptr && PlayerControls(*current);
     const int wait = player ? settings_.settleMs : std::max(settings_.settleMs, settings_.aiFollowUpMs);
@@ -1589,8 +2015,21 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
         return;
     }
     const bool player = PlayerControls(*current);
+    // An AI is told to choose in mid-turn only on a look taken with this
+    // step: on one half a second old, a creature stunned since was told
+    // (test_fights.cpp, seeds 35 and 126 with time). The statuses are asked
+    // for with the next step, which ends the turn of one that is held.
+    const bool fresh = player || !Timed() || lastStatusNow_ == lastNow_;
+    if (!fresh)
+    {
+        statusWanted_ = true;
+    }
     // The charged cast is done (or never came): the turn it began is its
     // creature's now, handed over as any turn is: an AI told, the player waited on.
+    if (budget_.landing && !fresh)
+    {
+        return;
+    }
     if (std::exchange(budget_.landing, false))
     {
         if (landing_)
@@ -1620,6 +2059,14 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
     // no room at his target every turn (COMMAND_FAILED_NO_SPACE_IN_MELEE_
     // RING), stood through a whole fight (the user, 2026-09-30). Once a
     // turn, as the action is given back once.
+    // Twice given back: it has nothing it can get to, and would stand at a
+    // third try as long as at the first two (a blocked spider's turn was six
+    // seconds: play test 31).
+    if (!player && budget_.givenBack >= kGivenBackEnough)
+    {
+        EndTurn(fx, "nothing it can get to");
+        return;
+    }
     if (!player && budget_.spend.ActionsLeft() > 0 && budget_.refunded && !budget_.retried && !budget_.outOfMovement)
     {
         budget_.retried = true;
@@ -1641,6 +2088,10 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
         if (Timed() && budget_.spend.ActionsLeft() > 0 && !budget_.outOfMovement &&
             budget_.commands < settings_.maxCommandsPerTurn)
         {
+            if (!fresh)
+            {
+                return;
+            }
             Log(LogLevel::Info, std::format("{} chooses again: {}", Utf8(current->name), BudgetLeft()));
             fx.push_back(Effect::Of(EffectKind::PokeAi, current->id));
             deadline_ = clock_ + static_cast<std::uint32_t>(settings_.aiThinkMs);
@@ -1681,6 +2132,7 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
         if (step <= kTeleport)
         {
             budget_.spend.Walk(step);
+            MoveClock(fx);
         }
     }
     lastPosition_ = actor.position;
@@ -1695,6 +2147,31 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
     {
         return;
     }
+    // With time, an action charged as it was let through, whose walk then
+    // runs past the bar: its time goes to the walk, and the action is
+    // charged when its creature gets there (ChargeOnArrival), what does not
+    // fit then owed to the next turn. Stopped here, a bandit that walked
+    // for a line of sight lost the turn, its shot never fired (play test
+    // 26), as a spider did whose path was longer than the gate could tell.
+    if (budget_.spend.Timed() && budget_.lastKind == CommandKind::Action && budget_.lastCostMs > 0 &&
+        budget_.onArrivalMs == 0)
+    {
+        budget_.onArrivalMs = budget_.lastCostMs;
+        budget_.spend.GiveActionBack(std::exchange(budget_.lastCostMs, 0));
+        budget_.spend.SettleOverwalk();
+        const Combatant *walker = order_.Current();
+        Log(LogLevel::Info,
+            std::format("{}'s walk runs past its bar: its {}'s {:.2f} s goes to the walk, and is "
+                        "taken when it gets there ({})",
+                        walker != nullptr ? Utf8(walker->name) : std::string{"?"}, Name(budget_.lastType),
+                        static_cast<float>(budget_.onArrivalMs) / 1000.0f, BudgetLeft()));
+        MoveClock(fx);
+        if (budget_.spend.Overwalked() < kOvershoot)
+        {
+            return;
+        }
+    }
+    budget_.onArrivalMs = 0; // stopped: the action never began
 
     fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
     // Stopped on the way to an attack or ability, it never used it: it is
@@ -1716,6 +2193,20 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
                         }) > 0;
     budget_.outOfMovement = true;
     const Combatant *current = order_.Current();
+    if (budget_.approachWalk)
+    {
+        // The mod's own walk, to where its creature's kept attack lands:
+        // it did what was ordered. "Out of movement" over it said it had
+        // failed (play test 27).
+        Log(LogLevel::Info,
+            std::format("{}'s walk to its kept attack's target ends where the meters paid for end ({:.1f} m)",
+                        current != nullptr ? Utf8(current->name) : std::string{"?"}, budget_.spend.Walked()));
+        if (current != nullptr && !PlayerControls(*current))
+        {
+            EndTurn(fx, "its action pending");
+        }
+        return;
+    }
     Floaty(fx, actor.id, L"Out of movement", kGrey);
     Log(LogLevel::Info,
         std::format("{} is out of movement ({:.1f} of {:.1f} m){}",
@@ -1732,6 +2223,14 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
 void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
 {
     HoldUsed(fx);
+    if (const Combatant *current = order_.Current(); current != nullptr && Timed() && std::exchange(clockRuns_, false))
+    {
+        // Its clock moves a turn's seconds a turn, whatever was spent,
+        // banked or lost: the rest of the way now.
+        const std::uint32_t turn = TurnMs();
+        AgeCooldowns(current->id, turn - std::min(turn, clockSeenMs_), fx);
+    }
+    clockSeenMs_ = 0;
     if (const Combatant *current = order_.Current())
     {
         // With time, what is left of the bar rolls over, to the creature's
@@ -1755,9 +2254,18 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
     {
         roundPending_ = true;
     }
+    LeaveTurn();
+}
+
+void TurnMachine::LeaveTurn()
+{
     budget_ = Budget{};
     heldByEffect_ = false;
     endedFor_ = kNoObject;
+    approach_ = false;
+    handoverWanted_.reset();
+    pendingEndNow_.reset();
+    delayRequested_ = false;
     budget_.spend.SpendAllActions();
     // Nothing to resume: a turn left open by a conversation and ended as
     // the fight came back (a cast kept just before it) is over, and the
@@ -1765,6 +2273,49 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
     resume_ = false;
     phase_ = Phase::TurnStart;
     wantScan_ = true;
+}
+
+// Delay: nothing of the turn was spent, so nothing of it is settled. Its
+// creature's clock has not moved and does not (no cooldown the older, no
+// rollover made or lost), and the bar it is given when its turn comes is
+// the one it had. The turn passes to the next standing combatant.
+bool TurnMachine::CanDelay() const
+{
+    const Combatant *current = order_.Current();
+    return settings_.delay && phase_ == Phase::AwaitingOrder && current != nullptr && PlayerControls(*current) &&
+           budget_.commands == 0 && budget_.pendingPaidMs == 0 && !budget_.landing &&
+           budget_.spend.Walked() < kMinStep && budget_.spend.ClockElapsedMs() == 0 && order_.CanDelay();
+}
+
+bool TurnMachine::OnDelay()
+{
+    if (!CanDelay())
+    {
+        return false;
+    }
+    delayRequested_ = true;
+    return true;
+}
+
+void TurnMachine::DelayTurn(std::vector<Effect> &fx)
+{
+    const Combatant *current = order_.Current();
+    if (current == nullptr)
+    {
+        return;
+    }
+    const ObjectId who = current->id;
+    const std::wstring name = current->name;
+    if (!order_.Delay())
+    {
+        return;
+    }
+    Log(LogLevel::Info, std::format("{}'s turn is put off to the round's end, nothing of it spent", Utf8(name)));
+    Emit(EventKind::TurnDelayed, who);
+    Floaty(fx, who, name + L" waits", kGrey);
+    clockRuns_ = false; // not this turn's end: its clock stays where it is
+    clockSeenMs_ = 0;
+    LeaveTurn();
 }
 
 void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
@@ -1778,6 +2329,7 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
         fx.push_back(Effect::Of(EffectKind::Select, hero_));
     }
     Emit(EventKind::FightOver, kNoObject, std::string{why});
+    playerPaused_ = false;
     while (!charges_.empty())
     {
         Interrupt(charges_.front().caster, "the fight over", fx);
@@ -1787,6 +2339,7 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
         Interrupt(landing_->caster, "the fight over", fx);
     }
     chargeBegan_ = false;
+    approach_ = false;
     HoldUsed(fx);
     ReleaseCooldowns(fx);
     HoldTime(false, fx);
@@ -1939,6 +2492,24 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
                                                 Utf8(c->name)));
                 Emit(EventKind::ConditionStillHeld, c->id);
             }
+            else if (Timed() && (status.conditionSeconds > 0.0f || settings_.conditionTurns > 0))
+            {
+                // Its own seconds, as the engine holds them now; where they
+                // cannot be read, condition_turns' worth (at 0, below: its
+                // turns lost while it lasts).
+                constexpr float kLongest = 600.0f;
+                const std::uint32_t known = static_cast<std::uint32_t>(
+                    std::lround(std::clamp(status.conditionSeconds, 0.0f, kLongest) * 1000.0f));
+                const std::uint32_t owed =
+                    known > 0 ? known : static_cast<std::uint32_t>(settings_.conditionTurns) * TurnMs();
+                held.kind = status.condition;
+                held.owedMs = std::max(held.owedMs, owed);
+                Log(LogLevel::Info, std::format("{} is held (stunned, pinned, knocked down): {:.1f} s of its time{}",
+                                                Utf8(c->name), static_cast<float>(held.owedMs) / 1000.0f,
+                                                known > 0 ? "" : " (its seconds not read: condition_turns' worth)"));
+                Emit(EventKind::ConditionHeld, c->id, known > 0 ? "its seconds" : "condition_turns",
+                     static_cast<std::int32_t>(held.owedMs));
+            }
             else if (settings_.conditionTurns > 0)
             {
                 held.kind = status.condition;
@@ -1949,6 +2520,12 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
             }
             else
             {
+                // On the game's clock: what an earlier hold still owed is
+                // this one's to take, for as long as it lasts (with an old
+                // debt kept, the machine ended this one as the debt was
+                // paid: test_fights.cpp, seed 9 with time).
+                held.kind = Condition::None;
+                held.owedMs = 0;
                 Log(LogLevel::Info, std::format("{} is held (stunned, pinned, knocked down): its turns lost while it "
                                                 "lasts",
                                                 Utf8(c->name)));
@@ -1970,6 +2547,14 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
             // a stun lifted before its victim's turn still cost the turn
             // (the fourth play test's addendum, 2026-09-30).
             const bool takenOff = timeHeld_ && (!agedAtNow_ || lastNow_ - *agedAtNow_ > kAgeSettleMs);
+            if (takenOff && held.owedMs > 0)
+            {
+                Log(LogLevel::Info, std::format("{}'s condition was taken off: the {:.1f} s it owed given back",
+                                                Utf8(c->name), static_cast<float>(held.owedMs) / 1000.0f));
+                held.owedMs = 0;
+                held.kind = Condition::None;
+                held.onClock = false;
+            }
             if (takenOff && held.turns > 0)
             {
                 Log(LogLevel::Info, std::format("{}'s condition was taken off: the {} turn{} it owed given back",
@@ -2013,7 +2598,7 @@ void TurnMachine::EnforcePause(const Observation &obs, std::vector<Effect> &fx) 
     {
         return;
     }
-    const bool want = WantsPaused(phase_, settings_);
+    const bool want = WantsPaused(phase_, settings_) || playerPaused_;
     if (want != obs.paused)
     {
         fx.push_back(Effect::Of(want ? EffectKind::Pause : EffectKind::Unpause));
@@ -2025,9 +2610,11 @@ bool TurnMachine::PlayerControls(const Combatant &c) const
     return c.side == Side::Party && (settings_.partyControl == PartyControl::Manual || c.hero);
 }
 
-float TurnMachine::TurnSpeed(const Combatant &who) const
+float TurnMachine::TurnSpeed() const
 {
-    return PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed;
+    // The fight's one speed, everyone's turns alike; within what the game's
+    // clock is known to take.
+    return std::clamp(settings_.fightSpeed, 0.1f, 8.0f);
 }
 
 bool TurnMachine::TurnSpent() const
@@ -2107,6 +2694,13 @@ Verdict TurnMachine::OnCommand(const CommandRequest &request)
         if (verdict != Verdict::Allow && phase_ == Phase::Dispatching)
         {
             phase_ = Phase::AwaitingOrder;
+        }
+        // An order taken while the player had the game paused runs it
+        // again: paused, the command would sit unbegun, and the turn be
+        // judged over a creature doing nothing.
+        if (verdict == Verdict::Allow && std::exchange(playerPaused_, false))
+        {
+            Log(LogLevel::Info, "the player's pause is over: an order was given");
         }
     }
     return verdict;
@@ -2200,7 +2794,8 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     // a controlled character carries on attacking by itself (in real time,
     // AI_DetermineCombatRound_Partial), and in play that ended a pinned
     // character's turn before the player had chosen (2026-09-30, 11:30).
-    if (player && !landing && request.source == Source::Script &&
+    const bool approaching = approach_ && kind == CommandKind::Move && request.source == Source::Script;
+    if (player && !landing && !approaching && request.source == Source::Script &&
         (kind == CommandKind::Action || kind == CommandKind::Move))
     {
         // At debug: the AI tries again each time a command of its ends.
@@ -2225,7 +2820,14 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     case CommandKind::Action:
         if (landing)
         {
-            Emit(EventKind::CastLanded, who->id, {}, request.ability);
+            if (Timed())
+            {
+                Emit(EventKind::ActionLanded, who->id, {}, request.ability, Name(request.type));
+            }
+            else
+            {
+                Emit(EventKind::CastLanded, who->id, {}, request.ability);
+            }
             landing_.reset();
             break; // for nothing: its turns were its price
         }
@@ -2282,7 +2884,9 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         if (const int charge = ChargeTurns(request); charge > 0)
         {
             std::erase_if(charges_, [&](const Charge &c) { return c.caster == who->id; });
-            charges_.push_back(Charge{who->id, request.ability, charge});
+            Charge begun{who->id, request.ability, charge};
+            begun.spell = request.abilityType == kAbilitySpell;
+            charges_.push_back(begun);
             chargeBegan_ = true;
             Log(LogLevel::Info, std::format("{} begins to cast ability {}: it charges {} turn{} and is cast on the "
                                             "next",
@@ -2343,7 +2947,14 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
                               : static_cast<int>(std::ceil(request.cooldownSeconds / CooldownTurnSeconds()));
         if (turns > 0)
         {
-            usedNow_.push_back(Hold{who->id, request.ability, turns, turns});
+            // With time, its own seconds on its user's clock; a mode turned
+            // off, a turn's worth, as built.
+            const auto ms =
+                !Timed() ? 0u
+                : request.sustained
+                    ? TurnMs()
+                    : static_cast<std::uint32_t>(std::lround(std::min(request.cooldownSeconds, 3600.0f) * 1000.0f));
+            usedNow_.push_back(Hold{who->id, request.ability, turns, turns, ms, ms});
         }
     }
     if (settings_.cameraFollow && !player && budget_.commands == 0)
@@ -2352,21 +2963,35 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         // the gate has returned.
         pending_.push_back(Effect::Of(EffectKind::CenterCamera, who->id));
     }
+    if (approaching)
+    {
+        approach_ = false; // the walk to its kept attack's target has come
+    }
+    budget_.approachWalk = approaching;
+    budget_.ownEffectCover.reset();
     ++budget_.commands;
     budget_.lastKind = kind;
     budget_.lastAbility = request.type == CommandType::UseAbility ? request.ability : -1;
     budget_.movementAtCommand = budget_.spend.Walked();
+    budget_.lastWalk = request.type == CommandType::Attack ? request.walk.value_or(0.0f) : 0.0f;
     budget_.lastType = request.type;
     budget_.lastAt = lastNow_;
+    budget_.lastClock = clock_;
+    budget_.lastMeasured = std::isfinite(request.actionSeconds) && request.actionSeconds > 0.0f;
     orderPending_ = false;
     Log(LogLevel::Info, std::format("{}: {} ({}, from {}); {}", Utf8(who->name), Name(request.type), Name(kind),
                                     Name(request.source), BudgetLeft()));
-    if (phase_ != Phase::Executing)
+    const bool began = phase_ != Phase::Executing;
+    if (began)
     {
         phase_ = Phase::Executing;
-        executingSince_ = clock_;
         idleTicks_ = 0;
     }
+    // Each command has max_action_ms of its own: counted from the turn's
+    // first, a spider's second attack was stopped a second after it began,
+    // the first having stood ten at a target it could not reach (play test
+    // 29, "still at a attack after 12000 ms").
+    executingSince_ = clock_;
     return Verdict::Allow;
 }
 
@@ -2385,6 +3010,21 @@ void TurnMachine::OnPlayerOrder(std::string_view what)
 }
 
 bool TurnMachine::OnPauseKey()
+{
+    if (!Active())
+    {
+        return false; // no fight, or a conversation over it (not Active): the game's own
+    }
+    if (!playerPaused_ && WantsPaused(phase_, settings_))
+    {
+        return true; // held still by the machine already: nothing to pause
+    }
+    playerPaused_ = !playerPaused_;
+    Log(LogLevel::Info, playerPaused_ ? "paused by the player" : "the player's pause is over");
+    return true;
+}
+
+bool TurnMachine::OnEndTurn()
 {
     if (!Active())
     {
@@ -2424,11 +3064,12 @@ MachineState TurnMachine::State() const
             continue;
         }
         const Combatant *c = order_.Find(id);
-        state.held.push_back({id, c != nullptr ? c->name : std::wstring{}, held.seen, held.turns, held.onClock});
+        state.held.push_back(
+            {id, c != nullptr ? c->name : std::wstring{}, held.seen, held.turns, held.onClock, held.owedMs});
     }
     for (const Hold &h : holds_)
     {
-        state.cooldowns.push_back({h.creature, h.ability, h.turns, h.of});
+        state.cooldowns.push_back({h.creature, h.ability, h.turns, h.of, h.leftMs, h.ofMs});
     }
     for (const Charge &c : charges_)
     {
@@ -2437,6 +3078,7 @@ MachineState TurnMachine::State() const
     state.lastRefusal = lastPlayerRefusal_;
     state.speed = speedSet_;
     state.heldByEffect = heldByEffect_;
+    state.playerPaused = playerPaused_;
     return state;
 }
 
@@ -2450,6 +3092,10 @@ bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t a
     {
         return false;
     }
+    if (Classify(type) == CommandKind::Action)
+    {
+        budget_.onArrivalMs = 0; // it never ran: nothing to take
+    }
     // A talent that never ran is not held on cooldown: an archer's was, for
     // a shot nobody took (the fourth play test, 19:21:52).
     if (type == CommandType::UseAbility &&
@@ -2458,15 +3104,29 @@ bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t a
         Log(LogLevel::Info,
             std::format("{}'s ability {} failed ({}): not held on cooldown", Utf8(current->name), ability, why));
     }
-    if (Classify(type) != CommandKind::Action || !ActionToGiveBack() || budget_.refunded)
+    // As built, once a turn: the turn's one action. With time, every time:
+    // three dagger attacks at a spider she could not get to, each over at
+    // once, and the second and third were charged 1.5 s each with no swing
+    // and no word (play test 30). An AI still chooses again but once for a
+    // failed action (StepSettling), and then as often as its commands allow.
+    if (Classify(type) != CommandKind::Action || !ActionToGiveBack() || (budget_.refunded && !Timed()))
     {
         return false;
     }
     GiveActionBack();
     budget_.refunded = true;
+    ++budget_.givenBack;
     Log(LogLevel::Info,
         std::format("{}'s {} failed ({}): its action is given back", Utf8(current->name), Name(type), why));
     Emit(EventKind::ActionGivenBack, who, std::string{why}, 0, Name(type));
+    // Said over the player's own: the bar dropped and filled again with no
+    // word, three tries running (play test 31).
+    if (PlayerControls(*current))
+    {
+        const bool way = why.find("PATH") != std::string_view::npos || why.find("MELEE_RING") != std::string_view::npos;
+        const bool sight = why.find("LINE_OF_SIGHT") != std::string_view::npos;
+        Floaty(pending_, who, way ? L"No way through" : sight ? L"No line of sight" : L"Nothing happened", kGold);
+    }
     return true;
 }
 
@@ -2489,15 +3149,35 @@ TurnView TurnMachine::View() const
         view.actionsLeft = budget_.spend.ActionsLeft();
         view.movementLeft = budget_.MovementLeft();
         view.movementMax = budget_.spend.MovementMax();
-        view.timed = budget_.spend.Timed();
+        // By the setting: the budget is reset between two turns, and by it
+        // the game's bar went back to experience for a third of a second
+        // (play test 27).
+        view.timed = Timed();
+        view.pendingPaidMs = budget_.pendingPaidMs;
         view.timeMs = budget_.spend.CapacityMs();
         view.timeLeftMs = budget_.spend.CapacityLeftMs();
+        view.turnMs = view.timed ? TurnMs() : 0;
+        view.paceMps = budget_.spend.PaceMps();
+        view.paidMeters = budget_.spend.PaidMeters();
+        view.canDelay = CanDelay();
+        view.delayOffered = settings_.delay && view.playerTurn;
+        view.playerPaused = playerPaused_;
+        view.rolledMs = budget_.rolledMs;
     }
     for (const TurnOrder::Slot &slot : order_.Upcoming(12))
     {
         const Combatant &c = *slot.who;
+        const auto owes = std::ranges::find(charges_, c.id, &Charge::caster);
+        // One that put its turn off waits for it while its place in this
+        // round is still to come.
+        const bool waits = !slot.current && slot.round == order_.Round() && order_.Delayed(c.id);
+        // What is pending is an ability's or an attack's (-1); the icon and
+        // the name are the game layer's to add.
+        const std::int32_t pending =
+            owes != charges_.end() && owes->type == CommandType::UseAbility ? owes->ability : -1;
         view.upcoming.push_back({c.id, c.name, c.tag, c.side, c.rank, c.health, c.down, slot.current, PlayerControls(c),
-                                 slot.round, c.energy, c.mana});
+                                 slot.round, c.energy, c.mana, owes != charges_.end() ? owes->owedMs : 0, waits,
+                                 pending, std::wstring{}, std::wstring{}});
     }
     return view;
 }

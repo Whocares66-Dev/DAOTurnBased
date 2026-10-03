@@ -6,6 +6,7 @@
 #include "core/Types.h"
 
 #include <cstdint>
+#include <optional>
 #include <span>
 
 namespace tb
@@ -162,6 +163,65 @@ enum class WeaponStyle : std::uint8_t
 // most talents with a Speed have none. The two the game's spells use are
 // known (245 builds up, 244 draws in); another stands in at 0.6 s and 3 s.
 [[nodiscard]] float ConjureSeconds(std::int32_t conjureAnim, int loops, bool staff);
+
+// What an attack takes, from what the game layer could read of the
+// attacker (DAOLib's dao/Animation.h and its play test, 2026-10-02, two
+// fights, the same in turns and in real time):
+// - a humanoid with a melee weapon: the scripts' formula, which the engine
+//   plays the swing to exactly (daggers' 1.000 s took 1.02 s, 46 times);
+// - a bow, a crossbow or a staff: a shot, 1.4 s for a follower and 1.6 s
+//   for the player's own character (the scripts' draw is shorter for
+//   followers), which no animation's length gives;
+// - anything else (a creature that is not a humanoid, a humanoid unarmed):
+//   its attack animation's length less the blend, 0.81 of it (a giant
+//   spider's 1.833 s took 1.49 s); the attack speed modifier does not
+//   reach it (read in the exe: nothing on that path reads a property).
+// 0 where nothing is known: the stand-in then.
+struct AttackFacts
+{
+    bool humanoid = false;
+    bool armed = false;  // a weapon in the main hand
+    bool ranged = false; // and it is a bow, a crossbow or a staff
+    bool hero = false;   // the player's own character
+    WeaponStyle style = WeaponStyle::None;
+    float weaponSpeed = 0.0f;         // the weapon's dspeed
+    float attackSpeedModifier = 1.0f; // creature property 31
+    std::optional<float> animation;   // its attack animation's length, seconds
+};
+inline constexpr float kShotSecondsFollower = 1.4f;
+inline constexpr float kShotSecondsHero = 1.6f;
+inline constexpr float kSwingShareOfAnimation = 0.81f;
+[[nodiscard]] float AttackSeconds(const AttackFacts &facts);
+
+// What an ability takes, the same way: its cast animation's length less the
+// blend, 0.84 of it (Dirty Fighting's 1.800 s took 1.51 s, a spider's Web's
+// 2.433 s took 2.07 s), and before it its conjuring, the start and so many
+// passes of the loop, by the creature's own animations where they are read
+// (ConjureSeconds' table otherwise). One with no cast animation plays
+// nothing of its own: an archery talent fires a shot (Pinning Shot's 1.7 s);
+// a monster's special is its script's business, and the stand-in's. 0
+// where nothing is known. An item's is its drink (kDrinkSeconds), not this.
+struct AbilityFacts
+{
+    std::optional<float> cast;        // seconds
+    std::optional<float> conjure;     // the conjure's start
+    std::optional<float> conjureLoop; // one pass of its loop
+    int loops = 0;                    // the conjuring speed's count
+    bool ranged = false;              // its user holds a bow, a crossbow or a staff
+    bool hero = false;
+    bool talent = false; // AbilityType talent: with no cast and a bow, a shot
+};
+inline constexpr float kCastShareOfAnimation = 0.84f;
+[[nodiscard]] float AbilitySeconds(const AbilityFacts &facts);
+
+// The damage over which a blow interrupts a spell being conjured
+// (rules_core.nss at EVENT_TYPE_DAMAGED, read 2026-10-01; dev/REBALANCE.md,
+// "Interruption"): for a party member 10 a rank of Combat Training (three
+// at most: the script's constant for the fourth is not the ability's id),
+// and 5, and half its level; for anyone else 10 for each of the ranks its
+// kind is given (a normal creature 2, a lieutenant 3, a boss 4, an elite
+// boss 6), and its level. Physical damage only.
+[[nodiscard]] float InterruptThreshold(bool party, int combatTraining, int level, int creatureRank);
 
 // Until the engine gives animations' lengths, by kind (dev/REBALANCE.md,
 // "What no rule reaches"): a swing that is not a formula's (the play tests'

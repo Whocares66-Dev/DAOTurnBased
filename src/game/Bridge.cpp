@@ -9,6 +9,7 @@
 #include "dao/Abilities.h"
 #include "dao/ClientExoApp.h"
 #include "dao/Clock.h"
+#include "dao/Effects.h"
 #include "dao/GameModes.h"
 #include "dao/Gda.h"
 #include "dao/Log.h"
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <unordered_set>
+#include <utility>
 
 namespace tb::game
 {
@@ -169,8 +171,10 @@ Observation Bridge::Observe(const Needs &needs, std::uint32_t nowMs)
     {
         // Ids are the save's: another game can reuse them.
         known_.clear();
+        keptVoid_.clear();
         return obs;
     }
+    obs.keptVoid = std::exchange(keptVoid_, {});
     if (needs.scan)
     {
         obs.scan = Scan();
@@ -513,6 +517,20 @@ CombatantStatus Bridge::Status(ObjectId id)
                 break;
             }
         }
+        // The seconds it has left, the longest of what holds it: with a
+        // turn a bar of time a hold takes its own time of its victim's
+        // turns (core: Held::owedMs). DAOLib's dao::effects::On (a893f20),
+        // first used here: not yet seen in play.
+        if (status.condition == Condition::Disabled)
+        {
+            for (const dao::effects::Standing &effect : dao::effects::On(id))
+            {
+                if (std::ranges::find(kHolding, static_cast<std::int32_t>(effect.type)) != kHolding.end())
+                {
+                    status.conditionSeconds = std::max(status.conditionSeconds, effect.remaining);
+                }
+            }
+        }
     }
     return status;
 }
@@ -562,6 +580,9 @@ void Bridge::Apply(const std::vector<Effect> &effects)
                     e.target, kept->ability, kept->target);
                 api::DisplayFloatyMessage(e.target, L"Its target is gone", k::FLOATY_MESSAGE,
                                           static_cast<std::int32_t>(kGrey), 2.0f);
+                // Told to the machine with the next observation: with a turn
+                // a bar of time, what the turn paid for it is given back.
+                keptVoid_.push_back(e.target);
             }
             else if (kept && kept->type == CommandType::Attack)
             {
@@ -604,6 +625,33 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             break;
         case EffectKind::DropCast:
             DropHeldCast(e.target);
+            break;
+        case EffectKind::Approach:
+            // With a turn a bar of time, an attack that did not fit is kept
+            // for its creature's next turn, and the creature walks to where
+            // it can strike now (core: TurnMachine::PayAction): a move to
+            // its target, given as a script gives one, to end inside the
+            // reach its attack will be judged by.
+            if (const std::optional<HeldCast> kept = PeekHeldCast(e.target);
+                kept && kept->target != dao::kInvalidObject && api::IsObjectValid(kept->target) != 0)
+            {
+                constexpr float kInside = 0.3f; // meters inside the reach, so that the attack need not step
+                const float within = std::max(0.5f, ReachOf(e.target, kept->target) - kInside);
+                if (const dao::script::OwnedCommand walk = api::CommandMoveToObject(kept->target, 1, within))
+                {
+                    api::AddCommand(e.target, *walk.get(), 0);
+                    spdlog::debug("{:#010x}: it walks to within {:.1f} m of {:#x}, where its kept action lands",
+                                  e.target, within, kept->target);
+                }
+                else
+                {
+                    spdlog::warn("{:#010x}: could not make the walk to its kept action's target", e.target);
+                }
+            }
+            else
+            {
+                spdlog::debug("{:#010x}: no kept action with a target to walk to", e.target);
+            }
             break;
         case EffectKind::Explain:
             Explain(e.target);

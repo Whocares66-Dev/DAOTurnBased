@@ -30,7 +30,7 @@ class CameraDirector
     void TurnTo(ObjectId id);
 
     // Each frame: whether the last pan got there, and why it ended (DAOLib's
-    // LastEnd). Twice, at ai_turn_speed 2, the pan to the hero's turn left
+    // LastEnd). Twice, with an AI's turns at twice the speed, the pan to the hero's turn left
     // the view on an enemy's room (play tests 2 and 5, 2026-09-30): the
     // game's own pull toward the party, lib-agent found, taken by the pan
     // for the player's (DAOLib 79d2baa). A pan that ends short for any
@@ -38,7 +38,7 @@ class CameraDirector
     // arrives; either is logged, with how far short and why.
     void Watch();
 
-    // The game's speed (ai_turn_speed on an AI's turn): the camera's moves
+    // The game's speed (the fight's, [turns] speed): the camera's moves
     // are as much quicker. At 2 a swing was over in under a second and the
     // pan took about one, so the view never reached the dog on its turns
     // (the sixth play test, 2026-09-30).

@@ -61,7 +61,7 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     World w;
     w.StartFight();
     const Decoded bar = Decode(EncodeBar(w.machine.View()));
-    REQUIRE(bar.head.size() == 11);
+    REQUIRE(bar.head.size() == 16);
     CHECK(bar.head[0] == std::to_wstring(kBarVersion));
     CHECK(bar.head[1] == L"1");                   // active
     CHECK(bar.head[2] == L"1");                   // round
@@ -74,7 +74,7 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     REQUIRE(bar.cards.size() == 4);               // each combatant once
     for (const auto &card : bar.cards)
     {
-        REQUIRE(card.size() == 13);
+        REQUIRE(card.size() == 18);
     }
     CHECK(bar.cards[0][0] == std::to_wstring(kHero));
     CHECK(bar.cards[0][1] == L"0");   // the party
@@ -88,7 +88,7 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     CHECK(bar.cards[1][1] == L"2"); // an enemy
     CHECK(bar.cards[1][6] == L"0"); // the AI's
     // The hero's turn over: the genlock first, the hero last, next round's.
-    CHECK(w.machine.OnPauseKey());
+    CHECK(w.machine.OnEndTurn());
     w.Frame();
     w.Frame();
     const Decoded after = Decode(EncodeBar(w.machine.View()));
@@ -111,7 +111,7 @@ TEST_CASE("a name cannot break the bar's string apart", "[bar]")
     view.upcoming.push_back(card);
     const Decoded bar = Decode(EncodeBar(view));
     REQUIRE(bar.cards.size() == 1);
-    REQUIRE(bar.cards[0].size() == 13);
+    REQUIRE(bar.cards[0].size() == 18);
     CHECK(bar.cards[0][8] == L"BadName!");
     CHECK(bar.cards[0][3] == L"100");
     CHECK(bar.cards[0][11] == L"0");
@@ -121,7 +121,7 @@ TEST_CASE("a name cannot break the bar's string apart", "[bar]")
 TEST_CASE("outside a fight the bar's string says so and has no cards", "[bar]")
 {
     const Decoded bar = Decode(EncodeBar(TurnView{}));
-    REQUIRE(bar.head.size() == 11);
+    REQUIRE(bar.head.size() == 16);
     CHECK(bar.head[1] == L"0");
     CHECK(bar.cards.empty());
 }
@@ -150,8 +150,9 @@ TEST_CASE("with a turn a bar of time, the bar's string has the bar and what is l
     World w(s);
     w.StartFight();
     const Decoded bar = Decode(EncodeBar(w.machine.View()));
-    REQUIRE(bar.head.size() == 11);
+    REQUIRE(bar.head.size() == 16);
     CHECK(bar.head[8] == L"1");
     CHECK(bar.head[9] == L"4.0");
     CHECK(bar.head[10] == L"4.0");
+    CHECK(bar.head[11] == L"4.0"); // a turn's own seconds
 }

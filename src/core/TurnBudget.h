@@ -49,6 +49,10 @@ class TurnBudget
     // Nothing more to act with this turn (a held turn, a charge begun, an
     // action kept for the next): with time, nothing more to walk either.
     void SpendAllActions();
+    // With time: the bar and the free meter spent, and the meters paid for
+    // kept: an action is kept for the next turn, and its creature walks to
+    // where it can do it.
+    void Pend();
 
     // Movement, in meters: with time, what the time left (and the free
     // meter) would walk at the creature's pace.
@@ -62,6 +66,9 @@ class TurnBudget
     // a little way past, kOvershoot).
     [[nodiscard]] float Overwalked() const;
     void Walk(float meters);
+    // With time: the meters walked past the bar are paid now, out of time
+    // given back since (an action's, taken on arriving instead).
+    void SettleOverwalk();
     // With time: what walking `meters` from here would cost of the bar, after
     // the meters already paid for and the free meter. Nothing as built.
     [[nodiscard]] std::uint32_t WalkCostMs(float meters) const;
@@ -74,6 +81,24 @@ class TurnBudget
     // Meters to walk without paying: a pending attack's walk, paid for in
     // what it owed, as it lands.
     void Credit(float meters);
+
+    // With time: the pace walked at, and the meters that cost nothing (the
+    // free meter left, and meters paid for). Zeros as built.
+    [[nodiscard]] float PaceMps() const
+    {
+        return timed_ ? pace_ : 0.0f;
+    }
+    [[nodiscard]] float PaidMeters() const;
+
+    // With time: a hold takes `clockMs` of the creature's clock, and with
+    // it that share of the bar (a 2 s stun half a 4 s turn's, whatever the
+    // bar holds). Answers the clock it took. Nothing as built.
+    std::uint32_t HoldClock(std::uint32_t clockMs);
+
+    // With time: how far the creature's own clock has moved this turn, of
+    // the turn's seconds: by its share of the bar spent (TurnTime). 0 as
+    // built.
+    [[nodiscard]] std::uint32_t ClockElapsedMs() const;
 
     // The bar, with time; zeros as built.
     [[nodiscard]] std::uint32_t CapacityMs() const;

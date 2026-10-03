@@ -34,6 +34,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <map>
 #include <optional>
@@ -113,12 +115,20 @@ struct Coverage
     int cooldownsReleased = 0;
     int roundsAged = 0;
     // With a turn a bar of time.
-    int kept = 0;       // actions that did not fit, kept for a later turn
-    int landed = 0;     // kept actions given again and let through
-    int wholeTurns = 0; // turns spent whole on what a kept action owed
-    int owed = 0;       // actions that ran and owed time to the next turn
-    int choseAgain = 0; // an AI told to choose again, its bar not spent
-    int rolledOver = 0; // turns that left time to the next
+    int kept = 0;           // actions that did not fit, kept for a later turn
+    int landed = 0;         // kept actions given again and let through
+    int wholeTurns = 0;     // turns spent whole on what a kept action owed
+    int owed = 0;           // actions that ran and owed time to the next turn
+    int choseAgain = 0;     // an AI told to choose again, its bar not spent
+    int rolledOver = 0;     // turns that left time to the next
+    int delays = 0;         // a party member's turn put off
+    int delayedTurns = 0;   // and taken at the round's end, as it was
+    int unplayed = 0;       // an action over at once, its time given back
+    int walkedOnAction = 0; // a walk past the bar took its action's time
+    int arrivals = 0;       // an action charged as its creature got there
+    int heldShares = 0;     // a hold shorter than a turn took its share of a bar
+    int approaches = 0;     // a kept attack's creature walked to its target
+    int targetsGone = 0;    // a kept action not given, its target gone
 };
 
 class Arena
@@ -134,6 +144,23 @@ class Arena
         world_.onEffect = [this](const Effect &e) { Saw(e); };
         // A kept action given again as its creature's turn begins: it walks
         // a little (its target may have stepped away), then works.
+        // The walk to a kept attack's target, given by the game layer: now
+        // and then it cannot be made, and now and then it is longer than
+        // was paid for.
+        world_.onApproach = [this](ObjectId id) {
+            if (Chance(rng_, 0.1))
+            {
+                return;
+            }
+            if (world_.Order(id, CommandType::MoveToObject, Source::Script) != Verdict::Allow)
+            {
+                return;
+            }
+            ++coverage_.approaches;
+            Task task{CommandType::MoveToObject};
+            task.walk = Between(rng_, 0.5f, 8.0f);
+            tasks_[id] = task;
+        };
         world_.onReleased = [this](ObjectId id, const CommandRequest &request, Verdict verdict) {
             if (verdict != Verdict::Allow)
             {
@@ -148,6 +175,10 @@ class Arena
         world_.machine.SetEventSink([this](const TurnEvent &e) { Heard(e); });
         // The machine's last words, for a failure's message.
         world_.onLog = [this](std::string_view line) {
+            if (echo)
+            {
+                std::printf("%7u %.*s\n", world_.now, static_cast<int>(line.size()), line.data());
+            }
             if (line.find("the action it was moving for is kept") != std::string_view::npos)
             {
                 ++coverage_.refunds;
@@ -178,10 +209,38 @@ class Arena
             if (line.find("it lands on its next turn") != std::string_view::npos)
             {
                 ++coverage_.kept;
+                // Now and then its target is gone by the time it would land.
+                if (Chance(rng_, 0.1))
+                {
+                    world_.targetGone.insert(world_.Current());
+                }
+            }
+            if (line.find("is dropped: its target is gone") != std::string_view::npos)
+            {
+                ++coverage_.targetsGone;
+                // What it owed is back in the bar: the turn may walk that
+                // much further than it could as it began.
+                turnMeters_ = std::max(turnMeters_, walked_ + world_.machine.View().movementLeft);
             }
             if (line.find("'s turn is spent on its pending") != std::string_view::npos)
             {
                 ++coverage_.wholeTurns;
+            }
+            if (line.find("over at once: it did nothing") != std::string_view::npos)
+            {
+                ++coverage_.unplayed;
+            }
+            if (line.find("'s walk runs past its bar") != std::string_view::npos)
+            {
+                ++coverage_.walkedOnAction;
+            }
+            if (line.find(" s taken now") != std::string_view::npos)
+            {
+                ++coverage_.arrivals;
+            }
+            if (line.find("'s condition takes ") != std::string_view::npos)
+            {
+                ++coverage_.heldShares;
             }
             if (line.find(" runs now and owes ") != std::string_view::npos)
             {
@@ -226,6 +285,8 @@ class Arena
         Must(frame < kMaxFrames, "the fight never ended");
     }
 
+    bool echo = false; // every line the machine logs, to the standard output
+
   private:
     static Settings RandomSettings(Rng &rng, TurnClock clock)
     {
@@ -248,14 +309,23 @@ class Arena
         s.pauseOnPlayerTurn = Chance(rng, 0.5);
         s.effectSecondsPerRound = Chance(rng, 0.2) ? 0.0f : 6.0f;
         s.conditionTurns = Chance(rng, 0.2) ? 0 : (Chance(rng, 0.7) ? 1 : 2);
-        s.aiTurnSpeed = Chance(rng, 0.3) ? 2.0f : 1.0f;
+        // Faster only: the arena's bounds on how long a turn may take are
+        // in real milliseconds, and a slower game stretches every one of
+        // the machine's waits past them.
+        s.fightSpeed = Chance(rng, 0.3) ? 2.0f : 1.0f;
         // Drawn after the rest, so that a fight as built is the one it was.
+        s.turnClock = clock;
         if (clock == TurnClock::Time)
         {
-            s.turnClock = TurnClock::Time;
             s.secondsPerTurn = Chance(rng, 0.7) ? 4.0f : Between(rng, 2.0f, 6.0f);
             s.freeStepMeters = Chance(rng, 0.8) ? 1.0f : Between(rng, 0.0f, 2.0f);
             s.paceMps = kRunSpeed;
+            // (A draw kept from when a fight had two speeds, so that the
+            // fights after it are the ones they were.)
+            if (Chance(rng, 0.3))
+            {
+                s.fightSpeed = 2.0f;
+            }
         }
         return s;
     }
@@ -546,7 +616,7 @@ class Arena
             timeHeld_ = e.a != 0;
             break;
         case EffectKind::GameSpeed:
-            Must(settings_.aiTurnSpeed != 1.0f, "the game's speed written at ai_turn_speed 1");
+            Must(settings_.fightSpeed != 1.0f, "the game's speed written at speed 1");
             ++coverage_.speedChanges;
             break;
         case EffectKind::AgeTime:
@@ -581,7 +651,11 @@ class Arena
             break;
         case EffectKind::EndConditions:
             Must(e.target == world_.Current(), "a condition ended out of its creature's turn");
-            Must(settings_.conditionTurns > 0, "a condition on the game's clock ended by the machine");
+            // Or one whose seconds the machine was given: it ends what it
+            // has taken the time of. (A second hold landing between two
+            // looks, its seconds not read, is the first's to the machine.)
+            Must(settings_.conditionTurns > 0 || secondsKnown_.erase(e.target) > 0,
+                 "a condition on the game's clock ended by the machine");
             ++coverage_.conditionsEnded;
             conditionLeftMs_.erase(e.target);
             Release(e.target);
@@ -589,6 +663,10 @@ class Arena
         case EffectKind::ReleaseCast:
         case EffectKind::DropCast:
             break; // with time, kept actions (World's onReleased); nothing charges as built
+        case EffectKind::Approach:
+            Must(e.target != kNoObject, "an approach for nobody");
+            Must(e.target == world_.Current(), "an approach for someone whose turn it is not");
+            break;
         case EffectKind::ClearCommands:
         case EffectKind::Floaty:
         case EffectKind::CenterCamera:
@@ -782,6 +860,8 @@ class Arena
                 // creature is held all the same.
                 tasks_.erase(id);
                 world_.Finish(id);
+                const bool already = world_.Get(id).condition == Condition::Disabled;
+                const float before = world_.Get(id).conditionSeconds;
                 world_.Get(id).condition = Chance(rng_, 0.2) ? Condition::None : Condition::Disabled;
                 Try(id, CommandType::ExecuteEffect, Source::Engine);
                 if (const auto found = tasks_.find(id); found != tasks_.end())
@@ -789,7 +869,28 @@ class Arena
                     found->second.held = true;
                 }
                 conditionLeftMs_[id] = static_cast<std::int32_t>(Between(rng_, 2000.0f, 10000.0f));
+                // With time, the game layer reads its seconds, most times.
+                world_.Get(id).conditionSeconds =
+                    settings_.turnClock == TurnClock::Time && Chance(rng_, 0.7)
+                        ? (Chance(rng_, 0.5) ? Between(rng_, 0.5f, 3.9f)
+                                             : static_cast<float>(conditionLeftMs_[id]) / 1000.0f)
+                        : 0.0f;
+                if (world_.Get(id).conditionSeconds > 0.0f && world_.Get(id).condition == Condition::Disabled)
+                {
+                    secondsKnown_.insert(id);
+                }
+                // Held already: the longer of the two is what there is to read.
+                if (already)
+                {
+                    world_.Get(id).conditionSeconds = std::max(before, world_.Get(id).conditionSeconds);
+                }
                 ++coverage_.stunned;
+                if (echo)
+                {
+                    std::printf("%7u (arena: %u held, condition %d, %.1f s read, was held %d)\n", world_.now, id,
+                                static_cast<int>(world_.Get(id).condition),
+                                static_cast<double>(world_.Get(id).conditionSeconds), already ? 1 : 0);
+                }
             }
         }
     }
@@ -845,8 +946,8 @@ class Arena
     void PressPause()
     {
         const bool holding = world_.machine.Active();
-        Must(world_.machine.OnPauseKey() == holding,
-             "the pause key taken when no fight holds the world, or not when one does");
+        Must(world_.machine.OnEndTurn() == holding,
+             "End turn taken when no fight holds the world, or not when one does");
     }
 
     // The player, on a turn that is theirs, thinks a while and then acts.
@@ -863,6 +964,19 @@ class Arena
             // End turn pressed while something plays out.
             PressPause();
             return;
+        }
+        if (Chance(rng_, 0.12))
+        {
+            // Delay pressed: taken exactly when the view says it may be.
+            const TurnView view = world_.machine.View();
+            const bool taken = world_.machine.OnDelay();
+            Must(taken == view.canDelay, "a delay taken when the view said no, or refused when it said yes");
+            if (taken)
+            {
+                Must(delayed_.emplace(current, DelayAsked{view.timeMs, view.round, false}).second,
+                     "a second delay in a round");
+                return;
+            }
         }
         if (phase == Phase::Dispatching && Chance(rng_, 0.5))
         {
@@ -977,9 +1091,31 @@ class Arena
         case EventKind::FightBegan:
             Must(!turnOpen_, "a fight began inside a turn");
             roundStarted_ = false;
+            delayed_.clear();
             break;
         case EventKind::RoundStarted:
             roundStarted_ = true;
+            // Who put a turn off took it before the round turned, unless it
+            // could not (fallen, gone, the fight suspended and begun again).
+            for (const auto &[id, asked] : delayed_)
+            {
+                const auto c = std::ranges::find(world_.creatures, id, &Creature::id);
+                Must(c == world_.creatures.end() || c->down || !c->exists || !asked.awaited,
+                     "a turn put off never came before the round turned");
+            }
+            delayed_.clear();
+            break;
+        case EventKind::TurnDelayed:
+            Must(turnOpen_, "a turn put off that was not open");
+            Must(delayed_.contains(e.who), "a turn put off that nobody asked for");
+            if (const auto asked = delayed_.find(e.who); asked != delayed_.end())
+            {
+                Must(e.round == asked->second.round, "a turn put off in another round than it was asked in");
+                Must(!asked->second.awaited, "a turn put off twice in a round");
+                asked->second.awaited = true;
+            }
+            turnOpen_ = false;
+            ++coverage_.delays;
             break;
         case EventKind::TurnStarted:
         case EventKind::TurnLost:
@@ -987,6 +1123,18 @@ class Arena
             Must(!turnOpen_, "a turn opened while another was open");
             Must(e.who == world_.Current(), "a turn opened for someone not current");
             turnOpen_ = true;
+            if (const auto asked = delayed_.find(e.who); asked != delayed_.end() && asked->second.awaited)
+            {
+                // The turn it put off: in the same round, and with the bar
+                // it had.
+                asked->second.awaited = false;
+                Must(e.round == asked->second.round, "a turn put off came in another round");
+                if (e.kind == EventKind::TurnStarted)
+                {
+                    Must(world_.machine.View().timeMs == asked->second.bar, "a turn put off came with another bar");
+                    ++coverage_.delayedTurns;
+                }
+            }
             break;
         case EventKind::TurnResumed:
             // The turn a conversation came in the middle of, still open.
@@ -994,8 +1142,11 @@ class Arena
             Must(e.who == world_.Current(), "a turn resumed for someone not current");
             break;
         case EventKind::TurnEnded:
+            turnOpen_ = false;
+            break;
         case EventKind::FightOver:
             turnOpen_ = false;
+            delayed_.clear();
             break;
         case EventKind::ConditionHeld:
         case EventKind::ConditionEnded:
@@ -1013,6 +1164,9 @@ class Arena
         case EventKind::CastCharging:
         case EventKind::CastLanded:
         case EventKind::CastInterrupted:
+        case EventKind::ActionPending:
+        case EventKind::ActionLanded:
+        case EventKind::ActionDropped:
             Must(e.who != kNoObject, "an event about someone names no one");
             break;
         case EventKind::SpeedSet:
@@ -1043,22 +1197,26 @@ class Arena
         {
             Must(timeHeld_, "effects' time running in a fight");
         }
-        // The game runs at ai_turn_speed through an AI's turn, and at its own
-        // speed through the player's, a conversation, and with no fight on.
+        // The game runs at the fight's speed through its turns, anyone's, and
+        // at its own through a conversation and with no fight on.
         const bool aiTurn = (phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling) &&
                             world_.Current() != kNoObject && !PlayerControls(world_.Current());
-        const bool ownSpeed = phase == Phase::Idle || phase == Phase::Suspended || phase == Phase::AwaitingOrder ||
-                              phase == Phase::Dispatching ||
-                              (world_.Current() != kNoObject && PlayerControls(world_.Current()) &&
-                               (phase == Phase::Executing || phase == Phase::Settling));
+        const bool ownSpeed = phase == Phase::Idle || phase == Phase::Suspended;
+        const bool playersTurn = phase == Phase::AwaitingOrder || phase == Phase::Dispatching ||
+                                 (world_.Current() != kNoObject && PlayerControls(world_.Current()) &&
+                                  (phase == Phase::Executing || phase == Phase::Settling));
+        const auto thousandths = [](float speed) { return static_cast<std::int32_t>(std::lround(speed * 1000.0f)); };
         if (aiTurn)
         {
-            Must(world_.speed == static_cast<std::int32_t>(std::lround(settings_.aiTurnSpeed * 1000.0f)),
-                 "an AI's turn not at ai_turn_speed");
+            Must(world_.speed == thousandths(settings_.fightSpeed), "an AI's turn not at the fight's speed");
+        }
+        else if (playersTurn)
+        {
+            Must(world_.speed == thousandths(settings_.fightSpeed), "the player's turn not at the fight's speed");
         }
         else if (ownSpeed)
         {
-            Must(world_.speed == 1000, "the game not at its own speed outside an AI's turn");
+            Must(world_.speed == 1000, "the game not at its own speed outside a fight's turns");
         }
         if (world_.mode == Mode::Combat)
         {
@@ -1126,9 +1284,13 @@ class Arena
                     // may take its thinking time to choose nothing.
                     const int again =
                         settings_.turnClock == TurnClock::Time ? settings_.maxCommandsPerTurn * settings_.aiThinkMs : 0;
+                    // A command held by its own effect has three times the
+                    // limit (kOwnEffectPatience: the long run's seed 364,
+                    // 2026-10-02, an attack whose creature an effect then held).
                     const int bound = settings_.aiThinkMs + again +
                                       settings_.maxCommandsPerTurn *
-                                          (settings_.maxActionMs + settings_.settleMs + settings_.aiFollowUpMs + 200) +
+                                          (settings_.maxActionMs * static_cast<int>(TurnMachine::kOwnEffectPatience) +
+                                           settings_.settleMs + settings_.aiFollowUpMs + 200) +
                                       static_cast<int>(settings_.roundMinSeconds * 1000.0f) + 1000;
                     Must(turnRunMs_ <= static_cast<std::uint32_t>(bound), "an AI's turn did not end");
                 }
@@ -1146,8 +1308,9 @@ class Arena
     Rng rng_;
     Settings settings_;
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
-    ObjectId lastTurnStart_ = kNoObject;                         // whose turn began last (its event)
-    bool timeHeld_ = false;                                      // effects' time, as the machine left it
+    std::set<ObjectId> secondsKnown_;    // held with seconds the machine could read, and not yet ended by it
+    ObjectId lastTurnStart_ = kNoObject; // whose turn began last (its event)
+    bool timeHeld_ = false;              // effects' time, as the machine left it
     World world_;
     Coverage &coverage_;
     std::map<ObjectId, Task> tasks_;
@@ -1161,9 +1324,18 @@ class Arena
     std::uint32_t turnRunMs_ = 0;
     std::uint32_t heldInTurnMs_ = 0; // the current creature held by a condition, running
     static constexpr std::uint32_t kHeldTurnMs = 1000;
-    bool heldAtStart_ = false;        // the current creature was held by an unnamed effect as its turn came
-    bool turnOpen_ = false;           // a turn's start heard, its end not yet
-    bool roundStarted_ = false;       // this fight's first round heard
+    bool heldAtStart_ = false;  // the current creature was held by an unnamed effect as its turn came
+    bool turnOpen_ = false;     // a turn's start heard, its end not yet
+    bool roundStarted_ = false; // this fight's first round heard
+    // Who asked to put a turn off this round: the bar it had, the round,
+    // and whether the turn is still to come.
+    struct DelayAsked
+    {
+        std::uint32_t bar = 0;
+        int round = 0;
+        bool awaited = false;
+    };
+    std::unordered_map<ObjectId, DelayAsked> delayed_;
     std::uint32_t turnBeganAtMs_ = 0; // turnRunMs_ as the machine began the turn
     static constexpr std::uint32_t kEffectGraceSlackMs = 600;
     int interlude_ = 0;
@@ -1231,6 +1403,9 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     // users' turns).
     CHECK(coverage.cooldownsHeld > 45);
     CHECK(coverage.cooldownsReleased > 22);
+    // (2026-10-02: 88 turns put off, 74 of them taken; the rest fell or were held first.)
+    CHECK(coverage.delays > 40);
+    CHECK(coverage.delayedTurns > 30);
 }
 
 // With a turn a bar of time (Settings::turnClock), the same fights' kinds
@@ -1252,11 +1427,41 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     CHECK(coverage.owed > 5);
     CHECK(coverage.choseAgain > 24);
     CHECK(coverage.rolledOver > 500);
+    // A kept attack's creature walking to its target, and a kept action's
+    // target gone by the time it would land (2026-10-02: 49 and 61).
+    CHECK(coverage.approaches > 15);
+    // A hold shorter than a turn taking its share of a bar (2026-10-02: 304).
+    CHECK(coverage.heldShares > 100);
     CHECK(coverage.movementCuts > 85);
-    CHECK(coverage.refunds > 50);
+    // With time a walk past the bar takes its action's time, and the action
+    // is charged on arriving: seldom given back.
+    // (2026-10-02: 182 walks on an action's time, 102 arrivals.)
+    CHECK(coverage.unplayed > 2); // an action over at once, given back (8)
+    CHECK(coverage.walkedOnAction > 60);
+    CHECK(coverage.arrivals > 30);
     CHECK(coverage.tooFar > 5);
-    CHECK(coverage.lostTurns > 150);
+    CHECK(coverage.lostTurns > 60); // whole turns: most holds are shorter (193)
     CHECK(coverage.cooldownsHeld > 35);
+    CHECK(coverage.delays > 40); // 95, and 84 taken
+    CHECK(coverage.delayedTurns > 30);
+}
+
+// One fight by its seed, every line the machine logs printed: a failure's
+// replay. `set TB_SEED=63& set TB_CLOCK=time& tb_tests "[fight-seed]"`.
+TEST_CASE("one random fight, by the seed in TB_SEED", "[.][fight-seed]")
+{
+    const auto env = [](const char *name) {
+#pragma warning(suppress : 4996) // the C library's getenv: a test's knob, read once
+        const char *value = std::getenv(name);
+        return std::string{value != nullptr ? value : ""};
+    };
+    const std::string seed = env("TB_SEED");
+    REQUIRE_FALSE(seed.empty());
+    Coverage coverage;
+    Arena arena{std::strtoull(seed.c_str(), nullptr, 10), coverage,
+                env("TB_CLOCK") == "time" ? TurnClock::Time : TurnClock::Actions};
+    arena.echo = true;
+    arena.Play();
 }
 
 // A thousand more, for a change to the machine: `tb_tests "[fights-long]"`.

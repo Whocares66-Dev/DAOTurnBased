@@ -46,7 +46,7 @@ TEST_CASE("a fight's events come in the order a test asserts on", "[events]")
     w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
     w.StartFight();
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 30.0f) == Verdict::Block); // too far
-    CHECK(w.machine.OnPauseKey());
+    CHECK(w.machine.OnEndTurn());
     w.Frame();
     w.Frame();
     w.Get(kHurlock).down = true;

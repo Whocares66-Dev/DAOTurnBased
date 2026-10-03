@@ -59,10 +59,24 @@ std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits)
     Meters(out, view.movementLeft);
     Meters(out, view.movementMax);
     // With a turn a bar of time: whether it is, and the bar and what is left
-    // of it, in seconds (version 4).
+    // of it, in seconds (version 4), and a turn's own seconds, past which
+    // the bar is Combat Tactics' and what rolled over (version 5).
     Field(out, view.timed);
     Meters(out, static_cast<float>(view.timeLeftMs) / 1000.0f);
     Meters(out, static_cast<float>(view.timeMs) / 1000.0f);
+    Meters(out, static_cast<float>(view.turnMs) / 1000.0f);
+    // What this turn paid as it began for an action begun the turn before,
+    // in seconds (version 6): why its bar starts short.
+    Meters(out, static_cast<float>(view.pendingPaidMs) / 1000.0f);
+    // Delay (version 8): 0 not offered (the setting off, or not the
+    // player's turn), 1 to be had now, 2 offered and not to be had (spent,
+    // put off already, nobody to wait for): the button greyed, End where
+    // it was. And what of the bar rolled over from the turn before, in
+    // seconds.
+    Field(out, static_cast<long long>(view.canDelay ? 1 : view.delayOffered ? 2 : 0));
+    Meters(out, static_cast<float>(view.rolledMs) / 1000.0f);
+    // The player has the game paused: the bar says the word.
+    Field(out, view.playerPaused);
     for (const CardView &card : view.upcoming)
     {
         out += kBarCard;
@@ -79,6 +93,15 @@ std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits)
         Field(out, std::wstring_view{TextureName(portraits.Of(card.id))});
         Field(out, static_cast<long long>(std::lround(std::clamp(card.energy, 0.0f, 1.0f) * 100.0f)));
         Field(out, card.mana);
+        // What an action of its still owes, in seconds: pending (version 6).
+        Meters(out, static_cast<float>(card.owedMs) / 1000.0f);
+        // It has put its turn off, and waits for it (version 8).
+        Field(out, card.waits);
+        // What is pending: the ability's id (-1: an attack), its icon's
+        // texture and its name, where the game layer found them.
+        Field(out, static_cast<long long>(card.pendingAbility));
+        Field(out, std::wstring_view{card.pendingIcon});
+        Field(out, std::wstring_view{card.pendingName});
     }
     return out;
 }

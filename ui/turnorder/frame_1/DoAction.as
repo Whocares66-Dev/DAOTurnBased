@@ -14,7 +14,7 @@
 // Outside the game there is no plugin to ask, and it draws a sample fight,
 // so the look can be checked in any Flash player.
 
-var BAR_VERSION = 4;
+var BAR_VERSION = 8;
 var CARD = String.fromCharCode(30);
 var FIELD = String.fromCharCode(31);
 
@@ -28,6 +28,7 @@ var GAP = 5;
 var ART = CARD_W / 114;
 var END_W = 78; // End, on the inventory's leather button (190 x 32 at full size)
 var END_H = 30;
+var BUTTON_GAP = 6; // between End and Delay, one over the other
 var CAPTION_W = 230; // the caption's strip under the bar
 var CAPTION_H = 30;
 var DIVIDER = 30;
@@ -42,12 +43,13 @@ var PARCHMENT = 0xE8DFC8;
 var INK = 0x14100C;
 var SIDE_COLOURS = [0x3C8CD8, 0x4CA84C, 0xC83C32]; // party, ally, enemy
 var RANK_COLOURS = [0, 0, 0, 0xFFFF00, 0xFF6600, 0xFF6600]; // creatureranks.gda: lieutenant, boss, elite boss
+var RANK_WORDS = ["", "", "", "a lieutenant", "a boss", "an elite boss"];
 
 // Whether the plugin is there to ask. In the game the call answers; in a
 // Flash player on its own, ExternalInterface is not available, or the
 // player is told to show the sample (the parameter sample=1, as
 // tools/snapshot.ps1 passes it).
-var inGame = flash.external.ExternalInterface.available && _root.sample != "1";
+var inGame = flash.external.ExternalInterface.available && _root.sample != "1" && _root.sample != "time";
 var lastView = null;
 var lastCards = null;
 var ticks = 0;
@@ -58,12 +60,18 @@ function sampleView()
 {
     // Each combatant once, the current first: the rest of round 2, then
     // round 3's up to the current (core/TurnOrder.h, Upcoming).
-    var head = [BAR_VERSION, 1, 2, 257, 1, 1, "6.5", "9.0", 0, "0.0", "0.0"].join(FIELD);
+    // With a turn a bar of time (sample=time): 3.1 s left of a bar of 5.5, a
+    // turn being 4.
+    var timed = _root.sample == "time" || _root.time == "1";
+    var head = (timed ? [BAR_VERSION, 1, 2, 257, 1, 1, "14.4", "14.4", 1, "3.1", "5.5", "4.0", "0.0", 2, "1.0", 0]
+                      : [BAR_VERSION, 1, 2, 257, 1, 1, "9.0", "9.0", 0, "0.0", "0.0", "4.0", "0.0", 1, "0.0", 0])
+                   .join(FIELD);
     var cards = [
-        [257, 0, 0, 65, 0, 1, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0],
-        [513, 2, 2, 40, 0, 0, 0, 2, "Genlock", "g", "", 100, 0],
+        [257, 0, 0, 65, 0, 1, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0, "0.0"],
+        [513, 2, 2, 40, 0, 0, 0, 2, "Genlock", "g", "", 100, 0, timed ? "1.6" : "0.0", 0, timed ? 617 : -1,
+         timed ? "ico_shield_bash" : "", timed ? "Shield Bash" : ""],
         [258, 0, 0, 0, 1, 0, 1, 2, "Morrigan", "gen00fl_morrigan", "gui_portrait_49", 30, 1],
-        [768, 1, 2, 90, 0, 0, 0, 2, "Soldier", "s", "gui_portrait_09", 80, 0],
+        [768, 1, 2, 90, 0, 0, 0, 2, "Soldier", "s", "gui_portrait_09", 80, 0, "0.0", 1],
         [514, 2, 3, 100, 0, 0, 0, 2, "Genlock Alpha", "a", "gui_portrait_49", 45, 0],
         [256, 0, 100, 100, 0, 0, 1, 3, "Warden", "player", "gui_portrait_09", 70, 0],
         [512, 2, 4, 80, 0, 0, 0, 3, "Hurlock Emissary", "e", "gui_portrait_49", 55, 1]
@@ -98,11 +106,13 @@ function parse(text)
         cards.push({id: f[0], side: Number(f[1]), rank: Number(f[2]), health: Number(f[3]),
                     down: f[4] == "1", current: f[5] == "1", yours: f[6] == "1", round: Number(f[7]),
                     name: f[8], tag: f[9], portrait: f[10] == undefined ? "" : f[10],
-                    energy: Number(f[11]), mana: f[12] == "1"});
+                    energy: Number(f[11]), mana: f[12] == "1", owed: Number(f[13]), waits: f[14] == "1",
+                    icon: f[16] == undefined ? "" : f[16], ability: f[17] == undefined ? "" : f[17]});
     }
     return {version: Number(head[0]), active: head[1] == "1", round: Number(head[2]), current: head[3],
             playerTurn: head[4] == "1", actions: Number(head[5]), movementLeft: head[6], movementMax: head[7],
-            timed: head[8] == "1", timeLeft: head[9], time: head[10], cards: cards};
+            timed: head[8] == "1", timeLeft: head[9], time: head[10], turn: head[11], paid: Number(head[12]),
+            delay: Number(head[13]), rolled: Number(head[14]), paused: head[15] == "1", cards: cards};
 }
 
 // Text as the game's own movies set it: the fonts they import from the
@@ -314,7 +324,10 @@ function drawCard(bar, card, index, x)
     clip._x = x;
     clip._y = TOP;
     clip.id = card.id;
-    clip.fullName = card.name;
+    // Under the pointer: its name, and what its gem says (a lieutenant's is
+    // yellow, a boss's orange: "a yellow dot under it I did not understand",
+    // play test 29).
+    clip.fullName = card.name + (RANK_WORDS[card.rank] ? ", " + RANK_WORDS[card.rank] : "");
     var mid = CARD_W / 2;
     var orb = 74 * ART;
     var orbAt = 20 * ART;
@@ -369,8 +382,65 @@ function drawCard(bar, card, index, x)
     {
         // The game's gold arrow (the inventory's sort button's, inventory_I2F1),
         // turned to point up at the card.
-        var pointer = art(clip, "inventory_I2F1", 18, mid - 7, CARD_H + 11, 14, 8);
+        // Close under the portrait's ring: six pixels lower its tip lay on
+        // the bar of time under the current card (the user, 2026-10-02: "should
+        // be higher up closer to portrait, it's overlapping w/ the action
+        // time bar").
+        var pointer = art(clip, "inventory_I2F1", 18, mid - 7, CARD_H + 5, 14, 8);
         pointer._yscale = -100;
+    }
+    if (card.owed > 0)
+    {
+        // An action of its creature's is pending (core: Charge), and lands
+        // on its next turn: said in words under the pointer. For a talent or
+        // a spell its own icon stands at the card's shoulder, the picture
+        // the quickbar shows for it, with a soft light behind it to lift it
+        // off the portrait. First a number of seconds stood here in a ring
+        // drawn by the script; the user, 2026-10-02: "crudely drawn", then
+        // "what if we used the icon of the talent / spell instead of a
+        // number? the number doesn't really tell us anything", and "no gold
+        // ring needed i think, just icon. maybe icon should have a slight
+        // glowing border". A pending attack has no icon: with four spiders
+        // every card had a badge, noise and not news (play test 28).
+        clip.fullName = pendingWords(card);
+        if (card.icon.length > 0)
+        {
+            // Three quarters of the first size: at 24 it was "too big now"
+            // (the user, 2026-10-02).
+            var badge = 18;
+            var badgeX = CARD_W - badge + 5;
+            var badgeY = -5;
+            var glow = clip.createEmptyMovieClip("pendingGlow", 19);
+            for (var layer = 0; layer < 4; layer++)
+            {
+                roundedBox(glow, badgeX - layer * 0.75, badgeY - layer * 0.75, badge + 1.5 * layer, badge + 1.5 * layer,
+                           2 + layer, 0xFFE9A8, 16);
+            }
+            if (inGame)
+            {
+                art(clip, card.icon, 20, badgeX, badgeY, badge, badge);
+            }
+            else
+            {
+                // Outside the game the icon's texture is not there: a dark
+                // square with the ability's first letter stands in.
+                var stand = clip.createEmptyMovieClip("pendingStand", 20);
+                roundedBox(stand, badgeX, badgeY, badge, badge, 2, INK, 100);
+                var letter = label(clip, "pendingLetter", 21, badgeX, badgeY, badge, badge, 11, GOLD, "center", true);
+                letter.text = card.ability.length > 0 ? card.ability.charAt(0) : "?";
+                centre(letter, badgeY, badge);
+            }
+        }
+    }
+    if (card.waits)
+    {
+        // It has put its turn off (Delay) and waits for it at the round's
+        // end: said under its card, the floaty over it being gone with the
+        // camera in the frame it was shown (play test 28).
+        // Under the party's arrow, which stands close under the ring.
+        var waits = label(clip, "waits", 22, -10, CARD_H + 4, CARD_W + 20, 16, 11, PARCHMENT, "center", false);
+        waits.text = "waits";
+        clip.fullName = card.name + " waits: its turn comes at the round's end";
     }
     if (card.down)
     {
@@ -421,11 +491,16 @@ function drawDivider(bar, round, index, x)
     centre(text, (CARD_H - badge) / 2, badge);
 }
 
-function drawEndTurn(bar, x)
+// End and Delay: the inventory's leather button, a word on it, a command
+// to the plugin on release. Delay stands under End while the turn may be
+// put off to the round's end (nothing of it spent, once a round, someone
+// standing after it): `y` is the button's top.
+function drawButton(bar, name, depth, word, command, x, y, live)
 {
-    var clip = bar.createEmptyMovieClip("endTurn", 500);
+    var clip = bar.createEmptyMovieClip(name, depth);
     clip._x = x;
-    clip._y = TOP + (CARD_H - END_H) / 2;
+    clip._y = y;
+    clip.command = command;
     var faces = ["inventory_I2EC", "inventory_I2EE", "inventory_I2F4"];
     for (var i = 0; i < faces.length; i++)
     {
@@ -440,8 +515,19 @@ function drawEndTurn(bar, x)
     };
     clip.face(0);
     var text = label(clip, "caption", 5, 0, 0, END_W, END_H, 15, GOLD, "center", true);
-    text.text = "End";
+    text.text = word;
     centreWord(text, 0, END_H);
+    if (!live)
+    {
+        // Not to be had now: greyed, in its place. It still takes the click,
+        // which would otherwise be an order in the world behind it.
+        clip._alpha = 35;
+        clip.useHandCursor = false;
+        clip.onRelease = function()
+        {
+        };
+        return;
+    }
     clip.onRollOver = function()
     {
         this.face(1);
@@ -458,7 +544,7 @@ function drawEndTurn(bar, x)
     clip.onRelease = function()
     {
         this.face(1);
-        fscommand("TB_EndTurn", "");
+        fscommand(this.command, "");
     };
 }
 
@@ -466,6 +552,9 @@ function drawEndTurn(bar, x)
 // centred on the stage.
 function build(state)
 {
+    // A card taken from under the pointer has no roll-out: its name stayed
+    // in the caption through a whole turn (play test 30).
+    _root.hovered = "";
     _root.bar.removeMovieClip();
     var bar = _root.createEmptyMovieClip("bar", 10);
     var x = 0;
@@ -489,22 +578,171 @@ function build(state)
     var reach = width;
     if (state.playerTurn)
     {
-        drawEndTurn(bar, x + GAP);
-        reach = x + GAP + END_W;
+        // Where Delay is offered the two stand one over the other about the
+        // medallions' middle through the whole turn, Delay greyed once it
+        // is not to be had: End dropped to the middle as Delay went, and a
+        // click where it had been missed it (play test 28). With no Delay
+        // in the game (the setting) End stands alone at the middle.
+        var middle = TOP + (CARD_H - END_H) / 2;
+        var apart = (END_H + BUTTON_GAP) / 2;
+        var offered = state.delay == 1 || state.delay == 2;
+        // Clear of the last card's shoulder, where a pending ability's icon
+        // stands: it lay against End's edge (play test 29).
+        var buttonsAt = x + GAP + 10;
+        drawButton(bar, "endTurn", 500, "End", "TB_EndTurn", buttonsAt, offered ? middle - apart : middle, true);
+        if (offered)
+        {
+            drawButton(bar, "delay", 501, "Delay", "TB_Delay", buttonsAt, middle + apart, state.delay == 1);
+        }
+        reach = buttonsAt + END_W;
     }
     bar._x = Math.round((Stage.width - width) / 2);
     // Behind the medallions (and End), a translucent black panel, square with
     // rounded corners and edges that fade out (the user: no tapering ends,
     // as the top menu's bar had); a small one of the same under the
     // medallions' middle for the caption.
-    panel(bar.createEmptyMovieClip("plate", 3), -16, TOP - 14, reach + 32, CARD_H + 28, 10);
+    // (The game's own "Paused", written across the top of the screen behind
+    // the bar, is hidden by the plugin through a fight: src/game/Bar.cpp.
+    // The plate was solid black over it while paused, for a day.)
+    panel(bar.createEmptyMovieClip("plate", 3), -16, TOP - 14, reach + 32, CARD_H + 34, 10);
+    // With a turn a bar of time, on the player's turn: the bar, and the
+    // caption under it.
+    var captionTop = TOP + CARD_H + 20;
+    var barMiddle = width / 2;
+    if (state.timed && state.playerTurn)
+    {
+        // Clear of the current card's pointer and of "waits" under a card:
+        // eight pixels higher the pointer's tip lay on the bar's left end
+        // (seen in play, 2026-10-02).
+        captionTop += 8;
+        // Under the current card, which is the first: centred on the strip
+        // it lay under cards three to six of nine, away from whose bar it
+        // is (play test 31). With three or four cards the two are the same.
+        barMiddle = Math.min(width / 2, TIME_W / 2);
+        buildTime(bar, barMiddle, captionTop);
+        captionTop += TIME_H + 8;
+    }
     var strip = bar.createEmptyMovieClip("strip", 4);
-    panel(strip.createEmptyMovieClip("plate", 1), width / 2 - CAPTION_W / 2, TOP + CARD_H + 20, CAPTION_W, CAPTION_H,
-          8);
-    var text = label(strip, "text", 2, width / 2 - CAPTION_W / 2, TOP + CARD_H + 20, CAPTION_W, CAPTION_H, 14,
-                     PARCHMENT, "center", false);
+    strip.top = captionTop;
+    strip.middle = barMiddle;
+    panel(strip.createEmptyMovieClip("plate", 1), barMiddle - CAPTION_W / 2, captionTop, CAPTION_W, CAPTION_H, 8);
+    var text = label(strip, "text", 2, barMiddle - CAPTION_W / 2, captionTop, CAPTION_W, CAPTION_H, 14, PARCHMENT,
+                     "center", false);
     strip._visible = false;
 }
+
+// With a turn a bar of time: the bar, the mod's own, under the medallions on
+// the player's turn. It is made of the game's experience bar's art (its dark
+// ground, CharacterRecord_I114, and its gold fill, _I117, a strip stretched
+// from the left; quickbar.gfx, read 2026-10-02), a fifth wider and half as
+// tall again, with a tick of its own at every second and a longer one where
+// a turn's own seconds end, past which the bar is what rolled over and
+// Combat Tactics'. What the order under the cursor would cost is shaded on
+// it: the part of the gold it would spend pale, all that is left red when
+// it does not fit and would land on the next turn.
+//
+// For half a day (2026-10-02) this was drawn on the game's experience bar
+// itself, which the plugin filled; the user, having seen it: "the action
+// bar seems to replace the experience bar? that's confusing. we should have
+// it separate."
+var TIME_W = 300;
+var TIME_H = 12;
+var TIME_INSET = 1.5; // the ground's frame, inside which the fill lies
+function fillRect(clip, x, y, w, h, colour, alpha)
+{
+    if (!(w > 0) || !(h > 0))
+    {
+        return;
+    }
+    clip.beginFill(colour, alpha);
+    clip.moveTo(x, y);
+    clip.lineTo(x + w, y);
+    clip.lineTo(x + w, y + h);
+    clip.lineTo(x, y + h);
+    clip.lineTo(x, y);
+    clip.endFill();
+}
+
+function buildTime(bar, middle, top)
+{
+    var clip = bar.createEmptyMovieClip("time", 6);
+    clip._x = Math.round(middle - TIME_W / 2);
+    clip._y = top;
+    if (inGame)
+    {
+        art(clip, "CharacterRecord_I114", 1, 0, 0, TIME_W, TIME_H);
+        art(clip, "CharacterRecord_I117", 2, TIME_INSET, TIME_INSET, TIME_W - 2 * TIME_INSET,
+            TIME_H - 2 * TIME_INSET);
+    }
+    else
+    {
+        // Outside the game its art is not there: plain rectangles stand in.
+        clip.createEmptyMovieClip("plain", 2);
+    }
+    clip.createEmptyMovieClip("mark", 3);
+    clip.createEmptyMovieClip("ticks", 4);
+}
+
+function drawTime(state)
+{
+    var clip = _root.bar.time;
+    if (clip == undefined)
+    {
+        return;
+    }
+    var whole = Number(state.time);
+    var left = Math.min(whole, Math.max(0, Number(state.timeLeft)));
+    clip._visible = whole > 0;
+    if (!(whole > 0))
+    {
+        return;
+    }
+    var inner = TIME_W - 2 * TIME_INSET;
+    var tall = TIME_H - 2 * TIME_INSET;
+    var share = left / whole;
+    if (inGame)
+    {
+        clip.art2._visible = share > 0.002;
+        clip.art2._xscale = Math.max(0.2, share * 100);
+    }
+    else
+    {
+        clip.plain.clear();
+        fillRect(clip.plain, 0, 0, TIME_W, TIME_H, INK, 100);
+        fillRect(clip.plain, TIME_INSET, TIME_INSET, inner * share, tall, 0xD9A441, 100);
+    }
+    clip.mark.clear();
+    if (timeCost > 0 && left > 0)
+    {
+        var from = timeSpills ? 0 : Math.max(0, left - timeCost) / whole;
+        fillRect(clip.mark, TIME_INSET + inner * from, TIME_INSET, inner * (share - from), tall,
+                 timeSpills ? 0xD8402A : 0xFFFFFF, timeSpills ? 70 : 62);
+    }
+    clip.ticks.clear();
+    for (var second = 1; second < whole - 0.05; second++)
+    {
+        fillRect(clip.ticks, TIME_INSET + inner * second / whole - 0.75, TIME_INSET, 1.5, tall, INK, 85);
+    }
+    var turn = Number(state.turn);
+    if (turn > 0 && whole > turn + 0.05)
+    {
+        fillRect(clip.ticks, TIME_INSET + inner * turn / whole - 1, -2, 2, TIME_H + 4, PARCHMENT, 90);
+    }
+}
+
+// What a pending action's badge says under the pointer, and the caption over
+// its creature: when it lands. ("An action lands in 1.2 s of its time" took
+// a second read: play test 28.)
+function pendingWords(card)
+{
+    var what = card.ability.length > 0 ? card.ability : (card.icon.length > 0 ? "an ability" : "an attack");
+    return card.name + ": " + what + " lands " + tenths(card.owed) + " s into its next turn";
+}
+
+var timeCost = 0;
+var timeSpills = false;
+var timeOver = "0"; // the creature the cursor is over, by its id (the preview's)
+var timeState = null;
 
 // A translucent black panel with rounded corners, its edges fading out: a
 // rounded rectangle a little smaller each layer, the layers' black adding
@@ -536,6 +774,13 @@ function roundedBox(clip, x, y, w, h, r, fill, alpha)
     clip.endFill();
 }
 
+// A number of seconds or meters with one decimal, always: "2.0", not "2".
+function tenths(value)
+{
+    var whole = Math.round(Number(value) * 10);
+    return Math.floor(whole / 10) + "." + (whole % 10);
+}
+
 // The caption under the bar: a card's name while the pointer is on it,
 // otherwise on the player's turn the movement left, and nothing else (the
 // user: not the round, not the name, not "action ready", which nearly
@@ -546,7 +791,12 @@ function caption()
     var strip = _root.bar.strip;
     var line = _root.hovered != undefined && _root.hovered.length > 0 ? _root.hovered : captionText;
     strip.text.text = line;
-    centre(strip.text, TOP + CARD_H + 20, CAPTION_H);
+    var w = Math.max(CAPTION_W, strip.text.textWidth + 44);
+    strip.plate.removeMovieClip();
+    panel(strip.createEmptyMovieClip("plate", 1), strip.middle - w / 2, strip.top, w, CAPTION_H, 8);
+    strip.text._x = strip.middle - w / 2;
+    strip.text._width = w;
+    centre(strip.text, strip.top, CAPTION_H);
     strip._visible = line.length > 0;
 }
 
@@ -580,6 +830,33 @@ function centreWord(field, top, height)
 // On the player's turn, the movement left, or with a turn a bar of time
 // (core: TurnBudget) the time left and how far it would walk; nothing on
 // anyone else's.
+// The creature under the cursor has an action pending: when it lands, in
+// its own time (the same words as its card's, under the pointer).
+function pendingOf(state)
+{
+    if (timeOver == "0" || timeOver == undefined)
+    {
+        return "";
+    }
+    for (var i = 0; i < state.cards.length; i++)
+    {
+        var card = state.cards[i];
+        if (card.id == timeOver && card.owed > 0)
+        {
+            return pendingWords(card);
+        }
+    }
+    return "";
+}
+
+// The caption's words: that the player has the game paused, on anyone's
+// turn (the pause key pauses; nothing else on the screen said so: play test
+// 29), else what the turn has left.
+function words(state)
+{
+    return state.paused ? "Paused: Space runs the game again" : describe(state);
+}
+
 function describe(state)
 {
     if (!state.playerTurn)
@@ -588,7 +865,47 @@ function describe(state)
     }
     if (state.timed)
     {
-        return state.timeLeft + " of " + state.time + " s, " + state.movementLeft + " m to walk";
+        var pending = pendingOf(state);
+        // What the cursor is on would cost, when the preview says; else what
+        // is left.
+        if (timeCost > 0)
+        {
+            var after = Math.max(0, Number(state.timeLeft) - timeCost);
+            // The cost alone: with the creature's pending action after it
+            // the line was two thoughts and a third of the screen wide
+            // (play test 28). That is said when no order is priced.
+            return timeSpills ? "Costs " + tenths(timeCost) + " s: lands next turn"
+                              : "Costs " + tenths(timeCost) + " s, leaving " + tenths(after) + " s";
+        }
+        if (pending.length > 0)
+        {
+            return pending;
+        }
+        // Nothing left. With an action of its own pending, its walk is under
+        // way and the turn about to pass: no word. Else the turn waits, and
+        // says what can still be done: with 0.01 s left the bar stood dark
+        // and silent for half a minute (play test 29).
+        if (!(Number(state.timeLeft) > 0))
+        {
+            for (var mine = 0; mine < state.cards.length; mine++)
+            {
+                if (state.cards[mine].current && state.cards[mine].owed > 0)
+                {
+                    return "";
+                }
+            }
+            return "No time left: an action begun now lands next turn";
+        }
+        // A turn that began by paying for an action begun the turn before
+        // says so, while nothing else has been spent.
+        var paid = state.paid > 0 && Math.abs(Number(state.time) - state.paid - Number(state.timeLeft)) < 0.05;
+        // And one longer than a turn by what rolled over says that, while it
+        // is whole: a turn ended early gave the next 5.0 s with no word of
+        // why (play test 28).
+        var saved = state.rolled > 0 && Math.abs(Number(state.time) - Number(state.timeLeft)) < 0.05;
+        return state.timeLeft + " s left, " + state.movementLeft + " m to walk" +
+               (paid ? " (" + tenths(state.paid) + " s paid for last turn's action)"
+                     : saved ? " (" + tenths(state.rolled) + " s saved from last turn)" : "");
     }
     return state.movementLeft + " of " + state.movementMax + " m to move";
 }
@@ -625,6 +942,7 @@ function draw(view)
     {
         _root.bar.removeMovieClip();
         lastCards = null;
+        timeState = null;
         // The cards and their images are gone: the plugin may release the
         // portraits it rendered for them (core/Portraits.h).
         if (inGame)
@@ -634,13 +952,18 @@ function draw(view)
         return;
     }
     var at = view.indexOf(CARD);
-    var cards = (at < 0 ? "" : view.substr(at)) + (state.playerTurn ? "+" : "-") + state.round;
+    // Rebuilt when the cards change, or whose turn it is, or whether Delay is
+    // to be had (it goes as soon as anything of the turn is spent).
+    var cards = (at < 0 ? "" : view.substr(at)) + (state.playerTurn ? "+" : "-") + state.delay +
+                (state.timed ? "t" : "") + state.round;
     if (cards != lastCards)
     {
         lastCards = cards;
         build(state);
     }
-    captionText = describe(state);
+    timeState = state;
+    drawTime(state);
+    captionText = words(state);
     caption();
 }
 
@@ -653,7 +976,7 @@ function draw(view)
 // with them: the stage is laid over the view whole and centred (showAll),
 // so a pixel is a stage point by one scale and an offset (seen so in play).
 // Asked every frame, since the points move with the camera.
-var PREVIEW_VERSION = 3;
+var PREVIEW_VERSION = 5;
 // The stage as tools/movie.py makes it (tools/test_movie.py holds the two
 // equal). Not Stage.width and Stage.height: in the game Stage.height is the
 // view's height in stage units, not the stage's (800 for a 1600 x 1000 view,
@@ -671,7 +994,11 @@ function samplePreview()
 {
     // Too far, which shows the most: in reach the line ends in the game's
     // own marker, which is the world's and not this movie's to draw.
-    var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 2, "13.6", "6.5", 1].join(FIELD);
+    // With a turn a bar of time (sample=time): what the order would cost,
+    // and that it fits.
+    var timed = _root.sample == "time" || _root.time == "1";
+    var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 2, "13.6", "6.5", 1, timed ? "1.9" : "0.0", 0, timed ? 513 : 0]
+                   .join(FIELD);
     var reach = [300, 262, 470, 250, 560, 214, 640, 200].join(FIELD);
     var beyond = [640, 200, 720, 186, 800, 204, 900, 196].join(FIELD);
     return head + CARD + reach + CARD + beyond + CARD + sampleRing(640, 200, 15).join(FIELD) + CARD +
@@ -883,6 +1210,24 @@ function drawPreview(text)
     var head = records[0].split(FIELD);
     var viewW = Number(head[1]);
     var viewH = Number(head[2]);
+    // What the order under the cursor would cost of the bar of time, shown
+    // on the bar (drawTime) and said in the caption.
+    var cost = Number(head[0]) == PREVIEW_VERSION && Number(head[7]) > 0 ? Number(head[7]) : 0;
+    var spills = head[8] == "1";
+    // And the creature the cursor is over (version 5), for its pending action.
+    var over = Number(head[0]) == PREVIEW_VERSION && head[9] != undefined ? head[9] : "0";
+    if (cost != timeCost || spills != timeSpills || over != timeOver)
+    {
+        timeCost = cost;
+        timeSpills = spills;
+        timeOver = over;
+        if (timeState != null)
+        {
+            drawTime(timeState);
+            captionText = words(timeState);
+            caption();
+        }
+    }
     if (Number(head[0]) != PREVIEW_VERSION || head[3] == "0" || head[3] == undefined || !(viewW > 0) ||
         !(viewH > 0))
     {
@@ -934,7 +1279,12 @@ function drawPreview(text)
     }
     if (end != undefined)
     {
-        previewLabel(clip, tooFar ? head[4] + " m of " + head[5] : head[4] + " m", tooFar ? RED_HEART : GOLD, end);
+        var plate = tooFar ? head[4] + " m of " + head[5] : head[4] + " m";
+        if (!tooFar && cost > 0)
+        {
+            plate += spills ? ", " + tenths(cost) + " s: next turn" : ", " + tenths(cost) + " s";
+        }
+        previewLabel(clip, plate, tooFar ? RED_HEART : GOLD, end);
     }
 }
 

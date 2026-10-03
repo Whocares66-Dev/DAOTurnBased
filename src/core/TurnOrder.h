@@ -85,6 +85,17 @@ class TurnOrder
     // With nobody standing the current turn stays where it lands.
     [[nodiscard]] bool Advance();
 
+    // The current combatant's turn put off to the end of this round
+    // (Delay, as Deadfire's: dev/REBALANCE.md, "Pillars as the reference"):
+    // the turn is the next standing combatant's, and the round after begins
+    // in initiative's order again. False, and nothing changed, with nobody
+    // standing after it this round, or if it has put a turn off this round
+    // already.
+    [[nodiscard]] bool Delay();
+    [[nodiscard]] bool CanDelay() const;
+    // Whether it has put its turn off this round.
+    [[nodiscard]] bool Delayed(ObjectId id) const;
+
     // A combatant arriving mid-fight, its initiative rolled.
     void Join(Combatant combatant);
 
@@ -105,6 +116,7 @@ class TurnOrder
     void DropFallenOthers();
 
     std::vector<Combatant> order_;
+    std::vector<ObjectId> delayed_; // who put a turn off this round: they stand at the order's end, out of place
     std::size_t current_ = 0;
     int round_ = 0;
 };

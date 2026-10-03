@@ -100,8 +100,20 @@ $builtAddresses = Join-Path $build 'daolib\addresses'
 if (-not (Test-Path (Join-Path $builtAddresses '*.bin'))) { throw "No address files in $builtAddresses; the build makes them" }
 $addresses = Join-Path $Game 'daolib\addresses'
 New-Item -ItemType Directory -Force $addresses | Out-Null
-foreach ($file in Get-ChildItem -Path $builtAddresses -Filter '*.bin') {
-    Copy-Item -Force $file.FullName (Join-Path $addresses $file.Name)
+$built = @(Get-ChildItem -Path $builtAddresses -Filter '*.bin' | ForEach-Object { $_.Name })
+foreach ($name in $built) {
+    Copy-Item -Force (Join-Path $builtAddresses $name) (Join-Path $addresses $name)
+}
+# The folder holds what this build has and nothing else, as DAOLib's own deploy leaves it: a
+# file the address library no longer writes (the names by link stamp alone, before its
+# ae992b3) would be stale here. This deploy puts the loader in, so the files are its to keep
+# current; Eluvian's reads the same four-field names and adds only what is missing
+# (eluvian-agent, 2026-10-02).
+foreach ($file in Get-ChildItem -Path $addresses -Filter 'daoaddresses-*.bin') {
+    if ($built -notcontains $file.Name) {
+        Remove-Item -Force $file.FullName
+        Show-Info "removed $($file.Name): the build has no such file"
+    }
 }
 Show-Ok "addresses -> $addresses"
 $builtMovie = Join-Path $repo 'build\ui\turnorder.swf'

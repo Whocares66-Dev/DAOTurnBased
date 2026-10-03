@@ -1,4 +1,5 @@
 #include "core/Preview.h"
+#include "core/TurnMachine.h"
 
 #include "core/Bar.h"
 
@@ -157,10 +158,40 @@ std::vector<Vec3> RingAround(const Vec3 &centre, float radius, int count)
     return ring;
 }
 
+namespace
+{
+// The creature the cursor is over, as the movie compares it with its cards'
+// ids; 0 for none (the invalid object's own number is no card's either, but
+// 0 is what the movie tests for).
+ObjectId OverField(ObjectId over)
+{
+    return over == kNoObject ? 0 : over;
+}
+} // namespace
+
 std::wstring EncodeNoPreview()
 {
-    return std::format(L"{}{}0{}0{}0{}0.0{}0.0{}1", kPreviewVersion, kBarField, kBarField, kBarField, kBarField,
-                       kBarField, kBarField);
+    return EncodeNoPreview(OrderCost{});
+}
+
+std::wstring EncodeNoPreview(const OrderCost &cost, ObjectId over)
+{
+    return std::format(L"{}{}0{}0{}0{}0.0{}0.0{}1{}{:.1f}{}{}{}{}", kPreviewVersion, kBarField, kBarField, kBarField,
+                       kBarField, kBarField, kBarField, kBarField, std::max(0.0f, cost.seconds), kBarField,
+                       cost.spills ? 1 : 0, kBarField, OverField(over));
+}
+
+OrderCost CostOf(const TurnView &view, float walkMeters, float actionSeconds)
+{
+    if (!view.timed || !(view.paceMps > 0.0f))
+    {
+        return {};
+    }
+    const float walk = std::max(0.0f, walkMeters - view.paidMeters) / view.paceMps;
+    OrderCost cost;
+    cost.seconds = walk + std::max(0.0f, actionSeconds);
+    cost.spills = cost.seconds * 1000.0f > static_cast<float>(view.timeLeftMs) + 0.5f;
+    return cost;
 }
 
 std::wstring EncodePreview(const PreviewView &view)
@@ -169,9 +200,11 @@ std::wstring EncodePreview(const PreviewView &view)
     {
         return EncodeNoPreview();
     }
-    std::wstring out = std::format(L"{}{}{}{}{}{}{}{}{:.1f}{}{:.1f}{}{}", kPreviewVersion, kBarField, view.width,
-                                   kBarField, view.height, kBarField, view.beyond.empty() ? 1 : 2, kBarField,
-                                   view.length, kBarField, view.meters, kBarField, view.line ? 1 : 0);
+    std::wstring out =
+        std::format(L"{}{}{}{}{}{}{}{}{:.1f}{}{:.1f}{}{}{}{:.1f}{}{}{}{}", kPreviewVersion, kBarField, view.width,
+                    kBarField, view.height, kBarField, view.beyond.empty() ? 1 : 2, kBarField, view.length, kBarField,
+                    view.meters, kBarField, view.line ? 1 : 0, kBarField, std::max(0.0f, view.cost), kBarField,
+                    view.spills ? 1 : 0, kBarField, OverField(view.over));
     AppendDots(out, view.reach);
     AppendDots(out, view.beyond);
     AppendDots(out, view.stopRing);

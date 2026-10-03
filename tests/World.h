@@ -14,6 +14,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -34,6 +36,7 @@ struct Creature
     bool engaged = true;  // fighting the party: in its sight, or attacking or attacked by it
     bool busy = false;
     Condition condition = Condition::None; // stunned or pinned, as the game side reads it
+    float conditionSeconds = 0.0f;         // what the engine has left of it (0: not read)
     float energy = 1.0f;                   // mana or stamina
     bool mana = false;                     // a mage's
     bool moving = false;
@@ -77,6 +80,13 @@ inline Settings Fixed()
     // And the cooldowns' first rate, the numbers they were written with
     // (Shield Bash's 20 s two turns); the default is a test of its own.
     s.cooldownSecondsPerTurn = 10.0f;
+    // And a turn of one action and meters, which they were written for; a
+    // turn as a bar of time has its own cases (test_time.cpp), which set it.
+    s.turnClock = TurnClock::Actions;
+    // Their actions are ended as soon as they are begun, to get on with the
+    // case: with time that reads as an action that did not play, whose time
+    // is given back. A case of its own has that rule on (test_time.cpp).
+    s.giveBackUnplayed = false;
     return s;
 }
 
@@ -164,8 +174,10 @@ class World
         for (const ObjectId id : needs.statuses)
         {
             const Creature &c = Get(id);
-            obs.statuses.push_back({id, c.exists, c.down, c.down ? 0.0f : 1.0f, c.condition, c.energy, c.mana});
+            obs.statuses.push_back({id, c.exists, c.down, c.down ? 0.0f : 1.0f, c.condition, c.energy, c.mana,
+                                    c.condition != Condition::None ? c.conditionSeconds : 0.0f});
         }
+        obs.keptVoid = std::exchange(keptVoid, {});
         Apply(machine.Step(obs));
     }
 
@@ -303,7 +315,11 @@ class World
     std::function<void(const Effect &)> onEffect;           // sees every effect as it is applied
     std::function<void(std::string_view)> onLog;            // sees every line the machine logs
     std::function<void(ObjectId, const CommandRequest &, Verdict)> onReleased; // a kept cast or action given again
-    bool record = true; // keep the log and the effects (a long random fight does not)
+    std::function<void(ObjectId)> onApproach; // the walk to a kept attack's target, when not World's own
+    int approaches = 0;
+    std::unordered_set<ObjectId> targetGone; // whose kept action's target is gone: not given
+    std::vector<ObjectId> keptVoid;          // told to the machine with the next frame
+    bool record = true;                      // keep the log and the effects (a long random fight does not)
     Mode mode = Mode::Explore;
     bool paused = false;
     bool inCombat = true;
@@ -352,9 +368,29 @@ class World
                     onPoke(e.target);
                 }
                 break;
+            case EffectKind::Approach:
+                // The game layer walks the creature to its kept attack's
+                // target, as a script's move.
+                ++approaches;
+                if (onApproach)
+                {
+                    onApproach(e.target);
+                }
+                else
+                {
+                    (void)Order(e.target, CommandType::MoveToObject, Source::Script);
+                }
+                break;
             case EffectKind::ReleaseCast:
-                // The game layer gives the cast it kept, as a script's.
-                if (const auto kept = heldCasts.find(e.target); kept != heldCasts.end())
+                // The game layer gives the cast it kept, as a script's; not
+                // one whose target is gone, which it says with the next
+                // frame's observation.
+                if (targetGone.erase(e.target) > 0)
+                {
+                    heldCasts.erase(e.target);
+                    keptVoid.push_back(e.target);
+                }
+                else if (const auto kept = heldCasts.find(e.target); kept != heldCasts.end())
                 {
                     CommandRequest again = kept->second;
                     heldCasts.erase(kept);

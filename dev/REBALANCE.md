@@ -6,7 +6,7 @@ How to read the evidence. "Read" is from the game's own scripts (the toolset's 2
 
 ## Current specification
 
-The rules in force as of 2026-10-02, and only those: what to build from. Everything below this section is how they were reached, kept as their reasons; where it disagrees with this section, this section holds. **Built so far, behind `[turns] clock = time` and not yet seen in play**: the turn's bar with Combat Tactics and rollover, actions at their own time (stand-ins where the engine's lengths are not read), walking at a pace with a free metre, an action that does not fit kept and landing on the next turn, an AI choosing while it has time, and Survival's initiative; `dev/REBALANCE_IMPLEMENTATION.md` has what and what not. Creatures' own clocks, holds by their time, interruption by damage, areas' clocks and the bar on screen are not. Each rule is marked by where it stands: *decided*, the user's own decision in the talk ("Decided: a turn is four seconds of time" and the section after it); *proposed*, an answer to a review that the user has had pushed but not confirmed in words ("Answers to the review concerns" and the two answer sections after it). Times are in seconds as the game has them; the core keeps them in milliseconds.
+The rules in force as of 2026-10-02, and only those: what to build from. Everything below this section is how they were reached, kept as their reasons; where it disagrees with this section, this section holds. **Built so far, as `[turns] clock = time`, the default since 2026-10-02 (seen in play, play tests 25 to 28; `clock = actions` is the rule before it)**: the turn's bar with Combat Tactics and rollover, actions at their own time (stand-ins where the engine's lengths are not read), walking at a pace with a free metre, an action that does not fit kept and landing on the next turn, an AI choosing while it has time, and Survival's initiative; `dev/REBALANCE_IMPLEMENTATION.md` has what and what not. Since (the fourth and fifth slices): holds by their own time, cooldowns on their user's clock, the engine's own durations for swings, shots and casts, interruption of a pending spell by a blow, a grab charged the time it runs, the time on the game's experience bar, and the fight's speed. Then (the sixth slice): the cost drawn on the experience bar, Delay, and a pending action said on hovering over its creature. Not built: effects on their owner's own clock (they age a round at a time), areas' clocks, waiting a set time. Each rule is marked by where it stands: *decided*, the user's own decision in the talk ("Decided: a turn is four seconds of time" and the section after it); *proposed*, an answer to a review that the user has had pushed but not confirmed in words ("Answers to the review concerns" and the two answer sections after it). Times are in seconds as the game has them; the core keeps them in milliseconds.
 
 ### The turn
 
@@ -68,9 +68,9 @@ A pending action follows the same sequence when its time is paid, after a check 
 
 ### What the player sees
 
-- **The bar on the game's experience bar**, a segment a second, the rollover past the 4 s mark (*decided*; whether that bar can be driven is not established).
-- **The hovered action's cost shaded on it**, gold if it fits and red if it spills, with its numbers ("move 1.2 s + attack 1.9 s, 0.9 s left"; "lands next turn, 2.4 s left"), and where a cooldown will lift (*proposed*).
-- **A pending action on hovering over its creature or its card**: "Inferno, lands in 2.4 s" (*decided*).
+- **The bar of time, the mod's own under the turn order, made of the experience bar's art**, a tick a second, the rollover past the 4 s mark (*decided*, 2026-10-02: it was built on the game's experience bar first, and the user, having seen it, wanted it separate: "the action bar seems to replace the experience bar? that's confusing").
+- **The hovered action's cost shaded on it** (built: pale for what it would spend, red if it spills), with its numbers ("move 1.2 s + attack 1.9 s, 0.9 s left"; "lands next turn, 2.4 s left"), and where a cooldown will lift (*proposed*).
+- **A pending action on hovering over its creature or its card**: "Inferno lands 2.4 s into its next turn", and the talent's or spell's own icon on the card (*decided*; built).
 - **The quickbar's sweep** moving as its user spends (*decided*).
 - **Waiting a set time**, as a way to spend the bar on nothing until a cooldown lifts (*proposed*).
 
@@ -82,7 +82,7 @@ A pending action follows the same sequence when its time is paid, after a check 
 - **A stealthed opening attack**: whether the mod's clearing of commands at the fight's start cancels it, to see in play ("After the decisions"); the fix if so is written there.
 - **The AI on the bar**: its own issue ("After the decisions").
 - **Dragons and creatures that fight unlike people**: grabs, flight, attacks timed by their animations.
-- **Delay**, the player's only, low in the order of work.
+- **Delay**, the player's only: **built 2026-10-02 as Deadfire's, to judge in play** (`[turns] delay`, on; the bar's Delay beside End). A party member puts its turn off to the round's end, once a round and only before it has moved or acted; the turn it then takes is whole, the round after is in initiative's order again, and nothing counts the turn twice (the scripts' turn start, its cooldowns, its own clock). The AI does not use it. *Decided*: the user, 2026-10-02, having asked what it does (it does not skip the turn; the turn is taken whole at the round's end): "okay, we can keep delay".
 
 ### What it rests on that is not yet had
 
@@ -554,6 +554,26 @@ After the rules, at 2 s a turn. Against real time:
 **Point systems**: Divinity: Original Sin 2 gives 4 points a turn, carries unspent ones up to 6, and makes Haste a point more; Fallout gives 5 plus half Agility and turns unspent points into armour; Wasteland 3 carries two over; Baldur's Gate 3 has an action, a bonus action (a potion, the off hand's attack) and movement. The shape proposed above is the last, with points for the bonus actions.
 
 **No turn-based mod for Dragon Age: Origins was found** on Nexus or in forum searches; players approximate one by pausing. Nexus's own search could not be reached, so that is likely, not proven.
+
+### Pillars as the reference: what its two modes teach (2026-10-02)
+
+The user, 2026-10-02: "the turn-based mode should be smooth, balanced, challenging, and most of all, fun. it should be a real viable alternative to rtwp, like it was always meant to be there, like the first-party turn-based modes of pillars of eternity. perhaps pillars can be a good reference for design choices and features we'd want." So both modes were looked at again, with their reception: Deadfire's (January 2019; the official wiki's "Turn-based mode", which quotes the in-game help) and the first game's (beta November 2025, released April 2026 as patch 3.9.3; Obsidian's release notes as gogdb.org carries them, the Steam beta notes, PC Gamer's and RPGFan's reviews, the Steam discussions). What was praised and what was not, each against what this mod does. These are readings and proposals, not decisions.
+
+| What Pillars found | Here |
+|---|---|
+| **Speed must buy something.** Deadfire gave everyone one action a round and ignored weapon speed: Dexterity became "the worst stat", heavy armour was free. The first game's mode made speed buy turns and was called "the way it's meant to be played". | The bar of time is this, taken further: a dagger swings 2.7 times in a turn and a greatsword 1.6, Haste and Momentum shorten every swing. Built, and seen in play (play test 25). |
+| **Free actions capped.** Deadfire's unlimited free actions were exploited; the first game allows one weapon swap, one potion and one mode a turn. | A potion costs its drink (1.2 s) and a mode its animation; a weapon swap is free and uncapped: to cap at one a turn, or cost a second. Proposed: one free swap a turn. |
+| **Fights must be shorter than a real-time fight feels.** Deadfire: a dungeon "took me 3 hours"; the first game raised all damage 35% to shorten fights, and its "max speed" was still called slow. | Unmeasured. To measure: the same fight in real time, in one-action turns and on the bar, in rounds, damage and minutes on the clock (the balance sweep). The levers, in order: enemies' turns faster (`ai_turn_speed`, 1 today), no waits between turns, then lethality if still slow. |
+| **Short effects must not be wasted.** In both, a one-round effect that ends at its victim's turn start does nothing for a slow debuffer. | A hold takes its own seconds of its victim's bar, whenever it lands (the hold rule): to build next. |
+| **Damage over time and pulses that land a round at once** leave no chance to react (the first game). | Effects age a round at a time at the round's start, the same fault. A creature's own clock mends it; needs DAOLib. Until then, to watch in play. |
+| **Interrupts that only delay become a stunlock** (the first game, uncapped). | A hold is the game's own, with its own shortening for a recent stun (rule in "Durations"); nothing added. |
+| **A pending cast is an entry in the tracker** (Deadfire), so interrupting it is a visible choice. | A pending action shown on its creature's card: to build. |
+| **The tracker must show what is coming**: the first game's did not show enough of a fast enemy's turns. | Everyone has one turn a round here, and the bar shows the round and the next. An enemy's bar (how much it will do) is drawn on its turn. |
+| **Delay Turn** (both; Deadfire's only before moving or acting). | Built as Deadfire's (2026-10-02, `[turns] delay`): before anything is spent, to the round's end, once a round. Kept (the user, the same day). |
+| **Enemy turns: slow, and an AI that stalls or skips** (both). | An AI that chooses nothing passes after `ai_think_ms`; with time it chooses again until its bar is spent. Its turns at `ai_turn_speed`. To be judged in long fights with several kinds of enemy. |
+| **The mode switched freely** between fights (the first game: options, a key, a HUD button); Deadfire's lock at a new game was resented. | Built: the options' toggle and a key, outside a fight. |
+| **Path preview and a readout of what is left** (both); the cursor reddens when a move would provoke (the first game). | Built: the path on the ground, gold and red, with its length; the bar of time with the hovered order's cost on it is being built. Nothing provokes here: leaving melee costs only its time, as decided. |
+| **Encounters tuned for real time become a slog** (both; Sawyer: "fewer encounters, smaller encounters, but much more tactical"). | Not the mod's to change. The switch between fights answers it: a trash fight in real time, a hard one in turns. |
 
 ## Thoughts on the ideas floated
 

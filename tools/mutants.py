@@ -8,26 +8,58 @@ builds the core preset, runs the tests, and puts the file back. A mutant is
 caught if a test fails (or the run hangs past the timeout), and survives if
 every test passes. A survivor is a promise no test holds.
 
-Run from a shell where tools\\build.ps1 has imported the developer
-environment, after one `.\\tools\\build.ps1 -Preset core`:
+The mutants run side by side (the user, 2026-10-02: "do the mutants all run
+serially? can we parallelize them? on low-priority threads like the build?").
+Each worker has a copy of the core and its tests under build\\mutants\\wN, with
+a build of its own, and breaks that copy: the working tree is read and never
+written, so the core can be edited while they run and a run that is stopped
+leaves nothing broken. The copies are kept between runs and brought up to
+the tree file by file, so that only what changed is built again. Every core
+is used, a mutant to each, and everything runs below normal priority, as the
+build does, so that whatever else the machine is doing comes first (the
+user: "use as many cores as available, but keep the threads low priority so
+they don't interfere w/ others"). One at a time and in the tree itself, 262
+mutants took 55 minutes; eight at a time, ten and a half; twenty at a time
+(a core each, on this machine), seven.
 
-    python tools\\mutants.py            every mutant
+Run from a shell where tools\\build.ps1 has imported the developer
+environment, after one `.\\tools\\build.ps1 -Preset core` (the workers use its
+vcpkg packages):
+
+    python tools\\mutants.py               every mutant
     python tools\\mutants.py gate joiner   those whose name contains "gate" or "joiner"
+    python tools\\mutants.py -j 4          four at a time (by default one a core)
 
 Exits non-zero if any mutant survives or fails to compile.
 """
 
 from __future__ import annotations
 
+import argparse
+import os
+import queue
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-TESTS = REPO / "build" / "core" / "tests" / "tb_tests.exe"
+WORK = REPO / "build" / "mutants"
+# What a worker's copy holds: the core preset builds from these and nothing else.
+FILES = (
+    "CMakeLists.txt",
+    "CMakePresets.json",
+    "vcpkg.json",
+    "vcpkg-configuration.json",
+)
+TREES = ("src/core", "tests")
+# The core preset's packages (Catch2), installed once by the tree's own build.
+PACKAGES = REPO / "build" / "core" / "vcpkg_installed"
 TIMEOUT_S = 600
+# Below normal, as tools\\build.ps1 runs the build: the machine stays usable.
+LOW = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
 
 
 @dataclass(frozen=True)
@@ -253,8 +285,8 @@ MUTANTS = [
     Mutant(
         "a conversation does not stand the gate aside",
         MACHINE,
-        "        phase_ = Phase::Suspended;\n        SetSpeed(1.0f, fx);\n        return fx;",
-        "        SetSpeed(1.0f, fx);\n        return fx;",
+        "        phase_ = Phase::Suspended;\n        playerPaused_ = false;\n        SetSpeed(1.0f, fx);\n        return fx;",
+        "        playerPaused_ = false;\n        SetSpeed(1.0f, fx);\n        return fx;",
     ),
     Mutant(
         "fallen enemies stay in the order",
@@ -319,14 +351,14 @@ MUTANTS = [
     Mutant(
         "a stun costs no turn",
         MACHINE,
-        "    const bool owes = held.kind == Condition::Disabled && held.turns > 0;",
-        "    const bool owes = held.kind == Condition::Disabled && held.turns > 99;",
+        "    const bool owes = timed ? held.owedMs >= turn : !Timed() && held.kind == Condition::Disabled && held.turns > 0;",
+        "    const bool owes = timed ? held.owedMs >= turn : !Timed() && held.kind == Condition::Disabled && held.turns > 99;",
     ),
     Mutant(
         "a condition that has had its turns is never ended",
         MACHINE,
-        "if (held.turns <= 0 && held.seen != Condition::None)",
-        "if (held.turns < 0 && held.seen != Condition::None)",
+        "if (held.turns <= 0 && held.owedMs == 0 && held.seen != Condition::None)",
+        "if (held.turns < 0 && held.owedMs == 0 && held.seen != Condition::None)",
     ),
     Mutant(
         "End waits out what the engine holds the creature in",
@@ -337,8 +369,8 @@ MUTANTS = [
     Mutant(
         "a condition on the game's clock costs no turn",
         MACHINE,
-        "    const bool holds = (settings_.conditionTurns == 0 || held.onClock) && held.seen == Condition::Disabled;",
-        "    const bool holds = false;",
+        "    const bool holds = (held.onClock || (settings_.conditionTurns == 0 && held.kind == Condition::None)) &&",
+        "    const bool holds = (false) &&",
     ),
     Mutant(
         "a turn waits out an effect no condition names",
@@ -377,22 +409,10 @@ MUTANTS = [
         "        phase_ = std::exchange(startInterrupted_, false) ? Phase::TurnStart : Phase::TurnStart;",
     ),
     Mutant(
-        "an enemy's turn runs at the game's own speed",
-        MACHINE,
-        "    return PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed;",
-        "    return PlayerControls(who) ? 1.0f : 1.0f;",
-    ),
-    Mutant(
-        "the player's turn runs at the enemies' speed",
-        MACHINE,
-        "    return PlayerControls(who) ? 1.0f : settings_.aiTurnSpeed;",
-        "    return PlayerControls(who) ? settings_.aiTurnSpeed : settings_.aiTurnSpeed;",
-    ),
-    Mutant(
         "a conversation plays at the enemies' speed",
         MACHINE,
-        "        phase_ = Phase::Suspended;\n        SetSpeed(1.0f, fx);",
-        "        phase_ = Phase::Suspended;",
+        "        playerPaused_ = false;\n        SetSpeed(1.0f, fx);\n        return fx;\n    }\n    if (obs.mode == Mode::Gui)",
+        "        playerPaused_ = false;\n        return fx;\n    }\n    if (obs.mode == Mode::Gui)",
     ),
     Mutant(
         "the speed is written though it has not changed",
@@ -475,8 +495,8 @@ MUTANTS = [
     Mutant(
         "a command that failed without acting keeps its action spent",
         MACHINE,
-        "    GiveActionBack();\n    budget_.refunded = true;\n    Log(LogLevel::Info,\n        std::format(\"{}'s {} failed",
-        "    budget_.refunded = true;\n    Log(LogLevel::Info,\n        std::format(\"{}'s {} failed",
+        "    GiveActionBack();\n    budget_.refunded = true;\n    ++budget_.givenBack;",
+        "    budget_.refunded = true;\n    ++budget_.givenBack;",
     ),
     Mutant(
         "the hero is not the one controlled after a fight",
@@ -527,10 +547,10 @@ MUTANTS = [
         "(!agedAtNow_ || lastNow_ - *agedAtNow_ > 0u)",
     ),
     Mutant(
-        "a turn's camera moves before its speed is set",
+        "a turn does not set the fight's speed",
         MACHINE,
-        "    // whether a pan got there (src/game/Camera.cpp).\n    SetSpeed(TurnSpeed(who), fx);",
-        "    // whether a pan got there (src/game/Camera.cpp).",
+        "    // says whether a pan got there (src/game/Camera.cpp).\n    SetSpeed(TurnSpeed(), fx);",
+        "    // says whether a pan got there (src/game/Camera.cpp).",
     ),
     Mutant(
         "effects' time turned on mid-fight is never held",
@@ -709,14 +729,14 @@ MUTANTS = [
     Mutant(
         "a creature standing at a walk is left to max_action_ms",
         MACHINE,
-        "        else if (clock_ - stoodSince_ >= kStoodMs)",
-        "        else if (clock_ - stoodSince_ >= kStoodMs * 1000)",
+        "        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs : kStoodMs))",
+        "        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs : kStoodMs * 1000))",
     ),
     Mutant(
         "a swing on the spot is taken for standing at a walk",
         MACHINE,
-        "(at == CommandKind::Move || at == CommandKind::Free))",
-        "(at == CommandKind::Move || at == CommandKind::Free || at == CommandKind::Action))",
+        "(at == CommandKind::Move || at == CommandKind::Free || short_))",
+        "(at == CommandKind::Move || at == CommandKind::Free || short_ || at == CommandKind::Action))",
     ),
     Mutant(
         "an action that waited behind a walk is lost when it is stopped",
@@ -859,8 +879,8 @@ MUTANTS = [
     Mutant(
         "a preview marked in the world still has the movie draw its line",
         PREVIEW,
-        "kBarField, view.line ? 1 : 0);",
-        "kBarField, view.line ? 1 : 1);",
+        "view.line ? 1 : 0,",
+        "view.line ? 1 : 1,",
     ),
     Mutant(
         "a preview too far is said to be in reach",
@@ -889,8 +909,8 @@ MUTANTS = [
     Mutant(
         "an ability's cooldown is never held",
         MACHINE,
-        "        if (turns > 0)\n        {\n            usedNow_.push_back(Hold{who->id, request.ability, turns, turns});",
-        "        if (turns > 99)\n        {\n            usedNow_.push_back(Hold{who->id, request.ability, turns, turns});",
+        "        if (turns > 0)\n        {\n            // With time, its own seconds",
+        "        if (turns > 99)\n        {\n            // With time, its own seconds",
     ),
     Mutant(
         "a held cooldown is released a turn early",
@@ -919,8 +939,8 @@ MUTANTS = [
     Mutant(
         "a character's own AI spends the player's turn",
         MACHINE,
-        "    if (player && !landing && request.source == Source::Script &&",
-        "    if (player && !landing && request.source == Source::Unknown &&",
+        "    if (player && !landing && !approaching && request.source == Source::Script &&",
+        "    if (player && !landing && !approaching && request.source == Source::Unknown &&",
     ),
     Mutant(
         "effects are never aged a round",
@@ -1052,8 +1072,8 @@ MUTANTS = [
     Mutant(
         "time: an attack's walk is not paid as it is let through",
         MACHINE,
-        "    budget_.spend.Prepay(walk);",
-        "",
+        "    budget_.spend.Prepay(walk);\n    const std::uint32_t owed = budget_.spend.SpendAction(cost);",
+        "    const std::uint32_t owed = budget_.spend.SpendAction(cost);",
     ),
     Mutant(
         "time: an action is kept by its own time alone, its walk forgotten",
@@ -1076,14 +1096,8 @@ MUTANTS = [
     Mutant(
         "time: what a kept action owes is not paid as its turn begins",
         MACHINE,
-        "        (void)budget_.spend.SpendAction(owed);\n        budget_.spend.Credit(charge->walk);",
-        "        budget_.spend.Credit(charge->walk);",
-    ),
-    Mutant(
-        "time: a kept action's walk is paid again as it lands",
-        MACHINE,
-        "        budget_.spend.Credit(charge->walk);",
-        "",
+        "        (void)budget_.spend.SpendAction(owed);\n        budget_.pendingPaidMs = owed;",
+        "        budget_.pendingPaidMs = owed;",
     ),
     Mutant(
         "time: nothing rolls over",
@@ -1169,32 +1183,629 @@ MUTANTS = [
         '             else if (v == "time")\n             {\n                 s.turnClock = TurnClock::Time;',
         '             else if (v == "time")\n             {\n                 s.turnClock = TurnClock::Actions;',
     ),
+    Mutant(
+        "time: a kept attack's creature does not walk to its target",
+        MACHINE,
+        "        const bool approach = walk >= kMinStep;",
+        "        const bool approach = walk >= 9999.0f;",
+    ),
+    Mutant(
+        "time: the walk to a kept attack's target is held as a script's on the player's turn",
+        MACHINE,
+        "    const bool approaching = approach_ && kind == CommandKind::Move && request.source == Source::Script;",
+        "    const bool approaching = approach_ && kind == CommandKind::Action && request.source == Source::Script;",
+    ),
+    Mutant(
+        "time: a kept action whose target is gone keeps what it was paid",
+        MACHINE,
+        "        budget_.spend.GiveActionBack(paid);\n        budget_.pendingPaidMs = 0;",
+        "        budget_.pendingPaidMs = 0;",
+    ),
+    Mutant(
+        "time: Next turn is said over every creature",
+        MACHINE,
+        '        if (PlayerControls(who))\n        {\n            Floaty(pending_, who.id, L"Lands next turn", kGold);',
+        '        if (who.id != kNoObject)\n        {\n            Floaty(pending_, who.id, L"Lands next turn", kGold);',
+    ),
+    Mutant(
+        "time: Interrupted is said as a fight ends",
+        MACHINE,
+        '    if (why == "held" || why == "struck" || (!Timed() && why != "the fight over"))',
+        '    if (why == "held" || why == "struck" || why == "the fight over" || (!Timed() && why != "the fight over"))',
+    ),
+    Mutant(
+        "time: a cooldown does not move with its user's clock",
+        MACHINE,
+        "        h.leftMs -= std::min(h.leftMs, clockMs);",
+        "        h.leftMs -= std::min(h.leftMs, clockMs) * 0;",
+    ),
+    Mutant(
+        "time: a turn's end does not move the clock the rest of the way",
+        MACHINE,
+        "        AgeCooldowns(current->id, turn - std::min(turn, clockSeenMs_), fx);",
+        "        AgeCooldowns(current->id, 0 * (turn - std::min(turn, clockSeenMs_)), fx);",
+    ),
+    Mutant(
+        "time: walking does not move the clock",
+        MACHINE,
+        "            budget_.spend.Walk(step);\n            MoveClock(fx);",
+        "            budget_.spend.Walk(step);",
+    ),
+    Mutant(
+        "time: a short hold takes nothing of its victim's bar",
+        MACHINE,
+        "        const std::uint32_t clock = budget_.spend.HoldClock(std::exchange(held.owedMs, 0));",
+        "        const std::uint32_t clock = budget_.spend.HoldClock(std::exchange(held.owedMs, 0) * 0);",
+    ),
+    Mutant(
+        "time: a hold of exactly a turn is not a turn lost",
+        MACHINE,
+        "    const bool owes = timed ? held.owedMs >= turn :",
+        "    const bool owes = timed ? held.owedMs > turn :",
+    ),
+    Mutant(
+        "time: a hold in its victim's own turn does not count the rest of that turn",
+        MACHINE,
+        "                held->second.owedMs -= std::min(held->second.owedMs, rest);",
+        "                held->second.owedMs -= std::min(held->second.owedMs, rest) * 0;",
+    ),
+    Mutant(
+        "time: a turn cut short by a hold rolls its time over",
+        MACHINE,
+        "                // Taken by the hold, not banked: nothing of it rolls over.\n                budget_.spend.SpendAllActions();",
+        "                // Taken by the hold, not banked: nothing of it rolls over.",
+    ),
+    Mutant(
+        "time: a hold taken off still costs its time",
+        MACHINE,
+        "            if (takenOff && held.owedMs > 0)",
+        "            if (takenOff && held.owedMs > 999999)",
+    ),
+    Mutant(
+        "preview: an order's cost forgets its walk",
+        PREVIEW,
+        "    const float walk = std::max(0.0f, walkMeters - view.paidMeters) / view.paceMps;",
+        "    const float walk = 0.0f * std::max(0.0f, walkMeters - view.paidMeters) / view.paceMps;",
+    ),
+    Mutant(
+        "preview: an order that does not fit is not said to spill",
+        PREVIEW,
+        "    cost.spills = cost.seconds * 1000.0f > static_cast<float>(view.timeLeftMs) + 0.5f;",
+        "    cost.spills = cost.seconds * 1000.0f > static_cast<float>(view.timeLeftMs) + 99999.0f;",
+    ),
+    Mutant(
+        "bar: a turn's own seconds are not in the string",
+        BAR,
+        "    Meters(out, static_cast<float>(view.turnMs) / 1000.0f);",
+        "    Meters(out, 0.0f);",
+    ),
+    Mutant(
+        "time: an AI is told to choose again on a look half a second old",
+        MACHINE,
+        "    const bool fresh = player || !Timed() || lastStatusNow_ == lastNow_;",
+        "    const bool fresh = player || !Timed() || lastStatusNow_ <= lastNow_;",
+    ),
+    Mutant(
+        "the fight's speed does not reach a turn",
+        MACHINE,
+        "    return std::clamp(settings_.fightSpeed, 0.1f, 8.0f);",
+        "    return std::clamp(1.0f, 0.1f, 8.0f);",
+    ),
+    Mutant(
+        "rules: a creature's swing is its whole animation",
+        RULES,
+        "        return *facts.animation * kSwingShareOfAnimation;",
+        "        return *facts.animation;",
+    ),
+    Mutant(
+        "rules: the player's own shot is a follower's",
+        RULES,
+        "            return facts.hero ? kShotSecondsHero : kShotSecondsFollower;",
+        "            return kShotSecondsFollower;",
+    ),
+    Mutant(
+        "rules: an ability's conjuring is not counted",
+        RULES,
+        "    if (facts.loops > 0 && known(facts.conjure))",
+        "    if (facts.loops > 99 && known(facts.conjure))",
+    ),
+    Mutant(
+        "rules: an archery talent with no cast animation costs nothing known",
+        RULES,
+        "    else if (facts.talent && facts.ranged)",
+        "    else if (facts.talent && facts.ranged && facts.loops > 99)",
+    ),
+    Mutant(
+        "time: between two turns the view says the turn is not a bar of time",
+        MACHINE,
+        "        view.timed = Timed();",
+        "        view.timed = budget_.spend.Timed();",
+    ),
+    Mutant(
+        "time: the walk to a kept attack's target has no slack",
+        MACHINE,
+        "            budget_.spend.Credit(kApproachSlack);",
+        "            budget_.spend.Credit(0.0f);",
+    ),
+    Mutant(
+        "time: Out of movement is said over a walk to a kept attack's target",
+        MACHINE,
+        "    if (budget_.approachWalk)",
+        "    if (budget_.approachWalk && budget_.commands > 99)",
+    ),
+    Mutant(
+        "time: the player's kept action ends the turn with no beat",
+        MACHINE,
+        "                pendingEndNow_ = lastNow_ + kPendingSayMs;",
+        "                pendingEndNow_ = lastNow_;",
+    ),
+    Mutant(
+        "time: an action whose own effect holds its creature costs only what it was charged",
+        MACHINE,
+        "if (const std::uint32_t over = ran - free; over > 0)",
+        "if (const std::uint32_t over = ran - free; over > 999999)",
+    ),
+    Mutant(
+        "time: the view does not say what the turn paid for a pending action",
+        MACHINE,
+        "        view.pendingPaidMs = budget_.pendingPaidMs;",
+        "        view.pendingPaidMs = 0;",
+    ),
+    Mutant(
+        "time: a card does not say what its creature's action owes",
+        MACHINE,
+        "owes != charges_.end() ? owes->owedMs : 0",
+        "owes != charges_.end() ? owes->owedMs * 0 : 0",
+    ),
+    Mutant(
+        "time: a walk past the bar stops an action that was charged",
+        MACHINE,
+        "    if (budget_.spend.Timed() && budget_.lastKind == CommandKind::Action && budget_.lastCostMs > 0 &&\n        budget_.onArrivalMs == 0)",
+        "    if (budget_.spend.Timed() && budget_.lastKind == CommandKind::Action && budget_.lastCostMs > 0 &&\n        budget_.onArrivalMs == 99)",
+    ),
+    Mutant(
+        "time: an action walked for on its own time is never charged",
+        MACHINE,
+        "    const std::uint32_t owed = budget_.spend.SpendAction(cost);\n    budget_.lastCostMs = cost - owed;\n    if (owed > 0)\n    {\n        Owe(current->id",
+        "    const std::uint32_t owed = budget_.spend.SpendAction(0);\n    budget_.lastCostMs = cost - owed;\n    if (owed > 0)\n    {\n        Owe(current->id",
+    ),
+    Mutant(
+        "a burn interrupts a pending spell",
+        MACHINE,
+        "    if (!physical || !(damage > threshold) || !Conjuring(target))",
+        "    if ((!physical && damage < 0.0f) || !(damage > threshold) || !Conjuring(target))",
+    ),
+    Mutant(
+        "a scratch interrupts a pending spell",
+        MACHINE,
+        "    if (!physical || !(damage > threshold) || !Conjuring(target))",
+        "    if (!physical || !(damage > 0.0f) || !Conjuring(target))",
+    ),
+    Mutant(
+        "a blow interrupts a pending talent",
+        MACHINE,
+        "    return Active() && ((charge != charges_.end() && charge->kept && charge->spell) ||",
+        "    return Active() && ((charge != charges_.end() && charge->kept) ||",
+    ),
+    Mutant(
+        "rules: a party member's threshold forgets Combat Training",
+        RULES,
+        "        return 10.0f * static_cast<float>(std::clamp(combatTraining, 0, 3)) + 5.0f + levels / 2.0f;",
+        "        return 10.0f * static_cast<float>(std::clamp(combatTraining, 0, 0)) + 5.0f + levels / 2.0f;",
+    ),
+    Mutant(
+        "rules: a boss is interrupted as a critter is",
+        RULES,
+        "    return 10.0f * static_cast<float>(ranks) + levels;",
+        "    return 10.0f + levels;",
+    ),
+    Mutant(
+        "delay: one that waited may wait again in its round",
+        ORDER,
+        "    delayed_.push_back(at->id);\n    std::rotate(at, at + 1, order_.end());",
+        "    std::rotate(at, at + 1, order_.end());",
+    ),
+    Mutant(
+        "delay: the fallen count as someone to wait for",
+        ORDER,
+        "                       [](const Combatant &c) { return !c.down; });\n}\n\nbool TurnOrder::Delay()",
+        "                       [](const Combatant &c) { return c.id != 0; });\n}\n\nbool TurnOrder::Delay()",
+    ),
+    Mutant(
+        "delay: the turn passes to a fallen combatant",
+        ORDER,
+        "    while (order_[current_].down)\n    {\n        ++current_;\n    }\n    return true;",
+        "    return true;",
+    ),
+    Mutant(
+        "delay: the round after stays in the order the waiting left",
+        ORDER,
+        "            if (!std::exchange(delayed_, {}).empty())\n            {\n                std::ranges::sort(order_, &TurnOrder::Before);\n            }",
+        "            delayed_.clear();",
+    ),
+    Mutant(
+        "delay: a turn is put off after a command of it was let through",
+        MACHINE,
+        "           budget_.commands == 0 && budget_.pendingPaidMs == 0 && !budget_.landing &&",
+        "           budget_.pendingPaidMs == 0 && !budget_.landing &&",
+    ),
+    Mutant(
+        "delay: the setting off is not heeded",
+        MACHINE,
+        "    return settings_.delay && phase_ == Phase::AwaitingOrder && current != nullptr && PlayerControls(*current) &&",
+        "    return phase_ == Phase::AwaitingOrder && current != nullptr && PlayerControls(*current) &&",
+    ),
+    Mutant(
+        "delay: a turn put off is told to the scripts and counted twice",
+        MACHINE,
+        "    if (order_.Delayed(who.id))\n    {\n        return;\n    }\n    Signal(fx, events::kTurnStart",
+        "    if (order_.Delayed(who.id) && who.id == kNoObject)\n    {\n        return;\n    }\n    Signal(fx, events::kTurnStart",
+    ),
+    Mutant(
+        "delay: a turn put off is ended",
+        MACHINE,
+        "    if (std::exchange(delayRequested_, false) && CanDelay())\n    {\n        DelayTurn(fx);",
+        '    if (std::exchange(delayRequested_, false) && CanDelay())\n    {\n        EndTurn(fx, "put off");',
+    ),
+    Mutant(
+        "delay: the view never says a turn may be put off",
+        MACHINE,
+        "        view.canDelay = CanDelay();",
+        "        view.canDelay = false;",
+    ),
+    Mutant(
+        "delay: the bar's string leaves out whether the turn may be put off",
+        BAR,
+        "    Field(out, static_cast<long long>(view.canDelay ? 1 : view.delayOffered ? 2 : 0));",
+        "    Field(out, static_cast<long long>(view.delayOffered ? 2 : 0));",
+    ),
+    Mutant(
+        "a conversation between two rounds loses the round's start",
+        MACHINE,
+        "        const auto minMs = static_cast<std::uint32_t>(settings_.roundMinSeconds * 1000.0f);\n        if (roundRunMs_ < minMs)\n        {",
+        "        const auto minMs = static_cast<std::uint32_t>(settings_.roundMinSeconds * 1000.0f);\n        if (roundPending_ = false; roundRunMs_ < minMs)\n        {",
+    ),
+    Mutant(
+        "preview: a path's string names no creature under the cursor",
+        PREVIEW,
+        "                    view.spills ? 1 : 0, kBarField, OverField(view.over));",
+        "                    view.spills ? 1 : 0, kBarField, OverField(kNoObject));",
+    ),
+    Mutant(
+        "preview: with no path, the string names no creature under the cursor",
+        PREVIEW,
+        "                       cost.spills ? 1 : 0, kBarField, OverField(over));",
+        "                       cost.spills ? 1 : 0, kBarField, OverField(over == 0 ? over : kNoObject));",
+    ),
+    Mutant(
+        "preview: no creature under the cursor is the invalid object's number",
+        PREVIEW,
+        "    return over == kNoObject ? 0 : over;",
+        "    return over;",
+    ),
+    Mutant(
+        "delay: the bar's string does not say that Delay is offered and not to be had",
+        BAR,
+        "    Field(out, static_cast<long long>(view.canDelay ? 1 : view.delayOffered ? 2 : 0));",
+        "    Field(out, static_cast<long long>(view.canDelay ? 1 : 0));",
+    ),
+    Mutant(
+        "delay: offered with the setting off",
+        MACHINE,
+        "        view.delayOffered = settings_.delay && view.playerTurn;",
+        "        view.delayOffered = view.playerTurn;",
+    ),
+    Mutant(
+        "delay: nobody's card says it waits",
+        MACHINE,
+        "        const bool waits = !slot.current && slot.round == order_.Round() && order_.Delayed(c.id);",
+        "        const bool waits = !slot.current && slot.round != order_.Round() && order_.Delayed(c.id);",
+    ),
+    Mutant(
+        "delay: a card waits on the turn it waited for",
+        MACHINE,
+        "        const bool waits = !slot.current && slot.round == order_.Round() && order_.Delayed(c.id);",
+        "        const bool waits = slot.round == order_.Round() && order_.Delayed(c.id);",
+    ),
+    Mutant(
+        "bar: a card's string leaves out that it waits",
+        BAR,
+        "        Field(out, card.waits);",
+        "        Field(out, false);",
+    ),
+    Mutant(
+        "time: the view does not say what rolled over",
+        MACHINE,
+        "        budget_.rolledMs = rolled->second;",
+        "        budget_.rolledMs = 0;",
+    ),
+    Mutant(
+        "bar: the string leaves out what rolled over",
+        BAR,
+        "    Meters(out, static_cast<float>(view.rolledMs) / 1000.0f);",
+        "    Meters(out, 0.0f);",
+    ),
+    Mutant(
+        "a spell lost is called an action, and an action a spell",
+        MACHINE,
+        '        Floaty(fx, who, spell ? L"Spell lost" : L"Action lost", kGold);',
+        '        Floaty(fx, who, spell ? L"Action lost" : L"Spell lost", kGold);',
+    ),
+    Mutant(
+        "bar: a card does not say which ability is pending",
+        MACHINE,
+        "            owes != charges_.end() && owes->type == CommandType::UseAbility ? owes->ability : -1;",
+        "            owes != charges_.end() && owes->type == CommandType::UseAbility ? -1 : -1;",
+    ),
+    Mutant(
+        "bar: a card's string leaves out the pending ability's id",
+        BAR,
+        "        Field(out, static_cast<long long>(card.pendingAbility));",
+        "        Field(out, static_cast<long long>(-1));",
+    ),
+    Mutant(
+        "bar: a card's string leaves out the pending ability's icon",
+        BAR,
+        "        Field(out, std::wstring_view{card.pendingIcon});",
+        "        Field(out, std::wstring_view{});",
+    ),
+    Mutant(
+        "bar: a card's string leaves out the pending ability's name",
+        BAR,
+        "        Field(out, std::wstring_view{card.pendingName});",
+        "        Field(out, std::wstring_view{});",
+    ),
+    Mutant(
+        "pause: the key pauses and never runs the game again",
+        MACHINE,
+        "    playerPaused_ = !playerPaused_;",
+        "    playerPaused_ = true;",
+    ),
+    Mutant(
+        "pause: the player's pause is not kept by the machine",
+        MACHINE,
+        "    const bool want = WantsPaused(phase_, settings_) || playerPaused_;",
+        "    const bool want = WantsPaused(phase_, settings_);",
+    ),
+    Mutant(
+        "pause: an order given while paused leaves the game paused",
+        MACHINE,
+        "        if (verdict == Verdict::Allow && std::exchange(playerPaused_, false))",
+        "        if (verdict == Verdict::Allow && playerPaused_)",
+    ),
+    Mutant(
+        "pause: the key arms a pause while the machine holds the world still",
+        MACHINE,
+        "    if (!playerPaused_ && WantsPaused(phase_, settings_))\n    {\n        return true; // held still",
+        "    if (!playerPaused_ && WantsPaused(phase_, settings_) && phase_ == Phase::Idle)\n    {\n        return true; // held still",
+    ),
+    Mutant(
+        "pause: the player's pause outlives the fight",
+        MACHINE,
+        "    Emit(EventKind::FightOver, kNoObject, std::string{why});\n    playerPaused_ = false;",
+        "    Emit(EventKind::FightOver, kNoObject, std::string{why});",
+    ),
+    Mutant(
+        "pause: the player's pause outlives a conversation over the fight",
+        MACHINE,
+        "        phase_ = Phase::Suspended;\n        playerPaused_ = false;\n        SetSpeed(1.0f, fx);",
+        "        phase_ = Phase::Suspended;\n        SetSpeed(1.0f, fx);",
+    ),
+    Mutant(
+        "time: an action that played most of its time is given back",
+        MACHINE,
+        "clock_ - budget_.lastClock >= budget_.lastCostMs / kOverAtOnce)",
+        "clock_ - budget_.lastClock >= budget_.lastCostMs)",
+    ),
+    Mutant(
+        "time: an action on a stand-in's time is given back when it ends at once",
+        MACHINE,
+        "    budget_.lastMeasured = std::isfinite(request.actionSeconds) && request.actionSeconds > 0.0f;",
+        "    budget_.lastMeasured = true;",
+    ),
+    Mutant(
+        "time: the setting off, an action over at once is given back all the same",
+        MACHINE,
+        "    if (current == nullptr || !Timed() || !settings_.giveBackUnplayed || budget_.lastKind != CommandKind::Action ||",
+        "    if (current == nullptr || !Timed() || budget_.lastKind != CommandKind::Action ||",
+    ),
+    Mutant(
+        "time: an action over at once is charged",
+        MACHINE,
+        "    OverAtOnce(fx);\n    const Combatant *current = order_.Current();",
+        "    const Combatant *current = order_.Current();",
+    ),
+    Mutant(
+        "pause: the view does not say the player has the game paused",
+        MACHINE,
+        "        view.playerPaused = playerPaused_;",
+        "        view.playerPaused = false;",
+    ),
+    Mutant(
+        "pause: the bar's string does not say the game is paused",
+        BAR,
+        "    Field(out, view.playerPaused);",
+        "    Field(out, false);",
+    ),
+    Mutant(
+        "a lost spell is said in grey",
+        MACHINE,
+        '        Floaty(fx, who, spell ? L"Spell lost" : L"Action lost", kGold);',
+        '        Floaty(fx, who, spell ? L"Spell lost" : L"Action lost", kGrey);',
+    ),
+    Mutant(
+        "an attack standing short of its target is left to stand",
+        MACHINE,
+        "    if (actor.busy && !heldByEffect_ && (at == CommandKind::Move || at == CommandKind::Free || short_))",
+        "    if (actor.busy && !heldByEffect_ && (at == CommandKind::Move || at == CommandKind::Free))",
+    ),
+    Mutant(
+        "an attack swinging where it stands is taken for one that cannot get there",
+        MACHINE,
+        "                        budget_.lastWalk - (budget_.spend.Walked() - budget_.movementAtCommand) > kStuckShort;",
+        "                        budget_.lastWalk - (budget_.spend.Walked() - budget_.movementAtCommand) > -100.0f;",
+    ),
+    Mutant(
+        "time: an action that did nothing is given back once a turn only",
+        MACHINE,
+        "    if (Classify(type) != CommandKind::Action || !ActionToGiveBack() || (budget_.refunded && !Timed()))",
+        "    if (Classify(type) != CommandKind::Action || !ActionToGiveBack() || budget_.refunded)",
+    ),
+    Mutant(
+        "as built, a failed action is given back every time",
+        MACHINE,
+        "    if (Classify(type) != CommandKind::Action || !ActionToGiveBack() || (budget_.refunded && !Timed()))",
+        "    if (Classify(type) != CommandKind::Action || !ActionToGiveBack() || (budget_.refunded && Timed()))",
+    ),
+    Mutant(
+        "a turn's commands share one limit, counted from the first",
+        MACHINE,
+        "    executingSince_ = clock_;\n    return Verdict::Allow;",
+        "    if (began)\n    {\n        executingSince_ = clock_;\n    }\n    return Verdict::Allow;",
+    ),
+    Mutant(
+        "an action given back is not said over the player's own",
+        MACHINE,
+        '    if (PlayerControls(*current))\n    {\n        const bool way = why.find("PATH")',
+        '    if (PlayerControls(*current) && who == kNoObject)\n    {\n        const bool way = why.find("PATH")',
+    ),
+    Mutant(
+        "an action given back is said over an enemy too",
+        MACHINE,
+        '    if (PlayerControls(*current))\n    {\n        const bool way = why.find("PATH")',
+        '    if (current != nullptr)\n    {\n        const bool way = why.find("PATH")',
+    ),
+    Mutant(
+        "no way through is said for a line of sight",
+        MACHINE,
+        '        const bool sight = why.find("LINE_OF_SIGHT") != std::string_view::npos;',
+        '        const bool sight = why.find("LINE_OF_SIGHT") == std::string_view::npos && !way;',
+    ),
+    Mutant(
+        "an AI given its action back twice is asked a third time",
+        MACHINE,
+        "    if (!player && budget_.givenBack >= kGivenBackEnough)",
+        "    if (!player && budget_.givenBack >= kGivenBackEnough + 100)",
+    ),
+    Mutant(
+        "an AI given its action back once has its turn ended",
+        MACHINE,
+        "    if (!player && budget_.givenBack >= kGivenBackEnough)",
+        "    if (!player && budget_.givenBack >= kGivenBackEnough - 1)",
+    ),
+    Mutant(
+        "an attack standing short of its target is given as long as a walk",
+        MACHINE,
+        "        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs : kStoodMs))",
+        "        else if (clock_ - stoodSince_ >= kStoodMs + (short_ ? 1000 : 0))",
+    ),
+    Mutant(
+        "an attack standing short of its target is stopped at once",
+        MACHINE,
+        "        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs : kStoodMs))",
+        "        else if (clock_ - stoodSince_ >= (short_ ? kStuckMs / 4 : kStoodMs))",
+    ),
+    Mutant(
+        "a party member's lost turn is said in grey",
+        MACHINE,
+        '    Floaty(fx, who.id, who.name + L" loses the turn", who.side == Side::Party ? kGold : kGrey);',
+        '    Floaty(fx, who.id, who.name + L" loses the turn", kGrey);',
+    ),
 ]
 
 
 def run(
-    command: list[str], timeout: int | None = None
+    command: list[str], cwd: Path, timeout: int | None = None
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        command, cwd=REPO, capture_output=True, text=True, timeout=timeout, check=False
+        command,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+        creationflags=LOW,
     )
 
 
-def build() -> bool:
-    return run(["cmake", "--build", "--preset", "core"]).returncode == 0
+def sync(worker: Path) -> None:
+    """Brings a worker's copy up to the tree: a file is written only where it
+    differs, so what did not change is not built again."""
+    wanted: set[Path] = set()
+    sources = [REPO / name for name in FILES if (REPO / name).exists()]
+    for tree in TREES:
+        sources += [f for f in (REPO / tree).rglob("*") if f.is_file()]
+    for source in sources:
+        target = worker / source.relative_to(REPO)
+        wanted.add(target)
+        data = source.read_bytes()
+        if not target.exists() or target.read_bytes() != data:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+    for tree in TREES:
+        for stale in (worker / tree).rglob("*"):
+            if stale.is_file() and stale not in wanted:
+                stale.unlink()
 
 
-def test(mutant: Mutant) -> str:
-    path = REPO / mutant.file
-    original = path.read_text(encoding="utf-8")
+def made_with() -> str:
+    """The build program the tree's own core build was configured with."""
+    cache = REPO / "build" / "core" / "CMakeCache.txt"
+    if cache.exists():
+        for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("CMAKE_MAKE_PROGRAM:"):
+                return line.partition("=")[2].strip()
+    return ""
+
+
+def tests_of(worker: Path) -> Path:
+    return worker / "build" / "core" / "tests" / "tb_tests.exe"
+
+
+def prepare(worker: Path, jobs: int) -> str:
+    """A worker's copy, configured and built as the tree is. Answers what went
+    wrong, or nothing."""
+    sync(worker)
+    if not (worker / "build" / "core" / "build.ninja").exists():
+        command = [
+            "cmake",
+            "--preset",
+            "core",
+            f"-DVCPKG_INSTALLED_DIR={PACKAGES.as_posix()}",
+            "-DVCPKG_MANIFEST_INSTALL=OFF",
+        ]
+        # Ninja as the tree's own build found it: it need not be on the path
+        # of the shell this runs in.
+        if ninja := made_with():
+            command.append(f"-DCMAKE_MAKE_PROGRAM={ninja}")
+        configured = run(command, worker)
+        if configured.returncode != 0:
+            return (configured.stdout + configured.stderr)[-2000:]
+    built = build(worker, jobs)
+    if built.returncode != 0:
+        return (built.stdout + built.stderr)[-2000:]
+    return ""
+
+
+def build(worker: Path, jobs: int) -> subprocess.CompletedProcess[str]:
+    return run(
+        ["cmake", "--build", "--preset", "core", "--parallel", str(jobs)], worker
+    )
+
+
+def test(mutant: Mutant, worker: Path) -> str:
+    """One mutant, in a worker's copy; the tree itself is only read."""
+    original = (REPO / mutant.file).read_text(encoding="utf-8")
     if original.count(mutant.old) != 1:
         return f"not applied: the text is in {mutant.file} {original.count(mutant.old)} times"
+    path = worker / mutant.file
     try:
         path.write_text(original.replace(mutant.old, mutant.new), encoding="utf-8")
-        if not build():
+        # One file changed: one compiler.
+        if build(worker, 1).returncode != 0:
             return "did not compile"
         try:
-            result = run([str(TESTS)], timeout=TIMEOUT_S)
+            result = run([str(tests_of(worker))], worker, timeout=TIMEOUT_S)
         except subprocess.TimeoutExpired:
             return "caught (the tests hung)"
         return "caught" if result.returncode != 0 else "SURVIVED"
@@ -1203,22 +1814,93 @@ def test(mutant: Mutant) -> str:
 
 
 def main() -> int:
-    wanted = sys.argv[1:]
-    chosen = [m for m in MUTANTS if not wanted or any(w in m.name for w in wanted)]
-    if not build() or run([str(TESTS)]).returncode != 0:
-        print("the unmutated core does not build or pass its tests; fix that first")
-        return 1
-    bad = 0
-    for mutant in chosen:
-        start = time.monotonic()
-        verdict = test(mutant)
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "names", nargs="*", help="only mutants whose name contains one of these"
+    )
+    parser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=os.cpu_count() or 2,
+        help="how many mutants at a time (by default one a core)",
+    )
+    args = parser.parse_args()
+    chosen = [
+        m for m in MUTANTS if not args.names or any(w in m.name for w in args.names)
+    ]
+    if not PACKAGES.exists():
         print(
-            f"{verdict:<32} {mutant.name} ({time.monotonic() - start:.0f} s)",
-            flush=True,
+            f"no {PACKAGES}: build the core preset once (tools\\build.ps1 -Preset core)"
         )
-        bad += 0 if verdict.startswith("caught") else 1
-    build()  # the unmutated core again
-    print(f"{len(chosen) - bad} of {len(chosen)} caught")
+        return 1
+    count = max(1, min(args.jobs, len(chosen)))
+    workers = [WORK / f"w{n}" for n in range(count)]
+    started = time.monotonic()
+
+    # The copies, built side by side: each with its share of the cores.
+    share = max(1, (os.cpu_count() or 2) // count)
+    problems: dict[Path, str] = {}
+
+    def ready(worker: Path) -> None:
+        problems[worker] = prepare(worker, share)
+
+    threads = [threading.Thread(target=ready, args=(w,)) for w in workers]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    for worker, problem in problems.items():
+        if problem:
+            print(f"{worker.name} does not configure or build:\n{problem}")
+            return 1
+    if run([str(tests_of(workers[0]))], workers[0]).returncode != 0:
+        print("the unmutated core does not pass its tests; fix that first")
+        return 1
+    print(
+        f"{count} at a time, in {WORK} ({time.monotonic() - started:.0f} s to make ready)",
+        flush=True,
+    )
+
+    todo: queue.Queue[Mutant] = queue.Queue()
+    for mutant in chosen:
+        todo.put(mutant)
+    verdicts: dict[str, str] = {}
+    said = threading.Lock()
+
+    def work(worker: Path) -> None:
+        while True:
+            try:
+                mutant = todo.get_nowait()
+            except queue.Empty:
+                return
+            start = time.monotonic()
+            # Whatever goes wrong is said, and counted as not caught.
+            try:
+                verdict = test(mutant, worker)
+            except Exception as error:  # noqa: BLE001
+                verdict = f"failed: {error}"
+            with said:
+                verdicts[mutant.name] = verdict
+                print(
+                    f"{verdict:<32} {mutant.name} ({time.monotonic() - start:.0f} s)",
+                    flush=True,
+                )
+
+    threads = [threading.Thread(target=work, args=(w,)) for w in workers]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    bad = [
+        name for name, verdict in verdicts.items() if not verdict.startswith("caught")
+    ]
+    hung = [name for name, verdict in verdicts.items() if "hung" in verdict]
+    for name in hung:
+        print(f"hung, and counted as caught: {name}")
+    print(
+        f"{len(chosen) - len(bad)} of {len(chosen)} caught in {time.monotonic() - started:.0f} s"
+    )
     return 1 if bad else 0
 
 

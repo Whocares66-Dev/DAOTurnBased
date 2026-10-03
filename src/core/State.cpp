@@ -71,6 +71,8 @@ std::string ToJson(const MachineState &state)
     out += std::format(R"(,"player_turn":{},"actions_left":{},"movement_left":{:.1f},"movement_max":{:.1f})",
                        Bool(view.playerTurn), view.actionsLeft, view.movementLeft, view.movementMax);
     out += std::format(R"(,"timed":{},"time_left_ms":{},"time_ms":{})", Bool(view.timed), view.timeLeftMs, view.timeMs);
+    out += std::format(R"(,"can_delay":{},"rolled_ms":{},"player_paused":{})", Bool(view.canDelay), view.rolledMs,
+                       Bool(state.playerPaused));
     out += std::format(R"(,"speed":{:.2f},"speed_took":{},"held_by_effect":{},"last_refusal":)", state.speed,
                        state.speedTook ? Bool(*state.speedTook) : "null", Bool(state.heldByEffect));
     Text(out, state.lastRefusal);
@@ -95,8 +97,8 @@ std::string ToJson(const MachineState &state)
         Id(out, held.id);
         out += R"(,"name":)";
         Text(out, Utf8(held.name));
-        out += std::format(R"(,"condition":"{}","turns_owed":{},"on_clock":{}}})", ConditionName(held.seen),
-                           held.turnsOwed, Bool(held.onClock));
+        out += std::format(R"(,"condition":"{}","turns_owed":{},"on_clock":{},"owed_ms":{}}})",
+                           ConditionName(held.seen), held.turnsOwed, Bool(held.onClock), held.owedMs);
     }
     out += R"(],"cooldowns":[)";
     for (std::size_t i = 0; i < state.cooldowns.size(); ++i)
@@ -104,7 +106,8 @@ std::string ToJson(const MachineState &state)
         const CooldownView &cooldown = state.cooldowns[i];
         out += i == 0 ? R"({"id":)" : R"(,{"id":)";
         Id(out, cooldown.id);
-        out += std::format(R"(,"ability":{},"turns":{},"of":{}}})", cooldown.ability, cooldown.turns, cooldown.of);
+        out += std::format(R"(,"ability":{},"turns":{},"of":{},"left_ms":{},"of_ms":{}}})", cooldown.ability,
+                           cooldown.turns, cooldown.of, cooldown.leftMs, cooldown.ofMs);
     }
     out += R"(],"charging":[)";
     for (std::size_t i = 0; i < state.charging.size(); ++i)

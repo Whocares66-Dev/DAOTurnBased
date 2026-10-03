@@ -71,6 +71,18 @@ void TurnBudget::SpendAllActions()
     owedMeters_ = 0.0f;
 }
 
+void TurnBudget::Pend()
+{
+    if (!timed_)
+    {
+        actions_ = 0;
+        return;
+    }
+    (void)time_.Spend(time_.CapacityLeft());
+    freeWalked_ = std::max(freeWalked_, free_);
+    owedMeters_ = 0.0f;
+}
+
 float TurnBudget::MovementLeft() const
 {
     if (!timed_)
@@ -138,6 +150,17 @@ void TurnBudget::Walk(float meters)
     }
 }
 
+void TurnBudget::SettleOverwalk()
+{
+    if (!timed_ || !(overwalked_ > 0.0f))
+    {
+        return;
+    }
+    const auto ms = static_cast<std::uint32_t>(std::ceil(overwalked_ / pace_ * 1000.0f));
+    const TimePayment paid = time_.Spend(ms);
+    overwalked_ = static_cast<float>(ms - paid.capacityMs) / 1000.0f * pace_;
+}
+
 std::uint32_t TurnBudget::WalkCostMs(float meters) const
 {
     if (!timed_)
@@ -173,6 +196,21 @@ void TurnBudget::Credit(float meters)
     {
         credit_ += meters;
     }
+}
+
+float TurnBudget::PaidMeters() const
+{
+    return timed_ ? credit_ + std::max(0.0f, free_ - freeWalked_) : 0.0f;
+}
+
+std::uint32_t TurnBudget::HoldClock(std::uint32_t clockMs)
+{
+    return timed_ ? time_.Hold(clockMs) : 0;
+}
+
+std::uint32_t TurnBudget::ClockElapsedMs() const
+{
+    return timed_ ? time_.ClockElapsed() : 0;
 }
 
 std::uint32_t TurnBudget::CapacityMs() const

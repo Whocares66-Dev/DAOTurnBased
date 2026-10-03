@@ -93,7 +93,7 @@ TEST_CASE("a creature joining the fight is asked for when its card comes", "[por
     PortraitBook book;
     CHECK(FillBook(book, w.machine.View()).size() == 4);
     w.Get(0x202).fighting = true;
-    CHECK(w.machine.OnPauseKey()); // the next turn's scan finds it
+    CHECK(w.machine.OnEndTurn()); // the next turn's scan finds it
     w.Frame();
     w.Frame();
     REQUIRE(w.machine.Order().Find(0x202) != nullptr);
@@ -122,7 +122,7 @@ TEST_CASE("portraits are kept through a conversation and forgotten when the figh
     // The enemies fall; at the next turn the fight is over.
     w.Get(kGenlock).down = true;
     w.Get(kHurlock).down = true;
-    CHECK(w.machine.OnPauseKey());
+    CHECK(w.machine.OnEndTurn());
     w.Frame();
     w.Frame();
     REQUIRE(w.machine.GetPhase() == Phase::Idle);
@@ -141,8 +141,8 @@ TEST_CASE("the bar's string carries each card's portrait, empty for none yet", "
     REQUIRE(records.size() >= 3);
     const auto hero = Split(records[1], kBarField);
     const auto genlock = Split(records[2], kBarField);
-    REQUIRE(hero.size() == 13);
-    REQUIRE(genlock.size() == 13);
+    REQUIRE(hero.size() == 18);
+    REQUIRE(genlock.size() == 18);
     CHECK(hero[10].empty());
     CHECK(genlock[0] == std::to_wstring(kGenlock));
     CHECK(genlock[10] == L"portrait_7.dds");
@@ -167,7 +167,7 @@ void EndFight(World &w)
 {
     w.Get(kGenlock).down = true;
     w.Get(kHurlock).down = true;
-    CHECK(w.machine.OnPauseKey());
+    CHECK(w.machine.OnEndTurn());
     w.Frame();
     w.Frame();
     REQUIRE(w.machine.GetPhase() == Phase::Idle);

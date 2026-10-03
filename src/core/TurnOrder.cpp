@@ -1,6 +1,7 @@
 #include "core/TurnOrder.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <utility>
 
 namespace tb
@@ -36,6 +37,7 @@ bool TurnOrder::Before(const Combatant &a, const Combatant &b)
 void TurnOrder::Clear()
 {
     order_.clear();
+    delayed_.clear();
     current_ = 0;
     round_ = 0;
 }
@@ -43,6 +45,7 @@ void TurnOrder::Clear()
 void TurnOrder::Begin(std::vector<Combatant> combatants)
 {
     order_ = std::move(combatants);
+    delayed_.clear();
     std::ranges::sort(order_, &TurnOrder::Before);
     round_ = 1;
     current_ = 0;
@@ -97,6 +100,12 @@ bool TurnOrder::Advance()
             ++round_;
             newRound = true;
             DropFallenOthers();
+            // Who put a turn off stands at the end: the new round is in
+            // initiative's order again.
+            if (!std::exchange(delayed_, {}).empty())
+            {
+                std::ranges::sort(order_, &TurnOrder::Before);
+            }
             if (order_.empty())
             {
                 return true;
@@ -108,6 +117,39 @@ bool TurnOrder::Advance()
         }
     }
     return newRound;
+}
+
+bool TurnOrder::Delayed(ObjectId id) const
+{
+    return std::ranges::find(delayed_, id) != delayed_.end();
+}
+
+bool TurnOrder::CanDelay() const
+{
+    if (current_ >= order_.size() || Delayed(order_[current_].id))
+    {
+        return false;
+    }
+    return std::any_of(order_.begin() + static_cast<std::ptrdiff_t>(current_) + 1, order_.end(),
+                       [](const Combatant &c) { return !c.down; });
+}
+
+bool TurnOrder::Delay()
+{
+    if (!CanDelay())
+    {
+        return false;
+    }
+    const auto at = order_.begin() + static_cast<std::ptrdiff_t>(current_);
+    delayed_.push_back(at->id);
+    std::rotate(at, at + 1, order_.end());
+    // The turn is the next standing one's: there is one before the end,
+    // where the one that waits now stands.
+    while (order_[current_].down)
+    {
+        ++current_;
+    }
+    return true;
 }
 
 void TurnOrder::Join(Combatant combatant)

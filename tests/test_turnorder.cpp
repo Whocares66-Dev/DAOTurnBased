@@ -170,3 +170,94 @@ TEST_CASE("nobody standing leaves the order where it lands", "[order]")
     CHECK(order.Empty());
     CHECK(order.Current() == nullptr);
 }
+
+TEST_CASE("a turn put off goes to the round's end, and the next round is in initiative's order again", "[order][delay]")
+{
+    TurnOrder order;
+    order.Begin({Make(1, Side::Party, 9), Make(2, Side::Enemy, 7), Make(3, Side::Party, 5), Make(4, Side::Enemy, 3)});
+    REQUIRE(order.Current()->id == 1);
+    REQUIRE(order.CanDelay());
+    REQUIRE(order.Delay());
+    CHECK(order.Current()->id == 2);
+    CHECK(Ids(order) == std::vector<ObjectId>{2, 3, 4, 1});
+    CHECK(order.Delayed(1));
+    CHECK_FALSE(order.Delayed(2));
+    // Each once on the bar: the rest of this round, the one that waits last.
+    CHECK(Upcoming(order, 8) == std::vector<ObjectId>{2, 3, 4, 1});
+    CHECK_FALSE(order.Advance()); // 3
+    CHECK_FALSE(order.Advance()); // 4
+    CHECK_FALSE(order.Advance()); // 1, in the same round
+    CHECK(order.Current()->id == 1);
+    CHECK(order.Round() == 1);
+    // It has waited once, and nobody stands after it.
+    CHECK_FALSE(order.CanDelay());
+    CHECK_FALSE(order.Delay());
+    CHECK(order.Advance()); // the round turns over
+    CHECK(order.Round() == 2);
+    CHECK(Ids(order) == std::vector<ObjectId>{1, 2, 3, 4});
+    CHECK(order.Current()->id == 1);
+    CHECK_FALSE(order.Delayed(1));
+    CHECK(order.CanDelay());
+}
+
+TEST_CASE("two that put their turns off take them in the order they waited", "[order][delay]")
+{
+    TurnOrder order;
+    order.Begin({Make(1, Side::Party, 9), Make(2, Side::Party, 7), Make(3, Side::Enemy, 5)});
+    REQUIRE(order.Delay()); // 1 waits: 2, 3, 1
+    REQUIRE(order.Current()->id == 2);
+    REQUIRE(order.Delay()); // 2 waits: 3, 1, 2
+    CHECK(Ids(order) == std::vector<ObjectId>{3, 1, 2});
+    CHECK(order.Current()->id == 3);
+    CHECK_FALSE(order.Advance());
+    CHECK(order.Current()->id == 1);
+    // 1 has waited already this round, though 2 stands after it.
+    CHECK_FALSE(order.CanDelay());
+    CHECK_FALSE(order.Delay());
+    CHECK_FALSE(order.Advance());
+    CHECK(order.Current()->id == 2);
+    CHECK(order.Advance());
+    CHECK(Ids(order) == std::vector<ObjectId>{1, 2, 3});
+}
+
+TEST_CASE("a turn is put off past the fallen, and not with nobody standing after it", "[order][delay]")
+{
+    TurnOrder order;
+    order.Begin({Make(1, Side::Party, 9), Make(2, Side::Enemy, 7), Make(3, Side::Party, 5), Make(4, Side::Enemy, 3)});
+    order.Find(2)->down = true;
+    REQUIRE(order.Delay());
+    CHECK(order.Current()->id == 3); // not the fallen 2
+    CHECK_FALSE(order.Advance());
+    CHECK(order.Current()->id == 4);
+    order.Find(1)->down = true;    // the one that waits falls
+    CHECK_FALSE(order.CanDelay()); // nobody standing after 4
+    CHECK_FALSE(order.Delay());
+    CHECK(Ids(order) == std::vector<ObjectId>{2, 3, 4, 1});
+    CHECK(TurnOrder{}.CanDelay() == false);
+    TurnOrder empty;
+    CHECK_FALSE(empty.Delay());
+}
+
+TEST_CASE("one that joins while a turn is put off takes its place, and the round after is in order", "[order][delay]")
+{
+    TurnOrder order;
+    order.Begin({Make(1, Side::Party, 9), Make(2, Side::Enemy, 7), Make(3, Side::Enemy, 3)});
+    REQUIRE(order.Delay()); // 2, 3, 1
+    order.Join(Make(5, Side::Enemy, 5));
+    CHECK(Ids(order) == std::vector<ObjectId>{2, 5, 3, 1});
+    CHECK(order.Current()->id == 2);
+    CHECK_FALSE(order.Advance());
+    CHECK(order.Current()->id == 5);
+    CHECK_FALSE(order.Advance());
+    CHECK_FALSE(order.Advance());
+    CHECK(order.Current()->id == 1);
+    CHECK(order.Advance());
+    CHECK(Ids(order) == std::vector<ObjectId>{1, 2, 5, 3});
+    // A fight begun again forgets who waited.
+    REQUIRE(order.Delay());
+    order.Begin({Make(1, Side::Party, 9), Make(2, Side::Enemy, 7)});
+    CHECK_FALSE(order.Delayed(1));
+    REQUIRE(order.Delay());
+    order.Clear();
+    CHECK_FALSE(order.Delayed(1));
+}

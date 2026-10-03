@@ -24,7 +24,9 @@ param(
     [string] $Ruffle = 'C:\Modding\ruffle_2026_09_30\ruffle.exe',
     [int] $Width = 1280,
     [int] $Height = 720,
-    [int] $Seconds = 3
+    [int] $Seconds = 3,
+    # The movie's sample: 1, the fight as built; time, with a turn a bar of time.
+    [string] $Sample = '1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,7 +77,7 @@ function Test-Blank([System.Drawing.Bitmap] $Image) {
 
 $process = Start-Process -FilePath $Ruffle -PassThru -ArgumentList @(
     '--width', $Width, '--height', $Height, '--storage', 'memory', '--filesystem-access-mode', 'allow',
-    '-Psample=1', $Movie)
+    "-Psample=$Sample", $Movie)
 try {
     $title = "Ruffle - $(Split-Path -Leaf $Movie)"
     $window = [IntPtr]::Zero

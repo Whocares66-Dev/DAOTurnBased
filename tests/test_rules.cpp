@@ -224,3 +224,65 @@ TEST_CASE("Survival's ranks add to initiative", "[rules]")
     CHECK(tb::RollInitiative(rng, 10.0f, s, 3) == 7);
     CHECK(tb::RollInitiative(rng, 10.0f, s, 9) == 9); // four ranks at most
 }
+
+TEST_CASE("an attack's time: a person's swing by the formula, a shot, a creature's by its animation", "[rules][time]")
+{
+    tb::AttackFacts lyna;
+    lyna.humanoid = true;
+    lyna.armed = true;
+    lyna.style = tb::WeaponStyle::Single;
+    lyna.weaponSpeed = -0.5f;
+    CHECK(tb::AttackSeconds(lyna) == Approx(1.5f)); // her dagger
+    lyna.attackSpeedModifier = 0.75f;               // hasted
+    CHECK(tb::AttackSeconds(lyna) == Approx(1.125f));
+    tb::AttackFacts archer;
+    archer.humanoid = true;
+    archer.armed = true;
+    archer.ranged = true;
+    CHECK(tb::AttackSeconds(archer) == Approx(1.4f)); // a follower's shot
+    archer.hero = true;
+    CHECK(tb::AttackSeconds(archer) == Approx(1.6f)); // the player's own
+    tb::AttackFacts spider;
+    spider.animation = 1.833f;
+    spider.attackSpeedModifier = 0.75f; // does not reach an animation's swing
+    CHECK(tb::AttackSeconds(spider) == Approx(1.485f).margin(0.01f));
+    tb::AttackFacts unarmed;
+    unarmed.humanoid = true;
+    unarmed.animation = 2.0f;
+    CHECK(tb::AttackSeconds(unarmed) == Approx(1.62f));
+    CHECK(tb::AttackSeconds(tb::AttackFacts{}) == 0.0f); // nothing known: the stand-in's
+}
+
+TEST_CASE("an ability's time: its cast less the blend, its conjuring, or a shot", "[rules][time]")
+{
+    tb::AbilityFacts dirty;
+    dirty.cast = 1.8f;
+    dirty.talent = true;
+    CHECK(tb::AbilitySeconds(dirty) == Approx(1.512f));
+    tb::AbilityFacts inferno;
+    inferno.cast = 1.03f;
+    inferno.conjure = 0.77f;
+    inferno.conjureLoop = 2.70f;
+    inferno.loops = 1;
+    CHECK(tb::AbilitySeconds(inferno) == Approx(1.03f * 0.84f + 3.47f));
+    inferno.loops = 0; // instant: no conjuring
+    CHECK(tb::AbilitySeconds(inferno) == Approx(1.03f * 0.84f));
+    tb::AbilityFacts pinning; // no cast animation, a bow in hand: a shot
+    pinning.talent = true;
+    pinning.ranged = true;
+    CHECK(tb::AbilitySeconds(pinning) == Approx(1.4f));
+    tb::AbilityFacts overwhelm; // a monster's special: nothing known
+    CHECK(tb::AbilitySeconds(overwhelm) == 0.0f);
+}
+
+TEST_CASE("the damage that interrupts a conjuring: by Combat Training and level, or by rank and level", "[rules]")
+{
+    CHECK(tb::InterruptThreshold(true, 0, 6, 100) == Approx(8.0f));   // 5 and half her level
+    CHECK(tb::InterruptThreshold(true, 2, 10, 100) == Approx(30.0f)); // 20, 5, 5
+    CHECK(tb::InterruptThreshold(true, 4, 10, 100) == Approx(40.0f)); // the fourth rank never counts
+    CHECK(tb::InterruptThreshold(false, 0, 7, 2) == Approx(27.0f));   // a normal creature
+    CHECK(tb::InterruptThreshold(false, 3, 7, 3) == Approx(37.0f));   // a lieutenant; its skills are not asked
+    CHECK(tb::InterruptThreshold(false, 0, 10, 4) == Approx(50.0f));  // a boss
+    CHECK(tb::InterruptThreshold(false, 0, 10, 5) == Approx(70.0f));  // an elite boss
+    CHECK(tb::InterruptThreshold(false, 0, 3, 1) == Approx(13.0f));   // a critter
+}

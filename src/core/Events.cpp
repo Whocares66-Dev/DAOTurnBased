@@ -61,6 +61,14 @@ const char *Name(EventKind kind)
         return "cast_landed";
     case EventKind::CastInterrupted:
         return "cast_interrupted";
+    case EventKind::ActionPending:
+        return "action_pending";
+    case EventKind::ActionLanded:
+        return "action_landed";
+    case EventKind::ActionDropped:
+        return "action_dropped";
+    case EventKind::TurnDelayed:
+        return "turn_delayed";
     }
     return "?";
 }
@@ -193,7 +201,7 @@ EventDescription Describe(EventKind kind)
                 nullptr,
                 nullptr};
     case EventKind::SpeedSet:
-        return {"The game's speed was set: ai_turn_speed for an AI's turn, 1 otherwise.",
+        return {"The game's speed was set: the fight's speed ([turns] speed) through its turns; 1 outside them.",
                 false,
                 nullptr,
                 "the speed, thousandths",
@@ -239,6 +247,38 @@ EventDescription Describe(EventKind kind)
                 true,
                 "why: held (a stun, a knockdown, paralysis, sleep), fell, gone, the fight over",
                 "the ability",
+                nullptr,
+                nullptr};
+    case EventKind::ActionPending:
+        return {"With a turn a bar of time: an action did not fit what was left of its creature's bar. It is kept, "
+                "its creature walks to where it can do it, and it lands as a later turn has paid what it owes; or "
+                "a whole turn was spent on what it owes.",
+                true,
+                "the time it still owes, as text (\"0.6 s more\")",
+                "its ability (-1: an attack)",
+                "the command",
+                nullptr};
+    case EventKind::ActionLanded:
+        return {"A pending action's time is paid: it is given to its creature as its turn begins, which then has "
+                "the rest of its bar.",
+                true,
+                nullptr,
+                "its ability (-1: an attack)",
+                "the command",
+                nullptr};
+    case EventKind::ActionDropped:
+        return {"A pending action will not land: what it still owed is not charged.",
+                true,
+                "why: held, struck, fell, gone, its target is gone, the fight over",
+                "its ability (-1: an attack)",
+                "the command",
+                nullptr};
+    case EventKind::TurnDelayed:
+        return {"A party member's turn was put off to the round's end, nothing of it spent: the turn_started before "
+                "it has no turn_ended, and another turn_started follows when its turn comes.",
+                true,
+                nullptr,
+                nullptr,
                 nullptr,
                 nullptr};
     }

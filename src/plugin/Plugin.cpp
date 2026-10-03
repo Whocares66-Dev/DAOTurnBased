@@ -32,7 +32,9 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <array>
 #include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
@@ -138,6 +140,29 @@ bool Toggle()
 // it by.
 constexpr wchar_t kOptionsSection[] = L"Turn-based";
 
+// The stops of the options' speed slider, and the one nearest the setting.
+constexpr std::array<float, 4> kSpeedStops{0.5f, 1.0f, 1.5f, 2.0f};
+
+void ReloadIfChanged(std::uint32_t now);
+
+std::int32_t SpeedStop()
+{
+    float speed = 1.0f;
+    {
+        const std::lock_guard lock(g.mutex);
+        speed = g.machine->GetSettings().fightSpeed;
+    }
+    std::size_t nearest = 0;
+    for (std::size_t i = 1; i < kSpeedStops.size(); ++i)
+    {
+        if (std::abs(kSpeedStops.at(i) - speed) < std::abs(kSpeedStops.at(nearest) - speed))
+        {
+            nearest = i;
+        }
+    }
+    return static_cast<std::int32_t>(nearest);
+}
+
 // The switch in the game's own options: a section "Turn-based" on the Game
 // tab with one box, "Turn-based combat" (the user, 2026-10-01: "not
 // controls, gameplay tab i think, its own section w/ a toggle"; DAOLib's
@@ -178,7 +203,53 @@ bool AddOptions()
     };
     std::vector<dao::options::Toggle> toggles;
     toggles.push_back(std::move(toggle));
-    return dao::options::AddSection(kOptionsSection, std::move(toggles));
+    // The fight's speed (the user, 2026-10-02: "a setting to change game
+    // speed, from 0.5x to 1X to 2x"): the game's own slider with named
+    // stops (DAOLib's dao::options::Choice), kept in turnbased.ini as
+    // [turns] speed. `set` is called once a stop passed in a drag: it writes
+    // the file and reads it back, which is cheap and the same each time.
+    dao::options::Choice speed;
+    speed.name = L"TurnBasedSpeed";
+    speed.label = L"Fight speed";
+    speed.tooltip = L"How fast a turn-based fight runs";
+    for (const float stop : kSpeedStops)
+    {
+        speed.values.push_back(std::format(L"{}x", stop));
+    }
+    speed.get = [] {
+        try
+        {
+            return SpeedStop();
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("the options' speed, asked: {}", e.what());
+            return std::int32_t{1};
+        }
+    };
+    speed.set = [](std::int32_t wanted) {
+        try
+        {
+            const std::size_t stop = static_cast<std::size_t>(
+                std::clamp<std::int32_t>(wanted, 0, static_cast<std::int32_t>(kSpeedStops.size()) - 1));
+            for (const std::string &warning :
+                 tb::game::SaveSetting("turns", "speed", std::format("{}", kSpeedStops.at(stop))))
+            {
+                spdlog::warn("the options' speed: {}", warning);
+            }
+            g.lastSettingsCheck = 0;
+            ReloadIfChanged(static_cast<std::uint32_t>(GetTickCount64()) + 2000);
+            return SpeedStop();
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("the options' speed, set: {}", e.what());
+            return std::int32_t{1};
+        }
+    };
+    std::vector<dao::options::Choice> choices;
+    choices.push_back(std::move(speed));
+    return dao::options::AddSection(kOptionsSection, std::move(toggles), std::move(choices));
 }
 
 // What became of the section, said once: known when the game first opens
@@ -272,6 +343,39 @@ bool BindToggle(const tb::KeyChord &chord)
         catch (const std::exception &e)
         {
             spdlog::error("the toggle's key: {}", e.what());
+        }
+    });
+}
+
+// End turn's key, one of the game's own as the toggle's is (`[keys]
+// end_turn`, Enter until bound in the controls). The pause key ended the
+// turn before; the user, 2026-10-02: "space bar should still pause the game
+// i think, instead of end turn. that's what players would expect."
+constexpr wchar_t kEndTurnAction[] = L"TurnBasedEndTurn";
+bool BindEndTurn(const tb::KeyChord &chord)
+{
+    const std::uint32_t code = tb::ScanCode(chord.key);
+    if (chord.key == 0 || code == 0)
+    {
+        return false;
+    }
+    dao::input::Action action;
+    action.name = kEndTurnAction;
+    action.label = L"End turn";
+    action.section = kOptionsSection;
+    action.key = static_cast<dao::input::Key>(code);
+    action.modifiers = (chord.ctrl ? dao::input::kControl : 0U) | (chord.shift ? dao::input::kShift : 0U) |
+                       (chord.alt ? dao::input::kAlt : 0U);
+    return dao::input::RegisterAction(std::move(action), [] {
+        try
+        {
+            const std::lock_guard lock(g.mutex);
+            spdlog::debug(g.machine->OnEndTurn() ? "the turn was ended by End turn's key"
+                                                 : "End turn's key outside a turn-based fight");
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("End turn's key: {}", e.what());
         }
     });
 }
@@ -390,8 +494,14 @@ void ServeBar(std::uint32_t now)
     if (g.bar.TakeEndTurn())
     {
         const std::lock_guard lock(g.mutex);
-        spdlog::debug(g.machine->OnPauseKey() ? "the turn was ended by the turn bar's End"
-                                              : "the bar's end turn outside a turn-based fight");
+        spdlog::debug(g.machine->OnEndTurn() ? "the turn was ended by the turn bar's End"
+                                             : "the bar's end turn outside a turn-based fight");
+    }
+    if (g.bar.TakeDelay())
+    {
+        const std::lock_guard lock(g.mutex);
+        spdlog::debug(g.machine->OnDelay() ? "the turn was put off by the turn bar's Delay"
+                                           : "the bar's Delay when the turn could not be put off");
     }
     if (const auto focus = g.bar.TakeFocus())
     {
@@ -518,7 +628,7 @@ void EndTurnTool(void * /*context*/, const char * /*args*/, EluvianReply *reply)
     bool ended = false;
     {
         const std::lock_guard lock(g.mutex);
-        ended = g.machine->OnPauseKey();
+        ended = g.machine->OnEndTurn();
     }
     if (ended)
     {
@@ -528,6 +638,24 @@ void EndTurnTool(void * /*context*/, const char * /*args*/, EluvianReply *reply)
     }
     reply->error(reply, "There is no turn of the player's to end: this ends a party member's turn the player plays. "
                         "Wait for turnbased.turn_started with detail \"yours\", or read inspect turnbased.state.");
+}
+
+void DelayTool(void * /*context*/, const char * /*args*/, EluvianReply *reply)
+{
+    bool delayed = false;
+    {
+        const std::lock_guard lock(g.mutex);
+        delayed = g.machine->OnDelay();
+    }
+    if (delayed)
+    {
+        spdlog::debug("the turn was put off by the turnbased_delay tool");
+        reply->ok(reply, R"({"delayed":true})");
+        return;
+    }
+    reply->error(reply, "The turn cannot be put off now: only a party member's turn the player plays, waiting on an "
+                        "order, with nothing of it spent, once a round, and with someone standing after it this "
+                        "round. inspect turnbased.state says so in can_delay.");
 }
 
 void SeedTool(void * /*context*/, const char *args, EluvianReply *reply)
@@ -564,7 +692,7 @@ void SettingsTool(void * /*context*/, const char *args, EluvianReply *reply)
     }
     if (!section || !key || !value)
     {
-        reply->error(reply, R"(Give section, key and value, e.g. {"section": "turns", "key": "ai_turn_speed", )"
+        reply->error(reply, R"(Give section, key and value, e.g. {"section": "turns", "key": "speed", )"
                             R"("value": "2"}; or nothing, to read turnbased.ini.)");
         return;
     }
@@ -620,12 +748,21 @@ void LookForEluvian()
         "turnbased.state");
     check(e.RegisterTool(
               "turnbased_end_turn",
-              R"({"description": "End the current party member's turn, as Space or the bar's End does: what it has )"
+              R"({"description": "End the current party member's turn, as the bar's End or its key does: what it has )"
               R"(left is given up and the next creature's turn starts (turnbased.turn_ended, then )"
               R"(turnbased.turn_started). Only on a turn the player plays (turnbased.state's current.yours); an error )"
               R"(otherwise.", "inputSchema": {"type": "object", "properties": {}}})",
               &EndTurnTool, nullptr, 0),
           "turnbased_end_turn");
+    check(e.RegisterTool(
+              "turnbased_delay",
+              R"({"description": "Put the current party member's turn off to the end of this round, as the bar's )"
+              R"(Delay does: nothing of it is spent, the next creature's turn starts (turnbased.turn_delayed, then )"
+              R"(turnbased.turn_started), and its own turn comes whole after everyone else's. Only while )"
+              R"(turnbased.state's can_delay is true; an error otherwise.", )"
+              R"("inputSchema": {"type": "object", "properties": {}}})",
+              &DelayTool, nullptr, 0),
+          "turnbased_delay");
     check(e.RegisterTool(
               "turnbased_seed",
               R"({"description": "Seed initiative's rolls from now on (a joiner's, the next fight's), so a )"
@@ -637,7 +774,7 @@ void LookForEluvian()
         e.RegisterTool(
             "turnbased_settings",
             R"({"description": "Read turnbased.ini (no arguments), or set one setting in it and apply it now: section, )"
-            R"(key and value as the ini has them, e.g. turns / ai_turn_speed / 2 (the game's speed in AI turns), )"
+            R"(key and value as the ini has them, e.g. turns / speed / 2 (the game's speed through a fight), )"
             R"(turns / party / tactics, turns / condition_turns / 1. Applied at once; answers the parse's warnings.", )"
             R"("inputSchema": {"type": "object", "properties": {"section": {"type": "string"}, "key": {"type": )"
             R"("string"}, "value": {"type": "string"}}}})",
@@ -688,7 +825,8 @@ void LookForEluvian()
     {
         spdlog::warn("Eluvian refused {}: its reason is in eluvian.log", name);
     }
-    spdlog::info("registered with Eluvian (build {}): inspect turnbased.state; turnbased_end_turn, turnbased_seed, "
+    spdlog::info("registered with Eluvian (build {}): inspect turnbased.state; turnbased_end_turn, turnbased_delay, "
+                 "turnbased_seed, "
                  "turnbased_settings; events turnbased.<kind>, {} described; {} refused",
                  e.build, described, refused.size());
 }
@@ -738,6 +876,11 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     g.bridge = std::make_unique<tb::game::Bridge>(settings);
     g.toggleKey = settings.toggleKey;
     g.toggle = BindToggle(settings.toggleKey) ? ToggleKey::Asked : ToggleKey::Polled;
+    spdlog::info(
+        BindEndTurn(settings.endTurnKey)
+            ? "End turn's key is one of the game's own (Options, Controls, under Turn-based): Enter until "
+              "bound there; the pause key pauses"
+            : "End turn has no key the game's controls take ([keys] end_turn): the turn bar's End ends a turn");
     if (g.toggle == ToggleKey::Asked)
     {
         spdlog::info(

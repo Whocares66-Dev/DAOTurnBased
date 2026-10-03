@@ -39,6 +39,9 @@ namespace k = dao::script::constants;
 // seventeenth play test), so a tenth of a meter, where it was a quarter:
 // between searches the path's end follows the cursor anyway.
 constexpr float kMoved = 0.1f;
+// An attack's walk shorter than this is not drawn: it is the shuffle of a
+// strike, within the meter that costs nothing.
+constexpr float kNoWalk = 0.5f;
 constexpr std::uint32_t kSearchEveryMs = 150;
 
 // The game's own marker for where a move goes (the user, 2026-10-01: "the
@@ -397,6 +400,19 @@ void Preview::Clear()
     encoded_ = EncodeNoPreview();
 }
 
+// Nothing to draw, and a cost to say (an attack on what is in reach): the
+// movie shows it on the bar of time.
+void Preview::ShowCost(const OrderCost &cost)
+{
+    HideMarker();
+    HideMarks();
+    std::wstring encoded = EncodeNoPreview(cost, over_);
+    // Something to take back when the cursor leaves (Clear).
+    drawn_ = cost.seconds > 0.0f || over_ != kNoObject;
+    const std::lock_guard lock(mutex_);
+    encoded_ = std::move(encoded);
+}
+
 void Preview::Search(ObjectId walker, const Vec3 &from, const Vec3 &to, ObjectId toward, std::uint32_t nowMs)
 {
     walker_ = walker;
@@ -471,6 +487,11 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
                          view.current != kNoObject && view.movementLeft >= TurnMachine::kMinStep;
     const dao::GameModeExplore *explore = waiting ? ExploreMode() : nullptr;
     const std::optional<ObjectId> object = explore != nullptr ? explore->CursorObject() : std::nullopt;
+    // Any living creature under the cursor is named to the movie, which says
+    // when an action it has pending lands (dev/REBALANCE.md, "The bar on
+    // screen": "a pending action on hovering over its creature or its card").
+    over_ = object && api::GetObjectType(*object) == k::OBJECT_TYPE_CREATURE && api::IsDead(*object) == 0 ? *object
+                                                                                                          : kNoObject;
     // Over an enemy, with an action left: the walk an attack on it would
     // take (the user's first list: "the same for an attack: gold if the
     // target can be reached this turn, red if not, before the player
@@ -485,6 +506,19 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     // click makes), and a path drawn to it promised one. In play a red end
     // there, clicked, was not refused "Too far": no command came (the
     // fifteenth play test, 2026-10-01).
+    // An ability being aimed (a quickbar talent pressed, the targeting
+    // cursor up): what it would cost, on the bar and in the caption, and no
+    // walk drawn: its range is its own, not the attack's reach. Quoted the
+    // attack's price before (play test 27: Dirty Fighting shown 1.5 s,
+    // charged 2.0 s). DAOLib's GameModeExplore::Targeting, first used here.
+    if (const std::optional<dao::GameModeExplore::Aim> aim = waiting ? dao::GameModeExplore::Targeting() : std::nullopt;
+        aim && aim->caster == view.current)
+    {
+        searched_ = false;
+        path_.clear();
+        ShowCost(CostOf(view, 0.0f, view.timed ? AbilitySecondsOf(view.current, aim->ability) : 0.0f));
+        return;
+    }
     std::optional<dao::Vector> point;
     if (target != kNoObject)
     {
@@ -496,6 +530,15 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     }
     if (!point || !AtRest(view.current))
     {
+        if (over_ != kNoObject)
+        {
+            // A friend, or an enemy with no action left to attack it with:
+            // no walk to show, and who it is all the same.
+            searched_ = false;
+            path_.clear();
+            ShowCost(OrderCost{});
+            return;
+        }
         Clear();
         return;
     }
@@ -541,16 +584,14 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
         const float distance = api::GetDistanceBetween(view.current, target);
         walk = WalkToReach(std::max(order, distance), ReachOf(view.current, target));
         walked = SplitPath(path_, walk + (drawn - order)).reach;
-        if (walk < 0.05f || walked.size() < 2)
+        // Under half a meter is the shuffle of a strike, not a walk: a plate
+        // "0.1 m, 1.5 s" lay at Lyna's feet with the spider beside her (seen
+        // in play, 2026-10-02).
+        if (walk < kNoWalk || walked.size() < 2)
         {
-            // In reach where it stands: no walk to show.
-            HideMarker();
-            HideMarks();
-            if (std::exchange(drawn_, false))
-            {
-                const std::lock_guard lock(mutex_);
-                encoded_ = EncodeNoPreview();
-            }
+            // In reach where it stands: no walk to show; with a turn a bar
+            // of time, what the swing would cost.
+            ShowCost(CostOf(view, walk, view.timed ? AttackSeconds(view.current) : 0.0f));
             return;
         }
     }
@@ -564,6 +605,16 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     }
     shown.length = walk;
     shown.meters = view.movementLeft;
+    shown.over = over_;
+    // With a turn a bar of time, what the order would cost: a move its walk,
+    // an attack its walk and its swing; nothing for one too far, which is
+    // refused.
+    if (view.timed && !split.TooFar())
+    {
+        const OrderCost cost = CostOf(view, walk, attack ? AttackSeconds(view.current) : 0.0f);
+        shown.cost = cost.seconds;
+        shown.spills = cost.spills;
+    }
     // The drawn line leaves out its first stretch, inside the walker's ring.
     const PathSplit outside = SplitPath(split.reach, kLineFrom);
     const std::vector<Vec3> &lineReach = outside.TooFar() ? outside.beyond : split.reach;

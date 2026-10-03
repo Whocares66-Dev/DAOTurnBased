@@ -3,6 +3,7 @@
 #include "core/Bar.h"
 #include "core/Text.h"
 
+#include "dao/Abilities.h"
 #include "dao/ClientExoApp.h"
 #include "dao/Gda.h"
 #include "dao/Gui.h"
@@ -39,6 +40,7 @@ void BarLink::Install()
             }
             // GFx copies the text as the call returns, so a local will do.
             call.Return(dao::gui::Value::WString(view.c_str()));
+            HideGameBanner(fightShown_.load());
         }
         catch (const std::exception &e)
         {
@@ -48,6 +50,10 @@ void BarLink::Install()
     dao::gui::OnFSCommand("TB_EndTurn", [this](void *, std::string_view) {
         const std::lock_guard lock(mutex_);
         endTurn_ = true;
+    });
+    dao::gui::OnFSCommand("TB_Delay", [this](void *, std::string_view) {
+        const std::lock_guard lock(mutex_);
+        delay_ = true;
     });
     dao::gui::OnFSCommand("TB_Focus", [this](void *, std::string_view args) {
         ObjectId id = kNoObject;
@@ -61,10 +67,21 @@ void BarLink::Install()
         focus_ = id;
     });
     dao::gui::OnFSCommand("TB_Cleared", [this](void *, std::string_view) {
-        const std::lock_guard lock(mutex_);
-        movieLetGo_ = true;
+        {
+            const std::lock_guard lock(mutex_);
+            movieLetGo_ = true;
+        }
+        // The fight is over: the game's banner is the game's again.
+        try
+        {
+            HideGameBanner(false);
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("TB_Cleared: {}", e.what());
+        }
     });
-    spdlog::info("the turn bar's calls are answered: TB_GetView, TB_EndTurn, TB_Focus, TB_Cleared");
+    spdlog::info("the turn bar's calls are answered: TB_GetView, TB_EndTurn, TB_Delay, TB_Focus, TB_Cleared");
 }
 
 namespace
@@ -120,11 +137,86 @@ void BarLink::KeepScreen(bool fighting)
     }
 }
 
+// The bar of time is the movie's own, under the medallions, made of the
+// experience bar's art (ui/turnorder: drawTime). For half a day it was the
+// game's experience bar itself, filled through the quickbar's movie with an
+// order's cost marked on it by a script added to that movie; the user,
+// 2026-10-02, having seen it: "the action bar seems to replace the
+// experience bar? that's confusing. we should have it separate." The game's
+// bar is the game's again, and nothing of its movie is touched.
 void BarLink::Publish(const TurnView &view)
 {
-    std::wstring encoded = EncodeBar(view, portraits_);
+    // A pending ability's icon and name, as the game's quickbar would show
+    // them: the abilities table's `icon` (a texture's name, which the
+    // quickbar's movie loads as img://<name>.dds) and the name by its
+    // string reference (DAOLib's dao::abilities::Name). Asked once an
+    // ability, from the frame callback.
+    TurnView shown = view;
+    for (CardView &card : shown.upcoming)
+    {
+        if (card.owedMs == 0 || card.pendingAbility < 0)
+        {
+            continue;
+        }
+        auto known = abilityArt_.find(card.pendingAbility);
+        if (known == abilityArt_.end())
+        {
+            AbilityArt found;
+            for (const char *column : {"icon", "Icon"})
+            {
+                if (found.icon.empty())
+                {
+                    found.icon = dao::gda::GetString(dao::script::Table::AbilitiesTalents, card.pendingAbility, column)
+                                     .value_or(std::wstring{});
+                }
+            }
+            found.name = dao::abilities::Name(card.pendingAbility).value_or(std::wstring{});
+            spdlog::info("ability {}: its icon is '{}', its name '{}'", card.pendingAbility, Utf8(found.icon),
+                         Utf8(found.name));
+            known = abilityArt_.emplace(card.pendingAbility, std::move(found)).first;
+        }
+        card.pendingIcon = known->second.icon;
+        card.pendingName = known->second.name;
+    }
+    fightShown_.store(view.active);
+    std::wstring encoded = EncodeBar(shown, portraits_);
     const std::lock_guard lock(mutex_);
     encoded_ = std::move(encoded);
+}
+
+// The game writes "Paused" across the top of the screen when it is paused
+// (floatylayer.gfx, read 2026-10-02 with FFDec: PauseIndicator_mc, aligned
+// top and centre, played in and out by frames as Client.Paused changes),
+// which is where the turn bar is: its ends showed beside the cards and its
+// tail between them (play test 30). For a day the bar's plate was made solid
+// black over it while paused; the user, seeing that: "pausing makes the
+// background turn black?" So the banner is hidden while a turn-based fight
+// has the bar up, whose caption says "Paused", and shown again as the fight
+// ends. Its `_visible` is not touched by the game's script, which only
+// plays its frames; the border the game draws round the screen while paused
+// (PauseBorder_mc) is left as it is.
+void BarLink::HideGameBanner(bool hide)
+{
+    if (bannerHidden_ == hide)
+    {
+        return;
+    }
+    constexpr const char *kBanner = "_root.PauseIndicator_mc";
+    void *owner = dao::gui::FindOwner(L"FloatyLayer");
+    dao::gui::Movie movie{owner != nullptr ? dao::gui::MovieOf(owner) : nullptr};
+    if (!movie || !movie.IsAvailable(kBanner))
+    {
+        if (!std::exchange(bannerSaid_, true))
+        {
+            spdlog::warn("the game's Paused banner is not there to hide (the floaty layer's {})", kBanner);
+        }
+        return;
+    }
+    const bool set = movie.SetVariable("_root.PauseIndicator_mc._visible", dao::gui::Value::Bool(!hide),
+                                       dao::gui::Movie::SetType::Normal);
+    bannerHidden_ = hide;
+    spdlog::info("the game's Paused banner is {}: {}", hide ? "hidden behind the turn bar" : "shown again",
+                 set ? "set" : "the call did not run");
 }
 
 void BarLink::FollowFight(const TurnView &view, std::uint32_t nowMs)
@@ -287,6 +379,12 @@ bool BarLink::TakeEndTurn()
 {
     const std::lock_guard lock(mutex_);
     return std::exchange(endTurn_, false);
+}
+
+bool BarLink::TakeDelay()
+{
+    const std::lock_guard lock(mutex_);
+    return std::exchange(delay_, false);
 }
 
 std::optional<ObjectId> BarLink::TakeFocus()

@@ -196,7 +196,14 @@ const std::vector<Entry> &Entries()
         {"turns", "cooldown_seconds_per_turn", Float(&Settings::cooldownSecondsPerTurn, 0.0f, 60.0f)},
         {"turns", "pause_on_player_turn", Bool(&Settings::pauseOnPlayerTurn)},
         {"turns", "pick_targets", Bool(&Settings::pickTargets)},
-        {"turns", "ai_turn_speed", Float(&Settings::aiTurnSpeed, 0.25f, 4.0f)},
+        // Gone: a file that still has it is told, once, by the warning.
+        {"turns", "ai_turn_speed",
+         [](Settings &, std::string_view) -> std::string {
+             return "no longer a setting: [turns] speed is the fight's speed, everyone's turns alike";
+         }},
+        {"turns", "speed", Float(&Settings::fightSpeed, 0.25f, 4.0f)},
+        {"turns", "delay", Bool(&Settings::delay)},
+        {"turns", "give_back_unplayed", Bool(&Settings::giveBackUnplayed)},
         {"movement", "path_check", Bool(&Settings::pathCheck)},
         {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
@@ -327,6 +334,16 @@ const std::vector<Entry> &Entries()
                  return "not a key (Ctrl+T, F9, None, ...)";
              }
              s.toggleKey = *chord;
+             return {};
+         }},
+        {"keys", "end_turn",
+         [](Settings &s, std::string_view text) -> std::string {
+             const auto chord = ParseKeyChord(text);
+             if (!chord)
+             {
+                 return "not a key (Enter, E, F9, None, ...)";
+             }
+             s.endTurnKey = *chord;
              return {};
          }},
     };
@@ -531,11 +548,20 @@ pause_on_player_turn = false
 ; once, as in real time (a character keeps its target from turn to turn).
 ; Talents for their user alone, and modes, are used as ever.
 pick_targets = true
-; How fast the game runs during an enemy's (or an AI companion's) turn, as
-; BG3 speeds them up: 1 as ever, 2 twice as fast (0.25 to 4). The player's
-; turns, conversations and the world outside a fight run as ever. At 1 the
-; mod leaves the game's speed alone.
-ai_turn_speed = 1
+; How fast the game runs through a turn-based fight, your turns and theirs
+; alike: 0.5 half speed, 1 as ever, 2 twice as fast (0.25 to 4). It is the
+; Fight speed slider in the game's options. Conversations and the world
+; outside a fight run as ever. At 1 the mod leaves the game's speed alone.
+speed = 1
+; A party member may put its turn off to the end of the round (Delay, on the
+; turn bar beside End), once a round and only before it has moved or acted:
+; a healer after the fighter, a mage after the enemy has closed. The turn it
+; then takes is whole, and its cooldowns and effects are none the older.
+delay = true
+; With time: an action that ended at once, in under a quarter of the time it
+; takes, did not happen (a spell at a target the game would not take), and
+; its time is given back, once a turn.
+give_back_unplayed = true
 ; Effects and regeneration count rounds: through a fight their clock is
 ; held, and at each new round every temporary effect (buffs, debuffs, damage
 ; and healing over time, timed summons, lasting areas) and every creature's
@@ -565,11 +591,12 @@ join_by_sight = true
 charge =
 ; How an AI creature is told its turn has come: command_complete or kickstart.
 ai_poke = command_complete
-; What a turn is. actions: one action (an attack, an ability, an item) and
-; the movement above, as the mod has played so far. time: a bar of time,
-; seconds_per_turn long, that actions and walking both spend, each at its
-; own length (dev/REBALANCE.md, being built: not yet seen in play).
-clock = actions
+; What a turn is. time: a bar of time, seconds_per_turn long, that actions
+; and walking both spend, each at its own length: a quick dagger strikes
+; more often than a greatsword, a long spell lands on the next turn, and
+; what is not spent rolls over a little. actions: one action (an attack, an
+; ability, an item) and the movement above, as the mod first played.
+clock = time
 ; With time: a turn's bar in seconds, and what cooldowns and effects are
 ; counted in.
 seconds_per_turn = 4
@@ -609,8 +636,7 @@ move_preview = true
 move_preview_ground = true
 
 [keys]
-; Turn turn-based combat on or off, outside combat. The game's pause key
-; ends a party member's turn during a turn-based fight.
+; Turn turn-based combat on or off, outside combat.
 ; This key is one of the game's own: it is listed in the game's Options,
 ; Controls, under "Turn-based", and bound there like any other. What is written
 ; here is the key it has before that: the game copies it into its
@@ -620,6 +646,11 @@ move_preview_ground = true
 ; game's: it works as written here, read at start, and is not in the
 ; controls.
 toggle = Ctrl+T
+; End a party member's turn, as the turn bar's End does. One of the game's
+; own keys too, bound in its controls under "Turn-based". The game's pause
+; key (Space) is not this: in a turn-based fight it pauses the game and
+; runs it again, as it does everywhere else.
+end_turn = Enter
 )";
 }
 

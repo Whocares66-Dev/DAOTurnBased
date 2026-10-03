@@ -32,6 +32,93 @@ The random fights run in both modes (`test_fights.cpp`: 80 seeds each in the sui
 
 Not yet in the game layer (next): the gate's `HeldCast` keeps only abilities, so a kept attack is not given again in play; `actionSeconds` (the swing by weapon), `abilityType`, `conjureAnim` and `staff` are not filled; Combat Tactics' and Survival's ranks are not read; the bar is not drawn.
 
+## Fourth slice: what play found, cooldowns on the clock, holds by their time
+
+After the first fights in the game (`dev/PLAYTEST-2026-10-02-25.md`, `-26.md`), in `TurnMachine` and the game layer, all with a turn a bar of time only:
+
+- **A kept action has its own words**: the events `action_pending`, `action_landed`, `action_dropped` (the charge rule's `cast_*` stay the as-built rule's), the log's `pending attack lands`, `is dropped`. "Next turn" floats over the player's own only; "Interrupted" only for a hold, never as a fight ends.
+- **A kept attack's creature walks to its target now** (`EffectKind::Approach`; the bridge gives a `CommandMoveToObject` to within the reach, let through though it is a script's on the player's turn): the walk is paid out of this turn, the swing owed to the next. An AI's attack is measured as the player's is (the path, at rest), so its walk and swing are judged together.
+- **A kept action whose target is gone gives back what it owed**: the bridge says so with the next observation (`Observation::keptVoid`), and the turn is whole.
+- **Cooldowns count on their user's clock** (`Hold::leftMs`): the clock moves as the bar is spent, by its share (`TurnBudget::ClockElapsedMs`), and the rest of the way to a turn's seconds as the turn ends, lost or spent on a pending action; a cooldown lifts the moment it runs out, mid-turn included, and the quickbar's sweep is redrawn sixteen times over it. A fallen creature's turn, passed over, moves nothing.
+- **A hold takes its own seconds** (`Held::owedMs`, read by the bridge through `dao::effects::On`, the longest of what holds the creature): a turn's worth or more is a turn lost; less is that share of the next bar by the clock's ratio, and the engine's condition is ended as it is paid; landing in its victim's own turn, the rest of that turn counts first and nothing of it rolls over; taken off, nothing is owed. Seconds not read: `condition_turns`' worth, or at 0 the as-built "while it lasts".
+- **What the order under the cursor would cost** (`core/Preview.h`, `CostOf`; the preview's string, version 4): a move its walk, an attack its walk and its swing, an attack in reach its swing alone, and whether it fits. The turn bar's string (version 5) carries a turn's own seconds. The movie draws the bar of time under the medallions: a segment a second, gold for what is left, the cost pale over it or all of it red when the order would land next turn, a notch where a turn's own seconds end.
+
+- **The time left on the game's own experience bar**, the user's decision (`src/game/Bar.cpp`; `dev/UI.md`): seen in the game. The bar drawn in the mod's movie is gone.
+- **The fight's speed** (`[turns] speed`, 0.25 to 4, the user: "a setting to change game speed, from 0.5x to 1X to 2x"): the game's speed through a turn-based fight, everyone's turns; an enemy's turn at it times `ai_turn_speed`. In the settings file; a row in the options screen wants a choice control DAOLib's options do not have yet.
+- **An AI is told to choose in mid-turn only on a fresh look at the statuses**, and a turn whose kept action will not come is handed over as any turn is: three things the thousand-fight run found (a stunned creature told to act; a stunned party member handed its turn; a creature held by an unnamed effect waiting its turn out).
+
+The random fights land holds with seconds, walk approaches, lose targets (`test_fights.cpp`); a fight replays by its seed with every line (`TB_SEED=63 TB_CLOCK=time tb_tests "[fight-seed]"`).
+
+## Fifth slice: what the tester's eyes found, the engine's own durations, arrival, interruption
+
+After play test 27 (`dev/PLAYTEST-2026-10-02-27.md`), and on DAOLib `c109566` (the animation lengths, the aimed ability, the options' choice row, a script event's fields):
+
+- **The experience bar no longer flickers between two turns**: the view says a turn is a bar of time by the setting, not by the budget, which is reset as a turn ends.
+- **The walk to a kept attack's target** has a meter of slack past what was paid for, and stops without "Out of movement".
+- **The player's kept action**: "Lands next turn" over the creature, and a beat of 0.8 s before the turn passes on, so that it is read before the next turn's announcement. The creature's card carries the time still owed in a small gold ring, and says "an action lands in 1.2 s of its time" under the pointer. A turn that began by paying for one says so in the caption until something else is spent.
+- **The caption's words**: "Costs 1.5 s, leaving 2.5 s", "Costs 1.5 s: lands next turn", always a decimal; nothing while a paid walk is under way. The plate at a walk's end says the cost too ("4.4 m, 2.2 s").
+- **An action whose own effect holds its creature** (a spider's Overwhelm, an ogre's grab: the open question of "What no rule reaches") **costs the time it runs**: its own cost covers the first of it, the bar the next, and what is over the bar is owed to its next turns. Overwhelm's 9.3 s is two turns and more of the spider's.
+- **What an attack and an ability take** (`core/Rules.h`, `AttackSeconds`, `AbilitySeconds`; the game layer gathers the facts): a humanoid's melee swing by the scripts' formula; a shot 1.4 s for a follower and 1.6 s for the player's own character; a creature's or an unarmed humanoid's swing 0.81 of its attack animation's length; an ability 0.84 of its cast animation's, with its conjuring before it by the creature's own animations; an archery talent with no cast animation a shot. The stand-ins remain for what reads nothing (a monster's special with no cast animation).
+- **An ability being aimed is quoted its own cost** (`GameModeExplore::Targeting`), not the attack's.
+- **An action's time is taken when its creature gets there** if its walk ran past the bar (`Budget::onArrivalMs`): the time it had been charged goes to the walk, the walk goes on to the end of the bar, and the action is charged on arriving, what does not fit owed to the next turn. An archer that walked for its shot, or a creature whose path was longer than the gate could tell, lost its turn before.
+- **A blow interrupts a pending spell** (`TurnMachine::OnDamaged`, heard from the scripts' `EVENT_TYPE_DAMAGED`): physical damage over the game's own threshold (`InterruptThreshold`: Combat Training and level for the party, rank and level for the rest), as the game interrupts a conjuring. A pending attack or talent is not a conjuring.
+- **The fight's speed in the options screen**: a slider with four stops (0.5x, 1x, 1.5x, 2x) under the Turn-based section's box.
+
+Not yet in play: all of this slice since the first two items' findings; the display was asleep and the game could not start (its renderer crashes with no display).
+
+## Sixth slice: Delay, the cost on the game's bar, the creature under the cursor
+
+Built 2026-10-02 while the game could not be started (its install had been emptied by another session's clean-up and was being repaired), and seen in the game the same morning, with the fifth, in runs with no hands: `dev/PLAYTEST-2026-10-02-28.md`. 295 tests, 2,000 long fights, 236 of 236 mutants, ASan, clang-tidy and /analyze clean.
+
+- **An order's cost on the game's experience bar**: the part of the gold the order would spend pale, all that is left red when it does not fit. A script of the mod's added to the quickbar's movie in memory (`ui/quickbar`, `src/game/QuickbarScript.h`, `dev/UI.md`); seen in Ruffle over a stand-in bar.
+- **Delay** (`[turns] delay`, on; `TurnOrder::Delay`, `TurnMachine::OnDelay`, `CanDelay`): a party member puts its turn off to the round's end, before it has spent anything of it, once a round, with someone standing after it. Nothing is settled as it does: its clock does not move, its bar and rollover are what they were, and when its turn comes the scripts are not told a second turn start and a cooldown that counts turns does not count a second one (`TellTurnStart`). The round after is in initiative's order again. On the turn bar a Delay button stands under End while the turn may be put off (the bar's string, version 7); `turnbased_delay` is the same for a test with no hands, and `can_delay` is in the state. The event `turn_delayed` closes the turn's `turn_started`; another follows when the turn comes.
+- **A pending action said on hovering over its creature** (the preview's string, version 5: the creature under the cursor): the caption says "Genlock: an action lands in 1.6 s of its time", after the order's own cost if there is one; its card said so already.
+- **Found by the random fights with a player that delays** (their draws changed, so they met new cases):
+  - A turn put off and then lost to a stun told the scripts its turn start twice. One place tells it now.
+  - **A conversation while the world ran on between two rounds lost the round's start**: back in the fight, the next round began with no round start told, its effects not aged (seed 27). The round stays pending until it has begun. This was in the as-built mode too, since `round_min_seconds` was made.
+  - The arena's bound on an AI's turn did not know that an action held by its own effect has three times `max_action_ms` (seed 364 of the long run): the bound was wrong, not the machine.
+
+## Seventh slice: after play test 28 and the user's look (2026-10-02)
+
+The tester played the sixth slice by mouse (`dev/PLAYTEST-2026-10-02-28.md`), and the user looked at the pictures. What changed:
+
+- **The bar of time is the mod's own**, under the turn order, made of the experience bar's art; the game's bar is left alone and the quickbar's movie untouched (`dev/UI.md`). `ui/quickbar`, `src/game/QuickbarScript.h` and their build step are gone.
+- **A pending talent or spell shows its own icon** on its creature's card; a pending attack shows nothing. The view's cards say what is pending (`CardView::pendingAbility`), and the game layer adds the icon's texture and the name.
+- **The pause key pauses.** `TurnMachine::OnPauseKey` toggles the player's own pause, which the machine keeps over its own; `OnEndTurn` is End, with a key of its own (`[keys] end_turn`, Enter).
+- **End stays where it is**, Delay greyed beneath it when it is not to be had; a card whose creature put its turn off says "waits".
+- **"Spell lost" and "Action lost"** for a pending action lost to a blow or a hold, not the game's own word "Interrupted", which it floats over ordinary broken swings.
+- **The caption** says the cost alone ("Costs 2.1 s, leaving 1.9 s"), and what rolled over while the turn is whole.
+- **`clock = time` is the default.**
+
+After play test 29 (`dev/PLAYTEST-2026-10-02-29.md`), the same build seen by mouse: an action over at once is given back (`OverAtOnce`: a spell of 4.99 s that was over in 0.4 s had taken the whole bar and done nothing), the caption says "Paused" and "No time left", a lost spell is said in red or gold, and a rank's gem is named under the pointer.
+
+**One speed** (the user, 2026-10-02: "shouldn't turn speed apply to everyone? we have one setting for combat speed right?"): `[turns] speed` is the fight's speed, everyone's turns alike, and `ai_turn_speed`, which sped an AI's turns alone, is gone; a file that still has it is told so once. The tester's clock for it, four spiders: a round 28 to 30 s at 1, 17 to 18 s at 2.
+
+After play test 30 (`dev/PLAYTEST-2026-10-02-30.md`): an action that did nothing is given back every time with time, not once a turn (three dagger attacks the engine failed, two of them charged); a creature standing short of its attack's target is stopped and chooses again (`kStuckShort`), and each command has its own limit; a lost spell is said in gold; the bar's plate is solid while paused; a hovered card's name does not outlive the card.
+
+After play test 31 (`dev/PLAYTEST-2026-10-02-31.md`): a word over the player's own for every action given back; a creature short of its target given a second (`kStuckMs`), and an AI given back twice ends its turn; the bar under the current card; a party member's lost turn said in gold.
+
+Still the tester's findings, not acted on: floaties one over another in a crowd; the quickbar and the name plate showing the member before on a turn's first frames (the game's own selection, a frame late). 
+
+## The road to done (2026-10-02)
+
+The user's brief: "a honed, polished, balanced, well-tested turn-based mode based on the ideas in rebalance.md", worked with DAOLib's session (the engine), Eluvian's (tools to stage and drive the game) and the tester (what only eyes and a mouse can judge); where a decision is unsure, a hypothesis and a test. This is the order of work, kept current; each item is struck when it is built, tested and seen in play.
+
+**How it is tested.** `tools/timeplay.py` plays the game with no hands through Eluvian (claim, launch, `[turns] clock = time`, a scenario, put back, quit): the rules. The tester, by screenshots and the mouse: the look, the preview, the feel. The core's tests, random fights and mutants as ever.
+
+1. ~~**What play test 25 found**~~: built, and the vanished target seen in play (play test 26).
+2. ~~**Holds by their own time**~~: built and seen in play (play test 26): 6 s a turn and half the next, 2 s half a bar.
+3. **Cooldowns on their user's clock**, lifting mid-turn: built and tested; to see in play (the quickbar's sweep).
+4. **The bar on screen**: on the game's experience bar, with the order's cost marked on it, the caption, the pending action on its creature's card and under the cursor: all built; the cost's mark, the badge and the captions of the fifth and sixth slices to be seen in the game.
+5. ~~**Durations from the engine**~~: taken (the fifth slice) and seen in play (play test 28), a mage's conjuring among them: Chain Lightning 4.99 s, Inferno, Tempest and Blizzard 3.99 s.
+6. ~~**Delay**~~: built (the sixth slice), seen in play (play tests 28 and 29), and kept by the user's word. **Waiting** a set time, to spend the bar on nothing until a cooldown lifts: not built; End does the same at the cost of the rollover's cap, and whether more is wanted is for play to say.
+7. **The AI on the bar**, judged in long fights with casters, archers and something big (Eluvian's templates): no stalls, no wasted turns, enemies' turns quick to watch.
+7a. ~~**An action's time taken when its creature gets there**~~: built, tested and seen in play (play test 28: a spider and an ogre).
+8. **Balance, measured** (`timeplay.py --scenario duel --clock time|actions|off`), 2026-10-02, with the engine's own durations: Lyna and Tamlen against three giant spiders, everyone attacking the nearest, nobody healed, three fights each way. **On the bar of time**: 127, 97 and 93 s over 6, 5 and 5 rounds; the party's health at the end Lyna 22, 53, 57% and Tamlen 89, 92, 81%; nobody fell. **In the game's own real time, the mod off, the same orders**: 29 and 41 s (the third not timed: Lyna fell and the script waited out its limit); Lyna 54, 0 (fallen), 32% and Tamlen 57, 22, 81%. So with the same blunt play the bar of time costs the party about what real time does, a little less on these six fights and with less spread, and puts more of it on whoever stands in front; a fight is three times as long on the clock at speed 1. With stand-in durations (a spider's bite 2.0 s where it is 1.49) the bar had been easier than real time (play test 26's numbers above); with the durations read from the engine it is not. The levers, if play wants them: the fight's speed for the length, nothing yet for the lethality.
+9. ~~**Interruption by damage**~~: built, tested and seen in play (play test 28: a bite under the threshold holds, an ogre's blow over it drops the spell). **A creature's own clock** for its effects: not taken (`dao::effects::OnAgeing` is the lead), kept at a round at a time until play shows it wrong.
+10. **The open decisions**, each tried: doors and chests, Dain's Fixes, the elite boss, a stealthed opening, kiting.
+11. **Time the default**: done (2026-10-02, after play test 28): `[turns] clock = time` is what a fresh install plays; `clock = actions` is the mod's first rule, one action and meters, kept and tested as before (the scripted cases of `test_machine.cpp` and half the random fights are on it).
+
 ## Codebase map and issues found
 
 1. **The existing machine is built around a different budget.** `TurnMachine::Budget` has one action, a separate movement maximum, and one failed-action refund. Cooldowns (`Hold`) and pending casts (`Charge`) store integer turns. `State`, the turn bar, previews, AI command limits, and `tests/World.h` consume that model. Replacing the budget alone would leave cooldowns, displays and AI inconsistent. Introduce the new state and observations together when the engine contract below exists.

@@ -3,6 +3,7 @@
 //
 //   ExternalInterface.call("TB_GetView")  the view, as core/Bar.h encodes it
 //   fscommand("TB_EndTurn")               end the player's turn, as the pause key does
+//   fscommand("TB_Delay")                 put the player's turn off to the round's end
 //   fscommand("TB_Focus", "<id>")         centre the camera on a combatant
 //   fscommand("TB_Cleared")               it has dropped its cards and their images
 //
@@ -19,10 +20,12 @@
 #include "core/TurnMachine.h"
 #include "core/Types.h"
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 namespace tb::game
 {
@@ -57,6 +60,7 @@ class BarLink
 
     // What the movie asked for since the last frame, each once.
     [[nodiscard]] bool TakeEndTurn();
+    [[nodiscard]] bool TakeDelay();
     [[nodiscard]] std::optional<ObjectId> TakeFocus();
 
     // The bar's screen: a GUI scene of ours, "TurnOrder", on the HUD's
@@ -69,10 +73,25 @@ class BarLink
 
   private:
     PortraitBook portraits_; // the frame callback's alone
+    // An ability's icon and name, as found: the frame callback's alone.
+    struct AbilityArt
+    {
+        std::wstring icon;
+        std::wstring name;
+    };
+    std::unordered_map<std::int32_t, AbilityArt> abilityArt_;
     std::mutex mutex_;
     std::wstring encoded_;
     bool endTurn_ = false;
+    bool delay_ = false;
     bool movieLetGo_ = false;
+    // The game's own "Paused" banner (the floaty layer's PauseIndicator_mc,
+    // top centre: where the turn bar is) hidden through a fight, and shown
+    // again after: on the interface's thread, from the movie's own calls.
+    void HideGameBanner(bool hide);
+    std::atomic<bool> fightShown_{false}; // the view last published is a fight's
+    bool bannerHidden_ = false;           // the interface's thread's
+    bool bannerSaid_ = false;
     std::optional<ObjectId> focus_;
     bool installed_ = false;
     bool screenAdded_ = false;

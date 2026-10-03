@@ -346,4 +346,75 @@ float ConjureSeconds(std::int32_t conjureAnim, int loops, bool staff)
     return start + loop * static_cast<float>(loops);
 }
 
+float AttackSeconds(const AttackFacts &facts)
+{
+    if (facts.humanoid && facts.armed)
+    {
+        if (facts.ranged)
+        {
+            return facts.hero ? kShotSecondsHero : kShotSecondsFollower;
+        }
+        return SwingSeconds(facts.style, facts.weaponSpeed, facts.attackSpeedModifier);
+    }
+    if (facts.animation && std::isfinite(*facts.animation) && *facts.animation > 0.0f)
+    {
+        return *facts.animation * kSwingShareOfAnimation;
+    }
+    return 0.0f;
+}
+
+float AbilitySeconds(const AbilityFacts &facts)
+{
+    const auto known = [](const std::optional<float> &seconds) {
+        return seconds && std::isfinite(*seconds) && *seconds > 0.0f;
+    };
+    float cast = 0.0f;
+    if (known(facts.cast))
+    {
+        cast = *facts.cast * kCastShareOfAnimation;
+    }
+    else if (facts.talent && facts.ranged)
+    {
+        cast = facts.hero ? kShotSecondsHero : kShotSecondsFollower;
+    }
+    else
+    {
+        return 0.0f;
+    }
+    if (facts.loops > 0 && known(facts.conjure))
+    {
+        cast +=
+            *facts.conjure + (known(facts.conjureLoop) ? *facts.conjureLoop : 0.0f) * static_cast<float>(facts.loops);
+    }
+    return cast;
+}
+
+float InterruptThreshold(bool party, int combatTraining, int level, int creatureRank)
+{
+    const float levels = static_cast<float>(std::max(0, level));
+    if (party)
+    {
+        return 10.0f * static_cast<float>(std::clamp(combatTraining, 0, 3)) + 5.0f + levels / 2.0f;
+    }
+    int ranks = 1;
+    switch (creatureRank)
+    {
+    case 2: // normal
+        ranks = 2;
+        break;
+    case 3: // lieutenant
+        ranks = 3;
+        break;
+    case 4: // boss
+        ranks = 4;
+        break;
+    case 5: // elite boss
+        ranks = 6;
+        break;
+    default:
+        break;
+    }
+    return 10.0f * static_cast<float>(ranks) + levels;
+}
+
 } // namespace tb

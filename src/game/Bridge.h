@@ -72,6 +72,9 @@ class Bridge
     CameraDirector camera_;
     std::optional<bool> speedTook_;
     std::optional<bool> byRooms_; // whether the last scan went by the rooms seen (Scan)
+    // Creatures whose kept cast or action was not given, its target gone
+    // (Apply, ReleaseCast): told to the machine with the next observation.
+    std::vector<ObjectId> keptVoid_;
     struct Known
     {
         std::wstring name;

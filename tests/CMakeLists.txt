@@ -21,6 +21,8 @@ add_executable(
     quiet_crt.cpp
     test_actiontime.cpp
     test_bar.cpp
+    test_delay.cpp
+    test_pause.cpp
     test_events.cpp
     test_fights.cpp
     test_json.cpp

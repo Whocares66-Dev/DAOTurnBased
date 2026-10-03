@@ -88,8 +88,21 @@ struct Settings
     // selected (otherwise the game uses it on the selected or attack target
     // at once); not one for its user alone, nor a mode (AsksForTarget).
     bool pickTargets = true;
-    // The game's speed during an AI's turn (1: as ever; 2: twice as fast).
-    float aiTurnSpeed = 1.0f;
+    // The game's speed through a turn-based fight, everyone's turns alike
+    // (the user, 2026-10-02: "a setting to change game speed, from 0.5x to
+    // 1X to 2x"). The one setting for it: `ai_turn_speed`, which ran an AI's
+    // turns faster than the player's, was there before and is gone (the
+    // user, the same day: "shouldn't turn speed apply to everyone? we have
+    // one setting for combat speed right?").
+    float fightSpeed = 1.0f;
+    // A party member may put its turn off to the round's end, before it has
+    // spent anything of it (Delay: dev/REBALANCE.md).
+    bool delay = true;
+    // With time: an action that was over in a fraction of the time the
+    // engine was read to take for it did not play, and its time is given
+    // back (TurnMachine::OverAtOnce). A switch, should it ever give back
+    // what did play.
+    bool giveBackUnplayed = true;
     // Judge an attack's or a move's walk by the game's own path (DAOLib's
     // FindPath) rather than a straight line, and refuse a move it cannot
     // finish this turn (the user's call, 2026-10-01).
@@ -112,11 +125,12 @@ struct Settings
     bool joinBySight = true;
     AiPoke aiPoke = AiPoke::CommandComplete;
 
-    // What a turn is (dev/REBALANCE.md, "Current specification"): one action
-    // and meters of movement, as built, or a bar of time that actions and
-    // walking both spend (`[turns] clock = time`). Actions until the bar is
-    // seen in play.
-    TurnClock turnClock = TurnClock::Actions;
+    // What a turn is (dev/REBALANCE.md, "Current specification"): a bar of
+    // time that actions and walking both spend, each at its own length, or
+    // one action and meters of movement, as the mod first played (`[turns]
+    // clock = actions`). Time since it was seen in play (play tests 25 to
+    // 28, 2026-10-02).
+    TurnClock turnClock = TurnClock::Time;
     // With time: a turn's bar, in seconds (the user, 2026-10-02: "a turn is
     // four seconds of time"). It is also what a cooldown's and an effect's
     // seconds are counted in, where effect_seconds_per_round and
@@ -145,6 +159,8 @@ struct Settings
 
     // [keys]
     KeyChord toggleKey{0x54, true, false, false}; // Ctrl+T
+    // End turn's key. Not the pause key's: that pauses, as in the game.
+    KeyChord endTurnKey{0x0D, false, false, false}; // Enter
 };
 
 struct ParsedSettings

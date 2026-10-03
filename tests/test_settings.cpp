@@ -204,14 +204,15 @@ TEST_CASE("the preview's path is marked on the ground by default, and can be a l
     CHECK(line.warnings.empty());
 }
 
-TEST_CASE("a turn is one action and meters by default; time and its numbers are read", "[settings]")
+TEST_CASE("a turn is a bar of time by default; one action and meters, and time's numbers, are read", "[settings]")
 {
     const tb::Settings defaults;
-    CHECK(defaults.turnClock == tb::TurnClock::Actions);
+    CHECK(defaults.turnClock == tb::TurnClock::Time);
     CHECK(defaults.secondsPerTurn == 4.0f);
     CHECK(defaults.freeStepMeters == 1.0f);
     CHECK(defaults.enemyTactics == std::array<int, 5>{0, 0, 2, 4, 4});
-    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.turnClock == tb::TurnClock::Actions);
+    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.turnClock == tb::TurnClock::Time);
+    CHECK(tb::ParseSettings("[turns]\nclock = actions\n").settings.turnClock == tb::TurnClock::Actions);
     const tb::ParsedSettings timed = tb::ParseSettings("[turns]\nclock = time\nseconds_per_turn = 5\nfree_step = 0.5\n"
                                                        "pace = 5\nenemy_tactics = 0, 1, 2, 3, 4\n");
     CHECK(timed.warnings.empty());
@@ -226,8 +227,45 @@ TEST_CASE("bad clocks and rank lists are refused, the defaults kept", "[settings
 {
     const tb::ParsedSettings bad = tb::ParseSettings("[turns]\nclock = points\nenemy_tactics = 0, 0, 2\n");
     CHECK(bad.warnings.size() == 2);
-    CHECK(bad.settings.turnClock == tb::TurnClock::Actions);
+    CHECK(bad.settings.turnClock == tb::TurnClock::Time);
     CHECK(bad.settings.enemyTactics == std::array<int, 5>{0, 0, 2, 4, 4});
     CHECK(tb::ParseSettings("[turns]\nenemy_tactics = 0, 0, 2, 4, 9\n").warnings.size() == 1);
     CHECK(tb::ParseSettings("[turns]\nenemy_tactics = 0, 0, 2, 4, 4, 4\n").warnings.size() == 1);
+}
+
+TEST_CASE("the fight's speed is read, and kept within what the game takes", "[settings]")
+{
+    CHECK(tb::Settings{}.fightSpeed == 1.0f);
+    CHECK(tb::ParseSettings("[turns]\nspeed = 2\n").settings.fightSpeed == 2.0f);
+    CHECK(tb::ParseSettings("[turns]\nspeed = 0.5\n").settings.fightSpeed == 0.5f);
+    const tb::ParsedSettings fast = tb::ParseSettings("[turns]\nspeed = 40\n");
+    CHECK(fast.warnings.size() == 1);
+    CHECK(fast.settings.fightSpeed == 4.0f); // kept within what the game takes
+    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.fightSpeed == 1.0f);
+}
+
+TEST_CASE("End turn's key is Enter until the file names another", "[settings]")
+{
+    const tb::Settings defaults;
+    CHECK(defaults.endTurnKey.key == 0x0D);
+    CHECK_FALSE(defaults.endTurnKey.ctrl);
+    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.endTurnKey.key == 0x0D);
+    const tb::ParsedSettings other = tb::ParseSettings("[keys]\nend_turn = Ctrl+E\n");
+    CHECK(other.warnings.empty());
+    CHECK(other.settings.endTurnKey.key == 0x45);
+    CHECK(other.settings.endTurnKey.ctrl);
+    const tb::ParsedSettings bad = tb::ParseSettings("[keys]\nend_turn = Whenever\n");
+    CHECK(bad.warnings.size() == 1);
+    CHECK(bad.settings.endTurnKey.key == 0x0D);
+}
+
+TEST_CASE("a fight has one speed; the setting that sped an AI's turns alone is gone, and a file that has it is told",
+          "[settings]")
+{
+    CHECK(tb::Settings{}.fightSpeed == 1.0f);
+    const tb::ParsedSettings both = tb::ParseSettings("[turns]\nspeed = 2\nai_turn_speed = 3\n");
+    CHECK(both.settings.fightSpeed == 2.0f);
+    REQUIRE(both.warnings.size() == 1);
+    CHECK(both.warnings.front().find("speed") != std::string::npos);
+    CHECK(tb::DefaultSettingsFile().find("ai_turn_speed") == std::string::npos);
 }

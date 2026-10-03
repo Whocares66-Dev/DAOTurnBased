@@ -35,7 +35,7 @@
 namespace tb
 {
 
-inline constexpr int kPreviewVersion = 3;
+inline constexpr int kPreviewVersion = 5;
 
 struct PathSplit
 {
@@ -97,11 +97,32 @@ struct PreviewView
     std::vector<ScreenDot> stopRing; // round where the movement runs out; empty in reach
     std::vector<ScreenDot> endRing;  // round the path's end
     bool line = true;                // the movie draws the line and the rings; false, the world has them
+    // With a turn a bar of time: what the order under the cursor would cost
+    // of the bar, in seconds (0: nothing to say), and that it does not fit
+    // what is left, and would land on the next turn.
+    float cost = 0;
+    bool spills = false;
+    // The creature the cursor is over, if any (version 5): the movie says
+    // when its pending action lands, as its card does.
+    ObjectId over = kNoObject;
 };
+
+// With a turn a bar of time, what an order would cost of the current
+// creature's bar: its walk at the creature's pace, after the meters that
+// cost nothing, and its action's own seconds. Nothing as built.
+struct OrderCost
+{
+    float seconds = 0;
+    bool spills = false; // more than is left: it would land on the next turn
+};
+struct TurnView;
+[[nodiscard]] OrderCost CostOf(const TurnView &view, float walkMeters, float actionSeconds);
 
 // Nothing to draw: no path, no turn of the player's, the cursor off the
 // ground.
 [[nodiscard]] std::wstring EncodeNoPreview();
+// No path to draw, and a cost to say: an attack on what is in reach.
+[[nodiscard]] std::wstring EncodeNoPreview(const OrderCost &cost, ObjectId over = kNoObject);
 [[nodiscard]] std::wstring EncodePreview(const PreviewView &view);
 
 } // namespace tb

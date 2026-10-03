@@ -2,6 +2,8 @@
 
 Dragon Age: Origins fights in real time with pause. This mod makes a fight a sequence of turns: everyone in it acts one at a time, in an order rolled when the fight begins, and the world waits between actions. Outside fights nothing changes. This page is what the mod does and why, for the code (`src/core/TurnMachine.cpp` implements it phase by phase) and for someone who has not played many turn-based games.
 
+**What a turn holds, since 2026-10-02.** By default a turn is a bar of time (`[turns] clock = time`): 4 s that actions and walking both spend, each at its own length, so that a dagger strikes more often than a greatsword, a long spell lands on the next turn, and a little of what is not spent rolls over. `dev/REBALANCE.md`'s "Current specification" has those rules and their reasons, and `dev/REBALANCE_IMPLEMENTATION.md` what is built of them. The turn this page describes below, one action and meters of movement, is the mod's first rule and is still there as `clock = actions`. Everything else here holds for both: who fights, the order, the rounds, what holds the world, what the player sees.
+
 ## The words
 
 - **Combatant**: a creature in the fight. Party members, allies that are not in the party (soldiers at Ostagar), enemies.
@@ -11,7 +13,7 @@ Dragon Age: Origins fights in real time with pause. This mod makes a fight a seq
 - **Action**: the one thing a turn is for: an attack, an ability or spell, drinking a potion. One per turn for now (see "Action points"). Opening a door or a chest, picking something up and the like are free ("only combat actions ... should" end it, the user, 2026-10-01).
 - **Movement**: meters a combatant may walk in its turn, spent as it goes, before or after its action or both.
 - **Free**: costs nothing (switching weapon sets).
-- **End turn**: giving up what is left. The game's pause key does it on a party member's turn.
+- **End turn**: giving up what is left: the turn bar's End, or its key (Enter until bound in the game's controls, under Turn-based). The game's pause key did it until 2026-10-02; it pauses now, as it does everywhere else in the game (the user: "space bar should still pause the game i think, instead of end turn. that's what players would expect"). The machine holds the game's pause through a fight, so it takes the key and pauses for the player; an order given while paused runs the game again, since its action has to play out.
 
 ## What the player sees
 
@@ -220,12 +222,12 @@ A module script can handle them like any other event. A new script command (`IsT
 
 Filling in what a turn-based mode usually has, by how much it matters:
 
-- **An end-turn control.** Built as the pause key, and as a button on the turn bar.
+- **An end-turn control.** Built as a button on the turn bar and a key of its own (Enter); the pause key, which was it at first, pauses again.
 - **Knowing it is your turn.** Built as floating text and selection. The bar and a sound would be better; the game's GUI sounds are reachable from a movie (`FSCommand:PlayGUISound`).
 - **Seeing what is left.** Action and movement remaining, under the bar or on the portrait. The data is in `TurnView`.
 - **The camera going to whoever acts.** `camera_follow`, through DAOLib's camera (`src/game/Camera.cpp`, `src/core/Easing.h`). In the tactical view it pans to whoever acts, eased, and never turns: only the player turns it. Close in, it stays with the player's character through others' turns (following an enemy put the camera 3.8 m behind it) and comes round behind each party member as their turn begins. Not yet seen in play.
-- **Fast enemy turns** (built 2026-09-30, off by default). A big fight is long when every enemy animates in full; BG3 lets you speed them up. `[turns] ai_turn_speed` (1; 0.25 to 4) is the game's speed through an AI's turn, through DAOLib's `dao::clock::SetSpeed` (`23abbc1`: the world's timer and the frame's, so logic, animation and sound together; seen at 2 in play by DAOLib, the fight twice as fast, the sound in step; the Flash UI keeps its own clock). The player's turns, conversations and everything outside a fight run at 1. The mod writes the speed only when it changes, so at 1 never, and another plugin setting it is left alone. Round padding is not sped up yet.
-- **Delay.** Moving one's turn later in the round, to act after an ally. Easy in `TurnOrder`; needs a key and a place in the bar.
+- **The fight's speed** (`[turns] speed`, 1; 0.25 to 4; the Fight speed slider in the game's options). A big fight is long when every creature animates in full: the game runs faster or slower through a turn-based fight, everyone's turns alike, through DAOLib's `dao::clock::SetSpeed` (the world's timer and the frame's, so logic, animation and sound together; the Flash UI keeps its own clock). Conversations and everything outside a fight run at 1. The mod writes the speed only when it changes, so at 1 never. Built 2026-09-30 as `ai_turn_speed`, for an AI's turns alone, as BG3 speeds enemies' turns up; the user, 2026-10-02: "shouldn't turn speed apply to everyone? we have one setting for combat speed right?", and that setting is gone.
+- **Delay.** Built 2026-10-02 and kept by the user: a party member puts its turn off to the round's end, before it has spent anything, once a round; the turn it then takes is whole (`dev/REBALANCE.md`). A button under End on the turn bar.
 - **Surprise.** A party that starts a fight from stealth might get a free round, as in D&D; enemies who ambush likewise. Stealth is readable from the scripts.
 - **Opportunity attacks.** Walking away from an adjacent enemy provokes a free attack in most turn-based games. Without them, melee creatures cannot hold anyone and archers kite freely. DAO has melee rings (`GetCreaturesInMeleeRing`) to detect leaving; the free attack is an `AddCommand` out of turn the gate lets through. A good second step.
 - **Sustained abilities and potions.** DAO's modal abilities (toggled on, draining mana or stamina) cost the action as built; most turn-based designs make a toggle or a potion a bonus action. That wants the ability's type from its data table (`abi_base`, readable through `dao::gda`) and a second, lesser action in the budget.
