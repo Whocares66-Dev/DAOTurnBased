@@ -1973,6 +1973,89 @@ TEST_CASE("with own clocks, a turn's end gives what its creature's clock brought
     CHECK(w.Current() == kGenlock);
 }
 
+TEST_CASE("with time, a kept action dropped as its creature's turn comes does not take the next one with it", "[time]")
+{
+    // The long fights' seed 790 with time (2026-10-03, found as issue 16
+    // changed the timings). A genlock with an attack kept is stunned for
+    // less than its bar; the read of the statuses that sees it comes with
+    // its turn; the kept attack is dropped, the hold takes its share, and
+    // the genlock, told its turn has come in that same frame, keeps a new
+    // attack. The drop went out a frame late, with the next step's effects,
+    // and cleared the new one in the game layer's hands while the machine
+    // still counted on it.
+    const auto again = [](const World &w) {
+        return std::ranges::any_of(
+            w.log, [](const std::string &line) { return line.find("round 2: Genlock's turn") != std::string::npos; });
+    };
+    const auto step = [](World &w) {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnEndTurn(); // the party's turns: nothing done
+        }
+        w.Frame();
+    };
+    const auto begin = [](World &w) {
+        // Each time it is told its turn has come: an attack too long for
+        // its bar, kept for its next.
+        w.onPoke = [&w](ObjectId id) {
+            if (id == kGenlock)
+            {
+                (void)Act(w, kGenlock, CommandType::Attack, Source::Script, 6.0f);
+            }
+        };
+        w.StartFight();
+    };
+    // How many frames to the genlock's second turn, left alone.
+    World alone(Timed());
+    begin(alone);
+    int frames = 0;
+    for (; frames < 6000 && !again(alone); ++frames)
+    {
+        step(alone);
+    }
+    REQUIRE(again(alone));
+    REQUIRE(frames > 45);
+    // Stunned at each of the frames before it: at some of them the first
+    // read to see it is the one its turn begins with.
+    int dropped = 0;
+    for (int before = 1; before <= 40; ++before)
+    {
+        CAPTURE(before);
+        World w(Timed());
+        begin(w);
+        for (int i = 0; i < frames - before; ++i)
+        {
+            step(w);
+        }
+        REQUIRE(w.heldCasts.contains(kGenlock)); // its first, kept
+        w.Get(kGenlock).condition = Condition::Disabled;
+        w.Get(kGenlock).conditionSeconds = 0.8f;
+        for (int i = 0; i < 400 && !again(w); ++i)
+        {
+            step(w);
+        }
+        REQUIRE(again(w));
+        for (int i = 0; i < 4; ++i)
+        {
+            step(w);
+        }
+        dropped +=
+            std::ranges::any_of(w.log,
+                                [](const std::string &line) {
+                                    return line.find("Genlock's pending attack is dropped: held") != std::string::npos;
+                                })
+                ? 1
+                : 0;
+        // Whatever it kept as its turn came is still the game layer's to
+        // give it, as the machine believes.
+        const MachineState state = w.machine.State();
+        const bool counted =
+            std::ranges::any_of(state.charging, [](const auto &charge) { return charge.id == kGenlock; });
+        CHECK(w.heldCasts.contains(kGenlock) == counted);
+    }
+    CHECK(dropped == 40); // the hold cost it its first kept attack every time
+}
+
 TEST_CASE("with own clocks, a turn's end with nothing held for its creature goes on to the next at once", "[time]")
 {
     World w(Timed());

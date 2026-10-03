@@ -969,6 +969,13 @@ MUTANTS = [
         "const bool rising = GettingUp();",
     ),
     Mutant(
+        "a kept action dropped by a hold is dropped a frame late, and takes the next one with it",
+        MACHINE,
+        'Interrupt(status.id, !status.exists ? "gone" : status.down ? "fell" : "held", fx);',
+        # (fx named, so that the mutant compiles under /W4 /WX.)
+        'Interrupt(status.id, !status.exists ? "gone" : status.down ? "fell" : "held", (static_cast<void>(fx), pending_));',
+    ),
+    Mutant(
         "those that waited outside a fight are never told it is over",
         MACHINE,
         "    for (const ObjectId id : outside_)\n    {\n        fx.push_back(Effect::Of(EffectKind::PokeAi, id));\n    }\n",

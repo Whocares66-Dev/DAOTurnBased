@@ -374,7 +374,7 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         clock_ += worldDt;
         roundRunMs_ += worldDt;
     }
-    ApplyStatuses(obs.statuses);
+    ApplyStatuses(obs.statuses, fx);
     if (currentStunned_ && (phase_ == Phase::AwaitingOrder || phase_ == Phase::Dispatching ||
                             phase_ == Phase::AiThinking || phase_ == Phase::Executing || phase_ == Phase::Settling))
     {
@@ -2809,13 +2809,21 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
     }
 }
 
-void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses)
+void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses, std::vector<Effect> &fx)
 {
     for (const CombatantStatus &status : statuses)
     {
         if (!status.exists || status.down || status.condition == Condition::Disabled)
         {
-            Interrupt(status.id, !status.exists ? "gone" : status.down ? "fell" : "held", pending_);
+            // Dropped with this step's own effects, ahead of what the step
+            // goes on to say. Put off to the next step's (pending_, which
+            // this step had already taken), the drop came a frame late: a
+            // creature held as its turn came, its hold short enough to leave
+            // it time, was told to choose in this frame and began a new
+            // cast, and the drop of its old one cleared the new (the long
+            // fights' seed 790 with time, found as issue 16 changed the
+            // timings, 2026-10-03).
+            Interrupt(status.id, !status.exists ? "gone" : status.down ? "fell" : "held", fx);
         }
         Combatant *c = order_.Find(status.id);
         if (c == nullptr)

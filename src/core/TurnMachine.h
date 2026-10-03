@@ -715,7 +715,7 @@ class TurnMachine
     void EndTurn(std::vector<Effect> &fx, std::string_view why);
     void End(std::vector<Effect> &fx, std::string_view why);
     void Merge(const std::vector<Combatant> &scan, std::vector<Effect> &fx);
-    void ApplyStatuses(const std::vector<CombatantStatus> &statuses);
+    void ApplyStatuses(const std::vector<CombatantStatus> &statuses, std::vector<Effect> &fx);
     void TrackMovement(const ActorObservation &actor, std::vector<Effect> &fx);
     void EnforcePause(const Observation &obs, std::vector<Effect> &fx) const;
     bool PlayerControls(const Combatant &c) const;
