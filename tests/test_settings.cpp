@@ -258,6 +258,53 @@ TEST_CASE("End turn's key is Enter until the file names another", "[settings]")
     const tb::ParsedSettings bad = tb::ParseSettings("[keys]\nend_turn = Whenever\n");
     CHECK(bad.warnings.size() == 1);
     CHECK(bad.settings.endTurnKey.key == 0x0D);
+    // None is a key's value too: End turn is then bound in the game's
+    // controls, where it is listed all the same.
+    const tb::ParsedSettings none = tb::ParseSettings("[keys]\nend_turn = None\n");
+    CHECK(none.warnings.empty());
+    CHECK(none.settings.endTurnKey.key == 0);
+}
+
+TEST_CASE("the toggle has no key until the file names one", "[settings]")
+{
+    // Ctrl+T until 2026-10-03. The user then, of the box in the game's own
+    // options doing the same: "maybe we don't need that key binding", and
+    // of its row left in the controls with no key: "Yeah we can keep it
+    // unbound I guess".
+    const tb::Settings defaults;
+    CHECK(defaults.toggleKey.key == 0);
+    CHECK_FALSE(defaults.toggleKey.ctrl);
+    const tb::ParsedSettings file = tb::ParseSettings(tb::DefaultSettingsFile());
+    CHECK(file.warnings.empty());
+    CHECK(file.settings.toggleKey.key == 0);
+    CHECK(tb::DefaultSettingsFile().find("\ntoggle = None\n") != std::string::npos);
+    // A file that names one keeps it: a player who had Ctrl+T written has it.
+    const tb::ParsedSettings old = tb::ParseSettings("[keys]\ntoggle = Ctrl+T\n");
+    CHECK(old.warnings.empty());
+    CHECK(old.settings.toggleKey.key == 0x54);
+    CHECK(old.settings.toggleKey.ctrl);
+}
+
+TEST_CASE("Delay has no key until the file names one", "[settings]")
+{
+    // The user, 2026-10-03: "Delay should have no key binding by default,
+    // end turn is enter".
+    const tb::Settings defaults;
+    CHECK(defaults.delayKey.key == 0);
+    const tb::ParsedSettings file = tb::ParseSettings(tb::DefaultSettingsFile());
+    CHECK(file.warnings.empty());
+    CHECK(file.settings.delayKey.key == 0);
+    CHECK(file.settings.endTurnKey.key == 0x0D); // and End turn's is Enter still
+    CHECK(tb::DefaultSettingsFile().find("\ndelay = None\n") != std::string::npos);
+    const tb::ParsedSettings other = tb::ParseSettings("[keys]\ndelay = Shift+D\n");
+    CHECK(other.warnings.empty());
+    CHECK(other.settings.delayKey.key == 0x44);
+    CHECK(other.settings.delayKey.shift);
+    CHECK_FALSE(other.settings.delayKey.ctrl);
+    CHECK(other.settings.endTurnKey.key == 0x0D); // each its own
+    const tb::ParsedSettings bad = tb::ParseSettings("[keys]\ndelay = Sometime\n");
+    CHECK(bad.warnings.size() == 1);
+    CHECK(bad.settings.delayKey.key == 0);
 }
 
 TEST_CASE("a fight has one speed; the setting that sped an AI's turns alone is gone, and a file that has it is told",

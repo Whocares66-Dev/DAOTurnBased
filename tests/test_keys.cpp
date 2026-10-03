@@ -63,7 +63,7 @@ TEST_CASE("a chord reads back as it is written", "[keys]")
 TEST_CASE("a key has the scan code the game's bindings know it by", "[keys]")
 {
     using tb::ScanCode;
-    CHECK(ScanCode(ParseKeyChord("Ctrl+T")->key) == 0x14); // the toggle's default
+    CHECK(ScanCode(ParseKeyChord("Ctrl+T")->key) == 0x14); // the toggle's, until 2026-10-03
     CHECK(ScanCode('Q') == 0x10);
     CHECK(ScanCode('P') == 0x19);
     CHECK(ScanCode('A') == 0x1E);

@@ -39,6 +39,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string_view>
@@ -316,8 +317,9 @@ static_assert(tb::ScanCode(VK_RIGHT) == static_cast<std::uint32_t>(dao::input::K
 // examples/input seen in play 2026-10-01, a4a7020): listed in the options'
 // Controls tab under "Turn-based", rebound there like any key, and kept in
 // KeyBindings.ini. `[keys] toggle` is then the key it has until the player
-// binds another: the game writes it into KeyBindings.ini at the first
-// start, and reads that from then on. From DAOLib_Load only, since the
+// binds another (none, since 2026-10-03: the row is there, empty): the game
+// writes it into KeyBindings.ini at the first start, and reads that from
+// then on. From DAOLib_Load only, since the
 // game registers its actions once. False for a key the game's bindings are
 // not known to take (core/Keys.h), or if the registration is refused: the
 // key is then polled, as every key was before.
@@ -349,26 +351,36 @@ bool BindToggle(const tb::KeyChord &chord)
     });
 }
 
-// End turn's key, one of the game's own as the toggle's is (`[keys]
-// end_turn`, Enter until bound in the controls). The pause key ended the
-// turn before; the user, 2026-10-02: "space bar should still pause the game
-// i think, instead of end turn. that's what players would expect."
-constexpr wchar_t kEndTurnAction[] = L"TurnBasedEndTurn";
-bool BindEndTurn(const tb::KeyChord &chord)
+// A key of a turn's, one of the game's own as the toggle's is: listed in the
+// controls under "Turn-based" with `chord` for its key until the player binds
+// another, or with none (dao::input::Key::None: listed, unbound). False for a
+// key the game's bindings are not known to take, or a registration refused.
+bool BindTurnKey(const wchar_t *name, const wchar_t *label, const tb::KeyChord &chord, std::function<void()> pressed)
 {
     const std::uint32_t code = tb::ScanCode(chord.key);
-    if (chord.key == 0 || code == 0)
+    if (chord.key != 0 && code == 0)
     {
         return false;
     }
     dao::input::Action action;
-    action.name = kEndTurnAction;
-    action.label = L"End turn";
+    action.name = name;
+    action.label = label;
     action.section = kOptionsSection;
     action.key = static_cast<dao::input::Key>(code);
     action.modifiers = (chord.ctrl ? dao::input::kControl : 0U) | (chord.shift ? dao::input::kShift : 0U) |
                        (chord.alt ? dao::input::kAlt : 0U);
-    return dao::input::RegisterAction(std::move(action), [] {
+    return dao::input::RegisterAction(std::move(action), std::move(pressed));
+}
+
+// End turn's key (`[keys] end_turn`, Enter until bound in the controls). The
+// pause key ended the turn before; the user, 2026-10-02: "space bar should
+// still pause the game i think, instead of end turn. that's what players
+// would expect." Listed in the controls with no key too (`end_turn = None`),
+// to be given one there: it was left out of them then, until 2026-10-03.
+constexpr wchar_t kEndTurnAction[] = L"TurnBasedEndTurn";
+bool BindEndTurn(const tb::KeyChord &chord)
+{
+    return BindTurnKey(kEndTurnAction, L"End turn", chord, [] {
         try
         {
             const std::lock_guard lock(g.mutex);
@@ -378,6 +390,29 @@ bool BindEndTurn(const tb::KeyChord &chord)
         catch (const std::exception &e)
         {
             spdlog::error("End turn's key: {}", e.what());
+        }
+    });
+}
+
+// Delay's key (`[keys] delay`), as the turn bar's Delay: the user,
+// 2026-10-03, "In the settings let's allow key bindings for delay and end
+// turn. Delay should have no key binding by default, end turn is enter". It
+// is in the controls with no key, and takes the one the player gives it
+// there. Enter was the game's for nothing else (its KeyBindings.ini,
+// 2026-10-03: TurnBasedEndTurn alone).
+constexpr wchar_t kDelayAction[] = L"TurnBasedDelay";
+bool BindDelay(const tb::KeyChord &chord)
+{
+    return BindTurnKey(kDelayAction, L"Delay turn", chord, [] {
+        try
+        {
+            const std::lock_guard lock(g.mutex);
+            spdlog::debug(g.machine->OnDelay() ? "the turn was put off by Delay's key"
+                                               : "Delay's key when the turn could not be put off");
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("Delay's key: {}", e.what());
         }
     });
 }
@@ -878,11 +913,34 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     g.bridge = std::make_unique<tb::game::Bridge>(settings);
     g.toggleKey = settings.toggleKey;
     g.toggle = BindToggle(settings.toggleKey) ? ToggleKey::Asked : ToggleKey::Polled;
-    spdlog::info(
-        BindEndTurn(settings.endTurnKey)
-            ? "End turn's key is one of the game's own (Options, Controls, under Turn-based): Enter until "
-              "bound there; the pause key pauses"
-            : "End turn has no key the game's controls take ([keys] end_turn): the turn bar's End ends a turn");
+    // Delay's before End turn's: the controls list them in the order they are
+    // registered, and Delay is above End there as on the turn bar (the user,
+    // 2026-10-03, of the list with End turn first: "Delay should be above
+    // end").
+    if (BindDelay(settings.delayKey))
+    {
+        spdlog::info("Delay's key is one of the game's own (Options, Controls, under Turn-based): {} until bound "
+                     "there",
+                     tb::FormatKeyChord(settings.delayKey));
+    }
+    else
+    {
+        spdlog::info("Delay has no key the game's controls take ([keys] delay = {}): the turn bar's Delay puts a "
+                     "turn off",
+                     tb::FormatKeyChord(settings.delayKey));
+    }
+    if (BindEndTurn(settings.endTurnKey))
+    {
+        spdlog::info("End turn's key is one of the game's own (Options, Controls, under Turn-based): {} until bound "
+                     "there; the pause key pauses",
+                     tb::FormatKeyChord(settings.endTurnKey));
+    }
+    else
+    {
+        spdlog::info("End turn has no key the game's controls take ([keys] end_turn = {}): the turn bar's End ends "
+                     "a turn",
+                     tb::FormatKeyChord(settings.endTurnKey));
+    }
     if (g.toggle == ToggleKey::Asked)
     {
         spdlog::info(

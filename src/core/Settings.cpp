@@ -335,7 +335,7 @@ const std::vector<Entry> &Entries()
              const auto chord = ParseKeyChord(text);
              if (!chord)
              {
-                 return "not a key (Ctrl+T, F9, None, ...)";
+                 return "not a key (None, Ctrl+T, F9, ...)";
              }
              s.toggleKey = *chord;
              return {};
@@ -348,6 +348,16 @@ const std::vector<Entry> &Entries()
                  return "not a key (Enter, E, F9, None, ...)";
              }
              s.endTurnKey = *chord;
+             return {};
+         }},
+        {"keys", "delay",
+         [](Settings &s, std::string_view text) -> std::string {
+             const auto chord = ParseKeyChord(text);
+             if (!chord)
+             {
+                 return "not a key (None, D, Ctrl+D, F9, ...)";
+             }
+             s.delayKey = *chord;
              return {};
          }},
     };
@@ -666,7 +676,8 @@ move_preview = true
 move_preview_ground = true
 
 [keys]
-; Turn turn-based combat on or off, outside combat.
+; Turn turn-based combat on or off, outside combat, as the box in the game's
+; Options, Game, under "Turn-based" does. It has no key until one is bound.
 ; This key is one of the game's own: it is listed in the game's Options,
 ; Controls, under "Turn-based", and bound there like any other. What is written
 ; here is the key it has before that: the game copies it into its
@@ -675,7 +686,11 @@ move_preview_ground = true
 ; A number pad key, Pause, or a key given by its code ("0xBA") is not the
 ; game's: it works as written here, read at start, and is not in the
 ; controls.
-toggle = Ctrl+T
+toggle = None
+; Put a party member's turn off to later in the round, as the turn bar's
+; Delay does. One of the game's own keys too, in its controls under
+; "Turn-based"; it has no key until one is bound there, or written here.
+delay = None
 ; End a party member's turn, as the turn bar's End does. One of the game's
 ; own keys too, bound in its controls under "Turn-based". The game's pause
 ; key (Space) is not this: in a turn-based fight it pauses the game and

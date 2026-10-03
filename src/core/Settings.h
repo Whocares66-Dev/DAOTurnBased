@@ -196,9 +196,17 @@ struct Settings
     bool movePreviewGround = true; // the path as marks on the ground, not a line over the scene (the user's choice)
 
     // [keys]
-    KeyChord toggleKey{0x54, true, false, false}; // Ctrl+T
+    // The toggle's key: none until the player binds one. It was Ctrl+T until
+    // 2026-10-03; the user then: "I don't think we necessarily need one for
+    // toggling turn-based on / off. There's already a checkbox in game
+    // settings", and of the row with no key in the controls: "Yeah we can
+    // keep it unbound I guess".
+    KeyChord toggleKey{0, false, false, false}; // None
     // End turn's key. Not the pause key's: that pauses, as in the game.
     KeyChord endTurnKey{0x0D, false, false, false}; // Enter
+    // Delay's key: none until the player binds one (the user, 2026-10-03:
+    // "Delay should have no key binding by default").
+    KeyChord delayKey{0, false, false, false}; // None
 };
 
 struct ParsedSettings

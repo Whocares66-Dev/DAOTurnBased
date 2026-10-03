@@ -994,6 +994,18 @@ MUTANTS = [
         "",
     ),
     Mutant(
+        "the toggle has Ctrl+T again before the player gives it a key",
+        "src/core/Settings.h",
+        "KeyChord toggleKey{0, false, false, false}; // None",
+        "KeyChord toggleKey{0x54, true, false, false}; // None",
+    ),
+    Mutant(
+        "Delay has a key before the player gives it one",
+        "src/core/Settings.h",
+        "KeyChord delayKey{0, false, false, false}; // None",
+        "KeyChord delayKey{0x44, false, false, false}; // None",
+    ),
+    Mutant(
         "the bar shows twelve turns ahead again, its buttons under the minimap",
         "src/core/TurnMachine.h",
         "static constexpr std::size_t kShown = 10;",
