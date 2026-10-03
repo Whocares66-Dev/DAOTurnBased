@@ -597,8 +597,13 @@ void Bridge::Apply(const std::vector<Effect> &effects)
                     "{:#010x}: the target of its charged cast of ability {} ({:#x}) is gone: not cast, nothing "
                     "spent",
                     e.target, kept->ability, kept->target);
-                api::DisplayFloatyMessage(e.target, L"Its target is gone", k::FLOATY_MESSAGE,
-                                          static_cast<std::int32_t>(kGrey), 2.0f);
+                // Logged, not shown: "Its target is gone" floated here in
+                // grey, and with a turn a bar of time most turns end on a
+                // kept attack whose target has often fallen by the next,
+                // eight to twelve times a fight in the Korcari Wilds. Nothing
+                // is lost by it, so nothing is asked of the player (the user,
+                // watching, 2026-10-03: "That can just be a thing we log and
+                // not show"; issue 8).
                 // Told to the machine with the next observation: with a turn
                 // a bar of time, what the turn paid for it is given back.
                 keptVoid_.push_back(e.target);
