@@ -2670,6 +2670,26 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
     {
         fx.push_back(Effect::Of(EffectKind::PokeAi, id));
     }
+    // And those of the fight still standing that are not the party's, enemy
+    // or ally. An AI with nothing to do waits, and the wait's end runs it
+    // again: its own loop. In a fight the wait is its pass and is blocked,
+    // so nothing is queued and nothing ends, and it chooses again only when
+    // told its turn has come. With the turns over nobody tells it. At
+    // Redcliffe's windmill the game ended combat with one walking corpse
+    // alive up the path, seven rounds of "chose to wait" behind it: it stood
+    // there in combat, commandless, and the night's second battle, which
+    // waits on the first's dead, never began (issue 12, 2026-10-03).
+    // Not one a condition holds: it cannot choose, and its own effect's
+    // end runs its AI.
+    for (const Combatant &c : order_.All())
+    {
+        const auto hold = held_.find(c.id);
+        const bool held = hold != held_.end() && hold->second.seen != Condition::None;
+        if (c.side != Side::Party && !c.down && !held)
+        {
+            fx.push_back(Effect::Of(EffectKind::PokeAi, c.id));
+        }
+    }
     outside_.clear();
     order_.Clear();
     held_.clear();

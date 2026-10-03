@@ -776,6 +776,33 @@ TEST_CASE("a conversation that ends the fight ends it", "[machine]")
     CHECK(w.Signalled(events::kCombatEnd));
 }
 
+TEST_CASE("those of the fight still standing when it ends are told it is over", "[machine]")
+{
+    // Issue 12: at Redcliffe's windmill the game ended combat with one
+    // walking corpse alive up the path. Its AI had chosen to wait, turn after
+    // turn: a wait is its pass, blocked, so nothing was queued and nothing
+    // would end to run its AI again. With the turns over nobody told it, and
+    // it stood in combat and commandless while the story waited on its death.
+    World w;
+    w.StartFight();
+    w.Get(kHurlock).down = true; // one enemy has fallen; the genlock stands
+    w.RunFor(600);
+    REQUIRE(w.machine.Active());
+    std::vector<ObjectId> told;
+    std::vector<Verdict> answers;
+    w.onPoke = [&](ObjectId id) {
+        told.push_back(id);
+        // Told with the machine idle, its wait is its own again: its loop.
+        answers.push_back(w.Order(id, CommandType::Wait, Source::Script));
+    };
+    w.mode = Mode::Explore; // the game ends combat: the party sees no enemy
+    w.Frame();
+    w.Frame();
+    CHECK_FALSE(w.machine.Active());
+    CHECK(told == std::vector<ObjectId>{kGenlock}); // not the fallen, not the party
+    CHECK(answers == std::vector<Verdict>{Verdict::Allow});
+}
+
 TEST_CASE("a combatant gone from the world loses its turns", "[machine]")
 {
     World w;

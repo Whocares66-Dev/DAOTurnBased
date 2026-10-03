@@ -710,6 +710,14 @@ class Arena
             }
             break;
         case EffectKind::PokeAi:
+            // The fight over, those of it still standing that are not the
+            // party's are told so, as the bystanders are (issue 12): an AI
+            // whose wait was blocked has nothing queued to run it again.
+            if (!world_.machine.Active())
+            {
+                Must(world_.Get(e.target).side != Side::Party, "a party member's AI told the fight is over");
+                break;
+            }
             Must(e.target == world_.Current(), "an AI told to choose out of its turn");
             Must(!PlayerControls(e.target), "the AI told to choose for a creature the player controls");
             Must(world_.Get(e.target).condition != Condition::Disabled, "a stunned creature's AI told to act");

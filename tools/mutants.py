@@ -971,9 +971,20 @@ MUTANTS = [
     Mutant(
         "those that waited outside a fight are never told it is over",
         MACHINE,
-        "    for (const ObjectId id : outside_)\n    {\n        fx.push_back(Effect::Of(EffectKind::PokeAi, id));\n    }\n"
-        "    outside_.clear();\n    order_.Clear();",
-        "    outside_.clear();\n    order_.Clear();",
+        "    for (const ObjectId id : outside_)\n    {\n        fx.push_back(Effect::Of(EffectKind::PokeAi, id));\n    }\n",
+        "",
+    ),
+    Mutant(
+        "those of the fight still standing when it ends are never told it is over",
+        MACHINE,
+        "        if (c.side != Side::Party && !c.down && !held)",
+        "        if (c.side != Side::Party && c.down && !held)",
+    ),
+    Mutant(
+        "the party's own AI is told the fight is over",
+        MACHINE,
+        "        if (c.side != Side::Party && !c.down && !held)",
+        "        if (!c.down && !held)",
     ),
     Mutant(
         "a turn that goes on after its action does not say it waits on an order",
