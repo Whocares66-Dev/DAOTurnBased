@@ -50,6 +50,12 @@ enum class EventKind : std::uint8_t
     // (Settings::delay): the turn_started before it is closed by this, and
     // another turn_started follows when its turn comes.
     TurnDelayed, // who
+    // A turn the player plays has started waiting on an order: as it is
+    // handed over (after whatever it kept has landed), and again each time
+    // an action or a walk has played out and the turn goes on. What a
+    // script playing the turn waits for, in place of reading the state
+    // several times a second until its phase says so (issue 7).
+    AwaitingOrder, // who; detail: why it waits now; value: ms of its bar left (actions left without time); note: meters
 };
 
 // snake_case, as the bus's topics take it: "turn_started".
@@ -70,7 +76,7 @@ struct EventDescription
 [[nodiscard]] EventDescription Describe(EventKind kind);
 
 // Every kind, in order, for listing them.
-inline constexpr EventKind kLastEventKind = EventKind::TurnDelayed;
+inline constexpr EventKind kLastEventKind = EventKind::AwaitingOrder;
 
 struct TurnEvent
 {

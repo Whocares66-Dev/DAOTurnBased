@@ -1238,6 +1238,53 @@ TEST_CASE("on the player's turn the character's own AI does not change its weapo
     CHECK(allowed == 1);
 }
 
+TEST_CASE("a turn the player plays says when it waits on an order", "[machine][events]")
+{
+    // Issue 7: a script playing a turn through a test server read the state
+    // several times a second between orders, for want of this.
+    World w;
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    const auto waits = [&](ObjectId who) {
+        return std::ranges::count_if(
+            events, [&](const TurnEvent &e) { return e.kind == EventKind::AwaitingOrder && e.who == who; });
+    };
+    const auto last = [&] {
+        const auto found =
+            std::ranges::find(events.rbegin(), events.rend(), EventKind::AwaitingOrder, &TurnEvent::kind);
+        REQUIRE(found != events.rend());
+        return *found;
+    };
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+    // As the turn is handed to the player, once, with what it has to spend.
+    CHECK(waits(kHero) == 1);
+    CHECK(last().detail == "the turn is its player's");
+    CHECK(last().value > 0);
+    CHECK(last().note.ends_with(" m"));
+    // Frames go by while it waits: said at the step into waiting, not while it lasts.
+    w.RunFor(500);
+    CHECK(waits(kHero) == 1);
+    // A walk played out and the turn goes on: it waits again, and says so.
+    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Allow);
+    w.RunFor(100);
+    w.Finish(kHero);
+    w.RunFor(600);
+    REQUIRE(w.Current() == kHero);
+    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(waits(kHero) == 2);
+    CHECK(last().detail == "after its action");
+    // The turn ended: nothing waits; and an AI's turn never does.
+    CHECK(w.machine.OnEndTurn());
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    w.RunFor(300);
+    CHECK(waits(kHero) == 2);
+    CHECK(waits(kGenlock) == 0);
+}
+
 TEST_CASE("a refusal repeated every frame is logged once a second", "[machine]")
 {
     // The player steering with the keys out of turn: a drive a frame.

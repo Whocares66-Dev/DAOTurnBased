@@ -69,6 +69,8 @@ const char *Name(EventKind kind)
         return "action_dropped";
     case EventKind::TurnDelayed:
         return "turn_delayed";
+    case EventKind::AwaitingOrder:
+        return "awaiting_order";
     }
     return "?";
 }
@@ -281,6 +283,18 @@ EventDescription Describe(EventKind kind)
                 nullptr,
                 nullptr,
                 nullptr};
+    case EventKind::AwaitingOrder:
+        return {"A turn the player plays has started waiting on an order: give one now. It comes as the turn is "
+                "handed over (after anything kept from the turn before has landed) and again each time an action or "
+                "a walk has played out and the turn goes on. After an order, one of these follows: this again, "
+                "refused (the turn still waits), action_pending (kept for the next turn: the turn ends by itself), "
+                "turn_ended, or fight_over.",
+                true,
+                "why it waits now: the turn is its player's, after its action, the order queued no command, the "
+                "order was refused",
+                "milliseconds of its bar left with a turn a bar of time; the actions left without",
+                nullptr,
+                "the movement left, in meters"};
     }
     return {};
 }

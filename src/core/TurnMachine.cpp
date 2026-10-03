@@ -1814,6 +1814,27 @@ void TurnMachine::SpendRound(std::vector<Effect> &fx)
     agedAtNow_ = lastNow_;
 }
 
+// A script playing a party member's turn through a test server (Eluvian's
+// order and wait_for) had no event to wait on between orders: the turn's
+// start is said (TurnStarted) and its end, and nothing when an action had
+// played out and the turn went on, so the playthrough's driver read the
+// state five times a second until its phase said "awaiting order" (issue 7,
+// 2026-10-03). Said at each step into the phase, not while it lasts: an
+// order refused while the turn already waits has its own event (Refused).
+void TurnMachine::AwaitOrder(std::string_view why)
+{
+    phase_ = Phase::AwaitingOrder;
+    const Combatant *current = order_.Current();
+    if (current == nullptr)
+    {
+        return;
+    }
+    const std::int32_t left =
+        Timed() ? static_cast<std::int32_t>(budget_.spend.CapacityLeftMs()) : budget_.spend.ActionsLeft();
+    Emit(EventKind::AwaitingOrder, current->id, std::string{why}, left, {},
+         std::format("{:.1f} m", budget_.MovementLeft()));
+}
+
 void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
 {
     // Set already as the turn began; again for a turn handed over mid-way.
@@ -1821,7 +1842,7 @@ void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
     if (PlayerControls(who))
     {
         fx.push_back(Effect::Of(EffectKind::Select, who.id));
-        phase_ = Phase::AwaitingOrder;
+        AwaitOrder("the turn is its player's");
         return;
     }
     // A companion whose tactics play it must not be the one the player
@@ -1938,7 +1959,7 @@ void TurnMachine::StepDispatching(const Observation &obs, std::vector<Effect> &f
     if (static_cast<std::int32_t>(obs.nowMs - dispatchUntilNow_) >= 0)
     {
         Log(LogLevel::Warn, "the order queued no command: waiting for another");
-        phase_ = Phase::AwaitingOrder;
+        AwaitOrder("the order queued no command");
     }
 }
 
@@ -2382,7 +2403,7 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
     // its spiders frozen and not on the bar (the eighth play test,
     // 2026-10-01).
     wantScan_ = true;
-    phase_ = Phase::AwaitingOrder;
+    AwaitOrder("after its action");
 }
 
 void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effect> &fx)
@@ -3002,7 +3023,7 @@ Verdict TurnMachine::OnCommand(const CommandRequest &request)
         orderPending_ = false;
         if (verdict != Verdict::Allow && phase_ == Phase::Dispatching)
         {
-            phase_ = Phase::AwaitingOrder;
+            AwaitOrder("the order was refused");
         }
         // An order taken while the player had the game paused runs it
         // again: paused, the command would sit unbegun, and the turn be

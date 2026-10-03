@@ -1305,6 +1305,12 @@ class Arena
             Must(turnOpen_, "a turn resumed that was never open");
             Must(e.who == world_.Current(), "a turn resumed for someone not current");
             break;
+        case EventKind::AwaitingOrder:
+            // Only an open turn waits on an order, and only its own creature's.
+            Must(turnOpen_, "a turn waits on an order that is not open");
+            Must(e.who == world_.Current(), "a turn waits on an order for someone not current");
+            Must(world_.machine.GetPhase() == Phase::AwaitingOrder, "a turn said to wait on an order that does not");
+            break;
         case EventKind::TurnEnded:
             turnsThisFrame_.insert(e.who);
             turnOpen_ = false;

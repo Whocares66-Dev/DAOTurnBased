@@ -695,6 +695,9 @@ class TurnMachine
     void BeginTurn(const Combatant &who, std::vector<Effect> &fx);
     void ResumeTurn(const Combatant &who, std::vector<Effect> &fx);
     void Handover(const Combatant &who, std::vector<Effect> &fx);
+    // The turn waits on the player's order from here, and says so
+    // (EventKind::AwaitingOrder): `why` is the event's detail.
+    void AwaitOrder(std::string_view why);
     void EndTurn(std::vector<Effect> &fx, std::string_view why);
     void End(std::vector<Effect> &fx, std::string_view why);
     void Merge(const std::vector<Combatant> &scan, std::vector<Effect> &fx);

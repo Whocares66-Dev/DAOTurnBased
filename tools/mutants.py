@@ -717,8 +717,8 @@ MUTANTS = [
     Mutant(
         "a room shown by an order is looked into only at the turn's end",
         MACHINE,
-        "    wantScan_ = true;\n    phase_ = Phase::AwaitingOrder;\n}",
-        "    phase_ = Phase::AwaitingOrder;\n}",
+        '    wantScan_ = true;\n    AwaitOrder("after its action");\n}',
+        '    AwaitOrder("after its action");\n}',
     ),
     Mutant(
         "an attack through a shut door is let through",
@@ -962,6 +962,18 @@ MUTANTS = [
         "    for (const ObjectId id : outside_)\n    {\n        fx.push_back(Effect::Of(EffectKind::PokeAi, id));\n    }\n"
         "    outside_.clear();\n    order_.Clear();",
         "    outside_.clear();\n    order_.Clear();",
+    ),
+    Mutant(
+        "a turn that goes on after its action does not say it waits on an order",
+        MACHINE,
+        '    AwaitOrder("after its action");',
+        "    phase_ = Phase::AwaitingOrder;",
+    ),
+    Mutant(
+        "a turn handed to the player does not say it waits on an order",
+        MACHINE,
+        '        AwaitOrder("the turn is its player\'s");',
+        "        phase_ = Phase::AwaitingOrder;",
     ),
     Mutant(
         "a battle in sight that is not the party's joins its fight however far",
