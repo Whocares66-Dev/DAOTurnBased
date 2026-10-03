@@ -1345,3 +1345,191 @@ TEST_CASE("a party member's lost turn is said in gold, an enemy's in grey", "[ti
         CHECK(floaty->colour == (who == kCompanion ? kGold : kGrey));
     }
 }
+
+TEST_CASE("an enemy's time by its rank: a lieutenant half a second, a boss a second, an elite boss one and a half",
+          "[time]")
+{
+    // The user, 2026-10-02: "lieutenant gets 0.5s more, boss gets 1s more,
+    // elite boss 1.5s more".
+    const std::pair<int, std::uint32_t> ranks[] = {{1, 4000}, {2, 4000}, {3, 4500}, {4, 5000}, {5, 5500}};
+    for (const auto &[rank, bar] : ranks)
+    {
+        std::vector<Creature> fight = StandardFight();
+        fight.at(1).rank = rank;
+        World w(Timed(), fight);
+        w.StartFight();
+        (void)w.machine.OnEndTurn();
+        w.RunFor(300);
+        REQUIRE(w.Current() == kGenlock);
+        CAPTURE(rank);
+        CHECK(w.machine.View().timeMs == bar);
+    }
+}
+
+TEST_CASE("with own clocks, a creature's effects age as its bar is spent, a turn's seconds a turn, nobody else's",
+          "[time]")
+{
+    // The user, 2026-10-02: "things on each creature's own clock seems like
+    // the most important next thing".
+    World w(Timed());
+    w.StartFight();
+    for (const ObjectId id : {kHero, kGenlock, kCompanion, kHurlock})
+    {
+        CAPTURE(id);
+        CHECK(w.onOwnClock.contains(id));
+    }
+    REQUIRE(w.Current() == kHero);
+    CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
+    Done(w, kHero);
+    // A bar of 4 s: its clock is its bar, second for second.
+    CHECK(w.agedOwn[kHero] == 2000);
+    CHECK(w.agedOwn[kGenlock] == 0);
+    const std::int64_t shared = w.agedMs;
+    (void)w.machine.OnEndTurn();
+    w.RunFor(300);
+    REQUIRE(w.Current() == kGenlock);
+    // Ended early: the rest of the way to a turn's seconds, and no more.
+    CHECK(w.agedOwn[kHero] == 4000);
+    CHECK(w.agedOwn[kGenlock] == 0);
+    CHECK(w.agedMs == shared); // the shared clock waits for the round
+    // A round on: each the same, and the shared clock a round's worth, for
+    // what is in no one's turn (an area on the ground).
+    for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnEndTurn();
+        }
+        w.Frame();
+    }
+    REQUIRE(w.machine.Order().Round() == 2);
+    w.RunFor(100);
+    for (const ObjectId id : {kHero, kGenlock, kCompanion, kHurlock})
+    {
+        CAPTURE(id);
+        CHECK(w.agedOwn[id] == 4000);
+    }
+    CHECK(w.agedMs == shared + 4000);
+}
+
+TEST_CASE("with own clocks, a bigger bar moves its clock by its share, and a lost turn moves it whole", "[time]")
+{
+    std::vector<Creature> fight = StandardFight();
+    fight.at(0).tactics = 4; // the hero: a bar of 5 s
+    World w(Timed(), fight);
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
+    Done(w, kHero);
+    CHECK(w.agedOwn[kHero] == 1600); // 2 of its 5 s: two fifths of 4 s
+    // The genlock stunned for longer than a turn: its turn is lost, and its
+    // clock moves a turn's seconds for it.
+    Stun(w, kGenlock, 6.0f);
+    w.RunFor(700);
+    (void)w.machine.OnEndTurn();
+    for (int i = 0; i < 400 && w.Current() != kCompanion; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kCompanion);
+    CHECK(w.agedOwn[kHero] == 4000);
+    CHECK(w.agedOwn[kGenlock] == 4000);
+}
+
+TEST_CASE("with own clocks off, or with actions, everyone's effects age together as each round begins", "[time]")
+{
+    Settings off = Timed();
+    off.ownClocks = false;
+    for (const Settings &settings : {off, Fixed()})
+    {
+        World w(settings);
+        w.StartFight();
+        REQUIRE(w.Current() == kHero);
+        CHECK(w.onOwnClock.empty());
+        CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
+        Done(w, kHero);
+        for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
+        {
+            if (w.machine.GetPhase() == Phase::AwaitingOrder)
+            {
+                (void)w.machine.OnEndTurn();
+            }
+            w.Frame();
+        }
+        REQUIRE(w.machine.Order().Round() == 2);
+        w.RunFor(100);
+        CHECK(w.agedOwn.empty());
+        CHECK(w.agedMs > 0);
+    }
+}
+
+TEST_CASE("with own clocks, a turn put off moves nothing until it is taken", "[time]")
+{
+    std::vector<Creature> fight = StandardFight();
+    World w(Timed(), fight);
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    REQUIRE(w.machine.OnDelay());
+    w.RunFor(300);
+    REQUIRE(w.Current() == kGenlock);
+    CHECK(w.agedOwn[kHero] == 0);
+    UntilTurnOf(w, kHero);
+    CHECK(w.agedOwn[kHero] == 0); // its turn, put off, comes now: whole
+    (void)w.machine.OnEndTurn();
+    w.RunFor(300);
+    CHECK(w.agedOwn[kHero] == 4000);
+}
+
+TEST_CASE("with own clocks, an action's own effect moves its creature's clock and its target's, nobody else's",
+          "[time]")
+{
+    // An ogre's grab holds the ogre and its victim, an effect on each; the
+    // command ends when the victim's does, on the victim's clock.
+    std::vector<Creature> fight = StandardFight();
+    fight.at(1).dexterity = 30.0f; // the genlock first
+    World w(Timed(), fight);
+    bool poked = false;
+    w.onPoke = [&](ObjectId id) {
+        if (poked)
+        {
+            return;
+        }
+        poked = true;
+        CommandRequest grab;
+        grab.object = id;
+        grab.target = kHero;
+        grab.type = CommandType::UseAbility;
+        grab.source = Source::Script;
+        grab.ability = 90036;
+        grab.inCombat = true;
+        grab.actionSeconds = 2.0f;
+        CHECK(w.Queue(grab) == Verdict::Allow);
+    };
+    w.StartFight();
+    for (int i = 0; i < 20 && !poked; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(poked);
+    REQUIRE(w.Current() == kGenlock);
+    w.RunFor(200);
+    w.Get(kGenlock).busy = true;
+    w.Get(kGenlock).current = CommandType::ExecuteEffect;
+    const std::int64_t hero = w.agedOwn[kHero];
+    const std::int64_t companion = w.agedOwn[kCompanion];
+    int frames = 0;
+    for (; frames < 2000 && w.Current() == kGenlock; ++frames)
+    {
+        // The grab lets go once three seconds of the victim's time have run.
+        if (w.Get(kGenlock).busy && w.agedOwn[kHero] - hero >= 3000)
+        {
+            w.Finish(kGenlock);
+        }
+        w.Frame();
+    }
+    CHECK(w.Current() != kGenlock);
+    CHECK(frames * 16 < 6000); // its three seconds and the turn's settling, not its patience (36 s)
+    CHECK(w.agedOwn[kHero] - hero >= 3000);
+    CHECK(w.agedOwn[kHero] - hero < 3600);
+    CHECK(w.agedOwn[kCompanion] == companion); // nobody else's
+}

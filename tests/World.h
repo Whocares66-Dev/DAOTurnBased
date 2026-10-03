@@ -306,9 +306,11 @@ class World
     std::vector<Creature> creatures;
     std::vector<Effect> applied;
     std::vector<std::string> log;
-    bool timeHeld = false;     // effects' time, as DAOLib's dao::effects::Hold leaves it
-    std::int32_t speed = 1000; // the game's, in thousandths
-    std::int64_t agedMs = 0;
+    bool timeHeld = false;                                  // effects' time, as DAOLib's dao::effects::Hold leaves it
+    std::int32_t speed = 1000;                              // the game's, in thousandths
+    std::int64_t agedMs = 0;                                // the shared clock's
+    std::unordered_map<ObjectId, std::int64_t> agedOwn;     // each creature's own
+    std::unordered_set<ObjectId> onOwnClock;                // as DAOLib's dao::clock::OwnClock leaves it
     std::unordered_map<ObjectId, CommandRequest> heldCasts; // casts the game layer keeps while they charge
     std::vector<Verdict> released;                          // what each cast given again was answered
     std::function<void(ObjectId)> onPoke;                   // what an AI does when told to choose
@@ -355,12 +357,33 @@ class World
                 break;
             case EffectKind::HoldTime:
                 timeHeld = e.a != 0;
+                if (!timeHeld)
+                {
+                    onOwnClock.clear(); // let go, every object is the shared clock's again
+                }
+                break;
+            case EffectKind::OwnClock:
+                if (e.a != 0)
+                {
+                    onOwnClock.insert(e.target);
+                }
+                else
+                {
+                    onOwnClock.erase(e.target);
+                }
                 break;
             case EffectKind::GameSpeed:
                 speed = e.b;
                 break;
             case EffectKind::AgeTime:
-                agedMs += e.b;
+                if (e.target != kNoObject)
+                {
+                    agedOwn[e.target] += e.b;
+                }
+                else
+                {
+                    agedMs += e.b;
+                }
                 break;
             case EffectKind::PokeAi:
                 if (onPoke)

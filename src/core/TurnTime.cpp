@@ -5,7 +5,7 @@ namespace tb
 {
 TacticsTime TimeFromTactics(int rank)
 {
-    const auto bounded = static_cast<std::uint32_t>(std::clamp(rank, 0, 4));
+    const auto bounded = static_cast<std::uint32_t>(std::clamp(rank, 0, kMostTactics));
     return {500 * (bounded / 2), 1000 + 500 * ((bounded + 1) / 2)};
 }
 TurnTime::TurnTime(std::uint32_t turnMs, std::uint32_t bonusMs, std::uint32_t rolloverMs)

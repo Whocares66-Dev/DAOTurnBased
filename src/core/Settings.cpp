@@ -203,6 +203,7 @@ const std::vector<Entry> &Entries()
          }},
         {"turns", "speed", Float(&Settings::fightSpeed, 0.25f, 4.0f)},
         {"turns", "delay", Bool(&Settings::delay)},
+        {"turns", "own_clocks", Bool(&Settings::ownClocks)},
         {"turns", "give_back_unplayed", Bool(&Settings::giveBackUnplayed)},
         {"movement", "path_check", Bool(&Settings::pathCheck)},
         {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
@@ -283,7 +284,7 @@ const std::vector<Entry> &Entries()
         {"turns", "pace", Float(&Settings::paceMps, 0.5f, 20.0f)},
         {"turns", "enemy_tactics",
          [](Settings &s, std::string_view text) -> std::string {
-             // "0, 0, 2, 4, 4": by rank, critter to elite boss.
+             // "0, 0, 2, 4, 6": by rank, critter to elite boss.
              std::array<int, 5> ranks{};
              std::size_t count = 0;
              std::size_t at = 0;
@@ -304,7 +305,7 @@ const std::vector<Entry> &Entries()
                  int rank = 0;
                  if (count >= ranks.size() || !WholeInt(item, rank) || rank < 0 || rank > 8)
                  {
-                     return "not five ranks 0 to 8, critter to elite boss (0, 0, 2, 4, 4)";
+                     return "not five ranks 0 to 8, critter to elite boss (0, 0, 2, 4, 6)";
                  }
                  ranks.at(count++) = rank;
                  if (end == text.size())
@@ -314,7 +315,7 @@ const std::vector<Entry> &Entries()
              }
              if (count != ranks.size())
              {
-                 return "not five ranks 0 to 8, critter to elite boss (0, 0, 2, 4, 4)";
+                 return "not five ranks 0 to 8, critter to elite boss (0, 0, 2, 4, 6)";
              }
              s.enemyTactics = ranks;
              return {};
@@ -550,7 +551,7 @@ pause_on_player_turn = false
 pick_targets = true
 ; How fast the game runs through a turn-based fight, your turns and theirs
 ; alike: 0.5 half speed, 1 as ever, 2 twice as fast (0.25 to 4). It is the
-; Fight speed slider in the game's options. Conversations and the world
+; Fight speed slider in the game's options (0.5x, 1x, 2x, 3x). Conversations and the world
 ; outside a fight run as ever. At 1 the mod leaves the game's speed alone.
 speed = 1
 ; A party member may put its turn off to the end of the round (Delay, on the
@@ -558,6 +559,11 @@ speed = 1
 ; a healer after the fighter, a mage after the enemy has closed. The turn it
 ; then takes is whole, and its cooldowns and effects are none the older.
 delay = true
+; With clock = time: what wears off, burns or regenerates on a creature does
+; so on that creature's own clock, as its turn is spent: a poison ticks on
+; its victim's turn, a buff of 20 seconds lasts five of its owner's turns.
+; false: everyone's effects age together as each round begins.
+own_clocks = true
 ; With time: an action that ended at once, in under a quarter of the time it
 ; takes, did not happen (a spell at a target the game would not take), and
 ; its time is given back, once a turn.
@@ -606,9 +612,11 @@ free_step = 1
 ; creature's movement speed.
 pace = 4.66
 ; With time: the Combat Tactics rank enemies fight at, by their rank:
-; critter, normal, lieutenant, boss, elite boss. Each rank 2 and 4 adds half
-; a second to a turn; ranks 1 and 3 let half a second more roll over.
-enemy_tactics = 0, 0, 2, 4, 4
+; critter, normal, lieutenant, boss, elite boss. Each even rank adds half
+; a second to a turn; each odd one lets half a second more roll over. So a
+; lieutenant has half a second more a turn, a boss a second, an elite boss a
+; second and a half. 0 to 8.
+enemy_tactics = 0, 0, 2, 4, 6
 
 [feedback]
 ; The game's floating text: whose turn it is, out of movement, not your turn.

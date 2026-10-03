@@ -9,7 +9,12 @@ struct TacticsTime
     std::uint32_t bonusMs = 0;
     std::uint32_t rolloverCapMs = 1000;
 };
-// Player ranks 0..4; enemy bonuses above that range remain configuration.
+// Half a second more a turn at each even rank, half a second more rolled
+// over at each odd one. A player's skill has ranks 0 to 4; an enemy's go
+// on to 8 (Settings::enemyTactics: an elite boss fights at 6, a second and
+// a half more a turn, the user's decision of 2026-10-02), as the game's
+// own interruption rule counts an elite boss past the player's ranks.
+inline constexpr int kMostTactics = 8;
 [[nodiscard]] TacticsTime TimeFromTactics(int rank);
 struct TimePayment
 {

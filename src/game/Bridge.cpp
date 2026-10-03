@@ -14,6 +14,7 @@
 #include "dao/Gda.h"
 #include "dao/Log.h"
 #include "dao/ScriptHooks.h"
+#include "dao/Timers.h"
 #include "dao/World.h"
 #include "dao/core/CommandWord.h"
 #include "dao/generated/ScriptApi.h"
@@ -661,6 +662,18 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             // on (DAOLib's dao/Clock.h, a42be67): held through a fight,
             // moved on a round's worth at a time.
             dao::clock::Hold(e.a != 0);
+            if (e.a != 0)
+            {
+                ReadInstalledRules(); // what the installed scripts count (Gate.cpp)
+            }
+            break;
+        case EffectKind::OwnClock:
+            // A combatant's effects, regeneration and the scripts' timers on
+            // it on a clock of its own (DAOLib's dao/Clock.h, 04b3be3), moved
+            // by the targeted AgeTime below as its turn is spent; what is not
+            // in the fight stays on the shared one. Given back as the hold is
+            // let go.
+            dao::clock::OwnClock(e.target, e.a != 0);
             break;
         case EffectKind::GameSpeed:
             // Game logic and animation together (DAOLib's dao/Clock.h,
@@ -680,7 +693,27 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             }
             break;
         case EffectKind::AgeTime:
+            if (e.target != kNoObject)
+            {
+                // One creature's own clock (core: AgeOwnClock), in steps as
+                // small as a frame's walk: DAOLib keeps the fractions.
+                dao::clock::Advance(e.target, static_cast<float>(e.b) / 1000.0f);
+                break;
+            }
+            // With the effects and regeneration, since DAOLib 48fe011, the
+            // scripts' own timers that pace them (dao/Timers.h): a damage
+            // over time's ticks and a lasting area's pulses wait while the
+            // clock is held and come due as it is moved, where before they
+            // ran on in real time (the user, playing, 2026-10-02: "there's a
+            // environmental poison trap that keeps hitting the party even
+            // during turn-based combat"). How many wait is said, to read a
+            // fight's ticks against its rounds.
             dao::clock::Advance(static_cast<float>(e.b) / 1000.0f);
+            if (const std::size_t waiting = dao::timers::Waiting(); waiting > 0)
+            {
+                spdlog::debug("the clock moved {:.2f} s: {} of the scripts' timers wait on it",
+                              static_cast<float>(e.b) / 1000.0f, waiting);
+            }
             break;
         case EffectKind::Cooldown:
             // Held, released, or back to seconds (core: "Cooldowns in turns").

@@ -1,7 +1,9 @@
 #include "core/Rules.h"
 
+#include <array>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cstdint>
 
 #include <limits>
 #include <set>
@@ -277,12 +279,169 @@ TEST_CASE("an ability's time: its cast less the blend, its conjuring, or a shot"
 
 TEST_CASE("the damage that interrupts a conjuring: by Combat Training and level, or by rank and level", "[rules]")
 {
-    CHECK(tb::InterruptThreshold(true, 0, 6, 100) == Approx(8.0f));   // 5 and half her level
-    CHECK(tb::InterruptThreshold(true, 2, 10, 100) == Approx(30.0f)); // 20, 5, 5
-    CHECK(tb::InterruptThreshold(true, 4, 10, 100) == Approx(40.0f)); // the fourth rank never counts
-    CHECK(tb::InterruptThreshold(false, 0, 7, 2) == Approx(27.0f));   // a normal creature
-    CHECK(tb::InterruptThreshold(false, 3, 7, 3) == Approx(37.0f));   // a lieutenant; its skills are not asked
-    CHECK(tb::InterruptThreshold(false, 0, 10, 4) == Approx(50.0f));  // a boss
-    CHECK(tb::InterruptThreshold(false, 0, 10, 5) == Approx(70.0f));  // an elite boss
-    CHECK(tb::InterruptThreshold(false, 0, 3, 1) == Approx(13.0f));   // a critter
+    CHECK(tb::InterruptThreshold(true, 0, 6) == Approx(8.0f));   // 5 and half her level
+    CHECK(tb::InterruptThreshold(true, 2, 10) == Approx(30.0f)); // 20, 5, 5
+    CHECK(tb::InterruptThreshold(true, 3, 10) == Approx(40.0f));
+    CHECK(tb::InterruptThreshold(true, 4, 10) == Approx(50.0f)); // the fourth, where the script counts it
+    CHECK(tb::InterruptThreshold(true, -1, 10) == Approx(10.0f));
+    // Anyone else: its kind's ranks and its level; as shipped where the
+    // game's table is not read.
+    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(2), 7) == Approx(27.0f));  // a normal creature
+    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(3), 7) == Approx(37.0f));  // a lieutenant
+    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(4), 10) == Approx(50.0f)); // a boss
+    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(5), 10) == Approx(70.0f)); // an elite boss
+    // (autoscale.gda's NCombatTraining, read 2026-10-02: 0 for a critter, 1
+    // for a weak normal creature, 2, 3, 4, and 6 for an elite boss.)
+    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(1), 3) == Approx(3.0f));   // a critter
+    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(11), 3) == Approx(13.0f)); // a weak one
+    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(99), 3) == Approx(3.0f));
+    CHECK(tb::InterruptThreshold(false, 5, 10) == Approx(60.0f)); // a table a mod changed
+}
+
+namespace
+{
+// rules_core.ncs as shipped, from 3773 (the game's designerscripts.rim, read
+// 2026-10-02): the four HasAbility calls of the interruption rule.
+std::vector<std::uint8_t> ShippedRules()
+{
+    return {0x00, 0x8c, 0x2d, 0x00, 0x04, 0x03, 0x00, 0x01, 0x87, 0x04, 0x04, 0x06, 0x00, 0x00, 0x00, 0x00, 0x05,
+            0x00, 0x00, 0xfc, 0x02, 0x04, 0x03, 0x00, 0x01, 0x87, 0x05, 0x04, 0x06, 0x00, 0x00, 0x00, 0x00, 0x05,
+            0x00, 0x00, 0xfc, 0x02, 0x14, 0x20, 0x04, 0x03, 0x00, 0x01, 0x87, 0x06, 0x04, 0x06, 0x00, 0x00, 0x00,
+            0x00, 0x05, 0x00, 0x00, 0xfc, 0x02, 0x14, 0x20, 0x04, 0x03, 0x00, 0x01, 0x87, 0x08, 0x04, 0x06, 0x00,
+            0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0xfc, 0x02, 0x14, 0x20, 0x01, 0x01, 0xff, 0xff, 0xff, 0xf0, 0x00,
+            0x04, 0x1b, 0x00, 0xff, 0xff, 0xff, 0xfc, 0x04, 0x03, 0x00, 0x00, 0x00, 0x05, 0x02, 0x03};
+}
+} // namespace
+
+TEST_CASE("Combat Training's four ranks are the abilities the installed script names", "[rules]")
+{
+    using Ids = std::array<std::int32_t, 4>;
+    // As shipped: the fourth is 100104, which is no ability, so Master
+    // Combat Training (100103) never counts.
+    const std::vector<std::uint8_t> shipped = ShippedRules();
+    CHECK(tb::CombatTrainingIds(shipped) == Ids{100100, 100101, 100102, 100104});
+    CHECK(tb::kCombatTrainingAsShipped == Ids{100100, 100101, 100102, 100104});
+    // A mended script: the fourth is the ability's own id, and is read.
+    std::vector<std::uint8_t> mended = shipped;
+    REQUIRE(mended.at(64) == 0x08);
+    mended.at(64) = 0x07;
+    CHECK(tb::CombatTrainingIds(mended) == Ids{100100, 100101, 100102, 100103});
+    // A constant is `04 03` and its four bytes: bytes that only look like
+    // one from the second on are passed over.
+    std::vector<std::uint8_t> decoy = mended;
+    const std::uint8_t looksLike[] = {0x07, 0x03, 0x00, 0x01, 0x87, 0x09};
+    decoy.insert(decoy.begin() + 50, std::begin(looksLike), std::end(looksLike));
+    CHECK(tb::CombatTrainingIds(decoy) == Ids{100100, 100101, 100102, 100103});
+    // All four bytes of it, the high one first: a mod's own ability may have
+    // a large id.
+    std::vector<std::uint8_t> large = shipped;
+    large.at(61) = 0x01;
+    CHECK(tb::CombatTrainingIds(large) == Ids{100100, 100101, 100102, 0x01018708});
+    // Further into a script, and after a first 100100 that is not the rule's.
+    std::vector<std::uint8_t> later(300, 0x00);
+    const std::uint8_t alone[] = {0x04, 0x03, 0x00, 0x01, 0x87, 0x04};
+    later.insert(later.begin() + 20, std::begin(alone), std::end(alone));
+    later.insert(later.end(), mended.begin(), mended.end());
+    CHECK(tb::CombatTrainingIds(later) == Ids{100100, 100101, 100102, 100103});
+}
+
+TEST_CASE("a script that does not hold the rule, or none: the shipped four", "[rules]")
+{
+    using Ids = std::array<std::int32_t, 4>;
+    const Ids shipped{100100, 100101, 100102, 100104};
+    CHECK(tb::CombatTrainingIds({}) == shipped);
+    CHECK(tb::CombatTrainingIds(std::vector<std::uint8_t>(64, 0x04)) == shipped);
+    // Cut off after the third: no fourth to read.
+    std::vector<std::uint8_t> cut = ShippedRules();
+    cut.resize(58);
+    CHECK(tb::CombatTrainingIds(cut) == shipped);
+    // The first three are not the three: something else's constants.
+    std::vector<std::uint8_t> other = ShippedRules();
+    other.at(26) = 0x09; // the second is 100105
+    other.at(64) = 0x07;
+    CHECK(tb::CombatTrainingIds(other) == shipped);
+    std::vector<std::uint8_t> third = ShippedRules();
+    third.at(45) = 0x09;
+    third.at(64) = 0x07;
+    CHECK(tb::CombatTrainingIds(third) == shipped);
+    // The fourth too far from the third to be the rule's.
+    std::vector<std::uint8_t> far = ShippedRules();
+    far.at(64) = 0x07;
+    far.insert(far.begin() + 46, 60, 0x00);
+    CHECK(tb::CombatTrainingIds(far) == shipped);
+    // A fourth that is no id.
+    std::vector<std::uint8_t> nothing = ShippedRules();
+    nothing.at(61) = 0x00;
+    nothing.at(62) = 0x00;
+    nothing.at(63) = 0x00;
+    nothing.at(64) = 0x00;
+    CHECK(tb::CombatTrainingIds(nothing) == shipped);
+    // The very end of a script: nothing is read past it.
+    const std::vector<std::uint8_t> end{0x04, 0x03, 0x00, 0x01, 0x87};
+    CHECK(tb::CombatTrainingIds(end) == shipped);
+}
+
+TEST_CASE("a swing's time is what the scripts last set for it, once one has been seen", "[rules][time]")
+{
+    using Catch::Approx;
+    tb::LearnedSwings swings;
+    const auto sword = tb::LearnedSwings::KeyOf(tb::WeaponStyle::Single, -0.1f, 1.0f);
+    // Nothing seen: the formula is the caller's first guess.
+    CHECK_FALSE(swings.Seconds(sword));
+    REQUIRE(swings.Learn(sword, 1.9f));
+    CHECK(*swings.Seconds(sword) == Approx(1.9f));
+    // Scripts that are not the shipped ones (a mod's): theirs is what counts,
+    // and the last one set.
+    REQUIRE(swings.Learn(sword, 1.7f));
+    CHECK(*swings.Seconds(sword) == Approx(1.7f));
+    // By what it depended on: another weapon, another speed, another style.
+    CHECK_FALSE(swings.Seconds(tb::LearnedSwings::KeyOf(tb::WeaponStyle::Single, -0.5f, 1.0f)));
+    CHECK_FALSE(swings.Seconds(tb::LearnedSwings::KeyOf(tb::WeaponStyle::Single, -0.1f, 0.75f)));
+    CHECK_FALSE(swings.Seconds(tb::LearnedSwings::KeyOf(tb::WeaponStyle::TwoHanded, -0.1f, 1.0f)));
+    // Haste with Momentum, 0.45: the shipped script throws it away and the
+    // mended one does not. Whichever is in the game is what is read.
+    const auto hasted = tb::LearnedSwings::KeyOf(tb::WeaponStyle::Single, 0.0f, 0.45f);
+    CHECK(tb::SwingSeconds(tb::WeaponStyle::Single, 0.0f, 0.45f) == Approx(2.0f));
+    REQUIRE(swings.Learn(hasted, 1.0f));
+    CHECK(*swings.Seconds(hasted) == Approx(1.0f));
+    CHECK(*swings.Seconds(sword) == Approx(1.7f));
+}
+
+TEST_CASE("a weapon in each hand: the mean of the last two swings, the hands taking turns", "[rules][time]")
+{
+    using Catch::Approx;
+    tb::LearnedSwings swings;
+    const auto pair = tb::LearnedSwings::KeyOf(tb::WeaponStyle::Dual, -0.5f, 1.0f);
+    REQUIRE(swings.Learn(pair, 1.0f)); // the dagger's hand
+    CHECK(*swings.Seconds(pair) == Approx(1.0f));
+    REQUIRE(swings.Learn(pair, 1.4f)); // the longsword's
+    CHECK(*swings.Seconds(pair) == Approx(1.2f));
+    REQUIRE(swings.Learn(pair, 1.0f));
+    CHECK(*swings.Seconds(pair) == Approx(1.2f));
+    // One weapon: the last, not a mean.
+    const auto one = tb::LearnedSwings::KeyOf(tb::WeaponStyle::Single, -0.5f, 1.0f);
+    REQUIRE(swings.Learn(one, 1.5f));
+    REQUIRE(swings.Learn(one, 1.3f));
+    CHECK(*swings.Seconds(one) == Approx(1.3f));
+}
+
+TEST_CASE("a time no swing could take is not kept", "[rules][time]")
+{
+    using Catch::Approx;
+    tb::LearnedSwings swings;
+    const auto key = tb::LearnedSwings::KeyOf(tb::WeaponStyle::Single, 0.0f, 1.0f);
+    CHECK_FALSE(swings.Learn(key, 0.0f));
+    CHECK_FALSE(swings.Learn(key, 0.2f));
+    CHECK_FALSE(swings.Learn(key, 10.5f));
+    CHECK_FALSE(swings.Learn(key, -1.0f));
+    CHECK_FALSE(swings.Learn(key, std::numeric_limits<float>::quiet_NaN()));
+    CHECK_FALSE(swings.Learn(key, std::numeric_limits<float>::infinity()));
+    CHECK_FALSE(swings.Seconds(key));
+    REQUIRE(swings.Learn(key, 0.25f));
+    REQUIRE(swings.Learn(key, 10.0f));
+    CHECK(*swings.Seconds(key) == Approx(10.0f));
+    // A key from numbers that are not: nothing odd.
+    const auto odd = tb::LearnedSwings::KeyOf(tb::WeaponStyle::Single, std::numeric_limits<float>::quiet_NaN(),
+                                              std::numeric_limits<float>::infinity());
+    CHECK(odd == tb::LearnedSwings::KeyOf(tb::WeaponStyle::Single, 0.0f, 0.0f));
 }

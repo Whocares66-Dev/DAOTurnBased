@@ -210,7 +210,7 @@ TEST_CASE("a turn is a bar of time by default; one action and meters, and time's
     CHECK(defaults.turnClock == tb::TurnClock::Time);
     CHECK(defaults.secondsPerTurn == 4.0f);
     CHECK(defaults.freeStepMeters == 1.0f);
-    CHECK(defaults.enemyTactics == std::array<int, 5>{0, 0, 2, 4, 4});
+    CHECK(defaults.enemyTactics == std::array<int, 5>{0, 0, 2, 4, 6});
     CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.turnClock == tb::TurnClock::Time);
     CHECK(tb::ParseSettings("[turns]\nclock = actions\n").settings.turnClock == tb::TurnClock::Actions);
     const tb::ParsedSettings timed = tb::ParseSettings("[turns]\nclock = time\nseconds_per_turn = 5\nfree_step = 0.5\n"
@@ -228,7 +228,7 @@ TEST_CASE("bad clocks and rank lists are refused, the defaults kept", "[settings
     const tb::ParsedSettings bad = tb::ParseSettings("[turns]\nclock = points\nenemy_tactics = 0, 0, 2\n");
     CHECK(bad.warnings.size() == 2);
     CHECK(bad.settings.turnClock == tb::TurnClock::Time);
-    CHECK(bad.settings.enemyTactics == std::array<int, 5>{0, 0, 2, 4, 4});
+    CHECK(bad.settings.enemyTactics == std::array<int, 5>{0, 0, 2, 4, 6});
     CHECK(tb::ParseSettings("[turns]\nenemy_tactics = 0, 0, 2, 4, 9\n").warnings.size() == 1);
     CHECK(tb::ParseSettings("[turns]\nenemy_tactics = 0, 0, 2, 4, 4, 4\n").warnings.size() == 1);
 }
@@ -268,4 +268,13 @@ TEST_CASE("a fight has one speed; the setting that sped an AI's turns alone is g
     REQUIRE(both.warnings.size() == 1);
     CHECK(both.warnings.front().find("speed") != std::string::npos);
     CHECK(tb::DefaultSettingsFile().find("ai_turn_speed") == std::string::npos);
+}
+
+TEST_CASE("own clocks are on by default, and can be turned off", "[settings]")
+{
+    CHECK(tb::Settings{}.ownClocks);
+    const tb::ParsedSettings off = tb::ParseSettings("[turns]\nown_clocks = false\n");
+    CHECK(off.warnings.empty());
+    CHECK_FALSE(off.settings.ownClocks);
+    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.ownClocks);
 }

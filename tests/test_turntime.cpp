@@ -12,8 +12,12 @@ TEST_CASE("tactics alternates rollover and capacity", "[turntime]")
     }
     CHECK(tb::TimeFromTactics(-1).bonusMs == 0);
     CHECK(tb::TimeFromTactics(-1).rolloverCapMs == 1000);
-    CHECK(tb::TimeFromTactics(99).bonusMs == 1000);
-    CHECK(tb::TimeFromTactics(99).rolloverCapMs == 2000);
+    // Past the player's ranks, an enemy's: an elite boss at 6.
+    CHECK(tb::TimeFromTactics(6).bonusMs == 1500);
+    CHECK(tb::TimeFromTactics(6).rolloverCapMs == 2500);
+    CHECK(tb::TimeFromTactics(8).bonusMs == 2000);
+    CHECK(tb::TimeFromTactics(99).bonusMs == 2000);
+    CHECK(tb::TimeFromTactics(99).rolloverCapMs == 3000);
 }
 TEST_CASE("rebalance example keeps cooldown and rollover separate", "[turntime]")
 {

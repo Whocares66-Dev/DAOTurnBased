@@ -141,7 +141,9 @@ bool Toggle()
 constexpr wchar_t kOptionsSection[] = L"Turn-based";
 
 // The stops of the options' speed slider, and the one nearest the setting.
-constexpr std::array<float, 4> kSpeedStops{0.5f, 1.0f, 1.5f, 2.0f};
+// (The user, having played at them, 2026-10-02: "make the options 0.5x, 1x,
+// 2x, 3x"; they were 0.5, 1, 1.5 and 2.)
+constexpr std::array<float, 4> kSpeedStops{0.5f, 1.0f, 2.0f, 3.0f};
 
 void ReloadIfChanged(std::uint32_t now);
 

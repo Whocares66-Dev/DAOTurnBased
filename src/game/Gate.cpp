@@ -13,6 +13,7 @@
 #include "dao/Messages.h"
 #include "dao/Module.h"
 #include "dao/Objects.h"
+#include "dao/Resources.h"
 #include "dao/Script.h"
 #include "dao/ScriptHooks.h"
 #include "dao/World.h"
@@ -377,6 +378,33 @@ void DescribeAbility(const dao::CCObject &self, const dao::Command &command, Com
 // shot; a creature's, or an unarmed humanoid's, by its attack animation's
 // length (DAOLib's dao::animation::Length). 0 where nothing is read: the
 // core's stand-in. Script calls: on the scripts' thread only.
+//
+// The formula is the first guess only: what the scripts themselves set for
+// a swing (SetAttackDuration, read as each attack ends: LearnSwing) is kept
+// by weapon style, speed and attack speed (core: LearnedSwings) and used
+// from then on, so a mod that mends the scripts' timing (Dain's Fixes: Haste
+// with Momentum) is followed with nothing assumed. Not yet seen in play.
+std::mutex g_swingMutex;
+LearnedSwings g_swings;
+
+// Combat Training's four abilities as the installed rules_core counts them
+// (ReadInstalledRules), the shipped four until it has been read.
+std::mutex g_rulesMutex;
+std::array<std::int32_t, 4> g_combatTraining = kCombatTrainingAsShipped;
+std::size_t g_rulesSize = 0; // the size last read, 0 before the first
+
+std::array<std::int32_t, 4> CombatTrainingAbilities()
+{
+    const std::lock_guard lock(g_rulesMutex);
+    return g_combatTraining;
+}
+struct AskedSwing
+{
+    LearnedSwings::Key key;
+    float formula = 0.0f;
+};
+std::unordered_map<ObjectId, AskedSwing> g_askedSwings; // each creature's last
+
 float SwingSecondsOf(ObjectId attacker)
 {
     if (GetCurrentThreadId() != dao::script::ScriptThreadId())
@@ -415,7 +443,47 @@ float SwingSecondsOf(ObjectId attacker)
     {
         facts.animation = dao::animation::Length(attacker, dao::animation::kAttack);
     }
-    return tb::AttackSeconds(facts);
+    const float formula = tb::AttackSeconds(facts);
+    if (facts.humanoid && facts.armed && !facts.ranged)
+    {
+        const LearnedSwings::Key key = LearnedSwings::KeyOf(facts.style, facts.weaponSpeed, facts.attackSpeedModifier);
+        const std::lock_guard lock(g_swingMutex);
+        g_askedSwings[attacker] = AskedSwing{key, formula};
+        return g_swings.Seconds(key).value_or(formula);
+    }
+    return formula;
+}
+
+// An attack is over: what the scripts set for it is kept for the next of its
+// kind. Said once for each kind, and again when it changes, with the
+// formula's figure beside it: where the two differ the scripts are not the
+// shipped ones, or the formula here is wrong.
+void LearnSwing(ObjectId attacker)
+{
+    const std::optional<float> set = dao::animation::AttackDuration(attacker);
+    if (!set)
+    {
+        return;
+    }
+    const std::lock_guard lock(g_swingMutex);
+    const auto asked = g_askedSwings.find(attacker);
+    if (asked == g_askedSwings.end())
+    {
+        return;
+    }
+    const std::optional<float> before = g_swings.Seconds(asked->second.key);
+    if (!g_swings.Learn(asked->second.key, *set))
+    {
+        return;
+    }
+    const float now = g_swings.Seconds(asked->second.key).value_or(*set);
+    if (!before || std::abs(*before - now) > 0.0015f)
+    {
+        const bool differs = std::abs(asked->second.formula - now) > 0.0015f;
+        spdlog::log(differs ? spdlog::level::info : spdlog::level::debug,
+                    "{:#x}: the scripts set {:.3f} s for its swing, the formula {:.3f} s{}", attacker, *set,
+                    asked->second.formula, differs ? ": the scripts' is what a swing of this kind costs now" : "");
+    }
 }
 
 // The engine's frames have no unwind data, so no exception may leave a hook
@@ -476,6 +544,7 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             }
             CommandRequest request;
             request.object = self->Id();
+            request.target = command->Target().value_or(dao::kInvalidObject);
             request.type = type;
             request.source = source;
             request.inCombat = creature != nullptr && creature->CombatState() != 0;
@@ -679,6 +748,46 @@ template <std::size_t... I> bool WatchOrders(std::index_sequence<I...>)
 
 } // namespace
 
+// The installed rules_core, as the game resolves it (DAOLib's
+// dao::resources::Read, ea4e3f9: override, add-ins, patches, the game's own
+// archives), read for the abilities its interruption rule counts. A mod that
+// mends the script (Dain's Fixes names Master Combat Training, 100103, where
+// the shipped script names 100104) is followed, and the shipped script is
+// read as shipped: the user, 2026-10-02, "if player has the fix, they get the
+// benefit. if not, they don't." At each fight's start, since an override can
+// appear between one game and the next ("if the game itself reads the file
+// each time, use that", the user through DAOLib's session, the same day):
+// a quarter of a megabyte, read through the game's own resource manager.
+// Said in the log when what it says changes.
+void ReadInstalledRules()
+{
+    const std::optional<std::vector<std::byte>> script = dao::resources::Read(L"rules_core.ncs");
+    if (!script)
+    {
+        spdlog::warn("rules_core.ncs could not be read: Combat Training counts as the shipped script counts it");
+        return;
+    }
+    std::vector<std::uint8_t> bytes(script->size());
+    std::ranges::transform(*script, bytes.begin(), [](std::byte b) { return std::to_integer<std::uint8_t>(b); });
+    const std::array<std::int32_t, 4> ids = CombatTrainingIds(bytes);
+    {
+        const std::lock_guard lock(g_rulesMutex);
+        const bool same = g_rulesSize == bytes.size() && g_combatTraining == ids;
+        g_combatTraining = ids;
+        g_rulesSize = bytes.size();
+        if (same)
+        {
+            return;
+        }
+    }
+    constexpr std::int32_t kMasterCombatTraining = 100103;
+    spdlog::info("rules_core.ncs as installed, {} bytes: Combat Training's ranks are abilities {}, {}, {} and {} ({})",
+                 bytes.size(), ids[0], ids[1], ids[2], ids[3],
+                 ids[3] == kMasterCombatTraining   ? "Master counts: the script is a mended one"
+                 : ids == kCombatTrainingAsShipped ? "as shipped: Master Combat Training never counts"
+                                                   : "neither the shipped four nor the mended");
+}
+
 std::optional<HeldCast> TakeHeldCast(ObjectId creature)
 {
     const auto kept = g_heldCasts.find(creature);
@@ -784,11 +893,15 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
     // On the game's thread, inside the command step: the machine only
     // counts, and queues or clears nothing.
     dao::commands::OnEnd([&machine, &mutex](ObjectId object, const dao::Command &command, std::int32_t result) {
+        const auto type = static_cast<CommandType>(static_cast<int>(command.Type()));
+        if (result == dao::commands::kSuccess && type == CommandType::Attack)
+        {
+            LearnSwing(object);
+        }
         if (result == dao::commands::kSuccess || result == dao::commands::kCleared)
         {
             return;
         }
-        const auto type = static_cast<CommandType>(static_cast<int>(command.Type()));
         // Every failure, to read what a command that seemed to do nothing
         // ended with (an archer's shot charged its cooldown for nothing, the
         // fourth play test).
@@ -853,20 +966,31 @@ void WatchDamage(TurnMachine &machine, std::mutex &mutex)
                     return;
                 }
             }
-            // ABILITY_SKILL_COMBAT_TRAINING_1 to _4 (2da_constants_h.nss).
-            constexpr std::int32_t kCombatTraining1 = 100100;
+            // Combat Training's ranks as the game's own rule counts them
+            // (core/Rules.h, InterruptThreshold): a party member's by the
+            // abilities the script names, anyone else's from the autoscale
+            // table by its rank (rules_core.nss: Diff_GetAutoScaleTable is
+            // TABLE_AUTOSCALE whatever the difficulty). The abilities are the
+            // installed script's (ReadInstalledRules), the shipped script's
+            // until it has been read.
+            const bool party = api::IsHero(target) != 0 || api::IsFollower(target) != 0;
             int training = 0;
-            for (int rank = 1; rank <= 4; ++rank)
+            if (party)
             {
-                if (api::HasAbility(target, kCombatTraining1 + rank - 1) != 0)
+                for (const std::int32_t ability : CombatTrainingAbilities())
                 {
-                    training = rank;
+                    training += api::HasAbility(target, ability) != 0 ? 1 : 0;
                 }
             }
-            const bool party = api::IsHero(target) != 0 || api::IsFollower(target) != 0;
+            else
+            {
+                const std::int32_t rank = api::GetCreatureRank(target);
+                training = dao::gda::GetInt(dao::script::Table::Autoscale, rank, "nCombatTraining")
+                               .value_or(TrainingOfRankAsShipped(rank));
+            }
             const int level =
                 static_cast<int>(api::GetCreatureProperty(target, k::PROPERTY_SIMPLE_LEVEL, k::PROPERTY_VALUE_TOTAL));
-            const float threshold = InterruptThreshold(party, training, level, api::GetCreatureRank(target));
+            const float threshold = InterruptThreshold(party, training, level);
             bool interrupted = false;
             {
                 const std::lock_guard lock(mutex);

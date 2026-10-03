@@ -323,6 +323,43 @@ float SwingSeconds(WeaponStyle style, float weaponSpeed, float attackSpeedModifi
     return seconds > 0.0f ? seconds : 0.0f;
 }
 
+LearnedSwings::Key LearnedSwings::KeyOf(WeaponStyle style, float weaponSpeed, float attackSpeedModifier)
+{
+    const auto milli = [](float value) {
+        return std::isfinite(value)
+                   ? static_cast<std::int32_t>(std::lround(std::clamp(value, -100.0f, 100.0f) * 1000.0f))
+                   : 0;
+    };
+    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier)};
+}
+
+bool LearnedSwings::Learn(const Key &key, float seconds)
+{
+    if (!std::isfinite(seconds) || seconds < kLeast || seconds > kMost)
+    {
+        return false;
+    }
+    Read &read = reads_[key];
+    read.before = read.last;
+    read.last = seconds;
+    return true;
+}
+
+std::optional<float> LearnedSwings::Seconds(const Key &key) const
+{
+    const auto found = reads_.find(key);
+    if (found == reads_.end())
+    {
+        return std::nullopt;
+    }
+    const Read &read = found->second;
+    if (key.style == WeaponStyle::Dual && read.before > 0.0f)
+    {
+        return (read.last + read.before) / 2.0f;
+    }
+    return read.last;
+}
+
 float ConjureSeconds(std::int32_t conjureAnim, int loops, bool staff)
 {
     if (conjureAnim <= 0 || loops <= 0)
@@ -389,32 +426,85 @@ float AbilitySeconds(const AbilityFacts &facts)
     return cast;
 }
 
-float InterruptThreshold(bool party, int combatTraining, int level, int creatureRank)
+float InterruptThreshold(bool party, int combatTraining, int level)
 {
     const float levels = static_cast<float>(std::max(0, level));
-    if (party)
-    {
-        return 10.0f * static_cast<float>(std::clamp(combatTraining, 0, 3)) + 5.0f + levels / 2.0f;
-    }
-    int ranks = 1;
+    const float ranks = static_cast<float>(std::clamp(combatTraining, 0, 20));
+    return party ? 10.0f * ranks + 5.0f + levels / 2.0f : 10.0f * ranks + levels;
+}
+
+int TrainingOfRankAsShipped(int creatureRank)
+{
     switch (creatureRank)
     {
     case 2: // normal
-        ranks = 2;
-        break;
+        return 2;
     case 3: // lieutenant
-        ranks = 3;
-        break;
+        return 3;
     case 4: // boss
-        ranks = 4;
-        break;
+        return 4;
     case 5: // elite boss
-        ranks = 6;
-        break;
-    default:
-        break;
+        return 6;
+    case 11: // a weak normal creature
+        return 1;
+    default: // a critter, and what has no rank
+        return 0;
     }
-    return 10.0f * static_cast<float>(ranks) + levels;
+}
+
+namespace
+{
+constexpr std::size_t kConstantBytes = 6; // 04 03, and four bytes, the high one first
+
+std::optional<std::int32_t> ConstantAt(std::span<const std::uint8_t> script, std::size_t at)
+{
+    if (at + kConstantBytes > script.size() || script[at] != 0x04 || script[at + 1] != 0x03)
+    {
+        return std::nullopt;
+    }
+    const std::uint32_t value = (static_cast<std::uint32_t>(script[at + 2]) << 24) |
+                                (static_cast<std::uint32_t>(script[at + 3]) << 16) |
+                                (static_cast<std::uint32_t>(script[at + 4]) << 8) | script[at + 5];
+    return static_cast<std::int32_t>(value);
+}
+} // namespace
+
+std::array<std::int32_t, 4> CombatTrainingIds(std::span<const std::uint8_t> compiledScript)
+{
+    constexpr std::size_t kNear = 48; // the four stand 17 to 19 bytes apart as shipped
+    for (std::size_t first = 0; first + kConstantBytes <= compiledScript.size(); ++first)
+    {
+        if (ConstantAt(compiledScript, first) != kCombatTrainingAsShipped[0])
+        {
+            continue;
+        }
+        std::array<std::int32_t, 4> ids{kCombatTrainingAsShipped[0], 0, 0, 0};
+        std::size_t from = first + kConstantBytes;
+        std::size_t found = 1;
+        while (found < ids.size())
+        {
+            std::optional<std::int32_t> next;
+            for (std::size_t at = from; at < from + kNear && !next; ++at)
+            {
+                next = ConstantAt(compiledScript, at);
+                if (next)
+                {
+                    from = at + kConstantBytes;
+                }
+            }
+            if (!next)
+            {
+                break;
+            }
+            ids.at(found++) = *next;
+        }
+        if (found == ids.size() && ids[1] == kCombatTrainingAsShipped[1] && ids[2] == kCombatTrainingAsShipped[2] &&
+            ids[3] > 0)
+        {
+            return ids;
+        }
+    }
+    return kCombatTrainingAsShipped;
 }
 
 } // namespace tb

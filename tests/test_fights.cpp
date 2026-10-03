@@ -114,6 +114,7 @@ struct Coverage
     int cooldownsHeld = 0;
     int cooldownsReleased = 0;
     int roundsAged = 0;
+    int ownAged = 0; // a creature's own clock moved (Settings::ownClocks)
     // With a turn a bar of time.
     int kept = 0;           // actions that did not fit, kept for a later turn
     int landed = 0;         // kept actions given again and let through
@@ -614,6 +615,22 @@ class Arena
         case EffectKind::HoldTime:
             Must((e.a != 0) != timeHeld_, "effects' time held twice, or let go twice");
             timeHeld_ = e.a != 0;
+            if (!timeHeld_)
+            {
+                ownClock_.clear();
+            }
+            break;
+        case EffectKind::OwnClock:
+            Must(timeHeld_, "a creature put on its own clock while effects' time runs anyway");
+            Must(settings_.turnClock == TurnClock::Time && settings_.ownClocks, "own clocks with own clocks off");
+            if (e.a != 0)
+            {
+                ownClock_.insert(e.target);
+            }
+            else
+            {
+                ownClock_.erase(e.target);
+            }
             break;
         case EffectKind::GameSpeed:
             Must(settings_.fightSpeed != 1.0f, "the game's speed written at speed 1");
@@ -621,6 +638,23 @@ class Arena
             break;
         case EffectKind::AgeTime:
             Must(timeHeld_, "effects aged by the fight while their time runs anyway");
+            if (e.target != kNoObject)
+            {
+                // A creature's own clock: only one put on its own, only in
+                // its own turn (this frame's, or one that opened or closed
+                // in it), and by something.
+                Must(settings_.turnClock == TurnClock::Time && settings_.ownClocks,
+                     "a creature's own clock moved with own clocks off");
+                Must(ownClock_.contains(e.target), "a creature's own clock moved though it was never put on one");
+                // (Or the target of the acting creature's own effect: a grab
+                // holds both, and both clocks move by its steps.)
+                Must(e.target == world_.Current() || e.target == lastCurrent_ || turnsThisFrame_.contains(e.target) ||
+                         e.target == world_.machine.OwnEffectTarget(),
+                     "a creature's own clock moved outside its own turn");
+                Must(e.b > 0, "a creature's own clock moved by nothing");
+                ++coverage_.ownAged;
+                break;
+            }
             // A round's worth, or a step of an action's own effect, or the
             // round's worth less those.
             // With time, a round is a turn's seconds.
@@ -1119,6 +1153,7 @@ class Arena
             break;
         case EventKind::TurnStarted:
         case EventKind::TurnLost:
+            turnsThisFrame_.insert(e.who);
             Must(roundStarted_, "a turn before the fight's first round");
             Must(!turnOpen_, "a turn opened while another was open");
             Must(e.who == world_.Current(), "a turn opened for someone not current");
@@ -1142,6 +1177,7 @@ class Arena
             Must(e.who == world_.Current(), "a turn resumed for someone not current");
             break;
         case EventKind::TurnEnded:
+            turnsThisFrame_.insert(e.who);
             turnOpen_ = false;
             break;
         case EventKind::FightOver:
@@ -1178,6 +1214,8 @@ class Arena
     // After each frame (2, 3, 4, 7).
     void Check()
     {
+        turnsThisFrame_.clear();
+        lastCurrent_ = world_.Current(); // a turn closed by the fight's end, next frame, has no event of its own
         FollowTurn();
         const Phase phase = world_.machine.GetPhase();
         if (phase == Phase::Idle || phase == Phase::Suspended)
@@ -1308,9 +1346,12 @@ class Arena
     Rng rng_;
     Settings settings_;
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
-    std::set<ObjectId> secondsKnown_;    // held with seconds the machine could read, and not yet ended by it
-    ObjectId lastTurnStart_ = kNoObject; // whose turn began last (its event)
-    bool timeHeld_ = false;              // effects' time, as the machine left it
+    std::set<ObjectId> secondsKnown_;             // held with seconds the machine could read, and not yet ended by it
+    ObjectId lastTurnStart_ = kNoObject;          // whose turn began last (its event)
+    bool timeHeld_ = false;                       // effects' time, as the machine left it
+    std::unordered_set<ObjectId> ownClock_;       // creatures put on their own clocks
+    std::unordered_set<ObjectId> turnsThisFrame_; // whose turn opened or closed in this frame
+    ObjectId lastCurrent_ = kNoObject;            // whose turn it was as the last frame ended
     World world_;
     Coverage &coverage_;
     std::map<ObjectId, Task> tasks_;
@@ -1427,6 +1468,8 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     CHECK(coverage.owed > 5);
     CHECK(coverage.choseAgain > 24);
     CHECK(coverage.rolledOver > 500);
+    // Each creature's own clock moved as its turns were spent.
+    CHECK(coverage.ownAged > 1000);
     // A kept attack's creature walking to its target, and a kept action's
     // target gone by the time it would land (2026-10-02: 49 and 61).
     CHECK(coverage.approaches > 15);

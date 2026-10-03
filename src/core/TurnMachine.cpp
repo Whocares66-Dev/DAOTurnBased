@@ -132,6 +132,8 @@ const char *Name(EffectKind kind)
         return "hold time";
     case EffectKind::AgeTime:
         return "age time";
+    case EffectKind::OwnClock:
+        return "own clock";
     case EffectKind::GameSpeed:
         return "game speed";
     case EffectKind::ReleaseCast:
@@ -1516,7 +1518,7 @@ void TurnMachine::MoveClock(std::vector<Effect> &fx)
     const std::uint32_t now = budget_.spend.ClockElapsedMs();
     if (now > clockSeenMs_)
     {
-        AgeCooldowns(current->id, now - clockSeenMs_, fx);
+        AgeOwnClock(current->id, now - clockSeenMs_, fx);
         clockSeenMs_ = now;
     }
 }
@@ -1601,8 +1603,53 @@ void TurnMachine::HoldTime(bool held, std::vector<Effect> &fx)
     Effect e = Effect::Of(EffectKind::HoldTime);
     e.a = held ? 1 : 0;
     fx.push_back(e);
-    Log(LogLevel::Info, held ? std::format("effects' time held: {:.0f} s of it a round", EffectRoundSeconds())
+    Log(LogLevel::Info, held ? std::format("effects' time held: {:.0f} s of it a round{}", EffectRoundSeconds(),
+                                           OwnClocks() ? ", each fighter's on its own clock" : "")
                              : std::string{"effects' time runs again"});
+    if (held)
+    {
+        PutOnOwnClocks(fx);
+    }
+}
+
+// With a turn a bar of time, a creature's effects, its regeneration and the
+// scripts' timers on it run on its own clock (Settings::ownClocks).
+bool TurnMachine::OwnClocks() const
+{
+    return Timed() && settings_.ownClocks;
+}
+
+// Everyone in the fight, once the time is held (the game layer's own clocks
+// are given back as the hold is let go, so again after each hold). What is
+// not in the fight, an area on the ground or a bystander, stays on the shared
+// clock, which the rounds move.
+void TurnMachine::PutOnOwnClocks(std::vector<Effect> &fx)
+{
+    if (!OwnClocks())
+    {
+        return;
+    }
+    for (const Combatant &c : order_.All())
+    {
+        Effect own = Effect::Of(EffectKind::OwnClock, c.id);
+        own.a = 1;
+        fx.push_back(own);
+    }
+}
+
+void TurnMachine::AgeOwnClock(ObjectId who, std::uint32_t clockMs, std::vector<Effect> &fx)
+{
+    AgeCooldowns(who, clockMs, fx);
+    // Not while its action's own effect runs: that effect's time is moved
+    // by its own steps (ObserveExecuting), which are this clock's too.
+    if (clockMs == 0 || !OwnClocks() || !timeHeld_ || ownEffectSince_)
+    {
+        return;
+    }
+    Effect age = Effect::Of(EffectKind::AgeTime, who);
+    age.b = static_cast<std::int32_t>(clockMs);
+    fx.push_back(age);
+    budget_.agedOwnMs += clockMs;
 }
 
 void TurnMachine::SpendRound(std::vector<Effect> &fx)
@@ -1855,10 +1902,36 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
                 }
             }
             ownEffectSince_ = clock_;
-            roundAgedMs_ += ran;
-            Effect age = Effect::Of(EffectKind::AgeTime);
+            // With own clocks the effect is on its creature, whose clock
+            // this moves; the rest of the fight's stands. Without, everyone's
+            // moves, and the round's worth is that much the less.
+            const Combatant *acting = order_.Current();
+            const bool own = OwnClocks() && acting != nullptr;
+            Effect age = Effect::Of(EffectKind::AgeTime, own ? acting->id : kNoObject);
             age.b = static_cast<std::int32_t>(ran);
             fx.push_back(age);
+            if (own)
+            {
+                budget_.agedOwnMs += ran;
+                // And its target's, by the same step: such an action holds
+                // two creatures with an effect on each (a grab, Overwhelm),
+                // and its command ends only when the one on its victim does,
+                // on the victim's clock. Moved by the acting creature's
+                // clock alone, an ogre's grab held its victim and everyone
+                // waiting 36 s, its patience (a run with no hands,
+                // 2026-10-02).
+                if (const ObjectId victim = budget_.lastTarget;
+                    victim != kNoObject && victim != acting->id && order_.Find(victim) != nullptr)
+                {
+                    Effect held = Effect::Of(EffectKind::AgeTime, victim);
+                    held.b = static_cast<std::int32_t>(ran);
+                    fx.push_back(held);
+                }
+            }
+            else
+            {
+                roundAgedMs_ += ran;
+            }
             agedAtNow_ = lastNow_;
         }
     }
@@ -1947,6 +2020,17 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         {
             EndTurn(fx, "ended by the player");
             return;
+        }
+        // At an effect's command with nothing of its own let through this
+        // turn: held by it, though it was not seen so as the turn began. The
+        // fight's first turn begins in the frame the fight does, before its
+        // creature has been looked at: a spider still dropping from the
+        // ceiling had the first turn and stood out max_action_ms, twelve
+        // seconds of the game's time, before anyone moved (a run with no
+        // hands, 2026-10-02).
+        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0)
+        {
+            heldByEffect_ = true;
         }
         // Held in an effect's command past the grace: the turn is lost, as
         // to a stun, and the effect left to the engine (its time, spent a
@@ -2229,6 +2313,15 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
         // banked or lost: the rest of the way now.
         const std::uint32_t turn = TurnMs();
         AgeCooldowns(current->id, turn - std::min(turn, clockSeenMs_), fx);
+        // And its effects: a turn's seconds in all, whatever part of them
+        // the bar's spending and its own action's effect moved already.
+        if (const std::uint32_t rest = turn - std::min(turn, budget_.agedOwnMs); rest > 0 && OwnClocks() && timeHeld_)
+        {
+            Effect age = Effect::Of(EffectKind::AgeTime, current->id);
+            age.b = static_cast<std::int32_t>(rest);
+            fx.push_back(age);
+            budget_.agedOwnMs += rest;
+        }
     }
     clockSeenMs_ = 0;
     if (const Combatant *current = order_.Current())
@@ -2429,6 +2522,12 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
             const ObjectId joined = joining.id;
             const int initiative = joining.initiative;
             order_.Join(std::move(joining));
+            if (OwnClocks() && timeHeld_)
+            {
+                Effect own = Effect::Of(EffectKind::OwnClock, joined);
+                own.a = 1;
+                fx.push_back(own);
+            }
             Emit(EventKind::Joined, joined, {}, initiative);
         }
     }
@@ -2975,6 +3074,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     budget_.movementAtCommand = budget_.spend.Walked();
     budget_.lastWalk = request.type == CommandType::Attack ? request.walk.value_or(0.0f) : 0.0f;
     budget_.lastType = request.type;
+    budget_.lastTarget = request.target;
     budget_.lastAt = lastNow_;
     budget_.lastClock = clock_;
     budget_.lastMeasured = std::isfinite(request.actionSeconds) && request.actionSeconds > 0.0f;

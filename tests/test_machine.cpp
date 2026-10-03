@@ -3061,3 +3061,60 @@ TEST_CASE("an enemy that goes on by itself after its charged cast is not told it
         return line.find("Genlock's turn ends: chose nothing") != std::string::npos;
     }));
 }
+
+TEST_CASE("held by an effect on the fight's first turn, a creature loses it after the grace, not max_action_ms",
+          "[machine]")
+{
+    // A spider that drops from the ceiling as the fight begins and has the
+    // first turn: the effect's command is seen a frame after the turn began.
+    std::vector<Creature> fight = StandardFight();
+    fight.at(1).dexterity = 30.0f; // the genlock first
+    World w(Fixed(), fight);
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; }; // its AI is asked, and has nothing to say: it is held
+    w.StartFight();
+    // The turn has begun, and its AI been asked, before the effect's command
+    // is seen: it was not known for held as the turn began.
+    for (int i = 0; i < 10 && pokes == 0; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(pokes == 1);
+    REQUIRE(w.Current() == kGenlock);
+    // Busy first at something of the engine's that is not an effect's (in
+    // play nothing was logged for it), then at the effect's command.
+    w.Get(kGenlock).busy = true;
+    w.Get(kGenlock).current = CommandType::Wait;
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE_FALSE(w.machine.State().heldByEffect);
+    w.Get(kGenlock).current = CommandType::ExecuteEffect;
+    int frames = 0;
+    for (; frames < 2000 && w.Current() == kGenlock; ++frames)
+    {
+        w.Frame();
+    }
+    CHECK(w.Current() != kGenlock);
+    CHECK(frames * 16 >= 1900); // the grace
+    CHECK(frames * 16 < 3000);  // not max_action_ms' twelve seconds
+    CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
+        return line.find("Genlock is held by an effect: its turn is lost") != std::string::npos;
+    }));
+    CHECK(std::ranges::none_of(
+        w.log, [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
+    // Its own action's effect is still its own: a command of its own let
+    // through, and then the effect's, is not a turn lost to the grace.
+    World own(Fixed(), fight);
+    own.onPoke = [&](ObjectId id) { CHECK(own.UseAbility(id, Source::Script, 90133, 60.0f) == Verdict::Allow); };
+    own.StartFight();
+    REQUIRE(own.Current() == kGenlock);
+    own.RunFor(200);
+    own.Get(kGenlock).busy = true;
+    own.Get(kGenlock).current = CommandType::ExecuteEffect;
+    own.RunFor(2500);
+    CHECK(own.Current() == kGenlock);
+    CHECK(std::ranges::none_of(own.log, [](const std::string &line) {
+        return line.find("is held by an effect: its turn is lost") != std::string::npos;
+    }));
+}

@@ -5,7 +5,10 @@
 #include "core/Settings.h"
 #include "core/Types.h"
 
+#include <array>
+#include <compare>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 
@@ -188,6 +191,46 @@ struct AttackFacts
     float attackSpeedModifier = 1.0f; // creature property 31
     std::optional<float> animation;   // its attack animation's length, seconds
 };
+// What the game's own scripts set for a swing, kept as it is read, so that
+// a swing costs what the scripts in the game make it and not what this
+// file's copy of their formula says. The user, 2026-10-02, of a mod that
+// mends the scripts: "shouldn't need to assume dain's fixes? the fixes
+// change the data. we should automatically be able to adapt to that."
+// SwingSeconds is the scripts' formula as shipped, its faults with it (an
+// attack speed under 0.5, Haste with Momentum, is thrown away); a mod that
+// mends the script changes what the script sets (SetAttackDuration, which
+// the engine plays the swing to), and that is read after each swing
+// (DAOLib's dao::animation::AttackDuration) and kept here by what it
+// depended on. The formula is then only the first guess, for a weapon and a
+// speed not yet seen swung.
+class LearnedSwings
+{
+  public:
+    struct Key
+    {
+        WeaponStyle style = WeaponStyle::None;
+        std::int32_t weaponSpeedMs = 0; // the main hand's dspeed
+        std::int32_t modifierMilli = 0; // the attack speed modifier
+        auto operator<=>(const Key &) const = default;
+    };
+    [[nodiscard]] static Key KeyOf(WeaponStyle style, float weaponSpeed, float attackSpeedModifier);
+    // Kept if it is a time a swing could take (kLeast to kMost): true then.
+    bool Learn(const Key &key, float seconds);
+    // The last one set; for a weapon in each hand the mean of the last two,
+    // since the hands take turns and each has its own time.
+    [[nodiscard]] std::optional<float> Seconds(const Key &key) const;
+    static constexpr float kLeast = 0.25f;
+    static constexpr float kMost = 10.0f;
+
+  private:
+    struct Read
+    {
+        float last = 0.0f;
+        float before = 0.0f; // 0: one read so far
+    };
+    std::map<Key, Read> reads_;
+};
+
 inline constexpr float kShotSecondsFollower = 1.4f;
 inline constexpr float kShotSecondsHero = 1.6f;
 inline constexpr float kSwingShareOfAnimation = 0.81f;
@@ -216,12 +259,35 @@ inline constexpr float kCastShareOfAnimation = 0.84f;
 
 // The damage over which a blow interrupts a spell being conjured
 // (rules_core.nss at EVENT_TYPE_DAMAGED, read 2026-10-01; dev/REBALANCE.md,
-// "Interruption"): for a party member 10 a rank of Combat Training (three
-// at most: the script's constant for the fourth is not the ability's id),
-// and 5, and half its level; for anyone else 10 for each of the ranks its
-// kind is given (a normal creature 2, a lieutenant 3, a boss 4, an elite
-// boss 6), and its level. Physical damage only.
-[[nodiscard]] float InterruptThreshold(bool party, int combatTraining, int level, int creatureRank);
+// "Interruption"): for a party member 10 a rank of Combat Training, and 5,
+// and half its level; for anyone else 10 for each of the ranks its kind is
+// given, and its level. Physical damage only.
+//
+// The ranks are the game layer's to read, from what is installed (the
+// user, 2026-10-02, asked whether the mod should count Master Combat
+// Training as a script mod does: "can we not just read it off the script?
+// ... if player has the fix, they get the benefit. if not, they don't.
+// each mod should do one thing & do it well"):
+// - a party member's: how many it has of the four abilities the script
+//   asks HasAbility of. The shipped script's fourth is 100104, which is no
+//   ability, where Master Combat Training is 100103: so there the fourth
+//   rank never counts, and with a mended script it does. Which four the
+//   installed script names is read from its compiled form
+//   (CombatTrainingIds);
+// - anyone else's: its rank's nCombatTraining in the game's autoscale table
+//   (TrainingOfRankAsShipped where that is not read).
+[[nodiscard]] float InterruptThreshold(bool party, int combatTraining, int level);
+[[nodiscard]] int TrainingOfRankAsShipped(int creatureRank);
+
+// The four abilities a compiled rules_core counts as Combat Training's
+// ranks. In it (NCS V1.0B, read from the game's designerscripts.rim
+// 2026-10-02, at 3779) a constant integer is `04 03` and four bytes, the
+// high one first, and the four stand 17 to 19 bytes apart, each followed by
+// its HasAbility call: 100100, 100101, 100102, and then 100104 as shipped.
+// Found by the first three; the fourth is whatever constant follows them.
+// The shipped four where the script is not given or they are not found.
+inline constexpr std::array<std::int32_t, 4> kCombatTrainingAsShipped{100100, 100101, 100102, 100104};
+[[nodiscard]] std::array<std::int32_t, 4> CombatTrainingIds(std::span<const std::uint8_t> compiledScript);
 
 // Until the engine gives animations' lengths, by kind (dev/REBALANCE.md,
 // "What no rule reaches"): a swing that is not a formula's (the play tests'

@@ -140,7 +140,8 @@ enum class EffectKind : std::uint8_t
     EndConditions, // take target's stuns, paralysis, sleep and pins off: their turns are spent
     Cooldown,      // target's ability a gets b seconds of cooldown (held, released, or back to seconds)
     HoldTime,      // every temporary effect's time held still (a 1) or let run (a 0)
-    AgeTime,       // every temporary effect aged b milliseconds, once
+    AgeTime,       // every temporary effect aged b milliseconds, once; with a target, that creature's alone
+    OwnClock,      // target's effects, regeneration and timers on a clock of its own (a 1), or the shared one (a 0)
     GameSpeed,     // the game runs at b thousandths of its speed (1000: as ever)
     ReleaseCast,   // target's held cast of ability a is given to it now: it has charged its turns
     DropCast,      // target's held cast is forgotten (interrupted); no target: everyone's
@@ -218,6 +219,9 @@ struct CommandRequest
     std::int32_t abilityType = 0;
     std::int32_t conjureAnim = 0;
     bool staff = false;
+    // The object it is aimed at, if any (an attack's, an ability's): last,
+    // since tests fill the fields above by place.
+    ObjectId target = kNoObject;
 };
 
 // With a turn a bar of time: what an action costs of it, in milliseconds.
@@ -560,6 +564,11 @@ class TurnMachine
         std::optional<std::uint32_t> ownEffectCover;
         int commands = 0;
         bool outOfMovement = false;
+        // With own clocks: how far this turn has moved its creature's
+        // effects on (AgeOwnClock, and the steps of its action's own
+        // effect), so the turn's end moves them the rest of a turn's
+        // seconds and no further.
+        std::uint32_t agedOwnMs = 0;
         bool refunded = false; // an action given back once already this turn
         int givenBack = 0;     // how many times this turn
         bool retried = false;  // an AI told to choose again, its failed action given back
@@ -568,6 +577,7 @@ class TurnMachine
         std::int32_t lastAbility = -1; // the ability the last command was to use; -1 for any other command
         float movementAtCommand = 0;   // meters walked as the last command was let through
         float lastWalk = 0; // and the meters it had to walk to its target (an attack's), as the gate was told
+        ObjectId lastTarget = kNoObject;             // what the last command let through was aimed at
         CommandType lastType = CommandType::Invalid; // the last command let through, and when
         std::uint32_t lastAt = 0;
         // And when on the world's clock, and whether its time was the
@@ -627,6 +637,22 @@ class TurnMachine
     // or its turn over); what counts on it is moved with it.
     void MoveClock(std::vector<Effect> &fx);
     void AgeCooldowns(ObjectId who, std::uint32_t clockMs, std::vector<Effect> &fx);
+    // A creature's own clock moved on: its cooldowns, and with own clocks
+    // its effects, regeneration and timers (the game layer's to move).
+    void AgeOwnClock(ObjectId who, std::uint32_t clockMs, std::vector<Effect> &fx);
+    [[nodiscard]] bool OwnClocks() const;
+
+  public:
+    // What the acting creature's last command let through was aimed at, while
+    // its own effect runs (a grab's victim): its clock moves with the
+    // creature's. For the tests' arena.
+    [[nodiscard]] ObjectId OwnEffectTarget() const
+    {
+        return ownEffectSince_ ? budget_.lastTarget : kNoObject;
+    }
+
+  private:
+    void PutOnOwnClocks(std::vector<Effect> &fx);
     [[nodiscard]] bool LandCast(const Combatant &who, std::vector<Effect> &fx);
     void Interrupt(ObjectId who, std::string_view why, std::vector<Effect> &fx);
     void HoldUsed(std::vector<Effect> &fx);

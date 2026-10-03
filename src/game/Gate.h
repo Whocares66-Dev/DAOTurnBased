@@ -25,6 +25,10 @@
 
 namespace tb::game
 {
+// Reads what the installed scripts count that the mod's rules follow:
+// Combat Training's four abilities in rules_core (core/Rules.h,
+// CombatTrainingIds). From the game's thread, at each fight's start.
+void ReadInstalledRules();
 
 // Places the hooks, at plugin load. False if any could not be placed; the
 // log says which.

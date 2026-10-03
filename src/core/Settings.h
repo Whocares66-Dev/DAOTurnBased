@@ -90,7 +90,8 @@ struct Settings
     bool pickTargets = true;
     // The game's speed through a turn-based fight, everyone's turns alike
     // (the user, 2026-10-02: "a setting to change game speed, from 0.5x to
-    // 1X to 2x"). The one setting for it: `ai_turn_speed`, which ran an AI's
+    // 1X to 2x"; then, having played: "default fight speed should be 1x,
+    // make the options 0.5x, 1x, 2x, 3x"). The one setting for it: `ai_turn_speed`, which ran an AI's
     // turns faster than the player's, was there before and is gone (the
     // user, the same day: "shouldn't turn speed apply to everyone? we have
     // one setting for combat speed right?").
@@ -98,6 +99,14 @@ struct Settings
     // A party member may put its turn off to the round's end, before it has
     // spent anything of it (Delay: dev/REBALANCE.md).
     bool delay = true;
+    // With time: each creature's effects, its regeneration and the scripts'
+    // timers on it (a damage over time's ticks) run on its own clock, which
+    // moves as its bar is spent and a turn's seconds a turn, as its
+    // cooldowns do (dev/REBALANCE.md, "The creature's own clock"; the user,
+    // 2026-10-02: "things on each creature's own clock seems like the most
+    // important next thing"). Off: everyone's age together, a round's worth
+    // as each round begins, as before DAOLib could move one creature's.
+    bool ownClocks = true;
     // With time: an action that was over in a fraction of the time the
     // engine was read to take for it did not play, and its time is given
     // back (TurnMachine::OverAtOnce). A switch, should it ever give back
@@ -146,7 +155,9 @@ struct Settings
     // With time: Combat Tactics' rank an enemy fights at, by its creature
     // rank: critter, normal, lieutenant, boss, elite boss (the user: "it
     // makes bosses more dangerous"). A party member's is its own skill's.
-    std::array<int, 5> enemyTactics{0, 0, 2, 4, 4};
+    // The user, 2026-10-02: "lieutenant gets 0.5s more, boss gets 1s more,
+    // elite boss 1.5s more": ranks 2, 4 and 6.
+    std::array<int, 5> enemyTactics{0, 0, 2, 4, 6};
 
     // [feedback]
     bool floaties = true;          // the game's floating text: whose turn, out of movement, ...

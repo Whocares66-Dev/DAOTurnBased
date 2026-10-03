@@ -948,7 +948,280 @@ def summary(log: Path) -> None:
             print(f"    {len(found):4d}  {sign}: {found[0][:170]}")
 
 
+STEALTH = 100075  # ABI_base: the skill Stealth, a mode (skill_stealth.ncs)
+
+
+def scenario_stealth(game: Game) -> None:
+    """A stealthed opening attack: does the blow that begins the fight land?
+
+    An open question of dev/REBALANCE.md ("A stealthed opening attack"), and
+    the user's way to try it, 2026-10-02: "stealth can be tested. the eluvian
+    mcp can add talent to char, no?" As combat mode begins the mod clears every
+    combatant's command, the attacker's with the rest, so that the first turn
+    starts from a still world. If the game enters combat mode before the blow
+    lands, the blow that began the fight is cancelled, and the free strike
+    stealth is for is lost.
+
+    Lyna is given Stealth and turns it on where she stands, before the hall's
+    spiders have dropped. A spider is put down behind her, which should not
+    see her, and she is told to attack it. What is read: whether the fight
+    began before she was told to (the spider saw her: nothing learned),
+    then ten times a second the game's mode and the spider's health, so the
+    order of the two is seen, and the log's own lines.
+    """
+    print(
+        f"{stamp()} equip the dagger:",
+        game.tool("script", {"command": "EquipItem", "args": [HERO, DAGGER]}),
+    )
+    # Tamlen too: a spider that sees him begins the fight as well as one that
+    # sees her (the first try, 2026-10-02: combat mode as the spider appeared).
+    for who, name in ((HERO, "Lyna"), (TAMLEN, "Tamlen")):
+        print(
+            f"{stamp()} give {name} Stealth:",
+            str(game.tool("script", {"command": "AddAbility", "args": [who, STEALTH]}))[
+                :80
+            ],
+        )
+    time.sleep(0.5)
+    for who, name in ((HERO, "Lyna"), (TAMLEN, "Tamlen")):
+        print(
+            f"{stamp()} {name}'s Stealth on:",
+            str(
+                game.tool(
+                    "order",
+                    {"action": "ability", "id": who, "ability": STEALTH, "target": who},
+                )
+            )[:100],
+        )
+    time.sleep(3.0)
+    lyna = game.tool("inspect", {"kind": "creature", "id": HERO})
+    lyna = lyna.get("creature", lyna)
+    print(
+        f"{stamp()} Lyna as she stands: at {lyna.get('position')}, effects "
+        f"{sorted({e.get('type') for e in lyna.get('effects') or []})}"
+    )
+    at = lyna.get("position") or [0.0, 0.0, 0.0]
+    if isinstance(at, dict):
+        at = [at.get("x", 0.0), at.get("y", 0.0), at.get("z", 0.0)]
+    cursor = game.tool("health").get("cursor", 0)
+    # Behind her: the hall, and its spiders' trigger, is the other way.
+    spawned = game.tool(
+        "stage",
+        {"action": "spawn", "template": SPIDER, "point": [at[0] - 9.0, at[1], at[2]]},
+    )
+    spider = (spawned.get("creature") or {}).get("id")
+    print(f"{stamp()} a spider behind her: {spider} {spawned.get('error', '')}")
+    if not spider:
+        return
+    time.sleep(2.0)
+    mode = game.tool("health").get("mode")
+    print(f"{stamp()} the game's mode with the spider there and Lyna stealthed: {mode}")
+    if mode == "combat":
+        print(
+            f"{stamp()} the spider saw her: the fight began before her attack, nothing to learn here"
+        )
+
+    def health_of(who: str) -> float | None:
+        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = creature.get("creature", creature)
+        return (creature.get("health") or {}).get("current")
+
+    before = health_of(spider)
+    print(f"{stamp()} the spider's health before: {before}")
+    began = time.time()
+    print(
+        f"{stamp()} attack:",
+        str(game.tool("order", {"action": "attack", "id": HERO, "target": spider}))[
+            :160
+        ],
+    )
+    combat_at = None
+    struck_at = None
+    seen_second = -1
+    for _ in range(100):
+        now = time.time() - began
+        if combat_at is None and game.tool("health").get("mode") == "combat":
+            combat_at = now
+            print(f"{stamp()}   combat mode at {now:.2f} s")
+        health = health_of(spider)
+        if (
+            struck_at is None
+            and before is not None
+            and health is not None
+            and health < before
+        ):
+            struck_at = now
+            print(f"{stamp()}   the spider struck at {now:.2f} s: {before} to {health}")
+        if combat_at is not None and (struck_at is not None or now - combat_at > 15.0):
+            break
+        if int(now) != seen_second:
+            seen_second = int(now)
+            health_now = game.tool("health")
+            # The game's own auto-pause, half a second into a fight that is
+            # not the mod's (the player's option): Space, as a player would.
+            if health_now.get("paused") and not game.state().get("active"):
+                print(
+                    f"{stamp()}   the game's own auto-pause: unpaused, as Space would"
+                )
+                game.tool("game", {"action": "unpause"})
+            lyna = game.tool("inspect", {"kind": "creature", "id": HERO})
+            lyna = lyna.get("creature", lyna)
+            where = game.tool(
+                "inspect", {"kind": "geometry", "id": HERO, "target": spider}
+            )
+            print(
+                f"{stamp()}   {now:4.1f} s: mode {health_now.get('mode')}, paused {health_now.get('paused')}; "
+                f"Lyna's command {lyna.get('command')}; to the spider {where.get('distance')}; "
+                f"turn-based {game.state().get('active')}"
+            )
+        time.sleep(0.1)
+    if combat_at is None:
+        print(
+            f"{stamp()} no fight began: the attack did not reach, or the order was not taken"
+        )
+    elif struck_at is None:
+        print(
+            f"{stamp()} THE OPENING BLOW DID NOT LAND within 6 s of the fight's start "
+            "(the mod cleared it, or it missed: see the log's lines below)"
+        )
+    else:
+        print(
+            f"{stamp()} the opening blow landed {struck_at - combat_at:+.2f} s from combat mode's start"
+        )
+    # And then: the struck spider fights, and the turns begin.
+    for _ in range(40):
+        if game.state().get("active"):
+            break
+        if game.tool("health").get("paused"):
+            game.tool("game", {"action": "unpause"})
+        time.sleep(0.25)
+    show_events(game, cursor)
+    state = game.state()
+    print(
+        f"{stamp()} the turn now: {(state.get('current') or {}).get('name')}, round {state.get('round')}, "
+        f"last refusal {state.get('last_refusal')!r}"
+    )
+    end_fight(game)
+
+
+WALKING_BOMB = 12005  # ABI_base: a damage over time of 20 s on its target
+
+
+def scenario_dot(game: Game) -> None:
+    """A damage over time on the turn clock: its ticks by the rounds, not by the wall's clock.
+
+    The user, playing, 2026-10-02: "there's a environmental poison trap that
+    keeps hitting the party even during turn-based combat." Its ticks are a
+    script's own timer (EVENT_TYPE_DOT_TICK, re-armed every 1.5 s), which the
+    mod's hold on effects' time did not reach; DAOLib 48fe011 holds and
+    advances them with the clock (dao/Timers.h). The same timer under another
+    effect is tried here, since it can be put on at will: Lyna is given Walking
+    Bomb (20 s of damage over time) and casts it on an ogre with health to
+    spare. Nobody attacks the ogre, so each drop of its health is a tick.
+
+    Read five times a second: the ogre's health, the round and whose turn. The
+    party's turns are held for some seconds before they are ended, with nobody
+    acting: a tick in that wait is the fault the user saw. Wanted: no tick
+    while a turn waits on an order, two or three a round of 4 s, the last
+    about five rounds after the first.
+    """
+    begin_spiders(game)
+    spawned = game.tool(
+        "stage", {"action": "spawn", "template": "ogre_default", "point": [9, -2, 0]}
+    )
+    ogre = (spawned.get("creature") or {}).get("id")
+    print(f"{stamp()} spawn an ogre: {ogre} {spawned.get('error', '')}")
+    if not ogre:
+        return
+    print(
+        f"{stamp()} give Lyna Walking Bomb:",
+        str(
+            game.tool("script", {"command": "AddAbility", "args": [HERO, WALKING_BOMB]})
+        )[:120],
+    )
+
+    def health_of(who: str) -> float | None:
+        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = creature.get("creature", creature)
+        return (creature.get("health") or {}).get("current")
+
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    max_health(game, HERO)
+    answer = game.tool(
+        "order",
+        {"action": "ability", "id": HERO, "ability": WALKING_BOMB, "target": ogre},
+    )
+    after = settle(game, HERO)
+    print(
+        f"{stamp()} Walking Bomb on the ogre: {str(answer)[:100]}; before {left(state)}; after {left(after)}; "
+        f"last refusal {after.get('last_refusal')!r}"
+    )
+    last = health_of(ogre)
+    print(f"{stamp()} the ogre's health: {last}")
+    began = time.time()
+    ticks: list[dict] = []
+    waited: dict = {}  # (round, id) of a party turn held: when it was first seen
+    hold_seconds = 6.0
+    while time.time() - began < 240.0:
+        state = game.state()
+        if not state.get("active"):
+            print(f"{stamp()} the fight is over")
+            break
+        current = state.get("current") or {}
+        waiting = bool(current.get("yours")) and state.get("phase") == "awaiting order"
+        # A turn that ends early moves its creature's clock the rest of the
+        # way at once, and what falls due comes on the queue's next update:
+        # in the first moments of the next turn. Waiting is a second and a
+        # half into a party turn with nobody acting.
+        settled = (
+            waiting
+            and time.time()
+            - waited.get((state.get("round"), current.get("id")), time.time())
+            >= 1.5
+        )
+        health = health_of(ogre)
+        if health is not None and last is not None and health < last - 0.01:
+            tick = {
+                "at": round(time.time() - began, 1),
+                "round": state.get("round"),
+                "turn": current.get("name"),
+                "phase": state.get("phase"),
+                "waiting": settled,
+                "damage": round(last - health, 1),
+            }
+            ticks.append(tick)
+            print(f"{stamp()}   tick {len(ticks)}: {tick}")
+        if health is not None:
+            last = health
+        if waiting:
+            key = (state.get("round"), current.get("id"))
+            first = waited.setdefault(key, time.time())
+            if time.time() - first >= hold_seconds:
+                max_health(game, current["id"])
+                game.tool("turnbased_end_turn", {})
+        if ticks and state.get("round", 0) > ticks[0]["round"] + 9:
+            print(f"{stamp()} ten rounds since the first tick: enough")
+            break
+        time.sleep(0.2)
+    by_round: dict = {}
+    for tick in ticks:
+        by_round[tick["round"]] = by_round.get(tick["round"], 0) + 1
+    while_waiting = [t for t in ticks if t["waiting"]]
+    print(f"{stamp()} ticks by round: {by_round}")
+    print(
+        f"{stamp()} ticks in all: {len(ticks)}, damage {sum(t['damage'] for t in ticks):.1f}; "
+        f"while a party turn waited on an order ({hold_seconds:.0f} s each, nobody acting): {len(while_waiting)}"
+    )
+    if while_waiting:
+        print(f"{stamp()} TICKS WHILE NOBODY ACTED: {while_waiting}")
+    end_fight(game)
+
+
 SCENARIOS = {
+    "dot": scenario_dot,
+    "stealth": scenario_stealth,
     "hover": scenario_hover,
     "interrupt": scenario_interrupt,
     "look": scenario_look,
