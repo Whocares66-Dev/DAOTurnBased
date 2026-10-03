@@ -489,7 +489,7 @@ function drawDivider(bar, round, index, x)
 }
 
 // End and Delay: the inventory's leather button, a word on it, a command
-// to the plugin on release. Delay stands under End while the turn may be
+// to the plugin on release. Delay stands over End while the turn may be
 // put off to the round's end (nothing of it spent, once a round, someone
 // standing after it): `y` is the button's top.
 function drawButton(bar, name, depth, word, command, x, y, live)
@@ -579,16 +579,21 @@ function build(state)
         // is not to be had: End dropped to the middle as Delay went, and a
         // click where it had been missed it (play test 28). With no Delay
         // in the game (the setting) End stands alone at the middle.
+        // Delay above, End below (the user, 2026-10-03, issue 9: "Maybe
+        // the delay button should be on top of the end button"): End is
+        // pressed nearly every turn and the lower place is the nearer to
+        // the battlefield; Delay, to be had only before anything is spent,
+        // is the turn's first choice.
         var middle = TOP + (CARD_H - END_H) / 2;
         var apart = (END_H + BUTTON_GAP) / 2;
         var offered = state.delay == 1 || state.delay == 2;
         // Clear of the last card's shoulder, where a pending ability's icon
         // stands: it lay against End's edge (play test 29).
         var buttonsAt = x + GAP + 10;
-        drawButton(bar, "endTurn", 500, "End", "TB_EndTurn", buttonsAt, offered ? middle - apart : middle, true);
+        drawButton(bar, "endTurn", 500, "End", "TB_EndTurn", buttonsAt, offered ? middle + apart : middle, true);
         if (offered)
         {
-            drawButton(bar, "delay", 501, "Delay", "TB_Delay", buttonsAt, middle + apart, state.delay == 1);
+            drawButton(bar, "delay", 501, "Delay", "TB_Delay", buttonsAt, middle - apart, state.delay == 1);
         }
     }
     bar._x = Math.round((Stage.width - width) / 2);
