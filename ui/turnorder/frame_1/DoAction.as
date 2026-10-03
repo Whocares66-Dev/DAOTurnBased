@@ -575,7 +575,6 @@ function build(state)
     // End stands after them on the player's turn (the user: End made part of
     // the strip shifted its centring).
     var width = x - GAP;
-    var reach = width;
     if (state.playerTurn)
     {
         // Where Delay is offered the two stand one over the other about the
@@ -594,17 +593,19 @@ function build(state)
         {
             drawButton(bar, "delay", 501, "Delay", "TB_Delay", buttonsAt, middle + apart, state.delay == 1);
         }
-        reach = buttonsAt + END_W;
     }
     bar._x = Math.round((Stage.width - width) / 2);
-    // Behind the medallions (and End), a translucent black panel, square with
+    // Behind the medallions alone, a translucent black panel, square with
     // rounded corners and edges that fade out (the user: no tapering ends,
     // as the top menu's bar had); a small one of the same under the
-    // medallions' middle for the caption.
+    // medallions' middle for the caption. End and Delay stand outside it:
+    // taken in, the panel grew and shrank as they came and went with the
+    // player's turns (the user, 2026-10-02: "background only covers the
+    // portraits").
     // (The game's own "Paused", written across the top of the screen behind
     // the bar, is hidden by the plugin through a fight: src/game/Bar.cpp.
     // The plate was solid black over it while paused, for a day.)
-    panel(bar.createEmptyMovieClip("plate", 3), -16, TOP - 14, reach + 32, CARD_H + 34, 10);
+    panel(bar.createEmptyMovieClip("plate", 3), -16, TOP - 14, width + 32, CARD_H + 34, 10);
     // With a turn a bar of time, on the player's turn: the bar, and the
     // caption under it.
     var captionTop = TOP + CARD_H + 20;
@@ -681,6 +682,9 @@ function buildTime(bar, middle, top)
     }
     clip.createEmptyMovieClip("mark", 3);
     clip.createEmptyMovieClip("ticks", 4);
+    // Under the rest: a gold glow about the bar's bonus seconds, past a
+    // turn's own (Combat Tactics' and what rolled over).
+    clip.createEmptyMovieClip("bonus", 0);
 }
 
 function drawTime(state)
@@ -723,10 +727,21 @@ function drawTime(state)
     {
         fillRect(clip.ticks, TIME_INSET + inner * second / whole - 0.75, TIME_INSET, 1.5, tall, INK, 85);
     }
+    // The seconds past a turn's own glow gold about their edge, as a pending
+    // action's icon does: bonus time. A white mark stood there before, which
+    // the user found unclear: "we already have segments that show where 4s
+    // is. if we want to show clearly it's bonus, we can make the bonus part
+    // glow gold edge or something" (2026-10-02).
+    clip.bonus.clear();
     var turn = Number(state.turn);
     if (turn > 0 && whole > turn + 0.05)
     {
-        fillRect(clip.ticks, TIME_INSET + inner * turn / whole - 1, -2, 2, TIME_H + 4, PARCHMENT, 90);
+        var from = TIME_INSET + inner * turn / whole;
+        for (var layer = 1; layer <= 4; layer++)
+        {
+            roundedBox(clip.bonus, from - layer * 0.5, -layer, TIME_W - from + layer * 1.5, TIME_H + 2 * layer,
+                       2 + layer, 0xF0C850, 22);
+        }
     }
 }
 

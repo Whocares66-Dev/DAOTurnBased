@@ -1,6 +1,7 @@
 #include "core/Portraits.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace tb
@@ -117,6 +118,46 @@ std::wstring PortraitFamily(std::wstring_view label)
         }
     }
     return family;
+}
+
+float SizeOverPerson(float personalSpace)
+{
+    if (!std::isfinite(personalSpace) || personalSpace <= kPortraitPersonSpace)
+    {
+        return 1.0f;
+    }
+    return std::pow(personalSpace / kPortraitPersonSpace, kPortraitSizePower);
+}
+
+std::optional<PortraitFraming> FrameBySize(float personalSpace, float personDistance, float personX, float personZ)
+{
+    const std::optional<float> distance = PortraitDistance(personalSpace, personDistance);
+    if (!distance)
+    {
+        return std::nullopt;
+    }
+    const float more = SizeOverPerson(personalSpace) - 1.0f;
+    return PortraitFraming{*distance, personX + kPortraitXPerSize * more, personZ + kPortraitZPerSize * more};
+}
+
+std::optional<float> FollowZoom(float playerZoom, float personalSpace)
+{
+    const float more = SizeOverPerson(personalSpace) - 1.0f;
+    if (!(more > 0.0f) || !std::isfinite(playerZoom) || playerZoom < kZoomLeast)
+    {
+        return std::nullopt;
+    }
+    return std::max(kZoomLeast, std::min(playerZoom, playerZoom - kZoomPerSize * more));
+}
+
+std::optional<float> PortraitDistance(float personalSpace, float personDistance)
+{
+    if (!std::isfinite(personalSpace) || !std::isfinite(personDistance) || personDistance <= 0.0f ||
+        personalSpace <= kPortraitPersonSpace)
+    {
+        return std::nullopt;
+    }
+    return personDistance * std::pow(personalSpace / kPortraitPersonSpace, kPortraitSizePower);
 }
 
 PortraitChoice ChoosePortrait(std::int32_t appearance, std::wstring_view appearanceLabel, bool person,

@@ -9,6 +9,7 @@
 #include "dao/Gui.h"
 #include "dao/Log.h"
 #include "dao/Objects.h"
+#include "dao/Portraits.h"
 #include "dao/core/GdaHash.h"
 #include "dao/generated/ScriptApi.h"
 
@@ -304,6 +305,37 @@ const std::vector<PortraitRow> &PortraitRows()
     return rows;
 }
 
+// The portraits table's camera for a person (its Default row), read once.
+struct PersonCamera
+{
+    float distance = 0.675f;
+    float xAdjust = 0.007f;
+    float zAdjust = 0.038f;
+};
+
+PersonCamera PersonCameraOf()
+{
+    static const PersonCamera camera = [] {
+        PersonCamera read;
+        for (std::int32_t row = 0; row < dao::gda::Rows(kPortraitsTable).value_or(0); ++row)
+        {
+            const auto label = dao::gda::GetString(kPortraitsTable, row, dao::core::GdaColumnHash("Label"));
+            if (label && *label == L"Default")
+            {
+                const auto column = [&](std::string_view name, float fallback) {
+                    return dao::gda::GetFloat(kPortraitsTable, row, dao::core::GdaColumnHash(name)).value_or(fallback);
+                };
+                read.distance = column("CameraDistance", read.distance);
+                read.xAdjust = column("CameraXAdjust", read.xAdjust);
+                read.zAdjust = column("CameraZAdjust", read.zAdjust);
+                break;
+            }
+        }
+        return read;
+    }();
+    return camera;
+}
+
 // A person (the appearance table's ModelType H, or P for the races a player
 // is of) has a face the default camera frames; W and S are creatures. An
 // appearance the table does not know is taken for a person's, as before.
@@ -354,6 +386,24 @@ void BarLink::KeepPortraits(const TurnView &view, bool render)
             how = "the game's";
             if (url.empty() && render)
             {
+                // A creature bigger than a person, framed from further back
+                // (core: PortraitDistance); the rest of the camera the
+                // table's.
+                const float space =
+                    dao::gda::GetFloat(dao::script::Table::Appearance, looks.appearance, "PerSpace").value_or(0.0f);
+                const PersonCamera person = PersonCameraOf();
+                if (const std::optional<PortraitFraming> frame =
+                        FrameBySize(space, person.distance, person.xAdjust, person.zAdjust))
+                {
+                    dao::portraits::Camera camera;
+                    camera.distance = frame->distance;
+                    camera.xAdjust = frame->xAdjust;
+                    camera.zAdjust = frame->zAdjust;
+                    dao::portraits::SetCamera(*id, camera);
+                    spdlog::info("{:#010x} is bigger than a person (personal space {:.2f}): its portrait is framed "
+                                 "from {:.2f} m, {:.2f} m aside, {:.2f} m up",
+                                 *id, space, frame->distance, frame->xAdjust, frame->zAdjust);
+                }
                 url = creature->RenderPortrait();
                 how = "rendered";
                 rendered = !url.empty();

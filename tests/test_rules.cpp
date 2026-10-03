@@ -445,3 +445,24 @@ TEST_CASE("a time no swing could take is not kept", "[rules][time]")
                                               std::numeric_limits<float>::infinity());
     CHECK(odd == tb::LearnedSwings::KeyOf(tb::WeaponStyle::Single, 0.0f, 0.0f));
 }
+
+TEST_CASE("a shot costs what its archer's last shot took, by its attack speed", "[rules][time]")
+{
+    using Catch::Approx;
+    // The user, of the flat 1.4 and 1.6 s: "we should read these".
+    tb::LearnedSwings shots;
+    const auto tamlen = tb::LearnedSwings::ShotOf(0x10d, 1.0f);
+    CHECK_FALSE(shots.Seconds(tamlen)); // the first: the flat figure, the caller's
+    REQUIRE(shots.Learn(tamlen, 1.41f));
+    CHECK(*shots.Seconds(tamlen) == Approx(1.41f));
+    // Another archer, or the same one hasted: their own.
+    CHECK_FALSE(shots.Seconds(tb::LearnedSwings::ShotOf(0x82, 1.0f)));
+    CHECK_FALSE(shots.Seconds(tb::LearnedSwings::ShotOf(0x10d, 0.75f)));
+    // Not a swing's key, whatever its numbers.
+    CHECK_FALSE(shots.Seconds(tb::LearnedSwings::KeyOf(tb::WeaponStyle::Ranged, 0.0f, 1.0f)));
+    // The mean of the last two: measured shots differ by a tenth.
+    REQUIRE(shots.Learn(tamlen, 1.81f));
+    CHECK(*shots.Seconds(tamlen) == Approx(1.61f));
+    REQUIRE(shots.Learn(tamlen, 1.61f));
+    CHECK(*shots.Seconds(tamlen) == Approx(1.71f));
+}

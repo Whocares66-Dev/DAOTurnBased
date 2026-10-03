@@ -1368,7 +1368,183 @@ def scenario_lands(game: Game) -> None:
     end_fight(game)
 
 
+SPIDER_OVERWHELM = 90133  # ABI_base: MONSTER_SPIDER_OVERWHELM
+
+
+def scenario_overwhelm(game: Game) -> None:
+    """A spider's Overwhelm on Lyna: it should end in its own seconds, and she owe that time.
+
+    Play test 33: an Overwhelm never ended on own clocks, was stopped after
+    36 s, and its victim owed 31.8 s. Its steps now move the shared clock too
+    (what ends it may be on neither creature), and a stopped one owes
+    nothing. On a spider's turn it is ordered to Overwhelm Lyna; the log says
+    how long its own effect ran, whether it was stopped, and what Lyna owes
+    ("held ... by another's action", or her turn lost).
+    """
+    cursor = begin_spiders(game)
+    spider = None
+    for _ in range(600):
+        state = game.state()
+        current = state.get("current") or {}
+        if current and not current.get("yours") and current.get("side") == "enemy":
+            spider = current.get("id")
+            break
+        if current.get("yours") and state.get("phase") == "awaiting order":
+            max_health(game, current["id"])
+            game.tool("turnbased_end_turn", {})
+        time.sleep(0.2)
+    if not spider:
+        print(f"{stamp()} no spider's turn came")
+        return
+    answer = game.tool(
+        "order",
+        {
+            "action": "ability",
+            "id": spider,
+            "ability": SPIDER_OVERWHELM,
+            "target": HERO,
+        },
+    )
+    print(f"{stamp()} {spider} told to Overwhelm Lyna: {str(answer)[:140]}")
+    began = time.time()
+    for _ in range(300):
+        state = game.state()
+        current = state.get("current") or {}
+        if current.get("id") != spider:
+            break
+        time.sleep(0.2)
+    print(
+        f"{stamp()} the spider's turn lasted {time.time() - began:.1f} s of the wall's clock"
+    )
+    state = wait_turn(game, HERO, seconds=180.0)
+    print(f"{stamp()} Lyna's turn: {left(state) if state else 'none came'}")
+    show_events(game, cursor, names=("Lyna",))
+    end_fight(game)
+
+
+def scenario_bonus(game: Game) -> None:
+    """A turn with bonus seconds (what rolled over): a picture of its bar, the bonus glowing at its edge.
+
+    Lyna ends her first turn with all of it left; a second rolls over, and
+    her next turn's bar is 5 s, its last second the bonus (the user: "we can
+    make the bonus part glow gold edge or something", 2026-10-02).
+    """
+    cursor = begin_spiders(game)
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    max_health(game, HERO)
+    game.tool("turnbased_end_turn", {})
+    time.sleep(1.0)
+    state = wait_turn(game, HERO, seconds=120.0)
+    if state is None:
+        return
+    max_health(game, HERO)
+    time.sleep(1.2)
+    picture(game, "bonus-glow")
+    print(f"{stamp()} her turn: {left(state)}")
+    show_events(game, cursor, names=("Lyna",))
+    end_fight(game)
+
+
+INFERNO = 10002  # ABI_base: a 30 s area on the ground, a pulse about every 4 s
+
+
+def scenario_inferno(game: Game) -> None:
+    """An Inferno on the ground: its pulses by the rounds, and how many rounds it lasts.
+
+    The user, 2026-10-02: an area's time should count "4s for a full round
+    (everyone's turn)... if it counted every turn it'd end too early." An
+    area is on the shared clock, which moves 4 s as each round begins, its
+    pulses (EVENT_TYPE_AOE_HEARTBEAT, held by DAOLib) with it. Lyna casts
+    Inferno where a spider stands; then, five times a second, the spiders'
+    health is read with the round and whose turn it is, and a spider struck
+    is healed again to keep it there. Wanted: a pulse about once a round (its
+    4.05 s), as the round begins; the area gone after about eight rounds (30
+    s); none while a turn waits.
+    """
+    begin_spiders(game)
+    game.tool("script", {"command": "AddAbility", "args": [HERO, INFERNO]})
+    state = wait_turn(game, HERO)
+    if state is None:
+        return
+    max_health(game, HERO)
+    targets = game.hostiles(HERO)
+    if not targets:
+        return
+    target = min(targets, key=lambda c: c.get("distance", 99.0))
+    spot = game.tool("inspect", {"kind": "creature", "id": target["id"]})
+    spot = spot.get("creature", spot).get("position") or {}
+    point = [spot.get("x", 0.0), spot.get("y", 0.0), spot.get("z", 0.0)]
+    answer = game.tool(
+        "order", {"action": "ability", "id": HERO, "ability": INFERNO, "point": point}
+    )
+    print(f"{stamp()} Inferno at {point}: {str(answer)[:120]}")
+    spiders = [c["id"] for c in targets]
+
+    def health_of(who: str) -> float | None:
+        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = creature.get("creature", creature)
+        return (creature.get("health") or {}).get("current")
+
+    last = {who: health_of(who) for who in spiders}
+    began = time.time()
+    first_round = None
+    pulses: list[dict] = []
+    waited: dict = {}
+    while time.time() - began < 300.0:
+        state = game.state()
+        if not state.get("active"):
+            print(f"{stamp()} the fight is over")
+            break
+        current = state.get("current") or {}
+        rnd = state.get("round", 0)
+        if first_round is None:
+            first_round = rnd
+        for who in spiders:
+            health = health_of(who)
+            if (
+                health is not None
+                and last.get(who) is not None
+                and health < last[who] - 0.01
+            ):
+                pulses.append(
+                    {
+                        "at": round(time.time() - began, 1),
+                        "round": rnd,
+                        "turn": current.get("name"),
+                        "phase": state.get("phase"),
+                        "who": who,
+                        "damage": round(last[who] - health, 1),
+                    }
+                )
+                print(f"{stamp()}   struck: {pulses[-1]}")
+                max_health(game, who)
+                health = health_of(who)
+            last[who] = health
+        if current.get("yours") and state.get("phase") == "awaiting order":
+            key = (rnd, current.get("id"))
+            first = waited.setdefault(key, time.time())
+            if time.time() - first >= 3.0:
+                max_health(game, current["id"])
+                game.tool("turnbased_end_turn", {})
+        if rnd - (first_round or rnd) >= 12:
+            break
+        time.sleep(0.2)
+    by_round: dict = {}
+    for p in pulses:
+        by_round[p["round"]] = by_round.get(p["round"], 0) + 1
+    print(f"{stamp()} strikes by round: {by_round}")
+    rounds = sorted(by_round)
+    if rounds:
+        print(f"{stamp()} the area struck from round {rounds[0]} to round {rounds[-1]}")
+    end_fight(game)
+
+
 SCENARIOS = {
+    "inferno": scenario_inferno,
+    "bonus": scenario_bonus,
+    "overwhelm": scenario_overwhelm,
     "lands": scenario_lands,
     "conjure": scenario_conjure,
     "dot": scenario_dot,

@@ -393,8 +393,8 @@ MUTANTS = [
     Mutant(
         "an AI held by an effect is told its turn has come",
         MACHINE,
-        " && seenActor_->current == CommandType::ExecuteEffect)",
-        " && seenActor_->current == CommandType::Invalid)",
+        "        seenActor_->current == CommandType::ExecuteEffect && !GettingUp())",
+        "        seenActor_->current == CommandType::Invalid && !GettingUp())",
     ),
     Mutant(
         "an AI an effect let go within the grace is never told again",
@@ -693,8 +693,8 @@ MUTANTS = [
     Mutant(
         "an action's effect time is spent again at the round's end",
         MACHINE,
-        "            roundAgedMs_ += ran;",
-        "            ;",
+        "            else\n            {\n                roundAgedMs_ += ran;",
+        "            else\n            {\n                ;",
     ),
     Mutant(
         "an effect that held a creature before its turn runs the clock",
@@ -1708,8 +1708,8 @@ MUTANTS = [
     Mutant(
         "a party member's lost turn is said in grey",
         MACHINE,
-        '    Floaty(fx, who.id, who.name + L" loses the turn", who.side == Side::Party ? kGold : kGrey);',
-        '    Floaty(fx, who.id, who.name + L" loses the turn", kGrey);',
+        '    Floaty(fx, who.id, who.name + L" loses the turn", who.side == Side::Party ? kGold : kGrey);\n    EndTurn(fx, "held by its condition");',
+        '    Floaty(fx, who.id, who.name + L" loses the turn", kGrey);\n    EndTurn(fx, "held by its condition");',
     ),
     Mutant(
         "an elite boss's Combat Tactics stops at a player's ranks",
@@ -1726,20 +1726,20 @@ MUTANTS = [
     Mutant(
         "a swing's time is kept whatever the weapon",
         "src/core/Rules.cpp",
-        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier)};",
-        "    return Key{style, milli(weaponSpeed) * 0, milli(attackSpeedModifier)};",
+        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier), kNoObject};",
+        "    return Key{style, milli(weaponSpeed) * 0, milli(attackSpeedModifier), kNoObject};",
     ),
     Mutant(
         "a swing's time is kept whatever the attack speed",
         "src/core/Rules.cpp",
-        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier)};",
-        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier) * 0};",
+        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier), kNoObject};",
+        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier) * 0, kNoObject};",
     ),
     Mutant(
         "a swing's time is kept whatever the weapon style",
         "src/core/Rules.cpp",
-        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier)};",
-        "    return Key{style == WeaponStyle::Dual ? style : WeaponStyle::Single, milli(weaponSpeed), milli(attackSpeedModifier)};",
+        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier), kNoObject};",
+        "    return Key{style == WeaponStyle::Dual ? style : WeaponStyle::Single, milli(weaponSpeed), milli(attackSpeedModifier), kNoObject};",
     ),
     Mutant(
         "a time no swing could take is kept",
@@ -1762,14 +1762,14 @@ MUTANTS = [
     Mutant(
         "one weapon's swing is a mean of the last two",
         "src/core/Rules.cpp",
-        "    if (key.style == WeaponStyle::Dual && read.before > 0.0f)",
+        "    if ((key.style == WeaponStyle::Dual || key.style == WeaponStyle::Ranged) && read.before > 0.0f)",
         "    if (read.before > 0.0f)",
     ),
     Mutant(
         "a weapon in each hand: the last swing, not the mean",
         "src/core/Rules.cpp",
-        "    if (key.style == WeaponStyle::Dual && read.before > 0.0f)",
-        "    if (key.style == WeaponStyle::TwoHanded && read.before > 0.0f)",
+        "    if ((key.style == WeaponStyle::Dual || key.style == WeaponStyle::Ranged) && read.before > 0.0f)",
+        "    if ((key.style == WeaponStyle::TwoHanded || key.style == WeaponStyle::Ranged) && read.before > 0.0f)",
     ),
     Mutant(
         "the fourth rank of Combat Training is the shipped script's whatever is installed",
@@ -1828,14 +1828,14 @@ MUTANTS = [
     Mutant(
         "an effect not seen as the turn began holds its creature for max_action_ms",
         MACHINE,
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0)\n        {\n            heldByEffect_ = true;",
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands < 0)\n        {\n            heldByEffect_ = true;",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 && !GettingUp())",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands < 0 && !GettingUp())",
     ),
     Mutant(
         "its own action's effect is taken for one that holds it",
         MACHINE,
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0)\n        {\n            heldByEffect_ = true;",
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect)\n        {\n            heldByEffect_ = true;",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 && !GettingUp())",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && !GettingUp())",
     ),
     Mutant(
         "own clocks: a creature's effects do not move as its bar is spent",
@@ -1888,8 +1888,8 @@ MUTANTS = [
     Mutant(
         "own clocks: an action's own effect does not move its target's clock",
         MACHINE,
-        "                    victim != kNoObject && victim != acting->id && order_.Find(victim) != nullptr)",
-        "                    victim != kNoObject && victim == acting->id && order_.Find(victim) != nullptr)",
+        "                if (held)\n                {\n                    Effect aged = Effect::Of(EffectKind::AgeTime, victim);",
+        "                if (false)\n                {\n                    Effect aged = Effect::Of(EffectKind::AgeTime, victim);",
     ),
     Mutant(
         "the engine's conjuring: a spell that conjures is kept in the gate",
@@ -1944,6 +1944,108 @@ MUTANTS = [
         MACHINE,
         "    if (budget_.conjureWaiting && kind != CommandKind::Free)",
         "    if (budget_.conjureWaiting && kind == CommandKind::Involuntary)",
+    ),
+    Mutant(
+        "a creature held by another's action owes nothing",
+        MACHINE,
+        "                grabbedMs_[victim] += ran;\n                budget_.grabbedNowMs += ran;",
+        "                grabbedMs_[victim] += 0;\n                budget_.grabbedNowMs += ran;",
+    ),
+    Mutant(
+        "held by another's action, a turn's worth or more is not a lost turn",
+        MACHINE,
+        "        Timed() && grabbed != grabbedMs_.end() && grabbed->second >= TurnMs())",
+        "        Timed() && grabbed != grabbedMs_.end() && grabbed->second >= TurnMs() * 100)",
+    ),
+    Mutant(
+        "held by another's action, its share is not taken of its bar",
+        MACHINE,
+        "    const std::uint32_t clock = budget_.spend.HoldClock(owed);\n    AgeCooldowns(who.id, clock, fx);",
+        "    const std::uint32_t clock = budget_.spend.HoldClock(0);\n    AgeCooldowns(who.id, clock, fx);",
+    ),
+    Mutant(
+        "held by another's action, its effects are moved again at its turn",
+        MACHINE,
+        "    clockSeenMs_ = budget_.spend.ClockElapsedMs();\n    budget_.agedOwnMs += clock;",
+        "    budget_.agedOwnMs += 0;",
+    ),
+    Mutant(
+        "own clocks: an action's own effect does not move the shared clock",
+        MACHINE,
+        "                Effect shared = Effect::Of(EffectKind::AgeTime);\n                shared.b = static_cast<std::int32_t>(ran);\n                fx.push_back(shared);",
+        "                Effect shared = Effect::Of(EffectKind::AgeTime);\n                shared.b = static_cast<std::int32_t>(ran);",
+    ),
+    Mutant(
+        "own clocks: the round's shared worth is not lessened by an action's own effect",
+        MACHINE,
+        "                fx.push_back(shared);\n                roundAgedMs_ += ran;",
+        "                fx.push_back(shared);",
+    ),
+    Mutant(
+        "an action stopped as too long leaves its target owing it",
+        MACHINE,
+        "                debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0));",
+        "                debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0) * 0);",
+    ),
+    Mutant(
+        "a creature bigger than a person is framed from a person's distance",
+        "src/core/Portraits.cpp",
+        "    return personDistance * std::pow(personalSpace / kPortraitPersonSpace, kPortraitSizePower);",
+        "    return personDistance * personalSpace / kPortraitPersonSpace;",
+    ),
+    Mutant(
+        "a person is framed from further back",
+        "src/core/Portraits.cpp",
+        "        personalSpace <= kPortraitPersonSpace)",
+        "        personalSpace < 0.0f)",
+    ),
+    Mutant(
+        "a creature getting up from a hold the machine ended is taken for held",
+        MACHINE,
+        "    return current != nullptr && endedFor_ == current->id;",
+        "    return current == nullptr && endedFor_ == current->id;",
+    ),
+    Mutant(
+        "after its action is kept, a creature may still start something",
+        MACHINE,
+        "    if ((chargeBegan_ || pendingEndNow_) && kind != CommandKind::Involuntary)",
+        "    if ((chargeBegan_ || pendingEndNow_) && kind == CommandKind::Action)",
+    ),
+    Mutant(
+        "a door costs nothing with time",
+        MACHINE,
+        "        if (Timed() && UsesAnObject(request.type) && settings_.objectSeconds > 0.0f)",
+        "        if (Timed() && UsesAnObject(request.type) && settings_.objectSeconds > 100.0f)",
+    ),
+    Mutant(
+        "a door's cost that does not fit is not owed",
+        MACHINE,
+        "            if (const std::uint32_t owed = budget_.spend.SpendAction(cost); owed > 0)\n            {\n                Owe(who->id, owed, request.type, -1);",
+        "            if (const std::uint32_t owed = budget_.spend.SpendAction(cost); owed > 100000)\n            {\n                Owe(who->id, owed, request.type, -1);",
+    ),
+    Mutant(
+        "a pickup is not an object's use",
+        "src/core/Rules.cpp",
+        "    case CommandType::GiveItem:\n    case CommandType::TakeItem:\n    case CommandType::PickupItem:\n        return true;",
+        "    case CommandType::GiveItem:\n    case CommandType::TakeItem:\n        return true;",
+    ),
+    Mutant(
+        "a shot is kept whoever its archer",
+        "src/core/Rules.cpp",
+        "    key.archer = archer;",
+        "    key.archer = archer & 0U;",
+    ),
+    Mutant(
+        "a shot is the last one's, not a mean",
+        "src/core/Rules.cpp",
+        "    if ((key.style == WeaponStyle::Dual || key.style == WeaponStyle::Ranged) && read.before > 0.0f)",
+        "    if ((key.style == WeaponStyle::Dual) && read.before > 0.0f)",
+    ),
+    Mutant(
+        "a creature that falls still owes the time it was held",
+        MACHINE,
+        "            if (c->down)\n            {\n                grabbedMs_.erase(c->id);\n            }",
+        "            if (c->down && false)\n            {\n                grabbedMs_.erase(c->id);\n            }",
     ),
 ]
 
@@ -2028,8 +2130,11 @@ def build(worker: Path, jobs: int) -> subprocess.CompletedProcess[str]:
 
 
 def test(mutant: Mutant, worker: Path) -> str:
-    """One mutant, in a worker's copy; the tree itself is only read."""
-    original = (REPO / mutant.file).read_text(encoding="utf-8")
+    """One mutant, in a worker's copy, from the copy as it was made: an edit to
+    the tree while mutants run is not taken up half way (it was, read from the
+    tree each time: a run whose mutants "did not compile" by the dozen,
+    2026-10-02)."""
+    original = (worker / mutant.file).read_text(encoding="utf-8")
     if original.count(mutant.old) != 1:
         return f"not applied: the text is in {mutant.file} {original.count(mutant.old)} times"
     path = worker / mutant.file

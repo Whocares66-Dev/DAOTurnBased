@@ -3118,3 +3118,21 @@ TEST_CASE("held by an effect on the fight's first turn, a creature loses it afte
         return line.find("is held by an effect: its turn is lost") != std::string::npos;
     }));
 }
+
+TEST_CASE("the fight's speed is set as a turn begins, before the camera moves to it", "[machine]")
+{
+    // Twice, the pan to the hero's turn, issued before the speed changed,
+    // never arrived (play tests 2 and 5, 2026-09-30): the speed first.
+    Settings s = Fixed();
+    s.fightSpeed = 2.0f;
+    s.cameraFollow = true;
+    World w(s);
+    w.StartFight();
+    w.Frame();
+    const auto speed = std::ranges::find_if(w.applied, [](const Effect &e) { return e.kind == EffectKind::GameSpeed; });
+    const auto camera =
+        std::ranges::find_if(w.applied, [](const Effect &e) { return e.kind == EffectKind::CenterCamera; });
+    REQUIRE(speed != w.applied.end());
+    REQUIRE(camera != w.applied.end());
+    CHECK(speed < camera);
+}

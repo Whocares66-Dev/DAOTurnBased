@@ -211,13 +211,24 @@ class LearnedSwings
         WeaponStyle style = WeaponStyle::None;
         std::int32_t weaponSpeedMs = 0; // the main hand's dspeed
         std::int32_t modifierMilli = 0; // the attack speed modifier
+        ObjectId archer = kNoObject;    // a shot's: its archer's own
         auto operator<=>(const Key &) const = default;
     };
     [[nodiscard]] static Key KeyOf(WeaponStyle style, float weaponSpeed, float attackSpeedModifier);
+    // A bow's shot, kept by its archer and its attack speed: its time is the
+    // game's draw and aim for that archer (combat_h.nss: 0.8 s drawing for a
+    // follower, 1.5 s for the player's own character, 2 to 2.5 s in heavy
+    // armour, 0.3 s with a staff; then an aim by the bow and the archer's
+    // talents and speed), which the engine keeps where DAOLib could not read
+    // it back: so what a shot took, measured, is what the next costs (the
+    // user, 2026-10-02, of the flat 1.4 and 1.6 s: "we should read these").
+    [[nodiscard]] static Key ShotOf(ObjectId archer, float attackSpeedModifier);
     // Kept if it is a time a swing could take (kLeast to kMost): true then.
     bool Learn(const Key &key, float seconds);
     // The last one set; for a weapon in each hand the mean of the last two,
-    // since the hands take turns and each has its own time.
+    // since the hands take turns and each has its own time; for a shot the
+    // mean of the last two too, measured shots differing by a tenth of a
+    // second (Tamlen's 1.59 to 1.72 s, a run with no hands, 2026-10-02).
     [[nodiscard]] std::optional<float> Seconds(const Key &key) const;
     static constexpr float kLeast = 0.25f;
     static constexpr float kMost = 10.0f;
@@ -277,6 +288,10 @@ inline constexpr float kCastShareOfAnimation = 0.84f;
 // - anyone else's: its rank's nCombatTraining in the game's autoscale table
 //   (TrainingOfRankAsShipped where that is not read).
 [[nodiscard]] float InterruptThreshold(bool party, int combatTraining, int level);
+
+// A thing that is not fighting done with an object: a door, a chest, a lever,
+// a lock, a thing picked up, taken or handed over ([costs] object).
+[[nodiscard]] bool UsesAnObject(CommandType type);
 [[nodiscard]] int TrainingOfRankAsShipped(int creatureRank);
 
 // The four abilities a compiled rules_core counts as Combat Training's

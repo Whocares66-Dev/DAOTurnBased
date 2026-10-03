@@ -283,6 +283,7 @@ const std::vector<Entry> &Entries()
         {"turns", "seconds_per_turn", Float(&Settings::secondsPerTurn, 1.0f, 30.0f)},
         {"turns", "free_step", Float(&Settings::freeStepMeters, 0.0f, 10.0f)},
         {"turns", "pace", Float(&Settings::paceMps, 0.5f, 20.0f)},
+        {"costs", "object", Float(&Settings::objectSeconds, 0.0f, 10.0f)},
         {"turns", "enemy_tactics",
          [](Settings &s, std::string_view text) -> std::string {
              // "0, 0, 2, 4, 6": by rank, critter to elite boss.
@@ -624,6 +625,13 @@ pace = 4.66
 ; lieutenant has half a second more a turn, a boss a second, an elite boss a
 ; second and a half. 0 to 8.
 enemy_tactics = 0, 0, 2, 4, 6
+
+[costs]
+; With clock = time, what the things that are not fighting cost of a turn's
+; bar, in seconds: a door, a chest or a lever used, a lock, a thing picked
+; up, taken or handed over. What does not fit is owed of the next turn. 0
+; for nothing.
+object = 0.5
 
 [feedback]
 ; The game's floating text: whose turn it is, out of movement, not your turn.

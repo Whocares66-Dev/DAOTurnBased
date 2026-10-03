@@ -83,6 +83,7 @@ struct Task
     bool story = false;     // given during a conversation: the cutscene's, not a turn's
     bool held = false;      // a condition's command: it lasts as long as the condition
     bool conjuring = false; // the engine's own spell, held in its conjure until released
+    bool grab = false;      // an ability whose own effect holds its creature and its target, after it
 };
 
 // Counts over every fight, so a run shows the generator reached the states
@@ -120,6 +121,7 @@ struct Coverage
     int kept = 0;           // actions that did not fit, kept for a later turn
     int landed = 0;         // kept actions given again and let through
     int conjured = 0;       // spells given to the engine to conjure, held
+    int grabs = 0;          // abilities whose own effect held their creature and their target
     int conjureLanded = 0;  // of them, let complete as their time was paid
     int conjureCleared = 0; // of them, cleared by the game before (rules_core, a knockdown)
     int wholeTurns = 0;     // turns spent whole on what a kept action owed
@@ -481,6 +483,29 @@ class Arena
             conjures = true;
             seconds = Between(rng_, 2.5f, 7.0f);
         }
+        // An ability aimed at an opponent whose own effect holds its creature
+        // and its target after it (an ogre's grab, a spider's Overwhelm).
+        ObjectId grabbed = kNoObject;
+        if (timed && !item && !conjures && type == CommandType::UseAbility && !sustained && Chance(rng_, 0.2))
+        {
+            const Creature &self = world_.Get(id);
+            const auto opponents = Living(self.side == Side::Enemy
+                                              ? +[](const Creature &c) { return c.side != Side::Enemy; }
+                                              : +[](const Creature &c) { return c.side == Side::Enemy && c.fighting; });
+            if (!opponents.empty())
+            {
+                grabbed = Pick(rng_, opponents);
+            }
+        }
+        CommandRequest grab;
+        grab.object = id;
+        grab.type = CommandType::UseAbility;
+        grab.source = source;
+        grab.inCombat = world_.Get(id).fighting;
+        grab.ability = 90036;
+        grab.cooldownSeconds = cooldown;
+        grab.actionSeconds = 1.0f;
+        grab.target = grabbed;
         CommandRequest spell;
         spell.object = id;
         spell.type = CommandType::UseAbility;
@@ -494,8 +519,9 @@ class Arena
         spell.actionSeconds = seconds;
         const std::uint32_t timeLeft = active ? world_.machine.View().timeLeftMs : 0;
         const Verdict verdict =
-            item       ? world_.Order(id, CommandType::UseItem, source, std::nullopt, seconds)
-            : conjures ? world_.Queue(spell)
+            item                   ? world_.Order(id, CommandType::UseItem, source, std::nullopt, seconds)
+            : conjures             ? world_.Queue(spell)
+            : grabbed != kNoObject ? world_.Queue(grab)
             : type == CommandType::UseAbility
                 ? world_.UseAbility(id, source, ability, cooldown, sustained, on)
                 : world_.Order(id, type, source, told ? std::optional{walk} : std::nullopt, seconds);
@@ -578,6 +604,12 @@ class Arena
             task.target = Pick(rng_, opponents);
         }
         task.story = world_.mode == Mode::Dialog;
+        if (grabbed != kNoObject)
+        {
+            task.grab = true;
+            task.target = grabbed;
+            task.workMs = 400;
+        }
         // What the engine puts in front of a spell held in its conjure (a
         // knockdown's effect) clears it, as the game does.
         ConjureBroken(id);
@@ -920,6 +952,19 @@ class Arena
             const Task done = task;
             tasks_.erase(found);
             world_.Finish(id);
+            // A grab: its own effect holds it (and its target) a while, the
+            // engine's command in front; the machine runs both clocks by it.
+            if (done.grab && id == world_.Current() && world_.machine.Active() && done.target != kNoObject &&
+                !world_.Get(done.target).down)
+            {
+                Task held{CommandType::ExecuteEffect};
+                held.workMs = static_cast<std::int32_t>(Between(rng_, 1000.0f, 9000.0f));
+                tasks_[id] = held;
+                world_.Get(id).busy = true;
+                world_.Get(id).current = CommandType::ExecuteEffect;
+                ++coverage_.grabs;
+                continue;
+            }
             if (done.type == CommandType::Attack && done.target != kNoObject)
             {
                 Creature &victim = world_.Get(done.target);
@@ -1555,6 +1600,8 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     // paid, some cleared by the game before.
     // (2026-10-02: 65 given to the engine to conjure, 14 let complete as
     // their time was paid, 32 cleared by the game before.)
+    // Grabs, their targets owing the time (2026-10-02: see the run's count).
+    CHECK(coverage.grabs > 0);
     CHECK(coverage.conjured > 22);
     CHECK(coverage.conjureLanded > 4);
     CHECK(coverage.conjureCleared > 10);

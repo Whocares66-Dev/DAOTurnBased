@@ -1599,6 +1599,14 @@ TEST_CASE("the engine's own conjuring: a spell that does not fit is begun at onc
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
     CHECK(w.machine.View().timeLeftMs == 2500); // 4 s, less the 1.5 s it owed
     CHECK(w.machine.State().charging.empty());
+    // Nothing was waited for at the gate: the engine cast it.
+    CHECK(std::ranges::none_of(w.log,
+                               [](const std::string &line) { return line.find("did not come") != std::string::npos; }));
+    // Landed, it is done with: the same spell again is a new cast and costs
+    // its time, not let through for nothing as a kept one given again is.
+    CHECK(w.Queue(Conjured(kHero, 2.0f)) == Verdict::Allow);
+    w.RunFor(100);
+    CHECK(w.machine.View().timeLeftMs == 500);
 }
 
 TEST_CASE("the engine's own conjuring cleared before its time is paid: the spell is lost, and nothing more is owed",
@@ -1670,4 +1678,269 @@ TEST_CASE("the engine's own conjuring that fails before it conjures is not pendi
     w.RunFor(300);
     CHECK(w.machine.State().charging.empty());
     CHECK(w.Current() == kHero); // its action given back, its turn goes on
+}
+
+namespace
+{
+// The genlock, first, grabs the hero for so many ms of the hero's own clock
+// (an ogre's grab: an effect on each, the genlock's command ending when the
+// hero's does).
+void Grab(World &w, std::uint32_t heldMs)
+{
+    bool poked = false;
+    w.onPoke = [&](ObjectId id) {
+        if (poked || id != kGenlock)
+        {
+            return;
+        }
+        poked = true;
+        CommandRequest grab;
+        grab.object = id;
+        grab.target = kHero;
+        grab.type = CommandType::UseAbility;
+        grab.source = Source::Script;
+        grab.ability = 90036;
+        grab.inCombat = true;
+        grab.actionSeconds = 1.0f;
+        CHECK(w.Queue(grab) == Verdict::Allow);
+    };
+    w.StartFight();
+    for (int i = 0; i < 20 && !poked; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(poked);
+    REQUIRE(w.Current() == kGenlock);
+    w.RunFor(200);
+    w.Get(kGenlock).busy = true;
+    w.Get(kGenlock).current = CommandType::ExecuteEffect;
+    const std::int64_t before = w.agedOwn[kHero];
+    for (int i = 0; i < 4000 && w.Current() == kGenlock; ++i)
+    {
+        if (w.Get(kGenlock).busy && w.agedOwn[kHero] - before >= heldMs)
+        {
+            w.Finish(kGenlock);
+        }
+        w.Frame();
+    }
+    w.onPoke = nullptr;
+}
+
+std::vector<Creature> GenlockFirst()
+{
+    std::vector<Creature> fight = StandardFight();
+    fight.at(1).dexterity = 30.0f;
+    return fight;
+}
+} // namespace
+
+TEST_CASE("a creature held by another's action owes that time of its next turn's bar", "[time]")
+{
+    // The user, 2026-10-02: "yeah your proposal on grab makes sense" (in real
+    // time it could do nothing while held).
+    World w(Timed(), GenlockFirst());
+    Grab(w, 2400);
+    UntilTurnOf(w, kHero);
+    REQUIRE(w.Current() == kHero);
+    // About 2.4 s of its 4 s bar gone; the grab's steps are a quarter second.
+    CHECK(w.machine.View().timeLeftMs <= 1700);
+    CHECK(w.machine.View().timeLeftMs >= 1300);
+    CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
+        return line.find("Hero was held") != std::string::npos && line.find("by another's action") != std::string::npos;
+    }));
+    // Its effects moved with the grab, and not again: a turn's seconds in all
+    // for the grab's span and this, its first turn.
+    (void)w.machine.OnEndTurn();
+    w.RunFor(300);
+    CHECK(w.agedOwn[kHero] <= 4300);
+    CHECK(w.agedOwn[kHero] >= 3700);
+}
+
+TEST_CASE("held by another's action for more than a turn: the turn is lost, the rest of the next is owed", "[time]")
+{
+    // A spider's Overwhelm, 9.3 s.
+    World w(Timed(), GenlockFirst());
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    Grab(w, 5000);
+    for (int i = 0; i < 4000 && w.Current() != kHero; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnEndTurn();
+        }
+        w.Frame();
+    }
+    // Its turn this round lost.
+    w.RunFor(100);
+    CHECK(std::ranges::any_of(events,
+                              [](const TurnEvent &e) { return e.kind == EventKind::TurnLost && e.who == kHero; }));
+    CHECK(w.Said(L"Hero loses the turn"));
+    // The next: a turn's bar less the second over.
+    UntilTurnOf(w, kHero);
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.machine.View().timeLeftMs <= 3200);
+    CHECK(w.machine.View().timeLeftMs >= 2700);
+}
+
+TEST_CASE("a creature's own action's effect owes nobody else's time when it has no target in the fight", "[time]")
+{
+    World w(Timed(), GenlockFirst());
+    bool poked = false;
+    w.onPoke = [&](ObjectId id) {
+        if (poked || id != kGenlock)
+        {
+            return;
+        }
+        poked = true;
+        CHECK(w.UseAbility(id, Source::Script, 90133, 60.0f) == Verdict::Allow); // no target
+    };
+    w.StartFight();
+    for (int i = 0; i < 20 && !poked; ++i)
+    {
+        w.Frame();
+    }
+    w.RunFor(200);
+    w.Get(kGenlock).busy = true;
+    w.Get(kGenlock).current = CommandType::ExecuteEffect;
+    w.RunFor(2400);
+    w.Finish(kGenlock);
+    w.onPoke = nullptr;
+    UntilTurnOf(w, kHero);
+    CHECK(w.machine.View().timeLeftMs == 4000);
+}
+
+TEST_CASE("an action's own effect stopped as too long leaves its target owing nothing of it", "[time]")
+{
+    // Play test 33: a spider's Overwhelm never ended, was stopped after
+    // 36 s, and its victim then owed 31.8 s, its turns lost.
+    Settings s = Timed();
+    s.maxActionMs = 3000; // its patience 9 s
+    World w(s, GenlockFirst());
+    Grab(w, 60000); // never lets go
+    UntilTurnOf(w, kHero);
+    REQUIRE(w.Current() == kHero);
+    CHECK(std::ranges::any_of(
+        w.log, [](const std::string &line) { return line.find("still at a execute effect") != std::string::npos; }));
+    CHECK(w.machine.View().timeLeftMs == 4000);
+}
+
+TEST_CASE("with own clocks, an action's own effect moves the shared clock too, the round that much the less", "[time]")
+{
+    World w(Timed(), GenlockFirst());
+    const std::int64_t shared = w.agedMs;
+    Grab(w, 2400);
+    // Its steps moved the shared clock as they moved the two creatures'.
+    CHECK(w.agedMs - shared >= 2400);
+    CHECK(w.agedMs - shared < 3000);
+    // The round's 4 s in all, on the shared clock.
+    for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnEndTurn();
+        }
+        w.Frame();
+    }
+    REQUIRE(w.machine.Order().Round() == 2);
+    w.RunFor(100);
+    CHECK(w.agedMs - shared == 4000);
+}
+
+TEST_CASE("a creature getting up from a hold ended as its turn began keeps its turn", "[time]")
+{
+    // The tester's re-check of play test 33: knocked down, Lyna's next turn
+    // took the knockdown's 1.37 s, the condition ended, she got up (an
+    // effect's command), and two seconds in her turn was lost to it.
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    (void)w.machine.OnEndTurn();
+    w.RunFor(200);
+    REQUIRE(w.Current() == kGenlock);
+    Stun(w, kHero, 1.4f); // knocked down in the genlock's turn
+    w.RunFor(700);
+    UntilTurnOf(w, kHero);
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Get(kHero).condition == Condition::None); // ended as the turn began
+    // Getting up: the engine's command, a while.
+    w.Get(kHero).busy = true;
+    w.Get(kHero).current = CommandType::ExecuteEffect;
+    w.RunFor(2600);
+    CHECK(w.Current() == kHero);
+    CHECK_FALSE(w.Said(L"Hero loses the turn"));
+    w.Finish(kHero);
+    w.RunFor(600);
+    CHECK(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(w.machine.View().timeLeftMs > 2000); // 4 s less the knockdown's share
+}
+
+TEST_CASE("with time, a door, a chest or a pickup costs its seconds from the settings file", "[time]")
+{
+    // The user, 2026-10-02: "let's make these cost 0.5s for now. we can adjust
+    // later. maybe make it data driven".
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
+    w.Finish(kHero);
+    w.RunFor(600);
+    CHECK(w.machine.View().timeLeftMs == 3500);
+    CHECK(w.Order(kHero, CommandType::PickupItem, Source::Player) == Verdict::Allow);
+    w.Finish(kHero);
+    w.RunFor(600);
+    CHECK(w.machine.View().timeLeftMs == 3000);
+    CHECK(w.Current() == kHero); // not an action: the turn goes on
+    // Its cost is the file's.
+    Settings free = Timed();
+    free.objectSeconds = 0.0f;
+    World f(free);
+    f.StartFight();
+    CHECK(f.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
+    f.Finish(kHero);
+    f.RunFor(600);
+    CHECK(f.machine.View().timeLeftMs == 4000);
+    CHECK(tb::ParseSettings("[costs]\nobject = 1.25\n").settings.objectSeconds == 1.25f);
+}
+
+TEST_CASE("with time, a door used with no time left is owed of the next turn", "[time]")
+{
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 3.8f, 0.0f) == Verdict::Allow);
+    Done(w, kHero);
+    REQUIRE(w.machine.View().timeLeftMs == 200);
+    CHECK(w.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
+    w.Finish(kHero);
+    w.RunFor(600);
+    REQUIRE(w.machine.State().charging.size() == 1);
+    CHECK(w.machine.State().charging.front().owedMs == 300);
+}
+
+TEST_CASE("using an object costs nothing as built, a turn one action and its meters", "[machine]")
+{
+    World w; // Fixed(): actions
+    w.StartFight();
+    CHECK(w.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
+    w.Finish(kHero);
+    w.RunFor(600);
+    CHECK(w.Current() == kHero);
+    CHECK(w.machine.State().charging.empty());
+}
+
+TEST_CASE("a creature that falls while it owes time held owes nothing when it is up again", "[time]")
+{
+    // Play test 34: fallen in an ogre's grab, up again, Lyna then lost four
+    // turns to a spider's Overwhelm, 9.9 s of them the grab's.
+    World w(Timed(), GenlockFirst());
+    Grab(w, 6000); // more than a turn owed
+    w.Get(kHero).down = true;
+    w.RunFor(1500); // seen fallen
+    w.Get(kHero).down = false;
+    w.RunFor(1500); // up again
+    UntilTurnOf(w, kHero);
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.machine.View().timeLeftMs == 4000);
+    CHECK_FALSE(w.Said(L"Hero loses the turn"));
 }

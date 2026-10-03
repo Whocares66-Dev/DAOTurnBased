@@ -117,6 +117,14 @@ struct Settings
     // again when its time is paid, and the mod's own copy of the game's rule
     // interrupts it.
     bool engineConjure = true;
+    // With time, [costs]: what the things that are not fighting cost of the
+    // bar, in seconds, read from the settings file rather than set here (the
+    // user, 2026-10-02: doors, chests and pickups "cost 0.5s for now. we can
+    // adjust later. maybe make it data driven so we can change a csv or yaml
+    // (or gda) somewhere instead of buried in source code"). A door, a
+    // chest, a lever used; a lock opened or locked; a thing picked up, taken
+    // or handed over.
+    float objectSeconds = 0.5f;
     // With time: an action that was over in a fraction of the time the
     // engine was read to take for it did not play, and its time is given
     // back (TurnMachine::OverAtOnce). A switch, should it ever give back

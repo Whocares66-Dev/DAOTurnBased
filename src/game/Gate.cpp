@@ -5,6 +5,7 @@
 
 #include "dao/Addresses.h"
 #include "dao/Animation.h"
+#include "dao/Clock.h"
 #include "dao/CommandEvents.h"
 #include "dao/Conjure.h"
 #include "dao/Events.h"
@@ -409,6 +410,16 @@ struct AskedSwing
 };
 std::unordered_map<ObjectId, AskedSwing> g_askedSwings; // each creature's last
 
+// A shot under way: when its command began (the wall's milliseconds) and
+// where its archer stood, to measure what it took, on the game's clock,
+// if the archer did not walk first (LearnShot).
+struct ShotBegun
+{
+    std::uint64_t atMs = 0;
+    dao::Vector where;
+};
+std::unordered_map<ObjectId, ShotBegun> g_shotsBegun;
+
 float SwingSecondsOf(ObjectId attacker)
 {
     if (GetCurrentThreadId() != dao::script::ScriptThreadId())
@@ -448,9 +459,11 @@ float SwingSecondsOf(ObjectId attacker)
         facts.animation = dao::animation::Length(attacker, dao::animation::kAttack);
     }
     const float formula = tb::AttackSeconds(facts);
-    if (facts.humanoid && facts.armed && !facts.ranged)
+    if (facts.humanoid && facts.armed)
     {
-        const LearnedSwings::Key key = LearnedSwings::KeyOf(facts.style, facts.weaponSpeed, facts.attackSpeedModifier);
+        const LearnedSwings::Key key =
+            facts.ranged ? LearnedSwings::ShotOf(attacker, facts.attackSpeedModifier)
+                         : LearnedSwings::KeyOf(facts.style, facts.weaponSpeed, facts.attackSpeedModifier);
         const std::lock_guard lock(g_swingMutex);
         g_askedSwings[attacker] = AskedSwing{key, formula};
         return g_swings.Seconds(key).value_or(formula);
@@ -462,8 +475,49 @@ float SwingSecondsOf(ObjectId attacker)
 // kind. Said once for each kind, and again when it changes, with the
 // formula's figure beside it: where the two differ the scripts are not the
 // shipped ones, or the formula here is wrong.
+// A shot is over: what it took, the wall's time since its command began at
+// the game's speed, kept for its archer's next (a shot whose archer walked
+// into range first is not). Said once for each archer and speed, and as it
+// changes.
+void LearnShot(ObjectId archer, const AskedSwing &asked)
+{
+    const auto begun = g_shotsBegun.find(archer);
+    if (begun == g_shotsBegun.end())
+    {
+        return;
+    }
+    const ShotBegun shot = begun->second;
+    g_shotsBegun.erase(begun);
+    const dao::Vector now = dao::script::api::GetPosition(archer);
+    if (std::hypot(now.x - shot.where.x, now.y - shot.where.y) > 0.3f)
+    {
+        return; // it walked: the walk is not the shot's
+    }
+    const float seconds =
+        static_cast<float>(GetTickCount64() - shot.atMs) / 1000.0f * std::max(0.1f, dao::clock::Speed());
+    const std::optional<float> before = g_swings.Seconds(asked.key);
+    if (!g_swings.Learn(asked.key, seconds))
+    {
+        return;
+    }
+    if (!before || std::abs(*before - seconds) > 0.05f)
+    {
+        spdlog::info("{:#x}: its shot took {:.2f} s of the game's time (the flat figure {:.2f} s): what its next costs",
+                     archer, seconds, asked.formula);
+    }
+}
+
 void LearnSwing(ObjectId attacker)
 {
+    {
+        const std::lock_guard lock(g_swingMutex);
+        if (const auto asked = g_askedSwings.find(attacker);
+            asked != g_askedSwings.end() && asked->second.key.style == WeaponStyle::Ranged)
+        {
+            LearnShot(attacker, asked->second);
+            return;
+        }
+    }
     const std::optional<float> set = dao::animation::AttackDuration(attacker);
     if (!set)
     {
@@ -827,15 +881,27 @@ bool ReleaseEngineConjure(ObjectId caster)
     {
         return false;
     }
-    // Fed what is left of it, then let go: it completes on its next update,
-    // and the cast and its impact run in real time, in its caster's turn.
+    // Fed what is left of it, and held still: the feed is set on its next
+    // update while it is held, and it completes then; the cast and its
+    // impact run in real time, in its caster's turn, and the hold goes as
+    // its command ends (OnEnd). Let go at once, the feed was never set and
+    // the whole conjure played in real time at the start of the turn (play
+    // test 33: 3.87 s before the bolt).
     if (const std::optional<dao::commands::Conjuring> conjure = dao::commands::Conjure(caster))
     {
-        dao::commands::FeedConjure(caster, std::max(0.0f, conjure->duration - conjure->elapsed));
+        // Its whole length: what is fed is a total that the held conjure's
+        // elapsed time is set to, never past its duration. What had run
+        // already is not counted in it: fed the rest only, it stood 0.04 s
+        // short of done and never ended (a run with no hands, 2026-10-02).
+        dao::commands::FeedConjure(caster, conjure->duration);
         spdlog::info("{:#x}: its held conjure let complete ({:.2f} of {:.2f} s had run)", caster, conjure->elapsed,
                      conjure->duration);
     }
-    dao::commands::HoldConjure(caster, false);
+    else
+    {
+        dao::commands::HoldConjure(caster, false); // nothing to feed: not at its conjure
+        g_engineConjures.erase(caster);
+    }
     return true;
 }
 
@@ -944,6 +1010,20 @@ bool DidNothing(std::int32_t result)
 
 void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
 {
+    // A shot's start, to measure it by (LearnShot): only noted, as the
+    // callback's contract asks.
+    dao::commands::OnStart([](ObjectId object, const dao::Command &command) {
+        if (static_cast<CommandType>(static_cast<int>(command.Type())) != CommandType::Attack)
+        {
+            return;
+        }
+        const std::lock_guard lock(g_swingMutex);
+        if (const auto asked = g_askedSwings.find(object);
+            asked != g_askedSwings.end() && asked->second.key.style == WeaponStyle::Ranged)
+        {
+            g_shotsBegun[object] = ShotBegun{GetTickCount64(), dao::script::api::GetPosition(object)};
+        }
+    });
     // On the game's thread, inside the command step: the machine only
     // counts, and queues or clears nothing.
     dao::commands::OnEnd([&machine, &mutex](ObjectId object, const dao::Command &command, std::int32_t result) {

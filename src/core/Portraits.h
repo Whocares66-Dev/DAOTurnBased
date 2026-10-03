@@ -77,6 +77,61 @@ struct PortraitChoice
 };
 
 [[nodiscard]] std::wstring PortraitFamily(std::wstring_view label);
+// How far back the portrait renderer's camera stands from a creature's head
+// for a creature bigger than a person, which the game's portraits table does
+// not frame (it frames the party, and its summons and forms): the table's
+// own distance for a person (its Default row, 0.675 m) times how much bigger
+// the creature is, by the appearance table's personal space (a person's
+// 0.35 to 0.4, an ogre's 0.95), to the power 1.5: a big creature's head is
+// bigger still. The renderer aims at the head; at a person's distance from
+// an ogre's it stood inside it, and the user saw "portrait for ogre looks
+// off": an arm and a chest (2026-10-02; DAOLib's reading of
+// PortraitRenderer::PlaceCamera). Seen the same day: at 1.60 m (in
+// proportion) the ogre's card showed a horn; at 2.56 m its face, horns and
+// teeth. Nothing for a creature a person's size or smaller: the table's
+// camera as ever.
+inline constexpr float kPortraitPersonSpace = 0.4f;
+inline constexpr float kPortraitSizePower = 1.5f;
+[[nodiscard]] std::optional<float> PortraitDistance(float personalSpace, float personDistance);
+
+// How much bigger than a person a creature is, by its personal space, to the
+// power above: 1 for a person or smaller, an ogre's 3.66.
+[[nodiscard]] float SizeOverPerson(float personalSpace);
+
+// The whole of a big creature's portrait camera: its distance (above), and
+// its offsets, which move with its size from a person's (the table's Default
+// row) as a big creature's face hangs forward and down from its head bone:
+// at an ogre's size the camera 0.25 m to the side and 0.15 m down centred
+// its face, where at the table's offsets it sat low and to the right (the
+// user: "ogre portrait isn't quite centered", 2026-10-02, and tried by sight
+// the same evening).
+struct PortraitFraming
+{
+    float distance = 0.0f;
+    float xAdjust = 0.0f;
+    float zAdjust = 0.0f;
+};
+inline constexpr float kPortraitXPerSize = 0.09f;
+inline constexpr float kPortraitZPerSize = -0.07f;
+[[nodiscard]] std::optional<PortraitFraming> FrameBySize(float personalSpace, float personDistance, float personX,
+                                                         float personZ);
+
+// The camera's zoom on a creature's turn, the camera following (the user:
+// "shouldn't camera pull back depend on creature size? for ogre or dragon pull
+// back more, for human sized enemies same as player"): on the scene camera's
+// scale, 1 close in, 0 the tactical view high above, back from the player's
+// own by kZoomPerSize for each person's size more than one, never into the
+// tactical view, whose camera no longer follows: the game flips to it under
+// 0.75 on this scale (0.5 on the controller's -1..1: an ogre's 0.73 flipped
+// it, and the camera stayed high above for the rest of the fight, a run with
+// no hands, 2026-10-02). Nothing for a
+// creature a person's size or smaller, nor with the player's own zoom in the
+// tactical view already: the player's zoom as it is. An ogre's turn at the
+// player's 1 (close in) is 0.80.
+inline constexpr float kZoomPerSize = 0.075f;
+inline constexpr float kZoomLeast = 0.78f;
+[[nodiscard]] std::optional<float> FollowZoom(float playerZoom, float personalSpace);
+
 [[nodiscard]] PortraitChoice ChoosePortrait(std::int32_t appearance, std::wstring_view appearanceLabel, bool person,
                                             std::wstring_view tag, const std::vector<PortraitRow> &rows);
 

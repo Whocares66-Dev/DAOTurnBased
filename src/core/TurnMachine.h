@@ -584,6 +584,9 @@ class TurnMachine
         // A spell let through to conjure (Verdict::Conjure): the turn ends
         // as its caster reaches the conjure the game layer holds.
         bool conjureWaiting = false;
+        // What this turn's own-effect steps added to its target's debt
+        // (grabbedMs_): taken back if the action is stopped as too long.
+        std::uint32_t grabbedNowMs = 0;
         bool refunded = false; // an action given back once already this turn
         int givenBack = 0;     // how many times this turn
         bool retried = false;  // an AI told to choose again, its failed action given back
@@ -656,6 +659,7 @@ class TurnMachine
     // its effects, regeneration and timers (the game layer's to move).
     void AgeOwnClock(ObjectId who, std::uint32_t clockMs, std::vector<Effect> &fx);
     [[nodiscard]] bool OwnClocks() const;
+    [[nodiscard]] bool GettingUp() const;
     [[nodiscard]] bool EngineConjures(const CommandRequest &request) const;
 
   public:
@@ -680,6 +684,7 @@ class TurnMachine
     [[nodiscard]] float TurnSpeed() const;
     void SpendRound(std::vector<Effect> &fx);
     void HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx);
+    void GrabAtTurnStart(const Combatant &who, std::vector<Effect> &fx);
 
     void StartFight(std::vector<Combatant> roster, std::vector<Effect> &fx);
     void StartNextTurn(std::vector<Effect> &fx);
@@ -843,6 +848,10 @@ class TurnMachine
     std::unordered_map<ObjectId, std::uint32_t> absentSince_;
     // With time: what each creature's last turn left over, to its cap.
     std::unordered_map<ObjectId, std::uint32_t> rollover_;
+    // With time: how long each creature was held by another's action
+    // while that action ran (a grab, Overwhelm), owed of its own turns
+    // (GrabAtTurnStart, LoseTurn).
+    std::unordered_map<ObjectId, std::uint32_t> grabbedMs_;
     static constexpr std::uint32_t kAbsentMs = 4000;
     // Those that left the fight alive (missing from the scans for
     // kAbsentMs): down in the order, and only a scan that finds one again

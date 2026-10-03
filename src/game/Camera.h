@@ -18,6 +18,12 @@
 #include "core/Types.h"
 
 #include <cstdint>
+#include <optional>
+
+namespace dao
+{
+class CameraController;
+}
 
 namespace tb::game
 {
@@ -50,6 +56,11 @@ class CameraDirector
   private:
     void Pan(ObjectId id, std::uint64_t nowMs);
     [[nodiscard]] float MoveSeconds() const;
+    void ZoomFor(ObjectId id, dao::CameraController &camera);
+
+    // The player's own zoom, kept while the camera is pulled back for a big
+    // creature's turn, given back on the party's next (unless they zoomed).
+    std::optional<float> playerZoom_;
 
     int logged_ = 0;
     ObjectId panning_ = kNoObject;

@@ -330,7 +330,14 @@ LearnedSwings::Key LearnedSwings::KeyOf(WeaponStyle style, float weaponSpeed, fl
                    ? static_cast<std::int32_t>(std::lround(std::clamp(value, -100.0f, 100.0f) * 1000.0f))
                    : 0;
     };
-    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier)};
+    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier), kNoObject};
+}
+
+LearnedSwings::Key LearnedSwings::ShotOf(ObjectId archer, float attackSpeedModifier)
+{
+    Key key = KeyOf(WeaponStyle::Ranged, 0.0f, attackSpeedModifier);
+    key.archer = archer;
+    return key;
 }
 
 bool LearnedSwings::Learn(const Key &key, float seconds)
@@ -353,7 +360,7 @@ std::optional<float> LearnedSwings::Seconds(const Key &key) const
         return std::nullopt;
     }
     const Read &read = found->second;
-    if (key.style == WeaponStyle::Dual && read.before > 0.0f)
+    if ((key.style == WeaponStyle::Dual || key.style == WeaponStyle::Ranged) && read.before > 0.0f)
     {
         return (read.last + read.before) / 2.0f;
     }
@@ -424,6 +431,23 @@ float AbilitySeconds(const AbilityFacts &facts)
             *facts.conjure + (known(facts.conjureLoop) ? *facts.conjureLoop : 0.0f) * static_cast<float>(facts.loops);
     }
     return cast;
+}
+
+bool UsesAnObject(CommandType type)
+{
+    switch (type)
+    {
+    case CommandType::UseObject:
+    case CommandType::Interact:
+    case CommandType::Lock:
+    case CommandType::Unlock:
+    case CommandType::GiveItem:
+    case CommandType::TakeItem:
+    case CommandType::PickupItem:
+        return true;
+    default:
+        return false;
+    }
 }
 
 float InterruptThreshold(bool party, int combatTraining, int level)

@@ -1,6 +1,8 @@
 // Whose portrait the game side renders next (core/Portraits.h), over the
 // stand-in's fights, and the bar's string carrying them.
 #include "World.h"
+#include <catch2/catch_approx.hpp>
+#include <limits>
 
 #include "core/Bar.h"
 #include "core/Portraits.h"
@@ -332,4 +334,61 @@ TEST_CASE("a family is the label up to its first comma, in small letters", "[por
     // With only a family's lesser member ready-made, that one is its kin's.
     const std::vector<PortraitRow> rows = {{57, L"Spider, Corrupted", L"", L"portrait_57"}};
     CHECK(ChoosePortrait(58, L"Spider, Giant", false, L"", rows).made == L"portrait_57");
+}
+
+TEST_CASE("a creature bigger than a person is framed from further back, by its size", "[portraits]")
+{
+    using Catch::Approx;
+    // The user, 2026-10-02: "portrait for ogre looks off" (its arm and chest).
+    // An ogre's personal space 0.95, a person's distance 0.675 m.
+    REQUIRE(tb::PortraitDistance(0.95f, 0.675f));
+    CHECK(*tb::PortraitDistance(0.95f, 0.675f) == Approx(2.471f).margin(0.01f)); // its face (2.56 m seen)
+    CHECK(*tb::PortraitDistance(0.5f, 0.675f) == Approx(0.943f).margin(0.01f));  // a shriek
+    CHECK(*tb::PortraitDistance(0.41f, 0.675f) == Approx(0.700f).margin(0.01f)); // no jump past a person
+    // A person's size or smaller: the table's camera as ever.
+    CHECK_FALSE(tb::PortraitDistance(0.4f, 0.675f));
+    CHECK_FALSE(tb::PortraitDistance(0.3f, 0.675f)); // a genlock
+    CHECK_FALSE(tb::PortraitDistance(0.95f, 0.0f));
+    CHECK_FALSE(tb::PortraitDistance(std::numeric_limits<float>::quiet_NaN(), 0.675f));
+}
+
+TEST_CASE("a big creature's portrait camera moves with its size: distance and offsets", "[portraits]")
+{
+    using Catch::Approx;
+    // The user: "ogre portrait isn't quite centered". The table's person:
+    // 0.675 m, x 0.007, z 0.038.
+    const auto ogre = tb::FrameBySize(0.95f, 0.675f, 0.007f, 0.038f);
+    REQUIRE(ogre);
+    CHECK(ogre->distance == Approx(2.471f).margin(0.01f));
+    CHECK(ogre->xAdjust == Approx(0.25f).margin(0.01f)); // as centred its face by sight
+    CHECK(ogre->zAdjust == Approx(-0.15f).margin(0.01f));
+    CHECK(tb::SizeOverPerson(0.95f) == Approx(3.66f).margin(0.01f));
+    CHECK(tb::SizeOverPerson(0.4f) == 1.0f);
+    CHECK(tb::SizeOverPerson(0.2f) == 1.0f);
+    // A person: the table's camera as it is.
+    CHECK_FALSE(tb::FrameBySize(0.4f, 0.675f, 0.007f, 0.038f));
+    // Just over a person's size: hardly moved.
+    const auto shriek = tb::FrameBySize(0.42f, 0.675f, 0.007f, 0.038f);
+    REQUIRE(shriek);
+    CHECK(shriek->xAdjust == Approx(0.007f).margin(0.01f));
+    CHECK(shriek->zAdjust == Approx(0.038f).margin(0.01f));
+}
+
+TEST_CASE("the camera pulls back on a big creature's turn, by its size, never into the tactical view", "[portraits]")
+{
+    using Catch::Approx;
+    // The user: "for ogre or dragon pull back more, for human sized enemies
+    // same as player".
+    CHECK_FALSE(tb::FollowZoom(1.0f, 0.4f)); // a person: the player's zoom
+    CHECK_FALSE(tb::FollowZoom(1.0f, 0.3f)); // a genlock
+    REQUIRE(tb::FollowZoom(1.0f, 0.95f));
+    CHECK(*tb::FollowZoom(1.0f, 0.95f) == Approx(0.80f).margin(0.01f)); // an ogre
+    CHECK(*tb::FollowZoom(1.0f, 0.70f) == Approx(0.90f).margin(0.01f)); // a giant spider
+    CHECK(*tb::FollowZoom(1.0f, 1.4f) == Approx(0.78f));                // a dragon: no further than the least
+    // The player already far back: never closer than the player's own, and
+    // never into the tactical view.
+    CHECK(*tb::FollowZoom(0.8f, 0.95f) == Approx(0.78f));
+    CHECK_FALSE(tb::FollowZoom(0.7f, 0.95f)); // already past the least: left as it is
+    CHECK_FALSE(tb::FollowZoom(0.3f, 0.95f)); // the tactical view
+    CHECK_FALSE(tb::FollowZoom(std::numeric_limits<float>::quiet_NaN(), 0.95f));
 }

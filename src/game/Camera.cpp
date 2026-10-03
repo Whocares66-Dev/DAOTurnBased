@@ -1,9 +1,11 @@
 #include "game/Camera.h"
 
+#include "core/Portraits.h"
 #include "dao/Camera.h"
 #include "dao/CameraMoves.h"
 #include "dao/ClientExoApp.h"
 #include "dao/GameModes.h"
+#include "dao/Gda.h"
 #include "dao/Log.h"
 #include "dao/generated/ScriptApi.h"
 
@@ -66,6 +68,7 @@ void CameraDirector::TurnTo(ObjectId id)
     {
         return;
     }
+    ZoomFor(id, *camera);
     const std::optional<float> behind = dao::camera::YawBehind(id);
     if (!behind)
     {
@@ -77,6 +80,39 @@ void CameraDirector::TurnTo(ObjectId id)
         ++logged_;
         spdlog::info("the camera comes round behind {:#010x}: yaw {:.2f} (it was {:.2f})", id, *behind, scene->Yaw());
     }
+}
+
+// The zoom by whose turn it is (core: FollowZoom): a creature bigger than a
+// person pulls the camera back by its size, so that a big creature does not
+// fill the frame (an ogre's back hid Lyna and the "Spell lost" over her, play
+// test 33); a person's, the party's above all, has the player's own zoom,
+// given back as it was unless the player zoomed meanwhile (DAOLib 752c52d's
+// EaseZoom and PlayerZoomed: the player wins).
+void CameraDirector::ZoomFor(ObjectId id, dao::CameraController &camera)
+{
+    dao::SceneCamera *scene = camera.Scene();
+    if (scene == nullptr)
+    {
+        return;
+    }
+    const float now = scene->Zoom();
+    if (!playerZoom_ || dao::camera::PlayerZoomed())
+    {
+        playerZoom_ = now; // the player's own, as they left it
+    }
+    const std::int32_t appearance = dao::script::api::GetAppearanceType(id);
+    const float space =
+        dao::gda::GetFloat(dao::script::Table::Appearance, appearance, "PerSpace").value_or(kPortraitPersonSpace);
+    const bool party = dao::script::api::IsHero(id) != 0 || dao::script::api::IsFollower(id) != 0;
+    const std::optional<float> back = party ? std::nullopt : FollowZoom(*playerZoom_, space);
+    const float want = back.value_or(*playerZoom_);
+    if (std::abs(want - now) < 0.01f)
+    {
+        return;
+    }
+    dao::camera::EaseZoom(want, MoveSeconds());
+    spdlog::info("the camera's zoom for {:#010x} (personal space {:.2f}): {:.2f}, from {:.2f}{}", id, space, want, now,
+                 back ? "" : " (the player's own)");
 }
 
 float CameraDirector::MoveSeconds() const
