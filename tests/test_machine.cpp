@@ -1198,6 +1198,8 @@ TEST_CASE("on the player's turn the character's own AI does not spend it", "[mac
     REQUIRE(w.Current() == kHero);
     CHECK(w.Order(kHero, CommandType::Attack, Source::Script) == Verdict::Block);
     CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Script) == Verdict::Block);
+    // Nor its wait, with no enemy to choose (issue 10).
+    CHECK(w.Order(kHero, CommandType::Wait, Source::Script) == Verdict::Block);
     w.RunFor(500);
     CHECK(w.Current() == kHero);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
@@ -2969,6 +2971,52 @@ TEST_CASE("a slow spell is begun on one turn and cast at the start of the next, 
     CHECK(count(EventKind::CastCharging) == 1);
     CHECK(count(EventKind::CastLanded) == 1);
     CHECK(count(EventKind::CastInterrupted) == 0);
+}
+
+TEST_CASE("a turn opened by a kept cast is the player's though its own AI waits in a loop", "[machine][charge]")
+{
+    // Issue 10: Lyna's kept shot landed as her turn began and felled the
+    // fight's last enemy. Not yet selected, she was a follower whose full AI
+    // ran as each of her commands ended, and with no enemy to choose it
+    // queued a wait of a second, and another as that one ended. Each was let
+    // through, so the turn stood at executing for eleven minutes: never
+    // handed over, never waiting on an order.
+    World w(FourSecondTurns());
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    REQUIRE(w.Cast(kHero, Source::Player, kBlizzard, 4.0f) == Verdict::Hold);
+    w.Frame();
+    w.Frame();
+    UntilHeroAgain(w);
+    REQUIRE(Released(w, kHero));
+    REQUIRE(w.Get(kHero).busy);
+    w.RunFor(300);
+    w.Finish(kHero);
+    // Its AI, as the scripts run it: a wait whenever it has no command, each
+    // one over after a few frames.
+    int asked = 0;
+    int through = 0;
+    int at = 0;
+    for (int frame = 0; frame < 400 && w.machine.GetPhase() != Phase::AwaitingOrder; ++frame)
+    {
+        if (!w.Get(kHero).busy)
+        {
+            ++asked;
+            at = 0;
+            through += w.Order(kHero, CommandType::Wait, Source::Script) == Verdict::Allow ? 1 : 0;
+        }
+        else if (++at >= 6)
+        {
+            w.Finish(kHero);
+        }
+        w.Frame();
+    }
+    CHECK(asked > 0);
+    CHECK(through == 0); // its own AI's, held: the turn is the player's
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    // And the player's order goes through as on any turn.
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
 }
 
 TEST_CASE("a ritual charges two turns and is cast on the third", "[machine][charge]")

@@ -3164,8 +3164,16 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     // turn a mode off by its script's event, not by a command.
     const bool gear =
         request.type == CommandType::SwitchWeaponSets || (request.type == CommandType::UseAbility && request.sustained);
+    // Nor does it wait. With no enemy left to choose, that full AI queues a
+    // wait of a second (AI_ExecuteDefaultAction: _AI_DoNothing, quick), and
+    // another as each ends; the controlled one's never waits ("Controled
+    // follower - NOT WAITING"). Let through, each put the turn back at its
+    // command with max_action_ms begun again: Lyna's turn, opened by a kept
+    // shot that felled the fight's last enemy, stood eleven minutes at
+    // executing, never handed over, End doing nothing (issue 10, the Tower
+    // of Ishal, 2026-10-03). Held, the queue is empty and the turn settles.
     if (player && !landing && !approaching && request.source == Source::Script &&
-        (kind == CommandKind::Action || kind == CommandKind::Move || gear))
+        (kind == CommandKind::Action || kind == CommandKind::Move || kind == CommandKind::Pass || gear))
     {
         // At debug: the AI tries again each time a command of its ends.
         if (Logs(LogLevel::Debug))

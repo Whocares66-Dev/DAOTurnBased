@@ -627,6 +627,15 @@ class Arena
         }
         if (PlayerControls(id))
         {
+            // One not yet selected has its full AI run, which waits when it
+            // has no enemy to choose: never let through on a turn the player
+            // plays, where each wait put the turn back at its command for
+            // good (issue 10). Asked without a draw; held, it changes nothing.
+            if (afterCommand && world_.machine.Active() && world_.Current() == id)
+            {
+                Must(world_.Order(id, CommandType::Wait, Source::Script) == Verdict::Block,
+                     "its own AI's wait let through on a turn the player plays");
+            }
             // A controlled creature's AI only carries on attacking.
             if (afterCommand && Chance(rng_, 0.5))
             {

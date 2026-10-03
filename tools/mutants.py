@@ -957,6 +957,12 @@ MUTANTS = [
         "        request.type == CommandType::SwitchWeaponSets;",
     ),
     Mutant(
+        "a character's own AI waits on the player's turn, and the turn never waits on an order",
+        MACHINE,
+        "(kind == CommandKind::Action || kind == CommandKind::Move || kind == CommandKind::Pass || gear))",
+        "(kind == CommandKind::Action || kind == CommandKind::Move || gear))",
+    ),
+    Mutant(
         "those that waited outside a fight are never told it is over",
         MACHINE,
         "    for (const ObjectId id : outside_)\n    {\n        fx.push_back(Effect::Of(EffectKind::PokeAi, id));\n    }\n"
