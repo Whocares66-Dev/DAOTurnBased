@@ -78,6 +78,8 @@ class Bridge
         std::wstring tag;
         int rank = 0;
         float speed = 1.0f; // against a person's pace (core/Rules.h, SpeedFactor)
+        int tactics = 0;    // Combat Tactics' rank, 0 to 4
+        int survival = 0;   // Survival's
     };
 
     std::vector<Combatant> Scan();

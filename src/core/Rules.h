@@ -68,8 +68,9 @@ class Rng
 };
 
 // A roll of 1..die plus initiativePerDexterity for each point of Dexterity
-// above 10 (rounded down; below 10 subtracts).
-[[nodiscard]] int RollInitiative(Rng &rng, float dexterity, const Settings &settings);
+// above 10 (rounded down; below 10 subtracts), and initiativePerSurvival a
+// rank of Survival.
+[[nodiscard]] int RollInitiative(Rng &rng, float dexterity, const Settings &settings, int survival = 0);
 
 // Meters a combatant may move in one turn. speedModifier is how fast it
 // moves against a person (SpeedFactor below; Haste and slows would multiply
@@ -131,5 +132,49 @@ inline constexpr float kLongestRange = 60.0f;
 
 // Meters a creature must walk before it can strike a target this far away.
 [[nodiscard]] float WalkToReach(float distance, float reach);
+
+// How long things take, with a turn a bar of time (Settings::turnClock,
+// dev/REBALANCE.md, "Current specification": every action costs its own
+// time).
+//
+// A melee swing is the game's own formula (CalculateAttackTiming, core_h.nss,
+// read 2026-10-02): a base by weapon style (BASE_TIMING_*: 2.0 s one weapon,
+// with a shield or none, 1.5 s dual, 2.5 s two-handed) plus the weapon's
+// dspeed (itemstats: a dagger -0.5, a longsword -0.1, a maul 0.05), times the
+// attack speed modifier (creature property 31, at rest 1.0; Haste -0.25),
+// clamped to 0.5 to 1.5 and taken as 1.0 below 0.5. A bow's and a creature's
+// that is not a humanoid's are their animations', 0 here: a stand-in is used.
+enum class WeaponStyle : std::uint8_t
+{
+    None,      // a humanoid unarmed: timed as one weapon
+    Single,    // one weapon, with a shield or not
+    Dual,      // a weapon in each hand
+    TwoHanded, // a greatsword, a maul, a battleaxe
+    Ranged,    // a bow, a crossbow, a staff: its animation's
+};
+[[nodiscard]] float SwingSeconds(WeaponStyle style, float weaponSpeed, float attackSpeedModifier);
+
+// A spell's conjuring before its cast (dev/REBALANCE.md, "Conjuring time",
+// read from the executable and the animation files 2026-10-01): its start
+// animation and loops of its loop animation, as many as the conjuring
+// speed's count (spellconjuringspeeds: 0 instant, 1 fast, 2 normal, 4
+// slow, 6 ritual); nothing without a conjure animation (ConjureAnim), as
+// most talents with a Speed have none. The two the game's spells use are
+// known (245 builds up, 244 draws in); another stands in at 0.6 s and 3 s.
+[[nodiscard]] float ConjureSeconds(std::int32_t conjureAnim, int loops, bool staff);
+
+// Until the engine gives animations' lengths, by kind (dev/REBALANCE.md,
+// "What no rule reaches"): a swing that is not a formula's (the play tests'
+// median attack was 1.74 s), a talent's or a spell's cast, a potion's drink
+// (1.23 s, its animation).
+inline constexpr float kStandInSwingSeconds = 2.0f;
+inline constexpr float kStandInAbilitySeconds = 2.0f;
+inline constexpr float kDrinkSeconds = 1.23f;
+
+// The ability table's AbilityType (ABILITY_TYPE_*, 2da_constants_h.nss).
+inline constexpr std::int32_t kAbilityTalent = 1;
+inline constexpr std::int32_t kAbilitySpell = 2;
+inline constexpr std::int32_t kAbilitySkill = 3;
+inline constexpr std::int32_t kAbilityItem = 4;
 
 } // namespace tb

@@ -61,7 +61,7 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     World w;
     w.StartFight();
     const Decoded bar = Decode(EncodeBar(w.machine.View()));
-    REQUIRE(bar.head.size() == 8);
+    REQUIRE(bar.head.size() == 11);
     CHECK(bar.head[0] == std::to_wstring(kBarVersion));
     CHECK(bar.head[1] == L"1");                   // active
     CHECK(bar.head[2] == L"1");                   // round
@@ -70,6 +70,7 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     CHECK(bar.head[5] == L"1");                   // an action left
     CHECK(bar.head[6] == L"9.0");                 // meters left
     CHECK(bar.head[7] == L"9.0");                 // meters at most
+    CHECK(bar.head[8] == L"0");                   // one action and meters, not a bar of time
     REQUIRE(bar.cards.size() == 4);               // each combatant once
     for (const auto &card : bar.cards)
     {
@@ -120,7 +121,7 @@ TEST_CASE("a name cannot break the bar's string apart", "[bar]")
 TEST_CASE("outside a fight the bar's string says so and has no cards", "[bar]")
 {
     const Decoded bar = Decode(EncodeBar(TurnView{}));
-    REQUIRE(bar.head.size() == 8);
+    REQUIRE(bar.head.size() == 11);
     CHECK(bar.head[1] == L"0");
     CHECK(bar.cards.empty());
 }
@@ -140,4 +141,17 @@ TEST_CASE("a creature's mana or stamina reaches its card as the statuses read it
     REQUIRE(genlock != bar.cards.end());
     CHECK((*genlock)[11] == L"40");
     CHECK((*genlock)[12] == L"1");
+}
+
+TEST_CASE("with a turn a bar of time, the bar's string has the bar and what is left of it", "[bar]")
+{
+    Settings s = Fixed();
+    s.turnClock = TurnClock::Time;
+    World w(s);
+    w.StartFight();
+    const Decoded bar = Decode(EncodeBar(w.machine.View()));
+    REQUIRE(bar.head.size() == 11);
+    CHECK(bar.head[8] == L"1");
+    CHECK(bar.head[9] == L"4.0");
+    CHECK(bar.head[10] == L"4.0");
 }

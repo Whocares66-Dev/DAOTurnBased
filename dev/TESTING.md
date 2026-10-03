@@ -129,6 +129,7 @@ Eluvian (`C:\project\DAOEluvianMCP`, eluvian-agent's) is the development bench's
 | `active`, `phase`, `round`, `world_ms` | whether a fight is on; the machine's phase (`awaiting order`, `AI thinking`, `executing`, `settling`, `turn start`, `idle`, ...); the round; the fight's clock in the world's milliseconds |
 | `current` | `{id, name, side, yours}` of whose turn it is (`side` party, ally or enemy; `yours` when the player plays it), null between turns |
 | `actions_left`, `movement_left`, `movement_max` | what the current creature has left |
+| `timed`, `time_left_ms`, `time_ms` | with `[turns] clock = time`, that a turn is a bar of time, and the bar and what is left of it in milliseconds; false and 0 as built |
 | `speed`, `speed_took` | the game's speed the mod last set (`ai_turn_speed` in an AI's turn, else 1), and whether the game took it (null before any) |
 | `held_by_effect`, `last_refusal` | the current creature held in an effect's command; the last refusal logged |
 | `order` | the turns to come, the current first: `{id, name, side, rank, health, energy, mana, down, current, yours, round}` (health and energy 0 to 1, `mana` for a mage's) |

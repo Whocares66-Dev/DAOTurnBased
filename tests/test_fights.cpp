@@ -9,9 +9,10 @@
 //   3. the game is paused exactly when a turn waits on the player or between
 //      turns, and runs otherwise;
 //   4. nobody walks further in a turn than its movement, give or take the
-//      frame it is stopped in;
+//      frame it is stopped in (with a turn a bar of time, than the bar would
+//      walk as the turn began);
 //   5. nobody spends two actions in a turn, unless stopped short of the first
-//      and given it back;
+//      and given it back (with time: no action begins with no time left);
 //   6. each combatant starts at most one turn a round;
 //   7. an AI's turn ends, and a fight ends when no enemy is left fighting;
 //   8. every effect names who it is for, the AI is told to choose only on its
@@ -111,18 +112,39 @@ struct Coverage
     int cooldownsHeld = 0;
     int cooldownsReleased = 0;
     int roundsAged = 0;
+    // With a turn a bar of time.
+    int kept = 0;       // actions that did not fit, kept for a later turn
+    int landed = 0;     // kept actions given again and let through
+    int wholeTurns = 0; // turns spent whole on what a kept action owed
+    int owed = 0;       // actions that ran and owed time to the next turn
+    int choseAgain = 0; // an AI told to choose again, its bar not spent
+    int rolledOver = 0; // turns that left time to the next
 };
 
 class Arena
 {
   public:
-    Arena(std::uint64_t seed, Coverage &coverage)
-        : rng_(seed), settings_(RandomSettings(rng_)), world_(settings_, RandomFight(rng_), seed), coverage_(coverage)
+    Arena(std::uint64_t seed, Coverage &coverage, TurnClock clock = TurnClock::Actions)
+        : rng_(seed), settings_(RandomSettings(rng_, clock)), world_(settings_, RandomFight(rng_, clock), seed),
+          coverage_(coverage)
     {
         world_.record = false;
         world_.machine.SetLogLevel(LogLevel::Info); // the turns, for a failure's message
         world_.onPoke = [this](ObjectId id) { Decide(id, false); };
         world_.onEffect = [this](const Effect &e) { Saw(e); };
+        // A kept action given again as its creature's turn begins: it walks
+        // a little (its target may have stepped away), then works.
+        world_.onReleased = [this](ObjectId id, const CommandRequest &request, Verdict verdict) {
+            if (verdict != Verdict::Allow)
+            {
+                return;
+            }
+            ++coverage_.landed;
+            Task task{request.type};
+            task.walk = Chance(rng_, 0.5) ? 0.0f : Between(rng_, 0.5f, 6.0f);
+            task.workMs = 600;
+            tasks_[id] = task;
+        };
         world_.machine.SetEventSink([this](const TurnEvent &e) { Heard(e); });
         // The machine's last words, for a failure's message.
         world_.onLog = [this](std::string_view line) {
@@ -143,6 +165,7 @@ class Arena
             if (line.starts_with("round ") && line.find("'s turn (") != std::string_view::npos)
             {
                 FollowTurn();
+                turnMeters_ = world_.machine.View().movementLeft;
                 const auto found = tasks_.find(world_.Current());
                 heldAtStart_ = found != tasks_.end() && found->second.held &&
                                world_.Get(world_.Current()).condition == Condition::None;
@@ -151,6 +174,26 @@ class Arena
             if (line.find(" m to walk with ") != std::string_view::npos)
             {
                 ++coverage_.tooFar;
+            }
+            if (line.find("it lands on its next turn") != std::string_view::npos)
+            {
+                ++coverage_.kept;
+            }
+            if (line.find("'s turn is spent on its pending") != std::string_view::npos)
+            {
+                ++coverage_.wholeTurns;
+            }
+            if (line.find(" runs now and owes ") != std::string_view::npos)
+            {
+                ++coverage_.owed;
+            }
+            if (line.find(" chooses again: ") != std::string_view::npos)
+            {
+                ++coverage_.choseAgain;
+            }
+            if (line.ends_with(" s rolls over") && !line.ends_with("; 0.00 s rolls over"))
+            {
+                ++coverage_.rolledOver;
             }
             recent_.emplace_back(line);
             if (recent_.size() > 40)
@@ -184,7 +227,7 @@ class Arena
     }
 
   private:
-    static Settings RandomSettings(Rng &rng)
+    static Settings RandomSettings(Rng &rng, TurnClock clock)
     {
         Settings s;
         s.movementRule = Chance(rng, 0.5) ? MovementRule::Speed : MovementRule::Constant;
@@ -206,10 +249,18 @@ class Arena
         s.effectSecondsPerRound = Chance(rng, 0.2) ? 0.0f : 6.0f;
         s.conditionTurns = Chance(rng, 0.2) ? 0 : (Chance(rng, 0.7) ? 1 : 2);
         s.aiTurnSpeed = Chance(rng, 0.3) ? 2.0f : 1.0f;
+        // Drawn after the rest, so that a fight as built is the one it was.
+        if (clock == TurnClock::Time)
+        {
+            s.turnClock = TurnClock::Time;
+            s.secondsPerTurn = Chance(rng, 0.7) ? 4.0f : Between(rng, 2.0f, 6.0f);
+            s.freeStepMeters = Chance(rng, 0.8) ? 1.0f : Between(rng, 0.0f, 2.0f);
+            s.paceMps = kRunSpeed;
+        }
         return s;
     }
 
-    static std::vector<Creature> RandomFight(Rng &rng)
+    static std::vector<Creature> RandomFight(Rng &rng, TurnClock clock)
     {
         std::vector<Creature> fight;
         const auto add = [&](ObjectId id, Side side, bool hero) {
@@ -232,6 +283,15 @@ class Arena
         for (int i = 0; i < allies; ++i)
         {
             add(0x300 + static_cast<ObjectId>(i), Side::Ally, false);
+        }
+        // Combat Tactics: a party member's own, an enemy's by its rank.
+        if (clock == TurnClock::Time)
+        {
+            for (Creature &c : fight)
+            {
+                c.tactics = static_cast<int>(rng.Next() % 5);
+                c.rank = 1 + static_cast<int>(rng.Next() % 5);
+            }
         }
         return fight;
     }
@@ -285,6 +345,7 @@ class Arena
             clears_ = 0;
             interruptions_ = 0;
             turnRunMs_ = 0;
+            turnMeters_ = 0.0f;   // with time, read as the machine begins the turn (onLog)
             heldAtStart_ = false; // judged as the machine begins the turn (onLog)
             turnBeganAtMs_ = 0;
         }
@@ -314,9 +375,28 @@ class Arena
                           source == Source::Player && Chance(rng_, 0.7);
         const float walk = type == CommandType::Attack ? approach : path;
         const float left = told && active ? world_.machine.View().movementLeft : 0.0f;
-        const Verdict verdict = type == CommandType::UseAbility
-                                    ? world_.UseAbility(id, source, ability, cooldown, sustained, on)
-                                    : world_.Order(id, type, source, told ? std::optional{walk} : std::nullopt);
+        // With time, an attack's swing: a weapon's, or the machine's stand-in.
+        // Now and then one longer than a turn (a ritual's conjuring), and an
+        // item used, which is not kept but owes what does not fit.
+        const bool timed = settings_.turnClock == TurnClock::Time;
+        float seconds = 0.0f;
+        bool item = false;
+        if (timed && type == CommandType::Attack)
+        {
+            seconds = Chance(rng_, 0.08) ? Between(rng_, 4.0f, 10.0f)
+                                         : (Chance(rng_, 0.7) ? Between(rng_, 1.0f, 2.6f) : 0.0f);
+        }
+        else if (timed && type == CommandType::UseAbility && !sustained && Chance(rng_, 0.25))
+        {
+            item = true;
+            seconds = Between(rng_, 1.0f, 6.0f);
+        }
+        const std::uint32_t timeLeft = active ? world_.machine.View().timeLeftMs : 0;
+        const Verdict verdict =
+            item ? world_.Order(id, CommandType::UseItem, source, std::nullopt, seconds)
+            : type == CommandType::UseAbility
+                ? world_.UseAbility(id, source, ability, cooldown, sustained, on)
+                : world_.Order(id, type, source, told ? std::optional{walk} : std::nullopt, seconds);
         if (told && active && verdict == Verdict::Allow && walk > left + TurnMachine::kReachSlack &&
             id == world_.Current())
         {
@@ -338,12 +418,16 @@ class Arena
         {
             return;
         }
-        if (active && kind == CommandKind::Action)
+        if (active && kind == CommandKind::Action && timed)
+        {
+            Must(id != current || timeLeft > 0, "an action let through with no time left");
+        }
+        else if (active && kind == CommandKind::Action)
         {
             ++actions_;
             Must(actions_ <= 1 + clears_, "a second action in one turn");
         }
-        Task task{type};
+        Task task{item ? CommandType::UseItem : type};
         switch (type)
         {
         case CommandType::Attack:
@@ -469,7 +553,11 @@ class Arena
             Must(timeHeld_, "effects aged by the fight while their time runs anyway");
             // A round's worth, or a step of an action's own effect, or the
             // round's worth less those.
-            Must(e.b > 0 && e.b <= static_cast<std::int32_t>(settings_.effectSecondsPerRound * 1000.0f),
+            // With time, a round is a turn's seconds.
+            Must(e.b > 0 && e.b <= static_cast<std::int32_t>((settings_.turnClock == TurnClock::Time
+                                                                  ? settings_.secondsPerTurn
+                                                                  : settings_.effectSecondsPerRound) *
+                                                             1000.0f),
                  "a round aged wrong");
             ++coverage_.roundsAged;
             // A round's worth off every condition's own timer.
@@ -500,7 +588,7 @@ class Arena
             break;
         case EffectKind::ReleaseCast:
         case EffectKind::DropCast:
-            break; // nothing charges in the random fights
+            break; // with time, kept actions (World's onReleased); nothing charges as built
         case EffectKind::ClearCommands:
         case EffectKind::Floaty:
         case EffectKind::CenterCamera:
@@ -950,8 +1038,8 @@ class Arena
         {
             Must(!timeHeld_, "effects' time left held with no fight on");
         }
-        else if (settings_.effectSecondsPerRound > 0.0f && phase != Phase::Starting &&
-                 !(phase == Phase::Suspended && world_.machine.Order().Round() == 0))
+        else if ((settings_.effectSecondsPerRound > 0.0f || settings_.turnClock == TurnClock::Time) &&
+                 phase != Phase::Starting && !(phase == Phase::Suspended && world_.machine.Order().Round() == 0))
         {
             Must(timeHeld_, "effects' time running in a fight");
         }
@@ -1007,7 +1095,9 @@ class Arena
             if (current != kNoObject)
             {
                 const Creature &c = world_.Get(current);
-                const float budget = MovementBudget(settings_, c.speed, c.dexterity);
+                const float budget = settings_.turnClock == TurnClock::Time
+                                         ? turnMeters_
+                                         : MovementBudget(settings_, c.speed, c.dexterity);
                 // Past the budget by the overshoot and the frame the cut is
                 // seen in, and the turn's first step, which the machine
                 // measures from. Then two tries to reach something, each a
@@ -1032,7 +1122,11 @@ class Arena
                 {
                     // An AI's turn: thinking, then at most every command it may
                     // start, each to its limit and settled after.
-                    const int bound = settings_.aiThinkMs +
+                    // With time it is told to choose again after each, and
+                    // may take its thinking time to choose nothing.
+                    const int again =
+                        settings_.turnClock == TurnClock::Time ? settings_.maxCommandsPerTurn * settings_.aiThinkMs : 0;
+                    const int bound = settings_.aiThinkMs + again +
                                       settings_.maxCommandsPerTurn *
                                           (settings_.maxActionMs + settings_.settleMs + settings_.aiFollowUpMs + 200) +
                                       static_cast<int>(settings_.roundMinSeconds * 1000.0f) + 1000;
@@ -1060,6 +1154,7 @@ class Arena
     std::set<std::pair<std::int32_t, ObjectId>> started_;
     std::pair<int, ObjectId> turn_{0, kNoObject};
     float walked_ = 0.0f;
+    float turnMeters_ = 0.0f; // with time: what the bar would walk as the turn began
     int actions_ = 0;
     int clears_ = 0;
     int interruptions_ = 0; // conversations during this turn
@@ -1085,13 +1180,13 @@ namespace
 {
 
 // Plays fights from seed 1 up, and says what they reached.
-Coverage PlayFights(std::uint64_t count)
+Coverage PlayFights(std::uint64_t count, TurnClock clock = TurnClock::Actions)
 {
     Coverage coverage;
     for (std::uint64_t seed = 1; seed <= count; ++seed)
     {
         CAPTURE(seed);
-        Arena arena{seed, coverage};
+        Arena arena{seed, coverage, clock};
         arena.Play();
     }
     return coverage;
@@ -1138,9 +1233,37 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     CHECK(coverage.cooldownsReleased > 22);
 }
 
+// With a turn a bar of time (Settings::turnClock), the same fights' kinds
+// with their own draws: the promises, 4 and 5 as time has them, and what
+// time adds reached.
+TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fights]")
+{
+    const Coverage coverage = PlayFights(80, TurnClock::Time);
+    // Each floor about a third of what seeds 1-80 reach (2026-10-02: 3417
+    // turns, 722 rounds, 778 kept, 519 landed, 68 whole turns, 19 owed, 74
+    // told to choose again, 1627 rollovers, 267 cuts, 166 refunds, 19 too
+    // far, 455 lost turns, 118 cooldowns).
+    CHECK(coverage.fights == 80);
+    CHECK(coverage.turns > 1100);
+    CHECK(coverage.rounds > 240);
+    CHECK(coverage.kept > 250);
+    CHECK(coverage.landed > 170);
+    CHECK(coverage.wholeTurns > 20);
+    CHECK(coverage.owed > 5);
+    CHECK(coverage.choseAgain > 24);
+    CHECK(coverage.rolledOver > 500);
+    CHECK(coverage.movementCuts > 85);
+    CHECK(coverage.refunds > 50);
+    CHECK(coverage.tooFar > 5);
+    CHECK(coverage.lostTurns > 150);
+    CHECK(coverage.cooldownsHeld > 35);
+}
+
 // A thousand more, for a change to the machine: `tb_tests "[fights-long]"`.
 TEST_CASE("a thousand random fights keep them too", "[.][fights-long]")
 {
     const Coverage coverage = PlayFights(1000);
     CHECK(coverage.fights == 1000);
+    const Coverage timed = PlayFights(1000, TurnClock::Time);
+    CHECK(timed.fights == 1000);
 }

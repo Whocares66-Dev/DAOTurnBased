@@ -330,6 +330,64 @@ void DescribeAbility(const dao::CCObject &self, const dao::Command &command, Com
     const std::int32_t speed = dao::gda::GetInt(dao::script::Table::AbilitiesTalents, *ability, "Speed").value_or(0);
     request.conjureSeconds = static_cast<float>(
         std::max(0, dao::gda::GetInt(dao::script::Table::SpellConjuringspeed, speed, "Speed").value_or(0)));
+    // With a turn a bar of time (core: ActionCostMs): that Speed is a count
+    // of loops of its conjure animation, and there is no conjuring without
+    // one (dev/REBALANCE.md, "Conjuring time"); a spell conjures faster with
+    // a staff in hand; an item's use (a potion) is a drink.
+    request.abilityType = dao::gda::GetInt(dao::script::Table::AbilitiesTalents, *ability, "AbilityType").value_or(0);
+    request.conjureAnim = dao::gda::GetInt(dao::script::Table::AbilitiesTalents, *ability, "ConjureAnim").value_or(0);
+    if (GetCurrentThreadId() == dao::script::ScriptThreadId())
+    {
+        constexpr std::int32_t kStaff = 16; // BASE_ITEM_TYPE_STAFF
+        const ObjectId weapon = api::GetItemInEquipSlot(k::INVENTORY_SLOT_MAIN, self.Id());
+        request.staff = api::IsObjectValid(weapon) != 0 && api::GetBaseItemType(weapon) == kStaff;
+    }
+}
+
+// With a turn a bar of time (core: ActionCostMs): an attack's swing by the
+// game's own formula (CalculateAttackTiming, core_h.nss, read 2026-10-02;
+// core: SwingSeconds), from the weapon style, the main hand's dspeed in the
+// item stats table and the attack speed modifier (creature property 31). A
+// bow's, an unarmed one's and a creature's that is not a humanoid's are
+// their animations': 0 here, and the core's stand-in. Script calls: on the
+// scripts' thread only.
+float SwingSecondsOf(ObjectId attacker)
+{
+    if (GetCurrentThreadId() != dao::script::ScriptThreadId() || api::IsHumanoid(attacker) == 0)
+    {
+        return 0.0f;
+    }
+    const ObjectId weapon = api::GetItemInEquipSlot(k::INVENTORY_SLOT_MAIN, attacker);
+    if (api::IsObjectValid(weapon) == 0)
+    {
+        return 0.0f;
+    }
+    const std::int32_t type = api::GetBaseItemType(weapon);
+    if (dao::gda::GetFloat(dao::script::Table::Items, type, "Range").value_or(0.0f) > 0.0f)
+    {
+        return 0.0f; // a bow, a crossbow, a staff
+    }
+    WeaponStyle style = WeaponStyle::Ranged;
+    switch (api::GetWeaponStyle(attacker))
+    {
+    case k::WEAPONSTYLE_NONE:
+        style = WeaponStyle::None;
+        break;
+    case k::WEAPONSTYLE_SINGLE:
+        style = WeaponStyle::Single;
+        break;
+    case k::WEAPONSTYLE_DUAL:
+        style = WeaponStyle::Dual;
+        break;
+    case k::WEAPONSTYLE_TWOHANDED:
+        style = WeaponStyle::TwoHanded;
+        break;
+    default:
+        break;
+    }
+    constexpr std::int32_t kAttackSpeedModifier = 31; // PROPERTY_ATTRIBUTE_ATTACK_SPEED_MODIFIER
+    return SwingSeconds(style, dao::gda::GetFloat(dao::script::Table::Itemstats, type, "dspeed").value_or(0.0f),
+                        api::GetCreatureProperty(attacker, kAttackSpeedModifier, k::PROPERTY_VALUE_TOTAL));
 }
 
 // The engine's frames have no unwind data, so no exception may leave a hook
@@ -392,6 +450,10 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             {
                 DescribeAbility(*self, *command, request);
             }
+            if (type == CommandType::Attack)
+            {
+                request.actionSeconds = SwingSecondsOf(self->Id());
+            }
             Verdict verdict = Verdict::Allow;
             {
                 const std::lock_guard lock(*g_mutex);
@@ -409,6 +471,7 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
                 // A cast that charges: kept, to be given again when its
                 // turns are up, and refused now as below.
                 HeldCast kept;
+                kept.type = request.type;
                 kept.ability = request.ability;
                 kept.target = command->Target().value_or(dao::kInvalidObject);
                 if (const std::optional<dao::Vector> place = command->Position())

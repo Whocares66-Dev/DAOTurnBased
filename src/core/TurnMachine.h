@@ -20,6 +20,7 @@
 #include "core/Events.h"
 #include "core/Rules.h"
 #include "core/Settings.h"
+#include "core/TurnBudget.h"
 #include "core/TurnOrder.h"
 #include "core/Types.h"
 
@@ -197,7 +198,23 @@ struct CommandRequest
     // game's table of conjuring speeds: 0 instant, 1 fast, 2 normal, 4
     // slow, 6 ritual): a turn's worth or more of it is charged in turns.
     float conjureSeconds = 0.0f;
+    // With a turn a bar of time (dev/REBALANCE.md, "Actions"): how long the
+    // action takes when the game layer could tell, an attack's swing by the
+    // game's formula (SwingSeconds), 0 for a stand-in by kind
+    // (ActionCostMs). And of an ability: its table's AbilityType (a spell, an
+    // item's: a potion), its conjure animation (ConjureAnim) and whether its
+    // caster holds a staff, for its conjuring (ConjureSeconds), the
+    // conjuring speed's count being conjureSeconds above.
+    float actionSeconds = 0.0f;
+    std::int32_t abilityType = 0;
+    std::int32_t conjureAnim = 0;
+    bool staff = false;
 };
+
+// With a turn a bar of time: what an action costs of it, in milliseconds.
+// An attack its swing, an ability its cast and its conjuring, an item's its
+// drink; turning a mode off nothing (dev/REBALANCE.md, "Actions").
+[[nodiscard]] std::uint32_t ActionCostMs(const CommandRequest &request);
 
 enum class Verdict : std::uint8_t
 {
@@ -244,6 +261,10 @@ struct TurnView
     int actionsLeft = 0;
     float movementLeft = 0;
     float movementMax = 0;
+    // With a turn a bar of time: the bar, and what is left of it.
+    bool timed = false;
+    std::uint32_t timeMs = 0;
+    std::uint32_t timeLeftMs = 0;
     std::vector<CardView> upcoming; // the current turn first
 };
 
@@ -271,6 +292,8 @@ struct ChargeView
     ObjectId id = kNoObject;
     std::int32_t ability = -1;
     int turns = 0; // its caster's turns still to go before it is cast
+    // With time: what it still owes, paid out of its creature's next turns.
+    std::uint32_t owedMs = 0;
 };
 
 struct MachineState
@@ -419,9 +442,10 @@ class TurnMachine
   private:
     struct Budget
     {
-        int actions = 1;
-        float movementMax = 0;
-        float movementUsed = 0;
+        // What the turn has to spend and has spent (core/TurnBudget.h): one
+        // action and meters as built, or a bar of time.
+        TurnBudget spend = TurnBudget::Actions(1, 0.0f);
+        std::uint32_t lastCostMs = 0; // what the last action let through was charged
         int commands = 0;
         bool outOfMovement = false;
         bool refunded = false; // an action given back once already this turn
@@ -429,13 +453,13 @@ class TurnMachine
         bool landing = false;  // the turn began with a charged cast: its creature's turn follows it
         CommandKind lastKind = CommandKind::Involuntary;
         std::int32_t lastAbility = -1; // the ability the last command was to use; -1 for any other command
-        float movementAtCommand = 0;   // movementUsed as the last command was let through
+        float movementAtCommand = 0;   // meters walked as the last command was let through
         CommandType lastType = CommandType::Invalid; // the last command let through, and when
         std::uint32_t lastAt = 0;
 
         [[nodiscard]] float MovementLeft() const
         {
-            return movementUsed >= movementMax ? 0.0f : movementMax - movementUsed;
+            return spend.MovementLeft();
         }
     };
 
@@ -458,6 +482,19 @@ class TurnMachine
     // and its loss.
     [[nodiscard]] int ChargeTurns(const CommandRequest &request) const;
     [[nodiscard]] bool ChargingTurn(const Combatant &who, std::vector<Effect> &fx);
+    // With a turn a bar of time (Settings::turnClock).
+    [[nodiscard]] bool Timed() const;
+    [[nodiscard]] std::uint32_t TurnMs() const;
+    [[nodiscard]] int TacticsOf(const Combatant &who) const;
+    [[nodiscard]] TurnBudget NewSpend(const Combatant &who) const;
+    [[nodiscard]] std::optional<Verdict> PayAction(const Combatant &who, const CommandRequest &request);
+    // What a cooldown's and an effect's seconds are counted in.
+    [[nodiscard]] float CooldownTurnSeconds() const;
+    [[nodiscard]] float EffectRoundSeconds() const;
+    // There is an action spent this turn to give back (its time, with time).
+    [[nodiscard]] bool ActionToGiveBack() const;
+    void GiveActionBack();
+    [[nodiscard]] std::string BudgetLeft() const;
     [[nodiscard]] bool LandCast(const Combatant &who, std::vector<Effect> &fx);
     void Interrupt(ObjectId who, std::string_view why, std::vector<Effect> &fx);
     void HoldUsed(std::vector<Effect> &fx);
@@ -556,11 +593,22 @@ class TurnMachine
     // turn. A caster held (a stun, a knockdown, paralysis, sleep), fallen
     // or gone before then loses it, nothing spent. Cast, it costs no action
     // of that turn: the caster then has its turn.
+    //
+    // With a turn a bar of time, the same keeps an action that does not fit
+    // what is left of its creature's bar (PayAction): it lands as a later
+    // turn has paid what it owes, and its walk to its target (an attack's),
+    // paid for in that, is walked for nothing. An action the game layer
+    // cannot keep (an item's use) runs at once, and only what it owes is
+    // kept, to be paid.
     struct Charge
     {
         ObjectId caster = kNoObject;
         std::int32_t ability = -1;
         int turns = 0; // its caster's turns still to go, the next included
+        std::uint32_t owedMs = 0;
+        float walk = 0;
+        CommandType type = CommandType::UseAbility;
+        bool kept = true;
     };
     std::vector<Charge> charges_;
     std::optional<Charge> landing_; // given again this turn, and not yet come through the gate
@@ -586,6 +634,8 @@ class TurnMachine
     // seconds for ten minutes (311 "up again" against 39 falls, read off
     // Eluvian's bus, 2026-09-30), losing whatever turn came while gone.
     std::unordered_map<ObjectId, std::uint32_t> absentSince_;
+    // With time: what each creature's last turn left over, to its cap.
+    std::unordered_map<ObjectId, std::uint32_t> rollover_;
     static constexpr std::uint32_t kAbsentMs = 4000;
     // Those that left the fight alive (missing from the scans for
     // kAbsentMs): down in the order, and only a scan that finds one again

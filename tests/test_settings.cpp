@@ -203,3 +203,31 @@ TEST_CASE("the preview's path is marked on the ground by default, and can be a l
     CHECK_FALSE(line.settings.movePreviewGround);
     CHECK(line.warnings.empty());
 }
+
+TEST_CASE("a turn is one action and meters by default; time and its numbers are read", "[settings]")
+{
+    const tb::Settings defaults;
+    CHECK(defaults.turnClock == tb::TurnClock::Actions);
+    CHECK(defaults.secondsPerTurn == 4.0f);
+    CHECK(defaults.freeStepMeters == 1.0f);
+    CHECK(defaults.enemyTactics == std::array<int, 5>{0, 0, 2, 4, 4});
+    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.turnClock == tb::TurnClock::Actions);
+    const tb::ParsedSettings timed = tb::ParseSettings("[turns]\nclock = time\nseconds_per_turn = 5\nfree_step = 0.5\n"
+                                                       "pace = 5\nenemy_tactics = 0, 1, 2, 3, 4\n");
+    CHECK(timed.warnings.empty());
+    CHECK(timed.settings.turnClock == tb::TurnClock::Time);
+    CHECK(timed.settings.secondsPerTurn == 5.0f);
+    CHECK(timed.settings.freeStepMeters == 0.5f);
+    CHECK(timed.settings.paceMps == 5.0f);
+    CHECK(timed.settings.enemyTactics == std::array<int, 5>{0, 1, 2, 3, 4});
+}
+
+TEST_CASE("bad clocks and rank lists are refused, the defaults kept", "[settings]")
+{
+    const tb::ParsedSettings bad = tb::ParseSettings("[turns]\nclock = points\nenemy_tactics = 0, 0, 2\n");
+    CHECK(bad.warnings.size() == 2);
+    CHECK(bad.settings.turnClock == tb::TurnClock::Actions);
+    CHECK(bad.settings.enemyTactics == std::array<int, 5>{0, 0, 2, 4, 4});
+    CHECK(tb::ParseSettings("[turns]\nenemy_tactics = 0, 0, 2, 4, 9\n").warnings.size() == 1);
+    CHECK(tb::ParseSettings("[turns]\nenemy_tactics = 0, 0, 2, 4, 4, 4\n").warnings.size() == 1);
+}

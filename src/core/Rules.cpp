@@ -231,10 +231,13 @@ const char *Name(Side side)
     return "?";
 }
 
-int RollInitiative(Rng &rng, float dexterity, const Settings &settings)
+int RollInitiative(Rng &rng, float dexterity, const Settings &settings, int survival)
 {
+    constexpr int kTopRank = 4;
     const float bonus = std::floor((dexterity - 10.0f) * settings.initiativePerDexterity);
-    return rng.Roll(settings.initiativeDie) + static_cast<int>(bonus);
+    const float ranks =
+        std::floor(static_cast<float>(std::clamp(survival, 0, kTopRank)) * settings.initiativePerSurvival);
+    return rng.Roll(settings.initiativeDie) + static_cast<int>(bonus) + static_cast<int>(ranks);
 }
 
 float Reach(float weaponRange, float attackerSpace, float targetSpace)
@@ -294,6 +297,53 @@ float SpeedFactor(float combatSpeed)
         return 1.0f;
     }
     return combatSpeed / kPersonCombatSpeed;
+}
+
+float SwingSeconds(WeaponStyle style, float weaponSpeed, float attackSpeedModifier)
+{
+    float base = 0.0f;
+    switch (style)
+    {
+    case WeaponStyle::None:
+    case WeaponStyle::Single:
+        base = 2.0f;
+        break;
+    case WeaponStyle::Dual:
+        base = 1.5f;
+        break;
+    case WeaponStyle::TwoHanded:
+        base = 2.5f;
+        break;
+    case WeaponStyle::Ranged:
+        return 0.0f;
+    }
+    const bool sensible = std::isfinite(attackSpeedModifier) && attackSpeedModifier >= 0.5f;
+    const float modifier = sensible ? std::min(1.5f, attackSpeedModifier) : 1.0f;
+    const float seconds = (base + (std::isfinite(weaponSpeed) ? weaponSpeed : 0.0f)) * modifier;
+    return seconds > 0.0f ? seconds : 0.0f;
+}
+
+float ConjureSeconds(std::int32_t conjureAnim, int loops, bool staff)
+{
+    if (conjureAnim <= 0 || loops <= 0)
+    {
+        return 0.0f;
+    }
+    constexpr std::int32_t kBuildsUp = 245;
+    constexpr std::int32_t kDrawsIn = 244;
+    float start = 0.6f;
+    float loop = 3.0f;
+    if (conjureAnim == kBuildsUp)
+    {
+        start = staff ? 0.77f : 0.67f;
+        loop = staff ? 2.70f : 2.27f;
+    }
+    else if (conjureAnim == kDrawsIn)
+    {
+        start = 0.47f;
+        loop = 3.40f;
+    }
+    return start + loop * static_cast<float>(loops);
 }
 
 } // namespace tb

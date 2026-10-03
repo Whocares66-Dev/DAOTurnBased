@@ -108,6 +108,7 @@ endif()
 add_library(
     tb_core
     STATIC
+    src/core/ActionTime.cpp
     src/core/Bar.cpp
     src/core/Events.cpp
     src/core/Json.cpp
@@ -119,6 +120,8 @@ add_library(
     src/core/State.cpp
     src/core/TurnMachine.cpp
     src/core/TurnOrder.cpp
+    src/core/TurnBudget.cpp
+    src/core/TurnTime.cpp
 )
 tb_apply_warnings(tb_core)
 target_include_directories(tb_core PUBLIC "${PROJECT_SOURCE_DIR}/src")

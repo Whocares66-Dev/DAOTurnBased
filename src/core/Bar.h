@@ -28,7 +28,7 @@ namespace tb
 
 inline constexpr wchar_t kBarCard = 0x1E;
 inline constexpr wchar_t kBarField = 0x1F;
-inline constexpr int kBarVersion = 3;
+inline constexpr int kBarVersion = 4;
 
 // The portraits come from the game's side, the rest from the machine.
 [[nodiscard]] std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits);

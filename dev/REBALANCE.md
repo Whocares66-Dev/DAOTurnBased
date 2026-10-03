@@ -6,7 +6,7 @@ How to read the evidence. "Read" is from the game's own scripts (the toolset's 2
 
 ## Current specification
 
-The rules in force as of 2026-10-02, and only those: what to build from. Everything below this section is how they were reached, kept as their reasons; where it disagrees with this section, this section holds. **Nothing here is built.** Each rule is marked by where it stands: *decided*, the user's own decision in the talk ("Decided: a turn is four seconds of time" and the section after it); *proposed*, an answer to a review that the user has had pushed but not confirmed in words ("Answers to the review concerns" and the two answer sections after it). Times are in seconds as the game has them; the core keeps them in milliseconds.
+The rules in force as of 2026-10-02, and only those: what to build from. Everything below this section is how they were reached, kept as their reasons; where it disagrees with this section, this section holds. **Built so far, behind `[turns] clock = time` and not yet seen in play**: the turn's bar with Combat Tactics and rollover, actions at their own time (stand-ins where the engine's lengths are not read), walking at a pace with a free metre, an action that does not fit kept and landing on the next turn, an AI choosing while it has time, and Survival's initiative; `dev/REBALANCE_IMPLEMENTATION.md` has what and what not. Creatures' own clocks, holds by their time, interruption by damage, areas' clocks and the bar on screen are not. Each rule is marked by where it stands: *decided*, the user's own decision in the talk ("Decided: a turn is four seconds of time" and the section after it); *proposed*, an answer to a review that the user has had pushed but not confirmed in words ("Answers to the review concerns" and the two answer sections after it). Times are in seconds as the game has them; the core keeps them in milliseconds.
 
 ### The turn
 
@@ -867,3 +867,5 @@ An action lands about a second or more after it starts (a swing's impact, a drin
 **Mana at landing**: agreed; the deduction and restoring at the start stays open until DAOLib has looked at the engine's resources.
 
 **One current specification: agreed, and now the main risk.** Five rounds of answers have each overridden earlier text, and building from this page risks following a rule since replaced. Next is a "Current specification" at the head of this page, the rules in force only, with the rounds below it as their reasons.
+
+Implementation has started with a pure-core time-accounting component; see [REBALANCE_IMPLEMENTATION.md](REBALANCE_IMPLEMENTATION.md) for what is built, verification, and the engine integration gaps. The live turn machine still uses the existing rules until those gaps are resolved.

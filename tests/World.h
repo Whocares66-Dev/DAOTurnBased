@@ -39,6 +39,9 @@ struct Creature
     bool moving = false;
     CommandType current = CommandType::Invalid;
     Vec3 position;
+    int rank = 0;     // CREATURE_RANK_*: an enemy's Combat Tactics is by it, with time
+    int tactics = 0;  // Combat Tactics' rank, a party member's
+    int survival = 0; // Survival's rank
 };
 
 inline Creature Make(ObjectId id, Side side, bool hero, std::wstring name, float dexterity)
@@ -146,6 +149,9 @@ class World
                 x.speed = c.speed;
                 x.down = c.down;
                 x.engaged = c.engaged;
+                x.rank = c.rank;
+                x.tactics = c.tactics;
+                x.survival = c.survival;
                 seen.push_back(x);
             }
             obs.scan = seen;
@@ -174,7 +180,10 @@ class World
     // A command queued on a creature, through the gate as the queue hook
     // puts it; it starts running if let through. walk: for an attack, the
     // meters to its target's reach, when the game layer could tell.
-    Verdict Order(ObjectId id, CommandType type, Source source, std::optional<float> walk = std::nullopt)
+    // seconds: with a turn a bar of time, how long the action takes (0: the
+    // machine's stand-in).
+    Verdict Order(ObjectId id, CommandType type, Source source, std::optional<float> walk = std::nullopt,
+                  float seconds = 0.0f)
     {
         CommandRequest request;
         request.object = id;
@@ -182,6 +191,7 @@ class World
         request.source = source;
         request.inCombat = Get(id).fighting;
         request.walk = walk;
+        request.actionSeconds = seconds;
         return Queue(request);
     }
 
@@ -292,6 +302,7 @@ class World
     std::function<void(ObjectId)> onPoke;                   // what an AI does when told to choose
     std::function<void(const Effect &)> onEffect;           // sees every effect as it is applied
     std::function<void(std::string_view)> onLog;            // sees every line the machine logs
+    std::function<void(ObjectId, const CommandRequest &, Verdict)> onReleased; // a kept cast or action given again
     bool record = true; // keep the log and the effects (a long random fight does not)
     Mode mode = Mode::Explore;
     bool paused = false;
@@ -349,6 +360,10 @@ class World
                     heldCasts.erase(kept);
                     again.source = Source::Script;
                     released.push_back(Queue(again));
+                    if (onReleased)
+                    {
+                        onReleased(e.target, again, released.back());
+                    }
                 }
                 break;
             case EffectKind::DropCast:

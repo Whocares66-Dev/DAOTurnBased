@@ -1,0 +1,198 @@
+#include "core/TurnBudget.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace tb
+{
+
+TurnBudget TurnBudget::Actions(int actions, float meters)
+{
+    TurnBudget budget;
+    budget.actions_ = std::max(0, actions);
+    budget.movementMax_ = std::max(0.0f, meters);
+    return budget;
+}
+
+TurnBudget TurnBudget::Time(const TurnTime &time, float paceMps, float freeMeters)
+{
+    TurnBudget budget;
+    budget.timed_ = true;
+    budget.time_ = time;
+    budget.pace_ = paceMps > 0.0f ? paceMps : 1.0f;
+    budget.free_ = std::max(0.0f, freeMeters);
+    return budget;
+}
+
+int TurnBudget::ActionsLeft() const
+{
+    if (!timed_)
+    {
+        return actions_;
+    }
+    return time_.CapacityLeft() > 0 ? 1 : 0;
+}
+
+std::uint32_t TurnBudget::SpendAction(std::uint32_t costMs)
+{
+    if (!timed_)
+    {
+        actions_ = std::max(0, actions_ - 1);
+        return 0;
+    }
+    const TimePayment paid = time_.Spend(costMs);
+    return costMs - paid.capacityMs;
+}
+
+void TurnBudget::GiveActionBack(std::uint32_t chargedMs)
+{
+    if (!timed_)
+    {
+        actions_ = std::max(actions_, 1);
+        return;
+    }
+    time_.Refund(chargedMs);
+}
+
+void TurnBudget::SpendAllActions()
+{
+    if (!timed_)
+    {
+        actions_ = 0;
+        return;
+    }
+    // The free meter and meters paid for go with it: a creature whose
+    // action is pending may not walk (dev/REBALANCE.md, "Actions"). In the
+    // random fights an AI walked its free meter after its action was kept,
+    // and on into the next creature's turn (test_fights.cpp, seed 130).
+    (void)time_.Spend(time_.CapacityLeft());
+    freeWalked_ = std::max(freeWalked_, free_);
+    credit_ = 0.0f;
+    owedMeters_ = 0.0f;
+}
+
+float TurnBudget::MovementLeft() const
+{
+    if (!timed_)
+    {
+        return walked_ >= movementMax_ ? 0.0f : movementMax_ - walked_;
+    }
+    const float freeLeft = std::max(0.0f, free_ - freeWalked_);
+    const float timed = static_cast<float>(time_.CapacityLeft()) / 1000.0f * pace_ - owedMeters_;
+    return credit_ + freeLeft + std::max(0.0f, timed);
+}
+
+float TurnBudget::MovementMax() const
+{
+    if (!timed_)
+    {
+        return movementMax_;
+    }
+    return walked_ - overwalked_ + MovementLeft();
+}
+
+float TurnBudget::Overwalked() const
+{
+    if (!timed_)
+    {
+        return std::max(0.0f, walked_ - movementMax_);
+    }
+    return overwalked_;
+}
+
+void TurnBudget::Walk(float meters)
+{
+    if (!(meters > 0.0f))
+    {
+        return;
+    }
+    walked_ += meters;
+    if (!timed_)
+    {
+        return;
+    }
+    // Meters paid for first, then the free meter, then time at the
+    // creature's pace. A frame's step is a few centimeters, less than a
+    // millisecond's walk: what is owed is kept until a whole millisecond is.
+    const float credited = std::min(meters, credit_);
+    credit_ -= credited;
+    meters -= credited;
+    if (!(meters > 0.0f))
+    {
+        return;
+    }
+    const float freed = std::min(meters, std::max(0.0f, free_ - freeWalked_));
+    freeWalked_ += freed;
+    owedMeters_ += meters - freed;
+    const auto wholeMs = static_cast<std::uint32_t>(std::floor(owedMeters_ / pace_ * 1000.0f));
+    if (wholeMs == 0)
+    {
+        return;
+    }
+    const TimePayment paid = time_.Spend(wholeMs);
+    owedMeters_ -= static_cast<float>(wholeMs) / 1000.0f * pace_;
+    if (paid.capacityMs < wholeMs)
+    {
+        // Walked past the time there was: the machine stops it.
+        overwalked_ += static_cast<float>(wholeMs - paid.capacityMs) / 1000.0f * pace_;
+    }
+}
+
+std::uint32_t TurnBudget::WalkCostMs(float meters) const
+{
+    if (!timed_)
+    {
+        return 0;
+    }
+    const float rest = meters - credit_ - std::max(0.0f, free_ - freeWalked_);
+    if (!(rest > 0.0f))
+    {
+        return 0;
+    }
+    return static_cast<std::uint32_t>(std::ceil(rest / pace_ * 1000.0f));
+}
+
+void TurnBudget::Prepay(float meters)
+{
+    if (!timed_ || !(meters > credit_))
+    {
+        return;
+    }
+    // What is already paid for stays credit; the free meter is used next,
+    // then time for the rest.
+    const std::uint32_t costMs = WalkCostMs(meters);
+    const float freed = std::min(meters - credit_, std::max(0.0f, free_ - freeWalked_));
+    freeWalked_ += freed;
+    (void)time_.Spend(costMs);
+    credit_ = meters;
+}
+
+void TurnBudget::Credit(float meters)
+{
+    if (meters > 0.0f)
+    {
+        credit_ += meters;
+    }
+}
+
+std::uint32_t TurnBudget::CapacityMs() const
+{
+    return timed_ ? time_.Capacity() : 0;
+}
+
+std::uint32_t TurnBudget::CapacityLeftMs() const
+{
+    return timed_ ? time_.CapacityLeft() : 0;
+}
+
+std::uint32_t TurnBudget::Finish(std::uint32_t rolloverCapMs)
+{
+    if (!timed_)
+    {
+        actions_ = 0;
+        return 0;
+    }
+    return time_.Finish(rolloverCapMs).rolloverMs;
+}
+
+} // namespace tb

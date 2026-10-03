@@ -47,6 +47,9 @@ void SetPathCheck(bool on);
 // to forget (DropCast; no creature: every one). On the scripts' thread.
 struct HeldCast
 {
+    // With a turn a bar of time, an attack is kept too, until its time is
+    // paid (core: TurnMachine::PayAction); the rest are ability uses.
+    CommandType type = CommandType::UseAbility;
     std::int32_t ability = -1;
     ObjectId target = kNoObject;
     bool placed = false; // aimed at a place

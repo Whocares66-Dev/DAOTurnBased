@@ -145,6 +145,7 @@ const std::vector<Entry> &Entries()
         {"turnbased", "enabled", Bool(&Settings::enabled)},
         {"initiative", "die", Int(&Settings::initiativeDie, 1, 100)},
         {"initiative", "per_dexterity", Float(&Settings::initiativePerDexterity, 0.0f, 5.0f)},
+        {"initiative", "per_survival", Float(&Settings::initiativePerSurvival, 0.0f, 10.0f)},
         {"movement", "rule",
          [](Settings &s, std::string_view text) -> std::string {
              const std::string v = Lower(text);
@@ -251,6 +252,64 @@ const std::vector<Entry> &Entries()
              {
                  return "not command_complete or kickstart";
              }
+             return {};
+         }},
+        {"turns", "clock",
+         [](Settings &s, std::string_view text) -> std::string {
+             const std::string v = Lower(text);
+             if (v == "actions")
+             {
+                 s.turnClock = TurnClock::Actions;
+             }
+             else if (v == "time")
+             {
+                 s.turnClock = TurnClock::Time;
+             }
+             else
+             {
+                 return "not actions or time";
+             }
+             return {};
+         }},
+        {"turns", "seconds_per_turn", Float(&Settings::secondsPerTurn, 1.0f, 30.0f)},
+        {"turns", "free_step", Float(&Settings::freeStepMeters, 0.0f, 10.0f)},
+        {"turns", "pace", Float(&Settings::paceMps, 0.5f, 20.0f)},
+        {"turns", "enemy_tactics",
+         [](Settings &s, std::string_view text) -> std::string {
+             // "0, 0, 2, 4, 4": by rank, critter to elite boss.
+             std::array<int, 5> ranks{};
+             std::size_t count = 0;
+             std::size_t at = 0;
+             while (at <= text.size())
+             {
+                 std::size_t end = text.find(',', at);
+                 end = end == std::string_view::npos ? text.size() : end;
+                 std::string_view item = text.substr(at, end - at);
+                 at = end + 1;
+                 while (!item.empty() && item.front() == ' ')
+                 {
+                     item.remove_prefix(1);
+                 }
+                 while (!item.empty() && item.back() == ' ')
+                 {
+                     item.remove_suffix(1);
+                 }
+                 int rank = 0;
+                 if (count >= ranks.size() || !WholeInt(item, rank) || rank < 0 || rank > 8)
+                 {
+                     return "not five ranks 0 to 8, critter to elite boss (0, 0, 2, 4, 4)";
+                 }
+                 ranks.at(count++) = rank;
+                 if (end == text.size())
+                 {
+                     break;
+                 }
+             }
+             if (count != ranks.size())
+             {
+                 return "not five ranks 0 to 8, critter to elite boss (0, 0, 2, 4, 4)";
+             }
+             s.enemyTactics = ranks;
              return {};
          }},
         {"feedback", "floaties", Bool(&Settings::floaties)},
@@ -393,6 +452,8 @@ enabled = true
 ; each point of Dexterity above 10. Highest goes first.
 die = 20
 per_dexterity = 0.25
+; And per_survival for each rank of Survival.
+per_survival = 2
 
 [movement]
 ; How far a combatant may move in its turn, in meters.
@@ -504,6 +565,23 @@ join_by_sight = true
 charge =
 ; How an AI creature is told its turn has come: command_complete or kickstart.
 ai_poke = command_complete
+; What a turn is. actions: one action (an attack, an ability, an item) and
+; the movement above, as the mod has played so far. time: a bar of time,
+; seconds_per_turn long, that actions and walking both spend, each at its
+; own length (dev/REBALANCE.md, being built: not yet seen in play).
+clock = actions
+; With time: a turn's bar in seconds, and what cooldowns and effects are
+; counted in.
+seconds_per_turn = 4
+; With time: meters a turn walked for nothing, to shuffle in a melee ring.
+free_step = 1
+; With time: a person's walk in a fight, meters a second, times the
+; creature's movement speed.
+pace = 4.66
+; With time: the Combat Tactics rank enemies fight at, by their rank:
+; critter, normal, lieutenant, boss, elite boss. Each rank 2 and 4 adds half
+; a second to a turn; ranks 1 and 3 let half a second more roll over.
+enemy_tactics = 0, 0, 2, 4, 4
 
 [feedback]
 ; The game's floating text: whose turn it is, out of movement, not your turn.

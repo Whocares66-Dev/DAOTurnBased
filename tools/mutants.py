@@ -50,13 +50,112 @@ PREVIEW = "src/core/Preview.cpp"
 
 MUTANTS = [
     Mutant(
+        "actiontime pays through an unresolved event",
+        "src/core/ActionTime.cpp",
+        "if (state_ == ActionTimeState::Pending)",
+        "if (true)",
+    ),
+    Mutant(
+        "actiontime ignores interruption at an event",
+        "src/core/ActionTime.cpp",
+        "if (interrupted)",
+        "if (interrupted && false)",
+    ),
+    Mutant(
+        "actiontime lands before a simultaneous timer",
+        "src/core/ActionTime.cpp",
+        "if (untilEventMs && payment.clockMs == *untilEventMs)",
+        "if (untilEventMs && payment.clockMs == *untilEventMs && remainingMs_ > 0)",
+    ),
+    Mutant(
+        "actiontime drops cost that should pend",
+        "src/core/ActionTime.cpp",
+        "remainingMs_ -= payment.capacityMs;",
+        "remainingMs_ = 0;",
+    ),
+    Mutant(
+        "actiontime dispatches the same action repeatedly",
+        "src/core/ActionTime.cpp",
+        "state_ = ActionTimeState::Dispatched;",
+        "state_ = ActionTimeState::Ready;",
+    ),
+    Mutant(
+        "actiontime interruption leaves unpaid cost live",
+        "src/core/ActionTime.cpp",
+        "remainingMs_ = 0;",
+        "remainingMs_ += 0;",
+    ),
+    Mutant(
+        "actiontime lets an unpaid action dispatch",
+        "src/core/ActionTime.cpp",
+        "if (state_ != ActionTimeState::Ready)",
+        "if (state_ == ActionTimeState::Ready)",
+    ),
+    Mutant(
+        "turntime rounds event payment before reaching the event",
+        "src/core/TurnTime.cpp",
+        "boundary - progress_ + turnMs_ - 1",
+        "boundary - progress_",
+    ),
+    Mutant(
+        "turntime ignores the bonus capacity",
+        "src/core/TurnTime.cpp",
+        "static_cast<std::uint64_t>(turnMs_) + bonusMs + rolloverMs",
+        "static_cast<std::uint64_t>(turnMs_) + bonusMs * 0 + rolloverMs",
+    ),
+    Mutant(
+        "turntime ignores rollover capacity",
+        "src/core/TurnTime.cpp",
+        "static_cast<std::uint64_t>(turnMs_) + bonusMs + rolloverMs",
+        "static_cast<std::uint64_t>(turnMs_) + bonusMs + rolloverMs * 0",
+    ),
+    Mutant(
+        "turntime advances a bonus creature clock too fast",
+        "src/core/TurnTime.cpp",
+        "progress_ / capacityMs_",
+        "progress_ / turnMs_",
+    ),
+    Mutant(
+        "turntime holds consume capacity instead of clock time",
+        "src/core/TurnTime.cpp",
+        "static_cast<std::uint64_t>(clockMs) * capacityMs_",
+        "static_cast<std::uint64_t>(clockMs) * turnMs_",
+    ),
+    Mutant(
+        "turntime passing never advances the remaining clock",
+        "src/core/TurnTime.cpp",
+        "std::min(rolloverCapMs, CapacityLeft()), ClockLeft()",
+        "std::min(rolloverCapMs, CapacityLeft()), 0",
+    ),
+    Mutant(
+        "turntime ending a turn can bank the same capacity twice",
+        "src/core/TurnTime.cpp",
+        "progress_ = Total();",
+        "progress_ += 0;",
+    ),
+    Mutant(
+        "turntime loses fractional progress between payments",
+        "src/core/TurnTime.cpp",
+        "return {paid, ClockElapsed() - before};",
+        "progress_ = static_cast<std::uint64_t>(ClockElapsed()) * capacityMs_;\n    return {paid, ClockElapsed() - before};",
+    ),
+    Mutant(
+        "turntime tactics increases capacity at the wrong ranks",
+        "src/core/TurnTime.cpp",
+        "500 * (bounded / 2)",
+        "500 * ((bounded + 1) / 2)",
+    ),
+    Mutant(
         "the gate lets anyone act",
         MACHINE,
         "if (current == nullptr || current->id != request.object)",
         "if (current == nullptr)",
     ),
     Mutant(
-        "the gate never spends an action", MACHINE, "        --budget_.actions;\n", "\n"
+        "the gate never spends an action",
+        MACHINE,
+        "        (void)budget_.spend.SpendAction(0);\n",
+        "\n",
     ),
     Mutant(
         "the gate never checks movement",
@@ -67,7 +166,7 @@ MUTANTS = [
     Mutant(
         "nobody is stopped for want of movement",
         MACHINE,
-        "if (!actor.moving || budget_.movementUsed < budget_.movementMax + kOvershoot)",
+        "if (!actor.moving || budget_.spend.Overwalked() < kOvershoot)",
         "if (true)",
     ),
     Mutant(
@@ -85,8 +184,8 @@ MUTANTS = [
     Mutant(
         "an action is given back every time",
         MACHINE,
-        "&& budget_.actions == 0 && !budget_.refunded;",
-        "&& budget_.actions == 0;",
+        "budget_.lastKind == CommandKind::Action && ActionToGiveBack() && !budget_.refunded;",
+        "budget_.lastKind == CommandKind::Action && ActionToGiveBack();",
     ),
     Mutant(
         "the turn never passes on",
@@ -376,8 +475,8 @@ MUTANTS = [
     Mutant(
         "a command that failed without acting keeps its action spent",
         MACHINE,
-        "    budget_.actions = 1;\n    budget_.refunded = true;\n    Log(LogLevel::Info,\n        std::format(\"{}'s {} failed",
-        "    budget_.actions = 0;\n    budget_.refunded = true;\n    Log(LogLevel::Info,\n        std::format(\"{}'s {} failed",
+        "    GiveActionBack();\n    budget_.refunded = true;\n    Log(LogLevel::Info,\n        std::format(\"{}'s {} failed",
+        "    budget_.refunded = true;\n    Log(LogLevel::Info,\n        std::format(\"{}'s {} failed",
     ),
     Mutant(
         "the hero is not the one controlled after a fight",
@@ -520,8 +619,8 @@ MUTANTS = [
     Mutant(
         "an AI whose action was given back is not told to choose again",
         MACHINE,
-        "    if (!player && budget_.actions > 0 && budget_.refunded && !budget_.retried && !budget_.outOfMovement)",
-        "    if (!player && budget_.actions > 9 && budget_.refunded && !budget_.retried && !budget_.outOfMovement)",
+        "    if (!player && budget_.spend.ActionsLeft() > 0 && budget_.refunded && !budget_.retried &&",
+        "    if (!player && budget_.spend.ActionsLeft() > 9 && budget_.refunded && !budget_.retried &&",
     ),
     Mutant(
         "an AI whose action was given back is told again and again",
@@ -538,14 +637,14 @@ MUTANTS = [
     Mutant(
         "a creature in reach is stopped for shifting its feet",
         MACHINE,
-        "budget_.movementUsed - budget_.movementAtCommand < kShuffle)",
-        "budget_.movementUsed - budget_.movementAtCommand < 0.0f)",
+        "budget_.spend.Walked() - budget_.movementAtCommand < kShuffle)",
+        "budget_.spend.Walked() - budget_.movementAtCommand < 0.0f)",
     ),
     Mutant(
         "an action's walk goes on past its movement",
         MACHINE,
-        "    budget_.movementAtCommand = budget_.movementUsed;",
-        "    budget_.movementAtCommand = budget_.movementUsed + 999.0f;",
+        "    budget_.movementAtCommand = budget_.spend.Walked();",
+        "    budget_.movementAtCommand = budget_.spend.Walked() + 999.0f;",
     ),
     Mutant(
         "a door costs the action",
@@ -622,8 +721,8 @@ MUTANTS = [
     Mutant(
         "an action that waited behind a walk is lost when it is stopped",
         MACHINE,
-        "            if (waited)\n            {\n                budget_.actions = 1;",
-        "            if (waited)\n            {\n                budget_.actions = 0;",
+        "            if (waited)\n            {\n                GiveActionBack();",
+        "            if (waited)\n            {\n",
     ),
     Mutant(
         "a fight made is not said to begin",
@@ -640,14 +739,14 @@ MUTANTS = [
     Mutant(
         "a ritual is cast a turn early",
         MACHINE,
-        "    if (charge == charges_.end() || --charge->turns <= 0)",
-        "    if (charge == charges_.end() || --charge->turns <= 1)",
+        "        if (--charge->turns <= 0)",
+        "        if (--charge->turns <= 1)",
     ),
     Mutant(
         "a charged cast given again is taken for an order of the turn's",
         MACHINE,
-        "    const bool landing = landing_ && landing_->caster == who->id && request.type == CommandType::UseAbility &&",
-        "    const bool landing = landing_ && landing_->caster != who->id && request.type == CommandType::UseAbility &&",
+        "    const bool landing = landing_ && landing_->caster == who->id && request.type == landing_->type &&",
+        "    const bool landing = landing_ && landing_->caster != who->id && request.type == landing_->type &&",
     ),
     Mutant(
         "a caster held keeps its charge",
@@ -676,8 +775,8 @@ MUTANTS = [
     Mutant(
         "an AI that spent its action after its charged cast is told again",
         MACHINE,
-        "        if (player || budget_.actions > 0)\n        {\n            Handover(*current, fx);",
-        "        if (player || budget_.actions > -9)\n        {\n            Handover(*current, fx);",
+        "        if (player || budget_.spend.ActionsLeft() > 0)\n        {\n            Handover(*current, fx);",
+        "        if (player || budget_.spend.ActionsLeft() > -9)\n        {\n            Handover(*current, fx);",
     ),
     Mutant(
         "the 0 key is given to the game as another key",
@@ -930,6 +1029,145 @@ MUTANTS = [
         BAR,
         "        Field(out, std::wstring_view{TextureName(portraits.Of(card.id))});\n",
         "        (void)portraits;\n",
+    ),
+    # A turn as a bar of time (Settings::turnClock, dev/REBALANCE.md).
+    Mutant(
+        "turnbudget lets a kept action's creature walk its free meter",
+        "src/core/TurnBudget.cpp",
+        "    freeWalked_ = std::max(freeWalked_, free_);\n    credit_ = 0.0f;",
+        "    credit_ = 0.0f;",
+    ),
+    Mutant(
+        "turnbudget charges an attack's prepaid walk again as it is walked",
+        "src/core/TurnBudget.cpp",
+        "    const float credited = std::min(meters, credit_);\n    credit_ -= credited;",
+        "    const float credited = 0.0f;\n    credit_ -= credited;",
+    ),
+    Mutant(
+        "turnbudget walks without paying past the free meter",
+        "src/core/TurnBudget.cpp",
+        "    const TimePayment paid = time_.Spend(wholeMs);",
+        "    const TimePayment paid{};",
+    ),
+    Mutant(
+        "time: an attack's walk is not paid as it is let through",
+        MACHINE,
+        "    budget_.spend.Prepay(walk);",
+        "",
+    ),
+    Mutant(
+        "time: an action is kept by its own time alone, its walk forgotten",
+        MACHINE,
+        "    if (walkMs + cost > left && keepable)",
+        "    if (cost > left && keepable)",
+    ),
+    Mutant(
+        "time: a kept action ends its turn under a command still running",
+        MACHINE,
+        "        chargeBegan_ = phase_ != Phase::Executing;",
+        "        chargeBegan_ = true;",
+    ),
+    Mutant(
+        "time: a kept attack is not known as it lands",
+        MACHINE,
+        "request.type == landing_->type &&",
+        "request.type == CommandType::UseAbility &&",
+    ),
+    Mutant(
+        "time: what a kept action owes is not paid as its turn begins",
+        MACHINE,
+        "        (void)budget_.spend.SpendAction(owed);\n        budget_.spend.Credit(charge->walk);",
+        "        budget_.spend.Credit(charge->walk);",
+    ),
+    Mutant(
+        "time: a kept action's walk is paid again as it lands",
+        MACHINE,
+        "        budget_.spend.Credit(charge->walk);",
+        "",
+    ),
+    Mutant(
+        "time: nothing rolls over",
+        MACHINE,
+        "            rollover_[current->id] = rolled;",
+        "            rollover_[current->id] = 0;",
+    ),
+    Mutant(
+        "time: rollover's cap ignores Combat Tactics",
+        MACHINE,
+        "budget_.spend.Finish(TimeFromTactics(TacticsOf(*current)).rolloverCapMs);",
+        "budget_.spend.Finish(1000);",
+    ),
+    Mutant(
+        "time: enemies have no Combat Tactics by rank",
+        MACHINE,
+        "    if (who.side != Side::Party && who.rank >= kCritter && who.rank <= kEliteBoss)",
+        "    if (who.side == Side::Ally && who.rank >= kCritter && who.rank <= kEliteBoss)",
+    ),
+    Mutant(
+        "time: an AI is not told to choose again with time left",
+        MACHINE,
+        "        if (Timed() && budget_.spend.ActionsLeft() > 0 && !budget_.outOfMovement &&",
+        "        if (Timed() && budget_.spend.ActionsLeft() > 99 && !budget_.outOfMovement &&",
+    ),
+    Mutant(
+        "time: a failed action's time is not given back",
+        MACHINE,
+        "    return budget_.spend.Timed() ? budget_.lastCostMs > 0 : budget_.spend.ActionsLeft() == 0;",
+        "    return budget_.spend.ActionsLeft() == 0;",
+    ),
+    Mutant(
+        "time: a turn with its bar spent waits on its free meter",
+        MACHINE,
+        "    if (settings_.endTurnWhenActionUsed || budget_.spend.Timed())",
+        "    if (settings_.endTurnWhenActionUsed)",
+    ),
+    Mutant(
+        "time: a turn ended over a conversation is resumed for the next creature",
+        MACHINE,
+        "    // next is begun, not resumed (test_fights.cpp, seed 594 with time).\n    resume_ = false;",
+        "    // next is begun, not resumed (test_fights.cpp, seed 594 with time).",
+    ),
+    Mutant(
+        "time: a turn spent whole on what a kept action owes is not",
+        MACHINE,
+        "        if (charge->owedMs <= bar.CapacityLeftMs())",
+        "        if (true)",
+    ),
+    Mutant(
+        "time: a mode turned off costs time",
+        MACHINE,
+        "                return 0; // a mode turned off",
+        "                seconds = kStandInAbilitySeconds;\n                break; // a mode turned off",
+    ),
+    Mutant(
+        "time: a spell's conjuring is free",
+        MACHINE,
+        "ConjureSeconds(request.conjureAnim, static_cast<int>(request.conjureSeconds), request.staff);",
+        "0.0f * ConjureSeconds(request.conjureAnim, static_cast<int>(request.conjureSeconds), request.staff);",
+    ),
+    Mutant(
+        "rules: a swing ignores the attack speed modifier",
+        RULES,
+        "    const float modifier = sensible ? std::min(1.5f, attackSpeedModifier) : 1.0f;",
+        "    const float modifier = sensible ? 1.0f : 1.0f;",
+    ),
+    Mutant(
+        "rules: a conjuring ignores its loops",
+        RULES,
+        "    return start + loop * static_cast<float>(loops);",
+        "    return start + loop;",
+    ),
+    Mutant(
+        "rules: Survival adds nothing to initiative",
+        RULES,
+        "    return rng.Roll(settings.initiativeDie) + static_cast<int>(bonus) + static_cast<int>(ranks);",
+        "    return rng.Roll(settings.initiativeDie) + static_cast<int>(bonus) + static_cast<int>(ranks) * 0;",
+    ),
+    Mutant(
+        "settings: a bar of time is not read",
+        SETTINGS,
+        '             else if (v == "time")\n             {\n                 s.turnClock = TurnClock::Time;',
+        '             else if (v == "time")\n             {\n                 s.turnClock = TurnClock::Actions;',
     ),
 ]
 

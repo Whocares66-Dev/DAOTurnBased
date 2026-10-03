@@ -364,6 +364,26 @@ float EffectsRate(ObjectId id)
     return MovementRate(potencies);
 }
 
+// A skill's rank, 0 to 4: the highest of its four abilities the creature
+// has. The skills' abilities are numbered by rank from the first
+// (ABILITY_SKILL_COMBAT_TACTICS_1 100110 to _4 100113, ABILITY_SKILL_
+// SURVIVAL_1 100051 to _4 100054; 2da_constants_h.nss, read 2026-10-02).
+constexpr std::int32_t kCombatTactics1 = 100110;
+constexpr std::int32_t kSurvival1 = 100051;
+
+int SkillRank(ObjectId id, std::int32_t first)
+{
+    constexpr int kTopRank = 4;
+    for (int rank = kTopRank; rank >= 1; --rank)
+    {
+        if (api::HasAbility(id, first + rank - 1) != 0)
+        {
+            return rank;
+        }
+    }
+    return 0;
+}
+
 } // namespace
 
 const Bridge::Known &Bridge::Remember(ObjectId id)
@@ -380,13 +400,21 @@ const Bridge::Known &Bridge::Remember(ObjectId id)
     // effects, not read yet (dev/DAOLIB_NEEDS.md).
     const float combatSpeed =
         dao::gda::GetFloat(dao::script::Table::Appearance, api::GetAppearanceType(id), "Game_CbtSpeed").value_or(0.0f);
-    Known known{api::GetName(id), api::GetTag(id), api::GetCreatureRank(id), SpeedFactor(combatSpeed)};
+    // Its skills' ranks (with a turn a bar of time, Combat Tactics' time
+    // and rollover; Survival's initiative), which a fight does not change.
+    Known known{api::GetName(id),
+                api::GetTag(id),
+                api::GetCreatureRank(id),
+                SpeedFactor(combatSpeed),
+                SkillRank(id, kCombatTactics1),
+                SkillRank(id, kSurvival1)};
     // Once per creature: what the rules will read of it, to check against
     // the game.
-    spdlog::info("{:#010x} {} ({}): rank {}, dexterity {}, combat speed {:.2f} m/s, {:.2f} a person's", id,
-                 Utf8(known.name), Utf8(known.tag), known.rank,
+    spdlog::info("{:#010x} {} ({}): rank {}, dexterity {}, combat speed {:.2f} m/s, {:.2f} a person's, Combat "
+                 "Tactics {}, Survival {}",
+                 id, Utf8(known.name), Utf8(known.tag), known.rank,
                  api::GetCreatureProperty(id, k::PROPERTY_ATTRIBUTE_DEXTERITY, k::PROPERTY_VALUE_TOTAL), combatSpeed,
-                 known.speed);
+                 known.speed, known.tactics, known.survival);
     return known_.emplace(id, std::move(known)).first->second;
 }
 
@@ -400,6 +428,8 @@ Combatant Bridge::Describe(ObjectId id, Side side, bool hero)
     c.name = known.name;
     c.tag = known.tag;
     c.rank = known.rank;
+    c.tactics = known.tactics;
+    c.survival = known.survival;
     c.dexterity = api::GetCreatureProperty(id, k::PROPERTY_ATTRIBUTE_DEXTERITY, k::PROPERTY_VALUE_TOTAL);
     const float rate = EffectsRate(id);
     c.speed = known.speed * rate;
@@ -532,6 +562,25 @@ void Bridge::Apply(const std::vector<Effect> &effects)
                     e.target, kept->ability, kept->target);
                 api::DisplayFloatyMessage(e.target, L"Its target is gone", k::FLOATY_MESSAGE,
                                           static_cast<std::int32_t>(kGrey), 2.0f);
+            }
+            else if (kept && kept->type == CommandType::Attack)
+            {
+                // With a turn a bar of time, an attack kept for the turn its
+                // time is paid on (core: TurnMachine::PayAction), given as a
+                // script gives one.
+                if (kept->target == dao::kInvalidObject)
+                {
+                    spdlog::warn("{:#010x}: its kept attack has no target: not given", e.target);
+                }
+                else if (const dao::script::OwnedCommand attack = api::CommandAttack(kept->target))
+                {
+                    api::AddCommand(e.target, *attack.get(), 1);
+                    spdlog::debug("{:#010x}: its kept attack on {:#x} is given to it", e.target, kept->target);
+                }
+                else
+                {
+                    spdlog::warn("{:#010x}: could not make the command for its kept attack", e.target);
+                }
             }
             else if (kept)
             {

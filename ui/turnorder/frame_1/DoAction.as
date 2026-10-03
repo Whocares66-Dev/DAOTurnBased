@@ -14,7 +14,7 @@
 // Outside the game there is no plugin to ask, and it draws a sample fight,
 // so the look can be checked in any Flash player.
 
-var BAR_VERSION = 3;
+var BAR_VERSION = 4;
 var CARD = String.fromCharCode(30);
 var FIELD = String.fromCharCode(31);
 
@@ -58,7 +58,7 @@ function sampleView()
 {
     // Each combatant once, the current first: the rest of round 2, then
     // round 3's up to the current (core/TurnOrder.h, Upcoming).
-    var head = [BAR_VERSION, 1, 2, 257, 1, 1, "6.5", "9.0"].join(FIELD);
+    var head = [BAR_VERSION, 1, 2, 257, 1, 1, "6.5", "9.0", 0, "0.0", "0.0"].join(FIELD);
     var cards = [
         [257, 0, 0, 65, 0, 1, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0],
         [513, 2, 2, 40, 0, 0, 0, 2, "Genlock", "g", "", 100, 0],
@@ -102,7 +102,7 @@ function parse(text)
     }
     return {version: Number(head[0]), active: head[1] == "1", round: Number(head[2]), current: head[3],
             playerTurn: head[4] == "1", actions: Number(head[5]), movementLeft: head[6], movementMax: head[7],
-            cards: cards};
+            timed: head[8] == "1", timeLeft: head[9], time: head[10], cards: cards};
 }
 
 // Text as the game's own movies set it: the fonts they import from the
@@ -577,12 +577,18 @@ function centreWord(field, top, height)
     field._y = top + (height - field.textHeight) / 2 - 2 - field.textHeight / 6;
 }
 
-// On the player's turn, the movement left; nothing on anyone else's.
+// On the player's turn, the movement left, or with a turn a bar of time
+// (core: TurnBudget) the time left and how far it would walk; nothing on
+// anyone else's.
 function describe(state)
 {
     if (!state.playerTurn)
     {
         return "";
+    }
+    if (state.timed)
+    {
+        return state.timeLeft + " of " + state.time + " s, " + state.movementLeft + " m to walk";
     }
     return state.movementLeft + " of " + state.movementMax + " m to move";
 }

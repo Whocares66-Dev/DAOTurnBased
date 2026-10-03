@@ -9,6 +9,7 @@
 
 #include "core/Keys.h"
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -34,6 +35,13 @@ enum class PartyControl : std::uint8_t
 
 // How an AI creature is told its turn has come (dev/DESIGN.md, "The AI's
 // turn").
+// What a turn is: one action and meters (as built), or a bar of time.
+enum class TurnClock : std::uint8_t
+{
+    Actions,
+    Time,
+};
+
 enum class AiPoke : std::uint8_t
 {
     CommandComplete, // a COMMAND_COMPLETE event, as when a command ends: the creature's own script sees it first
@@ -48,6 +56,8 @@ struct Settings
     // [initiative]: a roll of 1..die, plus perDexterity for each point of
     // Dexterity above 10.
     int initiativeDie = 20;
+    // Initiative a rank of Survival (dev/REBALANCE.md, "Initiative").
+    float initiativePerSurvival = 2.0f;
     float initiativePerDexterity = 0.25f;
 
     // [movement]
@@ -101,6 +111,28 @@ struct Settings
     // within the radius, as before.
     bool joinBySight = true;
     AiPoke aiPoke = AiPoke::CommandComplete;
+
+    // What a turn is (dev/REBALANCE.md, "Current specification"): one action
+    // and meters of movement, as built, or a bar of time that actions and
+    // walking both spend (`[turns] clock = time`). Actions until the bar is
+    // seen in play.
+    TurnClock turnClock = TurnClock::Actions;
+    // With time: a turn's bar, in seconds (the user, 2026-10-02: "a turn is
+    // four seconds of time"). It is also what a cooldown's and an effect's
+    // seconds are counted in, where effect_seconds_per_round and
+    // cooldown_seconds_per_turn are as built.
+    float secondsPerTurn = 4.0f;
+    // With time: meters a turn walked for nothing, for shuffling in a melee
+    // ring (the user: "about a metre a turn is free").
+    float freeStepMeters = 1.0f;
+    // With time: a person's walk in a fight, meters a second (appearance
+    // combat speed, read: 4.66), times the creature's movement speed, until
+    // each creature's own is read from the game.
+    float paceMps = 4.66f;
+    // With time: Combat Tactics' rank an enemy fights at, by its creature
+    // rank: critter, normal, lieutenant, boss, elite boss (the user: "it
+    // makes bosses more dangerous"). A party member's is its own skill's.
+    std::array<int, 5> enemyTactics{0, 0, 2, 4, 4};
 
     // [feedback]
     bool floaties = true;          // the game's floating text: whose turn, out of movement, ...

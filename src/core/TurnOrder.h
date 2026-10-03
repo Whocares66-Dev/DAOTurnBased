@@ -38,6 +38,12 @@ struct Combatant
     // always are.
     bool engaged = true;
     int initiative = 0;
+    // Its ranks in two skills, 0 to 4, a party member's own (the game
+    // layer's, read from its abilities): Combat Tactics, time a turn with
+    // the turn a bar of time (an enemy's is by its rank, Settings::
+    // enemyTactics), and Survival, initiative (dev/REBALANCE.md).
+    int tactics = 0;
+    int survival = 0;
 };
 
 class TurnOrder

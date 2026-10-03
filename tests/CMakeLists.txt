@@ -19,6 +19,7 @@ endif()
 add_executable(
     tb_tests
     quiet_crt.cpp
+    test_actiontime.cpp
     test_bar.cpp
     test_events.cpp
     test_fights.cpp
@@ -30,7 +31,10 @@ add_executable(
     test_rules.cpp
     test_settings.cpp
     test_text.cpp
+    test_time.cpp
     test_turnorder.cpp
+    test_turnbudget.cpp
+    test_turntime.cpp
 )
 tb_apply_warnings(tb_tests)
 target_link_libraries(tb_tests PRIVATE tb_core Catch2::Catch2WithMain)

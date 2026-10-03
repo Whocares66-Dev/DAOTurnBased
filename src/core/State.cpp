@@ -70,6 +70,7 @@ std::string ToJson(const MachineState &state)
     }
     out += std::format(R"(,"player_turn":{},"actions_left":{},"movement_left":{:.1f},"movement_max":{:.1f})",
                        Bool(view.playerTurn), view.actionsLeft, view.movementLeft, view.movementMax);
+    out += std::format(R"(,"timed":{},"time_left_ms":{},"time_ms":{})", Bool(view.timed), view.timeLeftMs, view.timeMs);
     out += std::format(R"(,"speed":{:.2f},"speed_took":{},"held_by_effect":{},"last_refusal":)", state.speed,
                        state.speedTook ? Bool(*state.speedTook) : "null", Bool(state.heldByEffect));
     Text(out, state.lastRefusal);
@@ -111,7 +112,7 @@ std::string ToJson(const MachineState &state)
         const ChargeView &charge = state.charging[i];
         out += i == 0 ? R"({"id":)" : R"(,{"id":)";
         Id(out, charge.id);
-        out += std::format(R"(,"ability":{},"turns":{}}})", charge.ability, charge.turns);
+        out += std::format(R"(,"ability":{},"turns":{},"owedMs":{}}})", charge.ability, charge.turns, charge.owedMs);
     }
     out += "]}";
     return out;

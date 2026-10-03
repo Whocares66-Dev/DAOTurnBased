@@ -58,6 +58,11 @@ std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits)
     Field(out, static_cast<long long>(view.actionsLeft));
     Meters(out, view.movementLeft);
     Meters(out, view.movementMax);
+    // With a turn a bar of time: whether it is, and the bar and what is left
+    // of it, in seconds (version 4).
+    Field(out, view.timed);
+    Meters(out, static_cast<float>(view.timeLeftMs) / 1000.0f);
+    Meters(out, static_cast<float>(view.timeMs) / 1000.0f);
     for (const CardView &card : view.upcoming)
     {
         out += kBarCard;

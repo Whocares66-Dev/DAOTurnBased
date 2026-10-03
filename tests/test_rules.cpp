@@ -186,3 +186,41 @@ TEST_CASE("a talent in a fight asks for its target unless it is for its user alo
     CHECK_FALSE(tb::AsksForTarget(4, 2)); // a mode whatever its mask says
     CHECK_FALSE(tb::AsksForTarget(0, 4)); // no target at all
 }
+
+TEST_CASE("a swing's time is the game's formula by weapon style, speed and attack speed", "[rules][time]")
+{
+    using Catch::Approx;
+    CHECK(tb::SwingSeconds(tb::WeaponStyle::Single, -0.5f, 1.0f) == Approx(1.5f));   // a dagger
+    CHECK(tb::SwingSeconds(tb::WeaponStyle::Single, -0.1f, 1.0f) == Approx(1.9f));   // a longsword
+    CHECK(tb::SwingSeconds(tb::WeaponStyle::Single, 0.0f, 1.0f) == Approx(2.0f));    // a mace
+    CHECK(tb::SwingSeconds(tb::WeaponStyle::None, 0.0f, 1.0f) == Approx(2.0f));      // unarmed
+    CHECK(tb::SwingSeconds(tb::WeaponStyle::Dual, -0.5f, 1.0f) == Approx(1.0f));     // a dagger's hand
+    CHECK(tb::SwingSeconds(tb::WeaponStyle::TwoHanded, 0.1f, 1.0f) == Approx(2.6f)); // a battleaxe
+    CHECK(tb::SwingSeconds(tb::WeaponStyle::Ranged, 0.0f, 1.0f) == 0.0f);            // its animation's
+    // Haste, and the clamps: over 1.5 is 1.5, under 0.5 is thrown away.
+    CHECK(tb::SwingSeconds(tb::WeaponStyle::Single, 0.0f, 0.75f) == Approx(1.5f));
+    CHECK(tb::SwingSeconds(tb::WeaponStyle::Single, 0.0f, 2.0f) == Approx(3.0f));
+    CHECK(tb::SwingSeconds(tb::WeaponStyle::Single, 0.0f, 0.45f) == Approx(2.0f));
+}
+
+TEST_CASE("a spell's conjuring is its start and its loops, and nothing without a conjure animation", "[rules][time]")
+{
+    using Catch::Approx;
+    CHECK(tb::ConjureSeconds(245, 1, true) == Approx(3.47f));
+    CHECK(tb::ConjureSeconds(245, 1, false) == Approx(2.94f));
+    CHECK(tb::ConjureSeconds(244, 1, true) == Approx(3.87f));
+    CHECK(tb::ConjureSeconds(245, 4, true) == Approx(11.57f));
+    CHECK(tb::ConjureSeconds(0, 2, true) == 0.0f);            // a talent with a Speed and no animation
+    CHECK(tb::ConjureSeconds(245, 0, true) == 0.0f);          // instant
+    CHECK(tb::ConjureSeconds(300, 1, false) == Approx(3.6f)); // one not known: the stand-in
+}
+
+TEST_CASE("Survival's ranks add to initiative", "[rules]")
+{
+    tb::Settings s;
+    s.initiativeDie = 1;
+    tb::Rng rng{1};
+    CHECK(tb::RollInitiative(rng, 10.0f, s) == 1);
+    CHECK(tb::RollInitiative(rng, 10.0f, s, 3) == 7);
+    CHECK(tb::RollInitiative(rng, 10.0f, s, 9) == 9); // four ranks at most
+}
