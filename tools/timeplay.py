@@ -932,6 +932,8 @@ LOG_SIGNS = (
     "Lands next turn",
     "owed to its next turn",
     "its own effect",
+    "is held by an effect's command",
+    "is free of the effect's command",
     "Out of movement",
     "turn is put off to the round's end",
     "[warning]",

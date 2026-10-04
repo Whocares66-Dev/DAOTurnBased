@@ -255,7 +255,7 @@ MUTANTS = [
     Mutant(
         "an action may run forever",
         MACHINE,
-        "        if (clock_ - executingSince_ > limit)",
+        "        if (!heldByEffect_ && clock_ - executingSince_ > limit)",
         "        if (false)",
     ),
     Mutant(
@@ -357,11 +357,161 @@ MUTANTS = [
         "    const bool holds = (held.onClock || (settings_.conditionTurns == 0 && held.kind == Condition::None)) &&",
         "    const bool holds = (false) &&",
     ),
+    # What holds a creature at an effect's command costs the time it holds it
+    # (issue 30): the two seconds a turn once waited before it was taken, and
+    # the five a creature getting up was let be for, are gone.
     Mutant(
-        "a turn waits out an effect no condition names",
+        "a hold takes the turn at two seconds, whatever is left of the bar",
         MACHINE,
-        " && clock_ - executingSince_ >= kEffectGraceMs)",
-        " && clock_ - executingSince_ >= kEffectGraceMs * 10)",
+        "    if (bar ? budget_.spend.CapacityLeftMs() > 0 : budget_.heldMs < HoldTurnMs())",
+        "    if (budget_.heldMs < 2000)",
+    ),
+    Mutant(
+        "a turn waits out a hold however long it runs",
+        MACHINE,
+        "    if (bar ? budget_.spend.CapacityLeftMs() > 0 : budget_.heldMs < HoldTurnMs())",
+        "    if (budget_.heldMs < 4000000000U)",
+    ),
+    Mutant(
+        "time: a hold takes nothing of the bar",
+        MACHINE,
+        "        (void)budget_.spend.HoldClock(ran);",
+        "        (void)budget_.spend.HoldClock(0);",
+    ),
+    Mutant(
+        "time: a hold takes its time of the bar as an action does, not of the clock by the turn's ratio",
+        MACHINE,
+        "        (void)budget_.spend.HoldClock(ran);",
+        "        (void)budget_.spend.SpendAction(ran);",
+    ),
+    Mutant(
+        "time: a hold does not move its creature's own clock: an effect on it cannot wear off within the turn",
+        MACHINE,
+        "        budget_.holdBarMs += before - budget_.spend.CapacityLeftMs();\n        MoveClock(fx);",
+        "        budget_.holdBarMs += before - budget_.spend.CapacityLeftMs();",
+    ),
+    Mutant(
+        "one clock for everyone's effects stands still for a hold",
+        MACHINE,
+        "    if (!timeHeld_ || OwnClocks())\n    {\n        return;\n    }\n    // Where effects are on the one clock",
+        "    if (!timeHeld_ || !OwnClocks())\n    {\n        return;\n    }\n    // Where effects are on the one clock",
+    ),
+    Mutant(
+        "with own clocks, a hold moves the clock everything else is on too",
+        MACHINE,
+        "    if (!timeHeld_ || OwnClocks())\n    {\n        return;\n    }\n    // Where effects are on the one clock",
+        "    if (!timeHeld_)\n    {\n        return;\n    }\n    // Where effects are on the one clock",
+    ),
+    Mutant(
+        "effects' time run by a hold does not come off the round's worth",
+        MACHINE,
+        "        roundAgedMs_ += static_cast<std::uint32_t>(age.b);\n        fx.push_back(age);\n        agedAtNow_ = lastNow_;",
+        "        fx.push_back(age);\n        agedAtNow_ = lastNow_;",
+    ),
+    Mutant(
+        "a stun that runs out as a hold's time runs is taken for one cured: the turn it owed is given back",
+        MACHINE,
+        "        roundAgedMs_ += static_cast<std::uint32_t>(age.b);\n        fx.push_back(age);\n        agedAtNow_ = lastNow_;",
+        "        roundAgedMs_ += static_cast<std::uint32_t>(age.b);\n        fx.push_back(age);",
+    ),
+    Mutant(
+        "a second hold in a turn is charged from the first one's end",
+        MACHINE,
+        "    ChargeHold(fx);\n    budget_.heldSeen.reset();",
+        "    ChargeHold(fx);",
+    ),
+    Mutant(
+        "the frame a hold lets go in is not charged",
+        MACHINE,
+        "    ChargeHold(fx);\n    budget_.heldSeen.reset();",
+        "    (void)fx;\n    budget_.heldSeen.reset();",
+    ),
+    Mutant(
+        "a frame between one command of an effect's and the next lets its creature go: what it kept is given into the gap",
+        MACHINE,
+        "        if (!actor.busy && ++idleTicks_ < 2)\n        {\n            return;\n        }\n        heldByEffect_ = false;",
+        "        heldByEffect_ = false;",
+    ),
+    Mutant(
+        "max_action_ms stops a hold, and clears the effect's command",
+        MACHINE,
+        "        if (!heldByEffect_ && clock_ - executingSince_ > limit)",
+        "        if (clock_ - executingSince_ > limit)",
+    ),
+    Mutant(
+        "an AI whose bar a hold spent as it let go is asked to choose with nothing",
+        MACHINE,
+        "        if (!actor.busy && current != nullptr && !PlayerControls(*current) &&\n            (!budget_.spend.Timed() || budget_.spend.ActionsLeft() > 0))",
+        "        if (!actor.busy && current != nullptr && !PlayerControls(*current))",
+    ),
+    Mutant(
+        "as built with effects on the game's clock, a hold has no turn's worth: the turn is lost at once",
+        MACHINE,
+        "    const float seconds = EffectRoundSeconds() > 0.0f ? EffectRoundSeconds() : settings_.secondsPerTurn;",
+        "    const float seconds = EffectRoundSeconds();",
+    ),
+    Mutant(
+        "as built, a hold's turn's worth is a turn's seconds, not what a round spends on effects",
+        MACHINE,
+        "    const float seconds = EffectRoundSeconds() > 0.0f ? EffectRoundSeconds() : settings_.secondsPerTurn;",
+        "    const float seconds = settings_.secondsPerTurn;",
+    ),
+    Mutant(
+        "an AI getting up from a condition the machine ended is told to choose behind the rise",
+        MACHINE,
+        "        seenActor_->current == CommandType::ExecuteEffect)\n    {\n        heldByEffect_ = true;",
+        "        seenActor_->current == CommandType::ExecuteEffect && endedFor_ != who.id)\n    {\n        heldByEffect_ = true;",
+    ),
+    # Where a hold (issue 30) meets a hostile that has noticed nobody (issue 29).
+    Mutant(
+        "an unaware hostile at an effect's command stands out its hold, and then its beat",
+        MACHINE,
+        "    if (!UnawareNow(who) && seenActor_ && seenActor_->id == who.id && seenActor_->busy &&",
+        "    if (seenActor_ && seenActor_->id == who.id && seenActor_->busy &&",
+    ),
+    Mutant(
+        "a party member thrown as its turn waits, after it has acted, is taken for one at its own action's effect",
+        MACHINE,
+        '": " + obs.actor->effects));\n        }\n        heldByEffect_ = obs.actor->current == CommandType::ExecuteEffect;',
+        '": " + obs.actor->effects));\n        }\n        heldByEffect_ = false;',
+    ),
+    Mutant(
+        "an AI thrown as it thinks, after it has acted, is taken for one at its own action's effect",
+        MACHINE,
+        "        // executing: busy here is something else's.\n        heldByEffect_ = obs.actor->current == CommandType::ExecuteEffect;",
+        "        // executing: busy here is something else's.\n        heldByEffect_ = false;",
+    ),
+    Mutant(
+        "a walk to a kept attack's target is given after its creature's turn is lost",
+        MACHINE,
+        "    if (const Combatant *current = order_.Current(); current != nullptr && approach_)",
+        "    if (const Combatant *current = order_.Current(); current != nullptr && approach_ && false)",
+    ),
+    Mutant(
+        "the engine's count, where it is only at least so much, is said as the whole of the hold",
+        MACHINE,
+        '            actor.heldKnown            ? std::format("{:.2f} s more by the engine\'s count", actor.heldSeconds)',
+        '            actor.heldKnown || actor.heldSeconds > 0.0f ? std::format("{:.2f} s more by the engine\'s count", actor.heldSeconds)',
+    ),
+    # Where a hold (issue 30) and an AI's wait (issue 31) meet.
+    Mutant(
+        "a held creature's wait is paid for behind the effect, or passes its turn",
+        MACHINE,
+        "    if (heldByEffect_ && kind != CommandKind::Free)",
+        "    if (heldByEffect_ && kind != CommandKind::Free && kind != CommandKind::Pass)",
+    ),
+    Mutant(
+        "an AI that has waited and is then thrown is nobody's: neither held nor at its own action's effect",
+        MACHINE,
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0)",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands + budget_.waits == 0)",
+    ),
+    # Where a hold meets an attack the engine has no way to make (issue 27).
+    Mutant(
+        "a held creature's attack the engine has no way to make is one given back, not one refused as held",
+        MACHINE,
+        "    if (heldByEffect_ && kind != CommandKind::Free)",
+        "    if (heldByEffect_ && kind != CommandKind::Free && request.noAttack == NoAttack::None)",
     ),
     Mutant(
         "an order queues behind the effect that holds its creature",
@@ -372,17 +522,17 @@ MUTANTS = [
     Mutant(
         "a creature an effect let go stays held",
         MACHINE,
-        "        heldByEffect_ = false; // let go within the grace: the turn is its own again",
+        "        heldByEffect_ = false; // let go: the turn is its own again, with what the hold left of it",
         "        // let go",
     ),
     Mutant(
         "an AI held by an effect is told its turn has come",
         MACHINE,
-        "        seenActor_->current == CommandType::ExecuteEffect && !GettingUp())",
-        "        seenActor_->current == CommandType::Invalid && !GettingUp())",
+        "        seenActor_->current == CommandType::ExecuteEffect)\n    {\n        heldByEffect_ = true;",
+        "        seenActor_->current == CommandType::Invalid)\n    {\n        heldByEffect_ = true;",
     ),
     Mutant(
-        "an AI an effect let go within the grace is never told again",
+        "an AI an effect let go is never told",
         MACHINE,
         "            Handover(*current, fx);\n            return;\n        }\n    }\n    // Standing at a walk it does not take (kStoodMs)",
         "            return;\n        }\n    }\n    // Standing at a walk it does not take (kStoodMs)",
@@ -763,7 +913,7 @@ MUTANTS = [
         "            else\n            {\n                ;",
     ),
     Mutant(
-        "an effect that held a creature before its turn runs the clock",
+        "a hold is taken for its creature's own action's effect too: effects' time runs twice with it",
         MACHINE,
         "!heldByEffect_ && timeHeld_ &&",
         "timeHeld_ &&",
@@ -1131,12 +1281,6 @@ MUTANTS = [
         MACHINE,
         "(kind == CommandKind::Action || kind == CommandKind::Move || kind == CommandKind::Pass || gear))",
         "(kind == CommandKind::Action || kind == CommandKind::Move || gear))",
-    ),
-    Mutant(
-        "getting up from an ended condition has no length: still held, the turn stands out max_action_ms",
-        MACHINE,
-        "const bool rising = GettingUp() && clock_ - executingSince_ < kGetUpMs;",
-        "const bool rising = GettingUp();",
     ),
     Mutant(
         "a kept action dropped by a hold is dropped a frame late, and takes the next one with it",
@@ -2755,14 +2899,14 @@ MUTANTS = [
     Mutant(
         "an effect not seen as the turn began holds its creature for max_action_ms",
         MACHINE,
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 && !rising)",
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands < 0 && !rising)",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0)",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands < 0)",
     ),
     Mutant(
         "its own action's effect is taken for one that holds it",
         MACHINE,
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 && !rising)",
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && !rising)",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0)",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect)",
     ),
     Mutant(
         "own clocks: a creature's effects do not move as its bar is spent",
@@ -2922,12 +3066,6 @@ MUTANTS = [
         "src/core/Portraits.cpp",
         "        personalSpace <= kPortraitPersonSpace)",
         "        personalSpace < 0.0f)",
-    ),
-    Mutant(
-        "a creature getting up from a hold the machine ended is taken for held",
-        MACHINE,
-        "    return current != nullptr && endedFor_ == current->id;",
-        "    return current == nullptr && endedFor_ == current->id;",
     ),
     Mutant(
         "after its action is kept, a creature may still start something",

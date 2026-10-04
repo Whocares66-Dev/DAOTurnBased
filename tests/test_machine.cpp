@@ -600,15 +600,22 @@ TEST_CASE("an AI an effect holds as its turn comes is not told until it is let g
     w.Frame();
     REQUIRE(w.Current() == kGenlock);
     CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock)); // it would choose and queue behind the effect
-    w.RunFor(500);
-    w.Finish(kGenlock); // up again within the grace
+    // Three seconds: past the two it was once given before its turn was
+    // taken (issue 30). The hold is the engine's, and so is its length.
+    w.RunFor(3000);
+    CHECK(w.Current() == kGenlock);
+    CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
+    w.Finish(kGenlock); // up again
     w.RunFor(100);
     CHECK(w.Did(EffectKind::PokeAi, kGenlock));
     CHECK(w.Current() == kGenlock);
 }
 
-TEST_CASE("an AI an effect holds past the grace loses its turn", "[machine][conditions]")
+TEST_CASE("an AI an effect holds a turn's worth loses its turn", "[machine][conditions]")
 {
+    // As built there is no bar to take the hold's time of: the turn waits,
+    // and is lost once the hold has run a turn's worth of seconds, what a
+    // round spends on effects (6 s).
     World w;
     w.StartFight();
     CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
@@ -616,10 +623,102 @@ TEST_CASE("an AI an effect holds past the grace loses its turn", "[machine][cond
     w.Frame();
     w.Frame();
     REQUIRE(w.Current() == kGenlock);
-    w.RunFor(static_cast<int>(TurnMachine::kEffectGraceMs) + 200);
+    CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
+    w.applied.clear();
+    w.RunFor(5700);
+    CHECK(w.Current() == kGenlock);
+    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+    w.RunFor(500);
     CHECK(w.Current() != kGenlock);
     CHECK(w.Said(L"Genlock loses the turn"));
     CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock)); // the effect is the engine's
+}
+
+TEST_CASE("with effects on the game's clock, a hold's turn's worth is a turn's own seconds", "[machine][conditions]")
+{
+    // effect_seconds_per_round 0: no round's worth of effects' time to go by.
+    Settings s = Fixed();
+    s.effectSecondsPerRound = 0.0f;
+    s.secondsPerTurn = 3.0f;
+    World w(s);
+    w.StartFight();
+    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    CHECK(w.machine.OnEndTurn());
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    const std::int64_t before = w.agedMs;
+    w.RunFor(2700);
+    CHECK(w.Current() == kGenlock);
+    w.RunFor(500);
+    CHECK(w.Current() != kGenlock);
+    CHECK(w.Said(L"Genlock loses the turn"));
+    CHECK(w.agedMs == before); // effects' time is not the fight's to move
+}
+
+TEST_CASE("a stun that runs out as a hold's time runs has run out on the clock: it keeps the turn it owes",
+          "[machine][conditions]")
+{
+    // Effects' time run by a hold wears a stun off as a round's does. Taken
+    // for a cure (a condition gone while effects' time stands still), the
+    // turn it owed was given back: a stun shorter than the hold cost nothing.
+    World w;
+    w.StartFight();
+    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    w.Get(kHurlock).condition = Condition::Disabled;
+    CHECK(w.machine.OnEndTurn());
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(w.timeHeld);
+    w.RunFor(600); // the hurlock's stun is seen, and the hold's first steps run
+    const std::int64_t before = w.agedMs;
+    REQUIRE(before > 0);
+    for (int i = 0; i < 100 && w.agedMs == before; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.agedMs > before);
+    w.Get(kHurlock).condition = Condition::None; // run out, with that step
+    w.RunFor(600);                               // and seen gone while the hold still runs
+    REQUIRE(w.Current() == kGenlock);
+    w.Finish(kGenlock);
+    for (int i = 0; i < 400 && w.machine.Order().Round() < 2; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnEndTurn();
+        }
+        w.RunFor(100);
+    }
+    CHECK(w.Said(L"Hurlock loses the turn"));
+    CHECK(std::ranges::none_of(
+        w.log, [](const std::string &line) { return line.find("condition was taken off") != std::string::npos; }));
+}
+
+TEST_CASE("a hold is not stopped by max_action_ms: its bound is a turn's worth", "[machine][conditions]")
+{
+    // The limit on a creature's own command is not a hold's: stopped by it,
+    // the effect's command was cleared, which is the engine's to end.
+    Settings s = Fixed();
+    s.maxActionMs = 2000;
+    World w(s);
+    w.StartFight();
+    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    CHECK(w.machine.OnEndTurn());
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    w.applied.clear();
+    w.RunFor(5000);
+    CHECK(w.Current() == kGenlock);
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock));
+    CHECK(std::ranges::none_of(w.log,
+                               [](const std::string &line) { return line.find("still at a") != std::string::npos; }));
+    w.Finish(kGenlock);
+    w.RunFor(100);
+    CHECK(w.Did(EffectKind::PokeAi, kGenlock));
 }
 
 TEST_CASE("a menu over the fight holds everything as it is", "[machine]")
@@ -1086,13 +1185,16 @@ TEST_CASE("a condition that has had its turns is ended at the start of the creat
     CHECK(w.Get(kGenlock).condition == Condition::None);
 }
 
-TEST_CASE("getting up from an ended condition has a length: still held past it, the turn is lost",
+TEST_CASE("still at an effect's command after its condition was ended, a creature is held like any other",
           "[machine][conditions]")
 {
     // Issue 11: a hurlock alpha's stun was ended as its turn began, and
     // something else held it at an effect's command still. Getting up from
     // an ended hold was exempt from "held by an effect" for the whole turn,
-    // so it stood max_action_ms, twelve seconds of the game's time.
+    // so it stood max_action_ms, twelve seconds of the game's time; then for
+    // five seconds of the mod's own choosing. It is held by the engine's
+    // command like any creature found at one (issue 30): its turn waits, and
+    // is lost at a turn's worth.
     World w;
     w.StartFight();
     w.Get(kGenlock).condition = Condition::Disabled;
@@ -1120,13 +1222,15 @@ TEST_CASE("getting up from an ended condition has a length: still held past it, 
     REQUIRE(w.Current() == kGenlock);
     w.Frame();
     REQUIRE(w.Did(EffectKind::EndConditions, kGenlock));
-    // While it may be getting up it is not taken for held (a knockdown's
-    // rise is over two seconds, the grace of any other turn).
-    w.RunFor(static_cast<int>(TurnMachine::kEffectGraceMs) + 500);
+    // Held from the first: its AI is not told to choose behind the command.
+    CHECK(w.machine.State().heldByEffect);
+    CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
+    // A knockdown's rise is over two seconds: the turn waits for it.
+    w.RunFor(2500);
     CHECK(w.Current() == kGenlock);
     CHECK_FALSE(w.Said(L"Genlock loses the turn"));
-    // Past that it is held, and the turn is lost: at five seconds, not twelve.
-    w.RunFor(static_cast<int>(TurnMachine::kGetUpMs - TurnMachine::kEffectGraceMs));
+    // A turn's worth of it (6 s as built), and the turn is lost: not twelve.
+    w.RunFor(3700);
     CHECK(w.Said(L"Genlock loses the turn"));
     CHECK(w.Current() != kGenlock);
     CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock)); // the effect is the engine's
@@ -1162,12 +1266,12 @@ TEST_CASE("End pressed while something the engine put there holds the creature e
     CHECK(w.Current() != kHero);
 }
 
-TEST_CASE("a creature an effect holds as its turn comes loses the turn after a grace, and no order queues behind it",
-          "[machine][conditions]")
+TEST_CASE(
+    "a creature an effect holds as its turn comes loses the turn at a turn's worth, and no order queues behind it",
+    "[machine][conditions]")
 {
     // A condition the statuses do not name (a grab, say): the engine keeps
-    // its creature in the effect's command, and with effects' time held
-    // that command outlasts any turn.
+    // its creature in the effect's command, for as long as the engine does.
     World w;
     w.StartFight();
     REQUIRE(w.Current() == kHero);
@@ -1186,14 +1290,21 @@ TEST_CASE("a creature an effect holds as its turn comes loses the turn after a g
     w.RunFor(100);
     w.applied.clear();
     CHECK(w.Order(kCompanion, CommandType::Attack, Source::Player, 0.0f) == Verdict::Block);
-    w.RunFor(static_cast<int>(TurnMachine::kEffectGraceMs) + 200);
+    w.RunFor(3000);
     CHECK(w.Said(L"Held"));
+    CHECK(w.Current() == kCompanion); // no two seconds of the mod's: the hold is the engine's
+    CHECK(w.Order(kCompanion, CommandType::Attack, Source::Player, 0.0f) == Verdict::Block);
+    w.RunFor(3200);
     CHECK(w.Current() != kCompanion);
     CHECK(w.Said(L"Alistair loses the turn"));
     CHECK_FALSE(w.Did(EffectKind::ClearCommands, kCompanion)); // the effect is the engine's
+    CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
+        return line.find("Alistair is held by an effect's command past a turn's 6.0 s: its turn is lost") !=
+               std::string::npos;
+    }));
 }
 
-TEST_CASE("a creature an effect lets go within the grace keeps its turn", "[machine][conditions]")
+TEST_CASE("a creature an effect lets go keeps its turn, however long it held", "[machine][conditions]")
 {
     World w;
     w.StartFight();
@@ -1207,12 +1318,18 @@ TEST_CASE("a creature an effect lets go within the grace keeps its turn", "[mach
         w.Frame();
     }
     REQUIRE(w.Current() == kCompanion);
-    w.RunFor(500);
+    // Four seconds on the ground and getting up: twice what it was once
+    // given before the turn was taken (issue 30).
+    w.RunFor(4000);
+    REQUIRE(w.Current() == kCompanion);
     w.Finish(kCompanion); // up again
     w.RunFor(1000);
     CHECK(w.Current() == kCompanion);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
     CHECK(w.Order(kCompanion, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
+    CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
+        return line.find("Alistair is free of the effect's command after ") != std::string::npos;
+    }));
 }
 
 TEST_CASE("End pressed during the creature's own action waits for it", "[machine]")
@@ -1840,7 +1957,7 @@ TEST_CASE("a companion's AI turn let go by an effect selects the hero before its
     REQUIRE(w.Current() == kCompanion);
     CHECK_FALSE(w.Did(EffectKind::PokeAi, kCompanion)); // held
     w.applied.clear();
-    w.Finish(kCompanion); // let go within the grace
+    w.Finish(kCompanion); // let go
     w.RunFor(100);
     CHECK(w.Did(EffectKind::Select, kHero));
     CHECK(w.Did(EffectKind::PokeAi, kCompanion));
@@ -2734,18 +2851,25 @@ TEST_CASE("an action whose own effect holds its creature gets that effect's time
     CHECK(w.agedMs - before == 6000);
 }
 
-TEST_CASE("held by an effect as its turn begins, a creature's time is not run for it", "[machine]")
+TEST_CASE("held by an effect as its turn begins, effects' time runs with the hold and comes off the round's worth",
+          "[machine]")
 {
-    // What held it before its turn costs the turn (kEffectGraceMs); only an
-    // action's own effect runs the clock.
+    // An effect that keeps its creature while it lasts can wear off within
+    // its victim's turn only if effects' time runs while it holds. Held
+    // still, as it was while a hold cost the turn after two seconds whatever
+    // it was, such an effect outlasted any wait (issue 30). Where the
+    // fight holds one clock for everyone's effects it runs with the hold, a
+    // step at a time, as it does with an action's own effect.
     Settings s = Fixed();
     s.partyControl = PartyControl::Manual;
     World w{s};
     w.StartFight();
     CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
     (void)w.machine.OnEndTurn();
+    REQUIRE(w.timeHeld);
     const std::int64_t before = w.agedMs;
     bool turned = false;
+    int heldFrames = 0;
     for (int i = 0; i < 400 && w.machine.Order().Round() < 2 && w.Current() != kCompanion; ++i)
     {
         // Held, it may still turn to face (a free command, let through):
@@ -2756,10 +2880,36 @@ TEST_CASE("held by an effect as its turn begins, a creature's time is not run fo
             CHECK(w.Order(kGenlock, CommandType::Turn, Source::Script) == Verdict::Allow);
             w.Get(kGenlock).current = CommandType::ExecuteEffect;
         }
+        // The effect wears off once two seconds of its time have run.
+        if (w.Get(kGenlock).busy && w.agedMs - before >= 2000)
+        {
+            w.Finish(kGenlock);
+        }
+        heldFrames += w.Current() == kGenlock && w.Get(kGenlock).busy ? 1 : 0;
         w.Frame();
     }
     CHECK(turned);
-    CHECK(w.agedMs == before);
+    CHECK_FALSE(w.Get(kGenlock).busy); // it wore off, within the turn
+    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+    CHECK(w.agedMs - before >= 2000);
+    CHECK(w.agedMs - before < 2300); // in quarter-second steps
+    // Once over, with the world: its two seconds took two seconds, not one
+    // (the hold taken for its creature's own action's effect as well, the
+    // turn to face being a command of its own, ran effects' time twice).
+    CHECK(heldFrames * 16 >= 1900);
+    // The round is still six seconds of effects' time in all.
+    for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnEndTurn();
+        }
+        w.Frame();
+    }
+    REQUIRE(w.machine.Order().Round() == 2);
+    w.Frame();
+    w.Frame();
+    CHECK(w.agedMs - before == 6000);
 }
 
 TEST_CASE("an action on its own effect's time may outlast max_action_ms, not three times it", "[machine]")
@@ -3415,7 +3565,7 @@ TEST_CASE("an enemy that goes on by itself after its charged cast is not told it
     }));
 }
 
-TEST_CASE("held by an effect on the fight's first turn, a creature loses it after the grace, not max_action_ms",
+TEST_CASE("held by an effect on the fight's first turn, a creature loses it at a turn's worth, not max_action_ms",
           "[machine]")
 {
     // A spider that drops from the ceiling as the fight begins and has the
@@ -3449,15 +3599,16 @@ TEST_CASE("held by an effect on the fight's first turn, a creature loses it afte
         w.Frame();
     }
     CHECK(w.Current() != kGenlock);
-    CHECK(frames * 16 >= 1900); // the grace
-    CHECK(frames * 16 < 3000);  // not max_action_ms' twelve seconds
+    CHECK(frames * 16 >= 5900); // a turn's worth of the hold (6 s as built)
+    CHECK(frames * 16 < 7000);  // not max_action_ms' twelve seconds
     CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
-        return line.find("Genlock is held by an effect: its turn is lost") != std::string::npos;
+        return line.find("Genlock is held by an effect's command past a turn's 6.0 s: its turn is lost") !=
+               std::string::npos;
     }));
     CHECK(std::ranges::none_of(
         w.log, [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
     // Its own action's effect is still its own: a command of its own let
-    // through, and then the effect's, is not a turn lost to the grace.
+    // through, and then the effect's, is not a hold on its turn.
     World own(Fixed(), fight);
     own.onPoke = [&](ObjectId id) { CHECK(own.UseAbility(id, Source::Script, 90133, 60.0f) == Verdict::Allow); };
     own.StartFight();
@@ -3465,10 +3616,11 @@ TEST_CASE("held by an effect on the fight's first turn, a creature loses it afte
     own.RunFor(200);
     own.Get(kGenlock).busy = true;
     own.Get(kGenlock).current = CommandType::ExecuteEffect;
-    own.RunFor(2500);
+    own.RunFor(7000);
     CHECK(own.Current() == kGenlock);
+    CHECK_FALSE(own.machine.State().heldByEffect);
     CHECK(std::ranges::none_of(own.log, [](const std::string &line) {
-        return line.find("is held by an effect: its turn is lost") != std::string::npos;
+        return line.find("is held by an effect's command") != std::string::npos;
     }));
 }
 

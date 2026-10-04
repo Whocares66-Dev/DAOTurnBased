@@ -31,7 +31,11 @@
 //  12. nobody is taken out of a fight while the engine's perception keeps it
 //      there (an enemy the party perceives or that perceives the party, an
 //      ally that perceives an enemy), however far it has gone; and nobody
-//      the scan's rules do not find fighting is brought into one (issue 29).
+//      the scan's rules do not find fighting is brought into one (issue 29);
+//  13. a creature an effect's command holds as its turn comes waits no longer
+//      than a turn's worth of time on it, and, let go before, has its turn
+//      with the time the hold ran gone from its bar (issue 30); one that has
+//      noticed nobody is not held, and is from the moment it notices.
 //
 // The arena is World.h's stand-in with the creatures made to act. An AI
 // chooses when told to and whenever its command ends, as COMMAND_COMPLETE
@@ -126,7 +130,9 @@ struct Coverage
     int stunned = 0;      // creatures stunned or pinned
     int lostTurns = 0;    // turns taken by a condition
     int lostOnClock = 0;  // of them, with conditions on the game's clock
-    int heldByEffect = 0; // turns lost to an effect's command no condition named
+    int heldByEffect = 0; // turns lost to an effect's command that held past the bar (a turn's worth, as built)
+    int heldFreed = 0;    // holds that let go within the turn, which went on with the rest
+    int heldPaid = 0;     // of them, with time, those held from the turn's start: their time checked against the bar
     int speedChanges = 0; // the game's speed set for an AI's turn and back
     long long events = 0; // typed events heard
     int conditionsEnded = 0;
@@ -267,19 +273,46 @@ class Arena
             {
                 ++coverage_.timeouts;
             }
-            if (line.find("is held by an effect: its turn is lost") != std::string_view::npos)
+            if (line.find("is held by an effect's command past ") != std::string_view::npos)
             {
                 ++coverage_.heldByEffect;
+                // Lost only once the hold has outlasted the bar (13).
+                if (settings_.turnClock == TurnClock::Time)
+                {
+                    Must(world_.machine.View().timeLeftMs == 0, "a turn lost to a hold with time left on its bar");
+                }
             }
-            // Held in an effect's command no condition names as the machine
-            // begins its turn: it gives the grace, then the turn is lost.
+            // A hold let go within the turn (13): with time, what it ran is
+            // gone from the bar, whatever else the turn paid as it began (the
+            // debt of a kept action). On the machine's clock, which runs at
+            // the fight's speed; less the frames between the turn's beginning
+            // and the first look at its creature.
+            if (line.find(" is free of the effect's command after ") != std::string_view::npos)
+            {
+                ++coverage_.heldFreed;
+                if (settings_.turnClock == TurnClock::Time && std::exchange(heldPaidDue_, false))
+                {
+                    const TurnView view = world_.machine.View();
+                    const auto ran = static_cast<std::uint32_t>(
+                        std::lround(static_cast<float>(heldAtStartMs_) * settings_.fightSpeed));
+                    const auto slack = static_cast<std::uint32_t>(std::lround(4.0f * kFrameMs * settings_.fightSpeed));
+                    Must(view.timeMs - view.timeLeftMs + slack >= ran,
+                         "a hold let go took less of the bar than it ran");
+                    ++coverage_.heldPaid;
+                }
+            }
+            // At an effect's command no condition names as the machine begins
+            // its turn: the hold runs on the turn's clock, and the turn is
+            // lost only once it has run a turn's worth.
             if (line.starts_with("round ") && line.find("'s turn (") != std::string_view::npos)
             {
                 FollowTurn();
                 turnMeters_ = world_.machine.View().movementLeft;
                 const auto found = tasks_.find(world_.Current());
-                heldAtStart_ = found != tasks_.end() && found->second.held &&
+                heldAtStart_ = found != tasks_.end() && found->second.type == CommandType::ExecuteEffect &&
                                world_.Get(world_.Current()).condition == Condition::None;
+                heldAtStartMs_ = 0;
+                heldPaidDue_ = heldAtStart_; // until the machine says it free: a frame or two after it is
                 turnBeganAtMs_ = turnRunMs_; // a padded round's wait came before
             }
             if (line.find(" m to walk with ") != std::string_view::npos)
@@ -353,10 +386,23 @@ class Arena
                 FollowTurn();
                 beatOf_ = world_.Current();
                 beatFromMs_ = turnRunMs_;
+                // One that has noticed nobody is not held, whatever the
+                // engine has it at: its beat, and its turn skipped (13).
+                heldAtStart_ = false;
+                heldPaidDue_ = false;
             }
             if (line.find(" has noticed someone to fight") != std::string_view::npos)
             {
                 ++coverage_.noticedInBeat;
+                // Noticing with an effect's command still on it, it is held
+                // from now: the beat before took nothing of its bar (13).
+                FollowTurn();
+                const auto found = tasks_.find(world_.Current());
+                heldAtStart_ = found != tasks_.end() && found->second.type == CommandType::ExecuteEffect &&
+                               world_.Get(world_.Current()).condition == Condition::None;
+                heldAtStartMs_ = 0;
+                heldPaidDue_ = heldAtStart_;
+                turnBeganAtMs_ = turnRunMs_;
             }
             if (line.find(", and stays in the fight: ") != std::string_view::npos)
             {
@@ -526,6 +572,8 @@ class Arena
             turnRunMs_ = 0;
             turnMeters_ = 0.0f;   // with time, read as the machine begins the turn (onLog)
             heldAtStart_ = false; // judged as the machine begins the turn (onLog)
+            heldAtStartMs_ = 0;
+            heldPaidDue_ = false;
             turnBeganAtMs_ = 0;
             told_ = kNoObject;
         }
@@ -906,6 +954,14 @@ class Arena
                      "a creature's own clock moved outside its own turn");
                 Must(e.b > 0, "a creature's own clock moved by nothing");
                 ++coverage_.ownAged;
+                // Its own clock's worth off the timer of what holds it: an
+                // effect on a creature on its own clock wears off as that
+                // clock moves (DAOLib's dao::clock::Advance for one object),
+                // so a hold its turn pays for ends within the turn.
+                if (const auto left = conditionLeftMs_.find(e.target); left != conditionLeftMs_.end())
+                {
+                    left->second -= e.b;
+                }
                 break;
             }
             // A round's worth, or a step of an action's own effect, or the
@@ -917,10 +973,15 @@ class Arena
                                                              1000.0f),
                  "a round aged wrong");
             ++coverage_.roundsAged;
-            // A round's worth off every condition's own timer.
+            // A round's worth off every condition's own timer; not one on a
+            // creature on a clock of its own, which the shared clock passes
+            // by (DAOLib's dao::effects::Advance).
             for (auto &[id, left] : conditionLeftMs_)
             {
-                left -= e.b;
+                if (!ownClock_.contains(id))
+                {
+                    left -= e.b;
+                }
             }
             break;
         case EffectKind::Cooldown:
@@ -1156,14 +1217,25 @@ class Arena
             Must(heldInTurnMs_ <= kHeldTurnMs, "a held creature's turn waited on its condition");
             FollowTurn();
             const auto found = tasks_.find(world_.Current());
-            const bool stillHeld = found != tasks_.end() && found->second.held;
+            const bool stillHeld = found != tasks_.end() && found->second.type == CommandType::ExecuteEffect;
             if (!stillHeld)
             {
                 heldAtStart_ = false; // let go (a hold after is another's)
             }
-            Must(!(turn && heldAtStart_ && stillHeld &&
-                   turnRunMs_ - turnBeganAtMs_ > TurnMachine::kEffectGraceMs + kEffectGraceSlackMs),
-                 "a turn waited past the grace on an effect no condition named");
+            else if (turn && heldAtStart_)
+            {
+                heldAtStartMs_ += kFrameMs;
+            }
+            // A turn's worth (13): with time the turn's seconds, which a hold
+            // takes of the bar as it runs; as built what a round spends on
+            // effects, or a turn's seconds with effects on the game's clock.
+            // Of the machine's clock, which runs at the fight's speed.
+            const float worth = settings_.turnClock == TurnClock::Time || !(settings_.effectSecondsPerRound > 0.0f)
+                                    ? settings_.secondsPerTurn
+                                    : settings_.effectSecondsPerRound;
+            const auto bound = static_cast<std::uint32_t>(worth * 1000.0f / settings_.fightSpeed) + kHoldSlackMs;
+            Must(!(turn && heldAtStart_ && stillHeld && turnRunMs_ - turnBeganAtMs_ > bound),
+                 "a turn waited past a turn's worth on an effect no condition named");
         }
         for (const ObjectId id : ids)
         {
@@ -1858,7 +1930,9 @@ class Arena
     std::uint32_t turnRunMs_ = 0;
     std::uint32_t heldInTurnMs_ = 0; // the current creature held by a condition, running
     static constexpr std::uint32_t kHeldTurnMs = 1000;
-    bool heldAtStart_ = false;  // the current creature was held by an unnamed effect as its turn came
+    bool heldAtStart_ = false; // the current creature was at an effect's command no condition names as its turn came
+    std::uint32_t heldAtStartMs_ = 0; // and how long that command has held it since, running
+    bool heldPaidDue_ = false;  // and its time is still to be checked against the bar, as the machine says it free
     bool turnOpen_ = false;     // a turn's start heard, its end not yet
     bool roundStarted_ = false; // this fight's first round heard
     // Who asked to put a turn off this round: the bar it had, the round,
@@ -1877,7 +1951,7 @@ class Arena
     bool runners_ = false;            // this fight has combatants that go out of the scan's reach (Wandering)
     std::map<ObjectId, int> away_;    // those gone so, and the frames until each is back or lost for good
     std::uint32_t turnBeganAtMs_ = 0; // turnRunMs_ as the machine began the turn
-    static constexpr std::uint32_t kEffectGraceSlackMs = 600;
+    static constexpr std::uint32_t kHoldSlackMs = 600;
     int interlude_ = 0;
     int menu_ = 0;
     int joiners_ = 0;
@@ -1927,8 +2001,11 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     CHECK(coverage.partyWipes > 7);
     CHECK(coverage.refunds > 85);
     CHECK(coverage.timeouts > 30);
-    // Turns lost to an effect no condition named (2026-09-30: 17).
-    CHECK(coverage.heldByEffect > 8);
+    // Turns lost to an effect no condition named (2026-09-30: 17, each one
+    // found so, after two seconds; 2026-10-04: 8, those that held a turn's
+    // worth), and holds that let go before, the turn going on (153).
+    CHECK(coverage.heldByEffect > 2);
+    CHECK(coverage.heldFreed > 45);
     // The game's speed set for an AI's turn and back (2026-09-30: 398).
     CHECK(coverage.speedChanges > 150);
     CHECK(coverage.bledOut > 60);
@@ -1996,6 +2073,14 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     CHECK(coverage.targetsGone > 12);
     // A hold shorter than a turn taking its share of a bar (2026-10-02: 304).
     CHECK(coverage.heldShares > 100);
+    // An effect's command no condition names, its time taken of the bar as it
+    // ran: let go with the turn going on, and held past the bar, the turn
+    // lost (issue 30; 2026-10-04, with the waits of issue 31: 170 let go,
+    // 148 of them held from the turn's start and checked against the bar, 91
+    // turns lost).
+    CHECK(coverage.heldFreed > 50);
+    CHECK(coverage.heldPaid > 45);
+    CHECK(coverage.heldByEffect > 25);
     CHECK(coverage.movementCuts > 85);
     // With time a walk past the bar takes its action's time, and the action
     // is charged on arriving: seldom given back.
@@ -2011,7 +2096,8 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     // An AI's wait taken of its bar, its creature told to choose again, and
     // one longer than what was left, its turn ended (2026-10-04, issue 31:
     // 176 and 27; 273 told to choose again, where 107 were before a wait
-    // cost its time).
+    // cost its time. With issue 30's holds taking their time of the bar,
+    // the arena's draws other for it: 156 and 49, and 264 told again).
     CHECK(coverage.waitsPaid > 55);
     CHECK(coverage.waitsTooLong > 8);
 }

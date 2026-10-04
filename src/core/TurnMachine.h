@@ -118,6 +118,26 @@ struct ActorObservation
     // effects nobody had looked at (issue 30; the user: "We should read the
     // data since that's available").
     std::string effects;
+    // At an effect's command: how long the engine's own count has that
+    // command still to run, in seconds, and whether that is the whole of it
+    // (DAOLib's dao::commands::HeldFor: the sub-actions left on the command,
+    // their delays and timed time left). Not known, the seconds are "at
+    // least": a sub-action left is untimed or has not begun (an animation
+    // takes its length only as it begins), or is timed and spent yet still
+    // there, or none is left of a command still current. Both zero where
+    // the engine says nothing of it.
+    //
+    // Said in the machine's lines beside what the hold then took, and
+    // nothing is decided by it. What a hold costs is the time it ran
+    // (TurnMachine::HoldRuns), which needs no count ahead; and the engine
+    // times only part of a hold ahead. Against the high dragon (2026-10-04)
+    // a knockback's one sub-action, timed to the effect's 1.2 s, was spent
+    // as the turn began and the fall and rise then held 0.61 to 3.19 s, on
+    // no list (at least 0); after the roar the count was some 2.0 s where
+    // the hold ran 2.25 to 2.53. And a creature whose stun the machine has
+    // just ended stands a frame more at a command whose count means nothing.
+    float heldSeconds = 0.0f;
+    bool heldKnown = false;
 };
 
 // What holds a creature, as far as turns go: disabled, it cannot act
@@ -615,16 +635,11 @@ class TurnMachine
     // turn waits in real time. Released on its user's turn, or turned back
     // into seconds when the fight ends.
     static constexpr std::int32_t kCooldownHoldSeconds = 3600;
-    // How long a turn waits on an effect's command it found its creature
-    // in before the turn is lost (heldByEffect_).
-    static constexpr std::uint32_t kEffectGraceMs = 2000;
-    // How long a creature may take to get up from a hold the machine ended
-    // as its turn began (GettingUp) before an effect's command it is still
-    // at counts as holding it. A knockdown's rise was over two seconds (play
-    // test 33's re-check); seven turns after an ended condition were all
-    // over, action and all, within two and a half (the playthrough of issue
-    // 3, 2026-10-03).
-    static constexpr std::uint32_t kGetUpMs = 5000;
+    // (No length of the mod's for a creature at an effect's command: until
+    // 2026-10-04 a turn waited two seconds on one, kEffectGraceMs, and was
+    // then lost whole, and a creature getting up from a hold the machine had
+    // ended was let be for five, kGetUpMs. What holds a creature costs the
+    // time the engine holds it: HoldRuns, issue 30.)
     // How long "Unaware" stands over a hostile that has noticed nobody to
     // fight before its turn is skipped (unaware_), of the fight's clock (the
     // world's time, as an AI's thinking is: at twice the speed half as long
@@ -672,6 +687,17 @@ class TurnMachine
         // Overwhelm, an ogre's grab) is charged the time it runs: what of
         // its own cost still covers that time (none: no such effect yet).
         std::optional<std::uint32_t> ownEffectCover;
+        // Held at an effect's command it did not choose (heldByEffect_,
+        // HoldRuns): the world's clock as the hold was last charged (none:
+        // no hold is being charged), how long holds have run this turn, how
+        // much of that the shared effects' clock is still to be moved by, and
+        // of the hold under way how long it has run and what it took of the
+        // bar, for the log.
+        std::optional<std::uint32_t> heldSeen;
+        std::uint32_t heldMs = 0;
+        std::uint32_t heldUnagedMs = 0;
+        std::uint32_t holdRanMs = 0;
+        std::uint32_t holdBarMs = 0;
         int commands = 0;
         // Waits its AI chose that were paid for out of the bar (PayWait).
         // Counted apart from the commands let through, which a wait is not:
@@ -770,7 +796,13 @@ class TurnMachine
     // its effects, regeneration and timers (the game layer's to move).
     void AgeOwnClock(ObjectId who, std::uint32_t clockMs, std::vector<Effect> &fx);
     [[nodiscard]] bool OwnClocks() const;
-    [[nodiscard]] bool GettingUp() const;
+    // What holds the current creature at an effect's command costs the time
+    // it holds it (issue 30): charged as it runs, the turn lost only once it
+    // has outlasted the bar; and the hold over, said with what it took.
+    [[nodiscard]] bool HoldRuns(const ActorObservation &actor, std::vector<Effect> &fx);
+    void HoldLetGo(const Combatant &who, std::vector<Effect> &fx);
+    void ChargeHold(std::vector<Effect> &fx);
+    [[nodiscard]] std::uint32_t HoldTurnMs() const;
     [[nodiscard]] std::uint32_t Patience(std::uint32_t ms) const;
     [[nodiscard]] bool EngineConjures(const CommandRequest &request) const;
 
@@ -855,10 +887,11 @@ class TurnMachine
     ObjectId endedFor_ = kNoObject; // whose conditions the machine ended this turn
     std::unordered_map<ObjectId, Held> held_;
     bool currentStunned_ = false; // the current combatant was stunned in its own turn
-    // The current combatant was found in an effect's command it did not
-    // choose, before acting: a condition the statuses do not name (a grab,
-    // say) holds it as a stun does, and with effects' time held its command
-    // may outlast the turn (a pin's did, 2026-09-30).
+    // The current combatant is at an effect's command it did not choose:
+    // whatever the effect is (a knockback, a grab, the getting up from a stun
+    // the machine ended), the engine holds it, as it says by where it has
+    // the creature. Its orders are refused meanwhile, its AI not told, what
+    // it kept not given, and the time it is held is its turn's (HoldRuns).
     bool heldByEffect_ = false;
     // The current combatant is a hostile that has noticed nobody to fight
     // (core/Rules.h, Unaware), in the beat its turn is skipped after

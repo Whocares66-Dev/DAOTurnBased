@@ -735,7 +735,9 @@ TEST_CASE("with time, a turn ended because its command never ended rolls nothing
 TEST_CASE("with time, a turn lost to an effect that holds its creature rolls nothing over", "[time]")
 {
     // The issue's other line: `Alistair's turn ends: held by an effect; 1.00
-    // s rolls over`.
+    // s rolls over`. (Since issue 30 the hold has taken the bar by the time
+    // the turn is lost to it, so there is nothing to roll over on either
+    // count: not after two seconds with the bar whole, as that line was.)
     World w(Timed());
     Turns turns(w);
     w.onPoke = [&](ObjectId id) { (void)w.Order(id, CommandType::Wait, Source::Script); };
@@ -747,7 +749,7 @@ TEST_CASE("with time, a turn lost to an effect that holds its creature rolls not
     (void)w.machine.OnEndTurn();
     w.RunFor(300);
     REQUIRE(w.Current() == kGenlock);
-    w.RunFor(TurnMachine::kEffectGraceMs + 200);
+    w.RunFor(4000 + 200); // the hold outlasts its bar
     REQUIRE(w.Current() != kGenlock);
     REQUIRE_FALSE(turns.ends[kGenlock].empty());
     CHECK(turns.ends[kGenlock].front() == "held by an effect");
@@ -1877,15 +1879,20 @@ TEST_CASE("a kept attack is not given to a creature an effect holds as its turn 
     UntilTurnOf(w, kCompanion);
     REQUIRE(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
 
-    SECTION("held past the grace: the turn is lost, and what it kept lands on its next")
+    SECTION("held past its bar: the turn is lost, and what it kept lands on its next")
     {
         UntilTurnOf(w, kGenlock);
         CHECK(w.released.empty()); // not given behind the effect
         CHECK(w.heldCasts.contains(kGenlock));
         CHECK(Logged(w, "Genlock's pending attack waits: an effect holds its creature"));
-        w.RunFor(TurnMachine::kEffectGraceMs + 200);
+        // Its bar is the 2 s its shot's debt left of 4: the hold takes them.
+        REQUIRE(w.machine.View().timeLeftMs <= 2000);
+        w.RunFor(1700);
+        CHECK(w.Current() == kGenlock);
+        w.RunFor(500);
         CHECK(w.Current() != kGenlock);
         CHECK(w.Said(L"Genlock loses the turn"));
+        CHECK(Logged(w, "Genlock is held by an effect's command past its bar"));
         CHECK_FALSE(Logged(w, "its action's own effect holds it"));
         CHECK_FALSE(Logged(w, "still at a"));
         CHECK(w.released.empty());
@@ -1895,12 +1902,13 @@ TEST_CASE("a kept attack is not given to a creature an effect holds as its turn 
         REQUIRE(w.released.size() == 1);
         CHECK(w.released.front() == Verdict::Allow);
         CHECK(w.Get(kGenlock).current == CommandType::Attack);
+        CHECK(w.machine.View().timeLeftMs == 4000); // paid for the turn before
     }
-    SECTION("let go within the grace: it lands then, and the turn is its own")
+    SECTION("let go before its bar is spent: it lands then, and the turn is its own with the rest")
     {
         UntilTurnOf(w, kGenlock);
         REQUIRE(w.released.empty());
-        w.RunFor(TurnMachine::kEffectGraceMs / 2);
+        w.RunFor(1000);
         REQUIRE(w.Current() == kGenlock);
         w.Finish(kGenlock); // the effect lets go
         w.RunFor(100);
@@ -1908,7 +1916,716 @@ TEST_CASE("a kept attack is not given to a creature an effect holds as its turn 
         CHECK(w.released.front() == Verdict::Allow);
         CHECK(w.Current() == kGenlock);
         CHECK(w.Get(kGenlock).current == CommandType::Attack);
+        // The second its hold ran is gone from the 2 s its bar had.
+        CHECK(w.machine.View().timeLeftMs <= 1050);
+        CHECK(w.machine.View().timeLeftMs >= 950);
     }
+}
+
+TEST_CASE("its action kept for its next turn, a creature starts nothing more in this one", "[time]")
+{
+    // The turn is over, its end come with the next step, or after a beat
+    // over the player's. A mode turned on in that frame ran on into the next
+    // creature's turn (the random fights, seed 47 with time), and only the
+    // random fights held it: when the arena's draws changed (issue 30) no
+    // seed of the eighty reached it, and the mutant survived.
+    SECTION("an AI's, in the frame it kept it")
+    {
+        World w(Timed());
+        int pokes = 0;
+        w.onPoke = [&](ObjectId id) {
+            if (++pokes > 1)
+            {
+                return;
+            }
+            CHECK(Strike(w, id, kHero, Source::Script, 6.0f) == Verdict::Hold);
+            // A mode, which costs nothing, and a step, in the same frame.
+            CHECK(w.UseAbility(id, Source::Script, 300, 0.0f, true, false) == Verdict::Block);
+            CHECK(w.Order(id, CommandType::MoveToLocation, Source::Script) == Verdict::Block);
+        };
+        w.StartFight();
+        UntilTurnOf(w, kGenlock);
+        w.RunFor(100);
+        REQUIRE(pokes == 1);
+        CHECK(w.Current() != kGenlock);
+        CHECK_FALSE(w.Get(kGenlock).busy);
+    }
+    SECTION("the player's, in the beat before its turn ends")
+    {
+        World w(Timed());
+        w.StartFight();
+        REQUIRE(w.Current() == kHero);
+        REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 3.0f, 0.0f) == Verdict::Allow);
+        Done(w, kHero);
+        REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Hold);
+        CHECK(w.UseAbility(kHero, Source::Player, 300, 0.0f, true, false) == Verdict::Block);
+        CHECK_FALSE(w.Get(kHero).busy);
+    }
+}
+
+namespace
+{
+// The genlock thrown in the hero's turn: at an effect's command no condition
+// names as its own turn comes, its first, with a bar of 4 s.
+void HeldAsItsTurnComes(World &w)
+{
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    REQUIRE(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    UntilTurnOf(w, kGenlock);
+    REQUIRE(w.machine.View().timeMs == 4000);
+    REQUIRE(w.machine.View().timeLeftMs == 4000);
+    w.applied.clear();
+}
+} // namespace
+
+TEST_CASE("with time, a hold costs the time it holds: a second and a half of a four-second bar leaves two and a half",
+          "[time][holds]")
+{
+    // Issue 30. The high dragon's knockback, 1.2 s by its effect's own
+    // count, cost each fighter it threw the whole turn: two seconds waited,
+    // then the bar and all taken, 37 of the party's 176 turns in one fight.
+    // The user: "we should not make a special case for it, but fix the way
+    // effects cost time by reading the actual amount of time they cost".
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    w.Get(kGenlock).effects = "effect type 1057 of ability 90065 by 0x100, 1.2 of 1.2 s left";
+    HeldAsItsTurnComes(w);
+    // A second and a half by the machine's count: it takes the creature for
+    // free on the second frame it sees it so.
+    w.RunFor(1480);
+    // Held: its turn its own still, its AI not told to choose behind the
+    // effect's command.
+    CHECK(w.Current() == kGenlock);
+    CHECK(w.machine.State().heldByEffect);
+    CHECK(pokes == 0);
+    w.Finish(kGenlock); // on its feet
+    w.RunFor(100);
+    CHECK(w.Current() == kGenlock);
+    CHECK_FALSE(w.machine.State().heldByEffect);
+    CHECK(pokes == 1); // told now, with what the hold left
+    CHECK(w.machine.View().timeLeftMs <= 2550);
+    CHECK(w.machine.View().timeLeftMs >= 2450);
+    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+    CHECK(Logged(w, "Genlock is held by an effect's command, how long the engine does not say ahead: the time it "
+                    "holds is taken of its bar as it runs (4.00 s and 21.0 m left) (effect type 1057 of ability "
+                    "90065 by 0x100, 1.2 of 1.2 s left)"));
+    CHECK(Logged(w, "Genlock is free of the effect's command after 1.50 s, 1.50 s of its bar: 2.50 s and "));
+}
+
+TEST_CASE("with time, a hold that outlasts the bar loses the turn, and only then", "[time][holds]")
+{
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    HeldAsItsTurnComes(w);
+    // Not at two seconds, as it was: at the bar's four.
+    w.RunFor(3800);
+    CHECK(w.Current() == kGenlock);
+    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+    CHECK(w.machine.View().timeLeftMs <= 250);
+    w.RunFor(400);
+    CHECK(w.Current() != kGenlock);
+    CHECK(w.Said(L"Genlock loses the turn"));
+    CHECK(pokes == 0);
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock)); // the effect is the engine's
+    CHECK(Logged(w, "Genlock is held by an effect's command past its bar (4.0"));
+    // The hold took the bar: nothing of it is left that could roll over,
+    // were a turn lost to a hold one that rolls anything (issue 29: it is
+    // not, its actor not having ended it): the line names no time that would
+    // have.
+    CHECK(Logged(w, "Genlock's turn ends: held by an effect; nothing rolls over"));
+    CHECK_FALSE(Logged(w, "its actor not having ended it ("));
+    CHECK_FALSE(Logged(w, "still at a"));
+}
+
+TEST_CASE("what a hold costs is the time it ran, whatever the effect and whatever the engine's count said ahead",
+          "[time][holds]")
+{
+    // No list of kinds (the user, of reading a knockback as one more kind of
+    // hold: "we should not make a special case for it"): the machine is told
+    // the effects on the creature only to say them. And the engine's count of
+    // what its command has left (DAOLib's HeldFor) is said, not acted on: no
+    // turn is lost on it. It is the whole of the hold only where every
+    // sub-action left is timed, and "at least" so much where part is not
+    // timed ahead. A knockback of the high dragon's is at least nothing: its
+    // one sub-action spent as the turn begins, the fall and rise, 0.61 to
+    // 3.19 s, on no list (2026-10-04).
+    struct Case
+    {
+        const char *effects;
+        float seconds;
+        bool known;
+        const char *said;
+    };
+    const Case cases[] = {
+        // A dragon's knockback, as it is in play: at least nothing.
+        {"effect type 1057 of ability 90065 by 0x100, 1.2 of 1.2 s left", 0.0f, false,
+         "how long the engine does not say ahead"},
+        // At least so much: a timed sub-action running, and after it one the
+        // engine does not time ahead.
+        {"effect type 1057 of ability 90065 by 0x100, 1.2 of 1.2 s left", 0.8f, false,
+         "at least 0.80 s more by the engine's count"},
+        // At least more than the bar holds, of a hold that lets go sooner.
+        {"effect type 1057 of ability 90065 by 0x100, 1.2 of 1.2 s left", 9.0f, false,
+         "at least 9.00 s more by the engine's count"},
+        // The whole of it, every sub-action left timed, and right.
+        {"effect type 1057 of ability 90065 by 0x100, 0.3 of 1.2 s left", 1.5f, true,
+         "1.50 s more by the engine's count"},
+        // The whole of it by the count, longer than the bar, and not kept to.
+        {"effect type 1057 of ability 90065 by 0x100, 1.2 of 1.2 s left", 9.0f, true,
+         "9.00 s more by the engine's count"},
+        // A spider's Overwhelm on its prey, and nothing listed at all.
+        {"effect type 1043 of ability 90133 by 0x201, 6.1 of 6.1 s left", 0.0f, false,
+         "how long the engine does not say ahead"},
+        {"no temporary effect stands on it", 0.0f, false, "how long the engine does not say ahead"},
+    };
+    for (const Case &c : cases)
+    {
+        CAPTURE(c.effects, c.seconds, c.known);
+        World w(Timed());
+        int pokes = 0;
+        w.onPoke = [&](ObjectId) { ++pokes; };
+        w.Get(kGenlock).effects = c.effects;
+        w.Get(kGenlock).heldSeconds = c.seconds;
+        w.Get(kGenlock).heldKnown = c.known;
+        HeldAsItsTurnComes(w);
+        w.RunFor(1480);
+        CHECK(w.Current() == kGenlock);
+        w.Finish(kGenlock);
+        w.RunFor(100);
+        CHECK(w.Current() == kGenlock);
+        CHECK(pokes == 1);
+        CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+        CHECK(w.machine.View().timeLeftMs == 2496); // the same to the frame, each of them
+        // Said as the engine gave it: the whole, at least so much, or nothing.
+        CHECK(Logged(w, std::string{"Genlock is held by an effect's command, "} + c.said + ": the time it holds"));
+        CHECK(Logged(w, std::string{"("} + c.effects + ")"));
+    }
+}
+
+TEST_CASE("with own clocks, a hold moves its creature's clock as its bar pays for it: its effect wears off in the turn",
+          "[time][holds]")
+{
+    // A hold that lasts while its effect does (a grab's victim, a pin not
+    // named; not the dragon's knockback, whose own 1.2 s the engine times
+    // with the world and had spent as the turn began). Effects' time is held
+    // through a fight, each fighter's moving only as its own bar is spent:
+    // while a turn waited on an effect with nothing of the bar taken, that
+    // time never ran until the lost turn's end moved the clock.
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    HeldAsItsTurnComes(w);
+    const std::int64_t own = w.agedOwn[kGenlock];
+    const std::int64_t shared = w.agedMs;
+    for (int i = 0; i < 400 && w.Get(kGenlock).busy; ++i)
+    {
+        w.Frame();
+        // The effect has 1.2 s of its victim's time left, and its command
+        // lasts as long.
+        if (w.agedOwn[kGenlock] - own >= 1200)
+        {
+            w.Finish(kGenlock);
+        }
+    }
+    w.RunFor(100);
+    CHECK(w.Current() == kGenlock);
+    CHECK(pokes == 1);
+    CHECK(w.agedOwn[kGenlock] - own >= 1200);
+    CHECK(w.agedOwn[kGenlock] - own < 1300);
+    CHECK(w.agedMs == shared); // the one clock everything else is on is the rounds'
+    CHECK(w.machine.View().timeLeftMs <= 2800);
+    CHECK(w.machine.View().timeLeftMs >= 2700);
+}
+
+TEST_CASE("with time and one clock for everyone's effects, it runs with a hold and comes off the round's worth",
+          "[time][holds]")
+{
+    Settings s = Timed();
+    s.ownClocks = false;
+    World w(s);
+    w.onPoke = [&](ObjectId) {};
+    HeldAsItsTurnComes(w);
+    REQUIRE(w.timeHeld);
+    const std::int64_t before = w.agedMs;
+    for (int i = 0; i < 400 && w.Get(kGenlock).busy; ++i)
+    {
+        w.Frame();
+        if (w.agedMs - before >= 1200)
+        {
+            w.Finish(kGenlock);
+        }
+    }
+    w.RunFor(100);
+    CHECK(w.Current() == kGenlock);
+    CHECK(w.agedMs - before >= 1200);
+    CHECK(w.agedMs - before < 1500); // in quarter-second steps
+    CHECK(w.agedOwn[kGenlock] == 0);
+    CHECK(w.machine.View().timeLeftMs <= 2800);
+    CHECK(w.machine.View().timeLeftMs >= 2450);
+    // The round is still a turn's seconds of effects' time in all.
+    for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnEndTurn();
+        }
+        w.Frame();
+    }
+    REQUIRE(w.machine.Order().Round() == 2);
+    w.RunFor(100);
+    CHECK(w.agedMs - before == 4000);
+}
+
+TEST_CASE("a hold is not stopped as an action that takes too long: its bound is the bar", "[time][holds]")
+{
+    // max_action_ms stops a command of the creature's own that does not end,
+    // and clears it. A hold is the engine's: with the two seconds gone, a
+    // short max_action_ms would have cleared the effect's command.
+    Settings s = Timed();
+    s.maxActionMs = 2000;
+    World w(s);
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    HeldAsItsTurnComes(w);
+    w.RunFor(3000);
+    CHECK(w.Current() == kGenlock);
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock));
+    CHECK_FALSE(Logged(w, "still at a"));
+    w.Finish(kGenlock);
+    w.RunFor(100);
+    CHECK(w.Current() == kGenlock);
+    CHECK(pokes == 1);
+    CHECK(w.machine.View().timeLeftMs <= 1050);
+    CHECK(w.machine.View().timeLeftMs >= 950);
+}
+
+TEST_CASE("a second hold in a turn is charged from when it began, not from the first one's end", "[time][holds]")
+{
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; }; // told, it thinks: the world runs
+    HeldAsItsTurnComes(w);
+    w.RunFor(1000);
+    w.Finish(kGenlock);
+    w.RunFor(500); // free, and thinking, half a second
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(pokes == 1);
+    const std::uint32_t afterTheFirst = w.machine.View().timeLeftMs;
+    CHECK(afterTheFirst <= 3050);
+    CHECK(afterTheFirst >= 2950);
+    // Thrown again before it has chosen.
+    REQUIRE(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    w.RunFor(1000);
+    CHECK(w.machine.State().heldByEffect);
+    w.Finish(kGenlock);
+    w.RunFor(100);
+    CHECK(w.Current() == kGenlock);
+    // The second's own second: not the half second it thought between them.
+    CHECK(w.machine.View().timeLeftMs <= afterTheFirst - 950);
+    CHECK(w.machine.View().timeLeftMs >= afterTheFirst - 1050);
+}
+
+TEST_CASE("thrown after it has acted, as its turn waits or its AI thinks, a creature is held all the same",
+          "[time][holds]")
+{
+    // With a command of its own let through this turn, an effect's command
+    // met while one of its own runs is taken for that action's own effect (a
+    // grab's). Met while the turn waits on an order, or while its AI thinks,
+    // it is no action's: something threw it, and it is held.
+    SECTION("a party member, its turn waiting on an order")
+    {
+        World w(Timed());
+        w.StartFight();
+        REQUIRE(w.Current() == kHero);
+        REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 1.0f, 0.0f) == Verdict::Allow);
+        Done(w, kHero);
+        REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+        REQUIRE(w.machine.View().timeLeftMs == 3000);
+        REQUIRE(w.Order(kHero, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+        w.RunFor(500);
+        CHECK(w.machine.State().heldByEffect);
+        CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 1.0f, 0.0f) == Verdict::Block);
+        CHECK_FALSE(Logged(w, "its action's own effect holds it"));
+        w.Finish(kHero);
+        w.RunFor(600);
+        CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+        CHECK(w.machine.View().timeLeftMs <= 2550); // the half second it was down
+        CHECK(w.machine.View().timeLeftMs >= 2450);
+    }
+    SECTION("an AI, thinking of its next action")
+    {
+        World w(Timed());
+        int pokes = 0;
+        w.onPoke = [&](ObjectId id) {
+            if (++pokes == 1)
+            {
+                CHECK(Act(w, id, CommandType::Attack, Source::Script, 1.0f, 0.0f) == Verdict::Allow);
+            }
+        };
+        w.StartFight();
+        UntilTurnOf(w, kGenlock);
+        w.RunFor(200);
+        REQUIRE(pokes == 1);
+        w.Finish(kGenlock);
+        for (int i = 0; i < 100 && pokes < 2; ++i)
+        {
+            w.Frame();
+        }
+        REQUIRE(pokes == 2); // told to choose again, with 3 s left
+        REQUIRE(w.machine.GetPhase() == Phase::AiThinking);
+        REQUIRE(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+        w.RunFor(500);
+        CHECK(w.machine.State().heldByEffect);
+        CHECK_FALSE(Logged(w, "its action's own effect holds it"));
+        w.Finish(kGenlock);
+        w.RunFor(100);
+        CHECK(pokes == 3); // and told again as it lets go
+        CHECK(w.machine.View().timeLeftMs <= 2550);
+        CHECK(w.machine.View().timeLeftMs >= 2450);
+    }
+}
+
+// Where a hold's time (issue 30) and an AI's wait's (issue 31) meet. A wait
+// is taken of the bar at the gate, at once and with the world still; a hold
+// as it runs. Neither is taken for a stretch the other has: a held
+// creature's wait is refused like any order behind the effect, and a wait
+// paid before its creature was thrown is time before the hold.
+TEST_CASE("an AI that waits and is then thrown pays for each once: the wait as it is taken, the hold as it runs",
+          "[time][holds][wait]")
+{
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId id) {
+        if (++pokes > 1)
+        {
+            return;
+        }
+        // It waits a second, and in that frame something throws it. A wait
+        // is no command of its own let through: the effect's command is not
+        // its action's own effect, and not nobody's either.
+        CHECK(w.Wait(id, 1.0f) == Verdict::Block);
+        CHECK(w.machine.View().timeLeftMs == 3000);
+        CHECK(w.Order(id, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    };
+    w.StartFight();
+    UntilTurnOf(w, kGenlock);
+    REQUIRE(pokes == 1);
+    w.RunFor(1000);
+    CHECK(w.Current() == kGenlock);
+    CHECK(w.machine.State().heldByEffect);
+    CHECK(pokes == 1); // not told to choose again behind the effect
+    CHECK_FALSE(Logged(w, "its action's own effect holds it"));
+    w.Finish(kGenlock);
+    w.RunFor(100);
+    CHECK(pokes == 2); // told as it lets go
+    // The wait's second and the hold's, each once, of the bar's four.
+    CHECK(w.machine.View().timeLeftMs <= 2050);
+    CHECK(w.machine.View().timeLeftMs >= 1950);
+    // And of its own clock, which both moved.
+    CHECK(w.agedOwn[kGenlock] >= 1950);
+    CHECK(w.agedOwn[kGenlock] <= 2050);
+    CHECK(Logged(w, "Genlock waits 1.00 s; 3.00 s and 16.0 m left"));
+    CHECK(Logged(w, "Genlock is held by an effect's command"));
+}
+
+TEST_CASE("a held creature's AI's wait takes nothing and ends nothing: the hold has that time already",
+          "[time][holds][wait]")
+{
+    SECTION("with time: refused behind the effect, and paid for only once it is free")
+    {
+        World w(Timed());
+        int pokes = 0;
+        w.onPoke = [&](ObjectId id) {
+            ++pokes;
+            CHECK(w.Wait(id, 2.0f) == Verdict::Block);
+        };
+        HeldAsItsTurnComes(w);
+        w.RunFor(500);
+        // Its AI, run by something that happened to it meanwhile, waits.
+        CHECK(w.Wait(kGenlock, 2.0f) == Verdict::Block);
+        w.RunFor(500);
+        CHECK(w.Current() == kGenlock); // not passed
+        CHECK(w.machine.State().heldByEffect);
+        CHECK(w.machine.View().timeLeftMs >= 2950); // the hold's second, not the wait's two as well
+        CHECK_FALSE(Logged(w, "Genlock waits "));
+        // The effect's command ends, and the engine runs its AI in that frame
+        // (COMMAND_COMPLETE), before the machine has seen it free: it waits.
+        w.Finish(kGenlock);
+        CHECK(w.Wait(kGenlock, 2.0f) == Verdict::Block);
+        CHECK_FALSE(Logged(w, "Genlock waits "));
+        CHECK(pokes == 0);
+        w.RunFor(100);
+        // Free, it is told, and the wait it answers with is paid for: 2 s of
+        // the 3 the hold left. Told again, its next does not fit, and ends
+        // the turn as a wait too long does, the rest rolling over as ever.
+        CHECK(pokes == 2);
+        CHECK(std::ranges::count_if(w.log, [](const std::string &line) {
+                  return line.find("Genlock waits 2.00 s") != std::string::npos;
+              }) == 1);
+        CHECK(Logged(w, "Genlock's wait of 2.00 s is longer than the 0.9"));
+        CHECK(Logged(w, "Genlock's turn ends: waits; 0.9"));
+        CHECK(w.Current() != kGenlock);
+    }
+    SECTION("as built, where a wait is a pass: it does not pass the turn of one held")
+    {
+        Settings s = Timed();
+        s.turnClock = TurnClock::Actions;
+        World w(s);
+        int pokes = 0;
+        w.onPoke = [&](ObjectId) { ++pokes; };
+        w.StartFight();
+        REQUIRE(w.Current() == kHero);
+        REQUIRE(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+        UntilTurnOf(w, kGenlock);
+        w.RunFor(500);
+        CHECK(w.Wait(kGenlock, 2.0f) == Verdict::Block);
+        w.RunFor(500);
+        CHECK(w.Current() == kGenlock);
+        w.Finish(kGenlock);
+        w.RunFor(100);
+        // Let go, the turn is its own, whole: its AI is told, not passed over.
+        CHECK(w.Current() == kGenlock);
+        CHECK(pokes == 1);
+        CHECK(w.machine.GetPhase() == Phase::AiThinking);
+    }
+}
+
+// Where a hold (issue 30) meets a hostile that has noticed nobody to fight
+// (issue 29), whose turn is skipped after a beat. Its hold is not stood out
+// for a turn that is skipped anyway: held first, as it was while a hold was
+// given two seconds, it would stand out its bar and then its beat.
+TEST_CASE("an unaware hostile at an effect's command is not stood out for: its turn is skipped after its beat",
+          "[time][holds][perception]")
+{
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    w.Get(kGenlock).perception = Unnoticing();
+    HeldAsItsTurnComes(w);
+    CHECK_FALSE(w.machine.State().heldByEffect);
+    CHECK(Logged(w, "Genlock has not noticed the party"));
+    SECTION("unaware to the end of its beat")
+    {
+        w.RunFor(1200);
+        CHECK(w.Current() != kGenlock);
+        CHECK(pokes == 0);
+        CHECK(Logged(w, "Genlock's turn ends: unaware"));
+        CHECK_FALSE(Logged(w, "Genlock is held by an effect's command"));
+        CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+    }
+    SECTION("noticing in its beat with the effect still on it: held from then, and told as it lets go")
+    {
+        w.RunFor(300);
+        REQUIRE(w.Current() == kGenlock);
+        w.Get(kGenlock).perception = Perception{};
+        w.RunFor(1000);
+        CHECK(w.Current() == kGenlock); // not skipped as its beat would have ended
+        CHECK(w.machine.State().heldByEffect);
+        CHECK(pokes == 0);
+        w.Finish(kGenlock);
+        w.RunFor(100);
+        CHECK(pokes == 1);
+        // The second it was held since it noticed, of its bar: not the beat
+        // before, which took nothing.
+        CHECK(w.machine.View().timeLeftMs <= 3050);
+        CHECK(w.machine.View().timeLeftMs >= 2950);
+    }
+}
+
+// A hold's time is the game's. Under a menu the game stands, the effect's
+// command with it, and the machine takes nothing up (Step; and since issue
+// 29's look at everyone, WhatToObserve takes none there): nothing of the bar
+// goes, however long the menu is up, and the hold is not let go under it.
+// The same for the player's own pause.
+TEST_CASE("a hold is not charged while the game stands: a menu or a pause over it takes nothing of the bar",
+          "[time][holds]")
+{
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    HeldAsItsTurnComes(w);
+    w.RunFor(500);
+    REQUIRE(w.machine.State().heldByEffect);
+    const std::uint32_t left = w.machine.View().timeLeftMs;
+    REQUIRE(left <= 3550);
+    REQUIRE(left >= 3450);
+    SECTION("a menu, longer than the bar")
+    {
+        w.mode = Mode::Gui;
+        w.paused = true; // the menu pauses
+        w.RunFor(6000);
+        CHECK(w.machine.View().timeLeftMs == left);
+        w.mode = Mode::Combat;
+        w.paused = false; // leaving it unpauses
+    }
+    SECTION("the player's pause, longer than the bar")
+    {
+        REQUIRE(w.machine.OnPauseKey());
+        w.Frame();
+        REQUIRE(w.paused);
+        const std::uint32_t paused = w.machine.View().timeLeftMs; // the frame that paused it ran
+        w.RunFor(6000);
+        CHECK(w.paused);
+        CHECK(w.machine.View().timeLeftMs == paused);
+        REQUIRE(w.machine.OnPauseKey());
+        w.Frame();
+        CHECK_FALSE(w.paused);
+    }
+    CHECK(w.Current() == kGenlock);
+    CHECK(w.machine.State().heldByEffect);
+    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+    w.RunFor(500);
+    w.Finish(kGenlock);
+    w.RunFor(100);
+    // A second of hold in all (and the frame or two in which the pause came
+    // and went): the bar has the other three, and its AI is told with them.
+    CHECK(w.Current() == kGenlock);
+    CHECK_FALSE(w.machine.State().heldByEffect);
+    CHECK(pokes == 1);
+    CHECK(w.machine.View().timeLeftMs <= 3050);
+    CHECK(w.machine.View().timeLeftMs >= 2900);
+    CHECK(Logged(w, "Genlock is free of the effect's command after 1.0"));
+}
+
+// Where a hold (issue 30) meets an attack the engine has no way to make
+// (issue 27). What a creature kept is given as its hold lets go, through the
+// gate as it is at a turn's start, and so is asked of the engine there: the
+// target's ring filled meanwhile, it is not made, and what the turn paid for
+// it as it began is given back. The hold's time is the hold's all the same.
+TEST_CASE("a kept attack given as a hold lets go is asked of the engine like any: with no room it is not made",
+          "[time][holds][noattack]")
+{
+    World w(Timed());
+    bool kept = false;
+    int pokes = 0;
+    w.onPoke = [&](ObjectId id) {
+        ++pokes;
+        if (id == kGenlock && !std::exchange(kept, true))
+        {
+            CHECK(Strike(w, kGenlock, kHero, Source::Script, 4.5f) == Verdict::Hold); // owes half a second
+        }
+    };
+    w.StartFight();
+    UntilTurnOf(w, kGenlock);
+    w.RunFor(200);
+    REQUIRE(kept);
+    // Thrown before its next turn; and by then the engine has no place for
+    // it at the hero.
+    UntilTurnOf(w, kCompanion);
+    REQUIRE(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    w.heldCasts[kGenlock].noAttack = NoAttack::NoPlace;
+    UntilTurnOf(w, kGenlock);
+    const int told = pokes;
+    REQUIRE(w.machine.View().timeLeftMs == 3500); // the half second its shot owed is paid
+    w.RunFor(500);
+    // Held, an attack of its script's is refused as any order behind the
+    // effect is: not put to the engine, and not counted as one given back.
+    CHECK(w.Attack(kGenlock, kHero, Source::Script, NoAttack::NoPlace, 0.0f, 1.0f) == Verdict::Block);
+    CHECK_FALSE(Logged(w, "is given back before a step"));
+    w.RunFor(500);
+    CHECK(w.released.empty()); // what it kept is not given behind the effect
+    w.Finish(kGenlock);
+    w.RunFor(200);
+    // Given as the hold lets go, and asked of the engine: not made.
+    REQUIRE(w.released.size() == 1);
+    CHECK(w.released.front() == Verdict::Block);
+    CHECK_FALSE(w.Get(kGenlock).busy);
+    CHECK(Logged(w, "Genlock's pending attack on Hero is not made: the engine has no place at its target for it; the "
+                    "0.50 s it owed given back"));
+    // The half second is back in the bar; the second the hold ran is not.
+    CHECK(w.machine.View().timeLeftMs <= 3050);
+    CHECK(w.machine.View().timeLeftMs >= 2950);
+    // And the turn is handed to it with that: its AI is told, once.
+    CHECK(w.Current() == kGenlock);
+    CHECK(pokes == told + 1);
+}
+
+TEST_CASE("a frame between one command of an effect's and the next is not the hold's end", "[time][holds]")
+{
+    // A frame can fall between one command the engine queues and the next
+    // (the machine waits two for any command's end). Taken for let go in
+    // that frame, a creature thrown and then getting up, if those are two
+    // commands, would be given what it kept into the gap, to queue behind
+    // the rise: the stall of issue 11's archer.
+    World w(Timed());
+    bool kept = false;
+    int pokes = 0;
+    w.onPoke = [&](ObjectId id) {
+        ++pokes;
+        if (id == kGenlock && !std::exchange(kept, true))
+        {
+            CHECK(Strike(w, kGenlock, kHero, Source::Script, 4.5f) == Verdict::Hold); // owes half a second
+        }
+    };
+    w.StartFight();
+    UntilTurnOf(w, kGenlock);
+    w.RunFor(200);
+    REQUIRE(kept);
+    UntilTurnOf(w, kCompanion);
+    REQUIRE(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    UntilTurnOf(w, kGenlock);
+    const int before = pokes;
+    w.RunFor(800);
+    // The fall's command ends, and a frame on the getting up's begins.
+    w.Finish(kGenlock);
+    w.Frame();
+    REQUIRE(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    w.RunFor(700);
+    CHECK(w.machine.State().heldByEffect);
+    CHECK(w.released.empty()); // nothing given into the gap
+    CHECK(pokes == before);
+    w.Finish(kGenlock);
+    w.RunFor(100);
+    REQUIRE(w.released.size() == 1);
+    CHECK(w.released.front() == Verdict::Allow);
+    // One hold, a second and a half of it, gap and all: of the 3.5 s its
+    // bar had after the shot's debt.
+    CHECK(w.machine.View().timeLeftMs <= 2050);
+    CHECK(w.machine.View().timeLeftMs >= 1950);
+}
+
+TEST_CASE("thrown as it was to walk to its kept attack's target, a creature with no bar left is not walked",
+          "[time][holds]")
+{
+    // The long run of random fights with time, as holds came to run on the
+    // turn's clock: an attack kept, its bar spent on it, the walk to its
+    // target asked for with the next step's effects, and its creature thrown
+    // before that step. The hold had nothing of the bar to take, the turn
+    // was lost in that step, and the walk was given after it, out of turn.
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    // 4.5 s of swing and 5 m to walk on a bar of 4 s: kept, and she walks to
+    // her target now.
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 4.5f, 5.0f) == Verdict::Hold);
+    REQUIRE(w.Order(kHero, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    w.RunFor(100);
+    CHECK(w.Current() != kHero);
+    CHECK(w.Said(L"Hero loses the turn"));
+    CHECK(w.approaches == 0);
+    CHECK(w.heldCasts.contains(kHero)); // what she kept is hers still, for her next turn
+}
+
+TEST_CASE("let go as the last of its bar goes, an AI is not asked to choose with nothing", "[time][holds]")
+{
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    HeldAsItsTurnComes(w);
+    for (int i = 0; i < 400 && w.machine.View().timeLeftMs > 16; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(w.machine.View().timeLeftMs == 16);
+    w.Finish(kGenlock); // free in the frame that takes the last of it
+    w.RunFor(1200);
+    CHECK(pokes == 0);
+    CHECK(w.Current() != kGenlock);
+    CHECK_FALSE(Logged(w, "Genlock's turn ends: chose nothing"));
 }
 
 TEST_CASE("each command of a turn has max_action_ms of its own", "[machine]")
@@ -2661,11 +3378,15 @@ TEST_CASE("with own clocks, an action's own effect leaves the shared clock to th
     CHECK(w.agedMs - shared == 4000);
 }
 
-TEST_CASE("a creature getting up from a hold ended as its turn began keeps its turn", "[time]")
+TEST_CASE("getting up from a hold ended as its turn began takes its own time of the bar, and the turn goes on",
+          "[time]")
 {
     // The tester's re-check of play test 33: knocked down, Lyna's next turn
     // took the knockdown's 1.37 s, the condition ended, she got up (an
-    // effect's command), and two seconds in her turn was lost to it.
+    // effect's command), and two seconds in her turn was lost to it. For a
+    // while after, getting up cost nothing, for up to five seconds. It costs
+    // the time the engine takes over it, as any hold does (issue 30: "A
+    // knockdown's time is its fall and getting up", dev/REBALANCE.md).
     World w(Timed());
     w.StartFight();
     REQUIRE(w.Current() == kHero);
@@ -2677,17 +3398,27 @@ TEST_CASE("a creature getting up from a hold ended as its turn began keeps its t
     UntilTurnOf(w, kHero);
     REQUIRE(w.Current() == kHero);
     CHECK(w.Get(kHero).condition == Condition::None); // ended as the turn began
-    // Getting up: the engine's command, a while.
+    // A bar of 5 s (a second rolled over from the turn she passed), less the
+    // knockdown's share of it: 1.4 s of her 4 s clock.
+    const std::uint32_t afterTheKnockdown = w.machine.View().timeLeftMs;
+    CHECK(afterTheKnockdown == 3250);
+    // Getting up: the engine's command, a second and a half.
     w.Get(kHero).busy = true;
     w.Get(kHero).current = CommandType::ExecuteEffect;
-    w.RunFor(2600);
+    w.RunFor(1500);
     CHECK(w.Current() == kHero);
     CHECK_FALSE(w.Said(L"Hero loses the turn"));
+    // Held meanwhile: an order would queue behind the rise.
+    CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 1.0f, 0.0f) == Verdict::Block);
     w.Finish(kHero);
     w.RunFor(600);
     CHECK(w.Current() == kHero);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.machine.View().timeLeftMs > 2000); // 4 s less the knockdown's share
+    // And the rise's second and a half are gone with it: of her clock, so
+    // that share of the bar, as the knockdown's own (1.5 of 4 s, of 5 s).
+    CHECK(w.machine.View().timeLeftMs <= afterTheKnockdown - 1800);
+    CHECK(w.machine.View().timeLeftMs >= afterTheKnockdown - 1950);
+    CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 1.0f, 0.0f) == Verdict::Allow);
 }
 
 TEST_CASE("with time, a door, a chest or a pickup costs its seconds from the settings file", "[time]")

@@ -16,6 +16,7 @@
 #include "dao/Gda.h"
 #include "dao/Log.h"
 #include "dao/ScriptHooks.h"
+#include "dao/SubActions.h"
 #include "dao/Timers.h"
 #include "dao/World.h"
 #include "dao/core/CommandWord.h"
@@ -676,6 +677,63 @@ Combatant Bridge::Describe(ObjectId id, Side side, bool hero)
     return c;
 }
 
+namespace
+{
+
+// What the engine's command for an effect is made of, said at debug as it
+// changes, for the creature whose turn it is: asked by DAOLib's session (its
+// issue 18, the mod's 30), so that a play test shows a knockback's sequence
+// and how far ahead a hold's time can be known. The sub-actions left on the
+// command, the running one first, each with its type and its duration as that
+// is set: none for an untimed one, and for a timed one until it begins (an
+// animation, 37, takes its length only then). Said again when a type or a
+// duration changes or a delay ends, not as the time elapsed moves, which it
+// does every frame. And the command's own parameters, the first of each kind
+// (past the last the engine gives 0, 0.0 and no object): which effect the
+// command runs is thought to be among them, and is not read yet (DAOLib's
+// dao/SubActions.h).
+void SayEffectCommand(ObjectId id, const dao::Command &command, const std::vector<dao::commands::SubAction> &subs)
+{
+    if (!spdlog::should_log(spdlog::level::debug))
+    {
+        return;
+    }
+    std::string key;
+    std::string said;
+    for (const dao::commands::SubAction &sub : subs)
+    {
+        key += std::format("{}:{}:{};", sub.type, sub.durationMs, sub.delayMs > 0);
+        said += said.empty() ? "" : ", ";
+        said += std::format("{} ({}{})", sub.type,
+                            sub.durationMs > 0 ? std::format("{} of {} ms", sub.elapsedMs, sub.durationMs)
+                                               : std::string{"untimed, or not begun"},
+                            sub.delayMs > 0 ? std::format(", after {} ms", sub.delayMs) : std::string{});
+    }
+    std::string parameters = "none";
+    if (const dao::CDataArrays *given = command.Parameters())
+    {
+        parameters = std::format("ints [{}, {}, {}, {}, {}, {}, {}, {}], objects [{:#x}, {:#x}, {:#x}, {:#x}], "
+                                 "floats [{:.3f}, {:.3f}, {:.3f}, {:.3f}]",
+                                 given->Integer(0), given->Integer(1), given->Integer(2), given->Integer(3),
+                                 given->Integer(4), given->Integer(5), given->Integer(6), given->Integer(7),
+                                 given->Object(0), given->Object(1), given->Object(2), given->Object(3),
+                                 given->Float(0), given->Float(1), given->Float(2), given->Float(3));
+    }
+    key += parameters;
+    static ObjectId lastWho = dao::kInvalidObject;
+    static std::string lastKey;
+    if (id == lastWho && key == lastKey)
+    {
+        return;
+    }
+    lastWho = id;
+    lastKey = std::move(key);
+    spdlog::debug("{:#x} is at an effect's command: sub-actions {}; its parameters: {}", id,
+                  said.empty() ? "none left" : said, parameters);
+}
+
+} // namespace
+
 ActorObservation Bridge::Actor(ObjectId id)
 {
     ActorObservation actor;
@@ -700,11 +758,32 @@ ActorObservation Bridge::Actor(ObjectId id)
         // or cast each frame.
         if (actor.current == CommandType::ExecuteEffect)
         {
+            // How long the engine's own count has this command still to run,
+            // where it can say: the sub-actions left on it, each with its
+            // delay and the timed time it has left (DAOLib's
+            // dao::commands::HeldFor, its issue 18). Not known, it is "at
+            // least" that: one of them is untimed or has not begun (an
+            // animation takes its length only as it begins), or is spent
+            // and still there, or none is left of a command still current.
+            // No command at all leaves both as they are, nothing known. The
+            // machine says it beside the time the hold then ran, which is
+            // what the hold costs (core: TurnMachine::HoldRuns, issue 30).
+            // Seen in play 2026-10-04 with DAOLib 57e1540, which read known
+            // and 0.00 s for every knockback of the high dragon's (its one
+            // sub-action spent, the fall and rise on no list, 0.61 to
+            // 3.19 s): since DAOLib 5e0108a that reads at least 0.
+            const std::vector<dao::commands::SubAction> subs = dao::commands::SubActions(id);
+            if (const std::optional<dao::commands::Held> held = dao::commands::HeldFor(id))
+            {
+                actor.heldSeconds = held->seconds;
+                actor.heldKnown = held->known;
+            }
+            SayEffectCommand(id, *current.get(), subs);
             // What holds it, as the engine has it: every temporary effect
             // standing on the creature, with the ability that applied it,
             // who did and the seconds it has left (DAOLib's
-            // dao::effects::On). For the machine's log; what a hold costs
-            // is to go by these and not by a grace of the mod's (issue 30).
+            // dao::effects::On). For the machine's lines: which of them the
+            // command is of is not read (the diagnostic above is to show).
             for (const dao::effects::Standing &effect : dao::effects::On(id))
             {
                 if (!(effect.remaining > 0.0f))
@@ -806,6 +885,26 @@ namespace
 {
 // The effects that hold a creature for turns, and that the machine ends
 // once their turns are spent (Status, EndConditions).
+//
+// A list of kinds, where what a hold costs is otherwise read with none
+// (issue 30: any effect's command costs the time it runs, core's HoldRuns).
+// Why these five keep theirs: each keeps its creature at its command for as
+// long as the effect itself stands (a pin's command outlasted its victim's
+// turn once effects' time was held, 2026-09-30), and in a fight an effect's
+// time is on a clock the mod holds and moves by its creature's own turns.
+// So the time such a hold has left is the effect's own, not a length its
+// command has to be read off its sub-actions (what DAOLib's count says of
+// one while its effect stands has not been looked at; of a knockback's
+// fall and rise the engine keeps no time ahead at all); and counted as it
+// runs, it would mean the
+// world running through every turn the hold takes, a paralysed fighter
+// standing out its bar, where today the turn is lost at once and the hold's
+// share is taken as the turn begins. Which effect a command waits on is not
+// read from the command yet (DAOLib's dao/SubActions.h), so the kinds still
+// say which effects' time left that is. The engine's command once one of
+// them is ended (the getting up) is charged as any other. What goes when a
+// command names its effect: this list for the time, not for what the card
+// calls stunned.
 constexpr std::array kHolding{k::EFFECT_TYPE_STUN, k::EFFECT_TYPE_PARALYZE, k::EFFECT_TYPE_SLEEP, k::EFFECT_TYPE_ROOT,
                               k::EFFECT_TYPE_KNOCKDOWN};
 constexpr std::array<const char *, kHolding.size()> kHoldingNames{"stun", "paralysis", "sleep", "pin", "knockdown"};
@@ -854,7 +953,9 @@ CombatantStatus Bridge::Status(ObjectId id)
         // The seconds it has left, the longest of what holds it: with a
         // turn a bar of time a hold takes its own time of its victim's
         // turns (core: Held::owedMs). DAOLib's dao::effects::On (a893f20),
-        // first used here: not yet seen in play.
+        // first used here: not yet seen in play. The effect's time, not its
+        // command's (kHolding, above, says why): read ahead, so that a turn
+        // it outlasts is lost with the world still.
         if (status.condition == Condition::Disabled)
         {
             for (const dao::effects::Standing &effect : dao::effects::On(id))

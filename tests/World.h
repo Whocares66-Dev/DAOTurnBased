@@ -57,6 +57,14 @@ struct Creature
     // acting creature, every frame (issue 29). Everything, unless a case
     // says otherwise: Unnoticing() for a hostile that has not noticed.
     Perception perception;
+    // At an effect's command: how long the engine's count has it still to
+    // run, and whether the engine can say (ActorObservation::heldSeconds,
+    // heldKnown), and the effects standing on it in the game layer's words
+    // (ActorObservation::effects). A case sets them; the machine only says
+    // them.
+    float heldSeconds = 0.0f;
+    bool heldKnown = false;
+    std::string effects;
 };
 
 // A hostile the party perceives that the game does not have in combat and
@@ -215,9 +223,9 @@ class World
         if (needs.actor != kNoObject)
         {
             const Creature &c = Get(needs.actor);
-            obs.actor =
-                ActorObservation{c.id,       c.exists,      c.down,       c.busy,        c.moving,     c.current,
-                                 c.position, c.conjureHeld, c.timersHeld, c.approaching, c.perception, std::string{}};
+            obs.actor = ActorObservation{c.id,         c.exists,   c.down,        c.busy,       c.moving,
+                                         c.current,    c.position, c.conjureHeld, c.timersHeld, c.approaching,
+                                         c.perception, c.effects,  c.heldSeconds, c.heldKnown};
         }
         for (const ObjectId id : needs.statuses)
         {
