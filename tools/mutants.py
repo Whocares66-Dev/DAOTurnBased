@@ -1048,6 +1048,24 @@ MUTANTS = [
         "    return std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;",
     ),
     Mutant(
+        "a hostile that has not noticed is drawn into a fight with the party at peace",
+        RULES,
+        "    return partyInCombat && sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;",
+        "    return sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius + (partyInCombat ? 0.0f : 0.0f);",
+    ),
+    Mutant(
+        "a hostile that has not noticed is drawn in unseen",
+        RULES,
+        "    return partyInCombat && sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;",
+        "    return partyInCombat && (sighting.seen || true) && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;",
+    ),
+    Mutant(
+        "a hostile that has not noticed is drawn in from beyond the join radius",
+        RULES,
+        "    return partyInCombat && sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;",
+        "    return partyInCombat && sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.combatRadius;",
+    ),
+    Mutant(
         "a creature attacking the party from afar waits outside its fight",
         RULES,
         "    if (!settings.joinBySight || sighting.fightsParty)",

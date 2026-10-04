@@ -299,9 +299,11 @@ std::vector<Combatant> Bridge::Scan()
             spdlog::info("who is in a fight here goes by sight: the area has no rooms");
         }
     }
-    const auto add = [&](ObjectId id, Side side) {
+    const auto add = [&](ObjectId id, Side side, bool unaware = false) {
         Combatant c = Describe(id, side, false);
-        if (settings_.joinBySight)
+        // One drawn in though it has not noticed is in the party's fight by
+        // the rule that drew it in (seen, within the join radius).
+        if (settings_.joinBySight && !unaware)
         {
             const std::optional<dao::world::Room> room = byRooms ? dao::world::RoomOf(id) : std::nullopt;
             const Sighting sighting = Sight(id, members, room);
@@ -329,8 +331,23 @@ std::vector<Combatant> Bridge::Scan()
         return api::IsObjectValid(id) != 0 && !seen.contains(id) && api::GetCombatState(id) != 0 &&
                api::GetDistanceBetween(leader, id) <= settings_.combatRadius;
     };
+    // And a hostile that has not noticed the party, with the party in combat
+    // (core: FightsUnawares; issue 20): seen and within the join radius it
+    // is in the fight. Sight is a party member's line here whatever the
+    // rooms say: a room the game shows may hold a hostile behind a pillar,
+    // and this one is not fighting anyone to be seen by.
+    const bool partyInCombat = api::GetCombatState(leader) != 0 || api::GetCombatState(hero) != 0;
+    const auto unawares = [&](ObjectId id) {
+        if (!partyInCombat || api::IsObjectValid(id) == 0 || seen.contains(id) || api::GetCombatState(id) != 0 ||
+            api::IsDead(id) != 0 || api::GetDistanceBetween(leader, id) > settings_.combatRadius)
+        {
+            return false;
+        }
+        return FightsUnawares(partyInCombat, Sight(id, members, std::nullopt), settings_);
+    };
     const dao::script::Array hostiles =
         api::GetNearestObjectByHostility(leader, 1, k::OBJECT_TYPE_CREATURE, kMaxCreaturesInCombat, 1, 0, 0);
+    std::size_t drawnIn = 0;
     for (std::size_t i = 0; i < hostiles.Size(); ++i)
     {
         const ObjectId id = hostiles.Object(i);
@@ -339,6 +356,21 @@ std::vector<Combatant> Bridge::Scan()
             seen.insert(id);
             add(id, Side::Enemy);
         }
+        else if (unawares(id))
+        {
+            seen.insert(id);
+            add(id, Side::Enemy, true);
+            ++drawnIn;
+            if (unawares_.insert(id).second)
+            {
+                spdlog::info("{} ({:#x}) has not noticed the party and is in sight within {:.0f} m: in the fight",
+                             Utf8(Remember(id).name), id, settings_.joinRadius);
+            }
+        }
+    }
+    if (drawnIn == 0)
+    {
+        unawares_.clear(); // said once a creature, until none is left to say it of
     }
     // Creatures in combat that are not hostile to the party fight beside it.
     const dao::script::Array others =

@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace tb::game
@@ -71,7 +72,8 @@ class Bridge
   private:
     CameraDirector camera_;
     std::optional<bool> speedTook_;
-    std::optional<bool> byRooms_; // whether the last scan went by the rooms seen (Scan)
+    std::optional<bool> byRooms_;           // whether the last scan went by the rooms seen (Scan)
+    std::unordered_set<ObjectId> unawares_; // hostiles drawn into a fight they had not noticed, each said once (Scan)
     // Creatures whose kept cast or action was not given, its target gone
     // (Apply, ReleaseCast): told to the machine with the next observation.
     std::vector<ObjectId> keptVoid_;

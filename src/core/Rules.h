@@ -115,6 +115,19 @@ struct Sighting
 // it, if it is seen and within joinRadius. Without joinBySight, everyone.
 [[nodiscard]] bool InThePartysFight(const Sighting &sighting, const Settings &settings);
 
+// Whether a hostile near the party that is not in combat itself is fighting
+// all the same: with the party in combat, one that is seen and within
+// joinRadius is. The game counts a creature as in combat once it has noticed
+// an enemy; one that has not (its back turned, a script keeping it at a
+// door) left the party "in combat" with nobody to take turns against, the
+// world running on in real time until someone struck it: three corpses at a
+// cell's door in Redcliffe's dungeon, a second band 40 m down the road after
+// an ambush was won (issue 20). The user, 2026-10-03: "If they're within
+// range and hostile they're fighting". Its first turn is its own AI's, which
+// may be to go on with what it was doing. Sight is asked for whatever
+// joinBySight says: a hostile behind a wall has not been met.
+[[nodiscard]] bool FightsUnawares(bool partyInCombat, const Sighting &sighting, const Settings &settings);
+
 // The ability table's TargetType is a mask (TARGET_TYPE_*, the scripts'
 // constants): self 1, friendly 2, hostile 4, placeable 8, area 16, ground
 // 32, body 64. UseType 2 is a mode (Shield Wall), turned on and off.
