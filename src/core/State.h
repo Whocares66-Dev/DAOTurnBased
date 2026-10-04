@@ -17,7 +17,8 @@ namespace tb
 //  "actions_left":1,
 //  "movement_left":7.3,"movement_max":9.0,"speed":1.0,"speed_took":true,
 //  "held_by_effect":false,
-//  "last_refusal":"...","order":[{"id":"0x...","name":"...","side":"party",
+//  "last_refusal":"...","notice":"" (the caption's line of an action given
+//  back, while it shows),"order":[{"id":"0x...","name":"...","side":"party",
 //  "rank":100,"health":0.85,"energy":1.0,"mana":false,"down":false,
 //  "current":true,"yours":true,"round":2},...],"held":[{"id":"0x...",
 //  "name":"...","condition":"disabled","turns_owed":1,"on_clock":false}],

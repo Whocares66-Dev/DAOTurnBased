@@ -83,6 +83,9 @@ std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits, cons
     Field(out, static_cast<long long>(row.before));
     Field(out, static_cast<long long>(row.shown));
     Field(out, static_cast<long long>(row.after));
+    // What the caption says for a while in place of what the turn has left
+    // (version 10): an action given back, and why (core/GivenBack.h).
+    Field(out, std::wstring_view{view.notice});
     for (const CardView &card : view.upcoming)
     {
         out += kBarCard;

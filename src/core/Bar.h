@@ -9,8 +9,10 @@
 //   the head:  version, active, round, current's id, player's turn,
 //              actions left, movement left, movement at most, then what
 //              later versions added (Bar.cpp says each where it writes it),
-//              and last the row (version 9): how many turns to come stand
-//              before it, how many it shows, how many come after
+//              then the row (version 9): how many turns to come stand
+//              before it, how many it shows, how many come after; and last
+//              (version 10) a line for the caption to say for a while, an
+//              action given back and why (core/GivenBack.h), empty for none
 //   each card: id, side (0 party, 1 ally, 2 enemy), rank, health (0-100),
 //              down, current, yours (the player commands it), round, name,
 //              tag, portrait (its texture's name, "portrait_player0.dds",
@@ -37,7 +39,7 @@ namespace tb
 
 inline constexpr wchar_t kBarCard = 0x1E;
 inline constexpr wchar_t kBarField = 0x1F;
-inline constexpr int kBarVersion = 9;
+inline constexpr int kBarVersion = 10;
 
 // The portraits and the row come from the game's side, the rest from the
 // machine.

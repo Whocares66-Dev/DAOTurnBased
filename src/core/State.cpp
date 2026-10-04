@@ -76,6 +76,11 @@ std::string ToJson(const MachineState &state)
     out += std::format(R"(,"speed":{:.2f},"speed_took":{},"held_by_effect":{},"last_refusal":)", state.speed,
                        state.speedTook ? Bool(*state.speedTook) : "null", Bool(state.heldByEffect));
     Text(out, state.lastRefusal);
+    // What the bar's caption says just now of an action given back, empty
+    // for nothing: a tool reads why its order came to nothing here, where
+    // the player reads it on the bar (issue 21).
+    out += R"(,"notice":)";
+    Text(out, Utf8(view.notice));
     out += R"(,"order":[)";
     for (std::size_t i = 0; i < view.upcoming.size(); ++i)
     {

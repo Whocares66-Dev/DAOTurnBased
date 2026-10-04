@@ -1,5 +1,6 @@
 #include "core/TurnMachine.h"
 
+#include "core/GivenBack.h"
 #include "core/Text.h"
 
 #include <algorithm>
@@ -559,6 +560,7 @@ void TurnMachine::StepStarting(const Observation &obs, std::vector<Effect> &fx)
 void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> &fx)
 {
     held_.clear();
+    notice_.reset(); // what the caption said of the last fight's order is not this one's
     currentStunned_ = false;
     usedNow_.clear();
     holds_.clear();
@@ -2183,7 +2185,7 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
                 ++budget_.givenBack;
                 if (current != nullptr && PlayerControls(*current))
                 {
-                    Floaty(fx, actor.id, L"No way through", kGold);
+                    SayGivenBack(fx, *current, budget_.lastType, L"No way through");
                 }
             }
             fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
@@ -3030,6 +3032,13 @@ void TurnMachine::Floaty(std::vector<Effect> &fx, ObjectId target, std::wstring 
     fx.push_back(std::move(effect));
 }
 
+void TurnMachine::SayGivenBack(std::vector<Effect> &fx, const Combatant &who, CommandType type, std::wstring_view words)
+{
+    Floaty(fx, who.id, std::wstring{words}, kGold);
+    // The caption's whatever the floaties' setting: it is the bar's own.
+    notice_ = Notice{GivenBackLine(words, who.name, type), lastNow_};
+}
+
 void TurnMachine::Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId object, std::int32_t a,
                          std::int32_t b) const
 {
@@ -3426,6 +3435,12 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     budget_.lastClock = clock_;
     budget_.lastMeasured = std::isfinite(request.actionSeconds) && request.actionSeconds > 0.0f;
     orderPending_ = false;
+    // What the caption says of an order given back is of the order before
+    // this one: the player has gone on.
+    if (request.source == Source::Player)
+    {
+        notice_.reset();
+    }
     Log(LogLevel::Info, std::format("{}: {} ({}, from {}); {}", Utf8(who->name), Name(request.type), Name(kind),
                                     Name(request.source), BudgetLeft()));
     const bool began = phase_ != Phase::Executing;
@@ -3555,9 +3570,7 @@ bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t a
         Emit(EventKind::ActionGivenBack, who, std::string{why}, 0, Name(type));
         if (PlayerControls(*current))
         {
-            const bool way = why.find("PATH") != std::string_view::npos;
-            const bool sight = why.find("LINE_OF_SIGHT") != std::string_view::npos;
-            Floaty(pending_, who, way ? L"No way through" : sight ? L"No line of sight" : L"Nothing happened", kGold);
+            SayGivenBack(pending_, *current, type, WhyGivenBack(why));
         }
         return true;
     }
@@ -3585,12 +3598,12 @@ bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t a
         std::format("{}'s {} failed ({}): its action is given back", Utf8(current->name), Name(type), why));
     Emit(EventKind::ActionGivenBack, who, std::string{why}, 0, Name(type));
     // Said over the player's own: the bar dropped and filled again with no
-    // word, three tries running (play test 31).
+    // word, three tries running (play test 31). And on the bar's caption,
+    // by the engine's reason: over the character alone it was missed, and
+    // the same order tried again and again (issue 21).
     if (PlayerControls(*current))
     {
-        const bool way = why.find("PATH") != std::string_view::npos || why.find("MELEE_RING") != std::string_view::npos;
-        const bool sight = why.find("LINE_OF_SIGHT") != std::string_view::npos;
-        Floaty(pending_, who, way ? L"No way through" : sight ? L"No line of sight" : L"Nothing happened", kGold);
+        SayGivenBack(pending_, *current, type, WhyGivenBack(why));
     }
     return true;
 }
@@ -3628,6 +3641,10 @@ TurnView TurnMachine::View() const
         view.delayOffered = settings_.delay && view.playerTurn;
         view.playerPaused = playerPaused_;
         view.rolledMs = budget_.rolledMs;
+        if (notice_ && lastNow_ - notice_->at < kNoticeMs)
+        {
+            view.notice = notice_->text;
+        }
     }
     // All of them: the bar's row is a window on these (core/BarWindow.h).
     for (const TurnOrder::Slot &slot : order_.Upcoming(order_.All().size()))

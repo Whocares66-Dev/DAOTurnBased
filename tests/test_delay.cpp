@@ -343,7 +343,7 @@ TEST_CASE("the bar's string and the state say whether the turn may be put off", 
         }
         return last;
     };
-    REQUIRE(head().size() == 19);
+    REQUIRE(head().size() == 20);
     CHECK(head()[13] == L"1"); // to be had
     CHECK(waits() == std::vector<std::wstring>{L"0", L"0", L"0", L"0"});
     CHECK(ToJson(w.machine.State()).find(R"("can_delay":true)") != std::string::npos);
@@ -371,10 +371,11 @@ TEST_CASE("with the setting off Delay is not offered", "[delay][bar]")
     w.StartFight();
     CHECK_FALSE(w.machine.View().delayOffered);
     // Delay, what rolled over and the pause, then the row's three (nobody
-    // before the four, nobody after), which end the head.
+    // before the four, nobody after) and the caption's line, none, which
+    // end the head.
     CHECK(EncodeBar(w.machine.View())
               .find(std::wstring{kBarField} + L"0" + kBarField + L"0.0" + kBarField + L"0" + kBarField + L"0" +
-                    kBarField + L"4" + kBarField + L"0" + kBarCard) != std::wstring::npos);
+                    kBarField + L"4" + kBarField + L"0" + kBarField + kBarCard) != std::wstring::npos);
 }
 
 TEST_CASE("with time, the view says what of the bar rolled over", "[delay][time][bar]")
@@ -388,10 +389,11 @@ TEST_CASE("with time, the view says what of the bar rolled over", "[delay][time]
     CHECK(view.timeMs == 5000);
     CHECK(view.rolledMs == 1000);
     const std::wstring bar = EncodeBar(view);
-    // What rolled over and the pause, before the row's three.
+    // What rolled over and the pause, before the row's three and the
+    // caption's line, which is none.
     CHECK(bar.substr(0, bar.find(kBarCard))
               .ends_with(std::wstring{kBarField} + L"1.0" + kBarField + L"0" + kBarField + L"0" + kBarField + L"4" +
-                         kBarField + L"0"));
+                         kBarField + L"0" + kBarField));
     CHECK(ToJson(w.machine.State()).find(R"("rolled_ms":1000)") != std::string::npos);
     // A turn that spends its bar rolls nothing over.
     CommandRequest swing;

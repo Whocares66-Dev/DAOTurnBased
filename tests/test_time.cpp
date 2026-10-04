@@ -7,12 +7,14 @@
 
 #include "core/Bar.h"
 #include "core/Rules.h"
+#include "core/State.h"
 #include "core/TurnMachine.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <optional>
+#include <string>
 #include <vector>
 
 using namespace tb;
@@ -1188,6 +1190,7 @@ TEST_CASE("an attack whose creature stands short of its target is stopped, its a
         w.RunFor(500);
         CHECK(w.Did(EffectKind::ClearCommands, kHero));
         CHECK(w.Said(L"No way through"));
+        CHECK(w.machine.View().notice == L"No way through: Hero's attack is given back"); // the caption too
         w.Finish(kHero);
         w.RunFor(600);
         CHECK(w.Current() == kHero);
@@ -1264,7 +1267,8 @@ TEST_CASE("an action given back is said over the player's own, by why, in gold",
                                     [&](const Effect &e) { return e.kind == EffectKind::Floaty && e.text == text; });
     };
     for (const auto &[why, words] : {std::pair{"COMMAND_FAILED_INVALID_PATH", L"No way through"},
-                                     std::pair{"COMMAND_FAILED_NO_SPACE_IN_MELEE_RING", L"No way through"},
+                                     std::pair{"COMMAND_FAILED_NO_SPACE_IN_MELEE_RING", L"No room at the target"},
+                                     std::pair{"COMMAND_FAILED_PATH_ACTION_REQUIRED", L"A door is in the way"},
                                      std::pair{"COMMAND_FAILED_NO_LINE_OF_SIGHT", L"No line of sight"},
                                      std::pair{"COMMAND_FAILED_INVALID_DATA", L"Nothing happened"}})
     {
@@ -1289,6 +1293,121 @@ TEST_CASE("an action given back is said over the player's own, by why, in gold",
     REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH"));
     w.Frame();
     CHECK(said(w, L"No way through") == w.applied.end());
+}
+
+TEST_CASE("an action given back is said on the bar's caption, for long enough to be read", "[time][givenback]")
+{
+    // Issue 21: over the character alone the word was missed, and the same
+    // order was tried again and again (Sten at a doorway, eighteen times in
+    // one fight). The caption has the reason, whose action it was, and that
+    // it is given back.
+    World w(Timed());
+    w.StartFight();
+    CHECK(w.machine.View().notice.empty());
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
+    CHECK(w.machine.View().notice.empty());
+    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    w.Finish(kHero);
+    const std::wstring line = L"No room at the target: Hero's attack is given back";
+    CHECK(w.machine.View().notice == line);
+    // In the bar's string, the head's last field, and in the state a tool reads.
+    const std::wstring bar = EncodeBar(w.machine.View());
+    CHECK(bar.substr(0, bar.find(kBarCard)).ends_with(std::wstring{kBarField} + line));
+    CHECK(ToJson(w.machine.State()).find(R"("notice":"No room at the target: Hero's attack is given back")") !=
+          std::string::npos);
+    // The turn goes on and waits for an order, the world standing still:
+    // the line stays five seconds of the real clock, and then goes.
+    w.RunFor(4800);
+    CHECK(w.Current() == kHero);
+    CHECK(w.machine.View().notice == line);
+    w.RunFor(400);
+    CHECK(w.machine.View().notice.empty());
+    CHECK(ToJson(w.machine.State()).find(R"("notice":"")") != std::string::npos);
+    const std::wstring after = EncodeBar(w.machine.View());
+    CHECK(after.substr(0, after.find(kBarCard)).ends_with(std::wstring{kBarField}));
+}
+
+TEST_CASE("the caption's line of an action given back goes when the player's next order is let through",
+          "[time][givenback]")
+{
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
+    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH"));
+    w.Finish(kHero);
+    w.RunFor(600);
+    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+    REQUIRE(w.machine.View().notice == L"No way through: Hero's attack is given back");
+    // Another try that comes to nothing has its own line, by its own reason.
+    REQUIRE(Act(w, kHero, CommandType::UseAbility, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
+    CHECK(w.machine.View().notice.empty()); // the order before's is gone as this one begins
+    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::UseAbility, 617, "COMMAND_FAILED_NO_LINE_OF_SIGHT"));
+    w.Finish(kHero);
+    w.RunFor(600);
+    CHECK(w.machine.View().notice == L"No line of sight: Hero's ability is given back");
+    // An order that is let through and runs: the line was of the order before.
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 1.0f, 0.0f) == Verdict::Allow);
+    CHECK(w.machine.View().notice.empty());
+}
+
+TEST_CASE("the caption's line is for the player: an enemy's action given back is not said, nor takes the line away",
+          "[time][givenback]")
+{
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId id) {
+        ++pokes;
+        (void)Act(w, id, CommandType::Attack, Source::Script, 2.0f, 0.0f);
+    };
+    w.StartFight();
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
+    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    w.Finish(kHero);
+    w.RunFor(300);
+    const std::wstring line = L"No room at the target: Hero's attack is given back";
+    REQUIRE(w.machine.View().notice == line);
+    // The hero's turn ended, the genlock's begun, its attack let through:
+    // not the player's order, and the line is still there to be read.
+    REQUIRE(w.machine.OnEndTurn());
+    w.RunFor(200);
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(pokes == 1);
+    CHECK(w.machine.View().notice == line);
+    // The genlock's own attack comes to nothing: given back, and no word of
+    // it on the caption, which is the player's.
+    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH"));
+    w.Frame();
+    CHECK(w.machine.View().notice == line);
+}
+
+TEST_CASE("a new fight begins with nothing on the caption from the last one", "[time][givenback]")
+{
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
+    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH"));
+    w.Finish(kHero);
+    w.RunFor(300);
+    REQUIRE_FALSE(w.machine.View().notice.empty());
+    // The enemies fall and the fight is over; the game leaves combat, and
+    // within the line's five seconds another fight begins.
+    w.Get(kGenlock).down = true;
+    w.Get(kHurlock).down = true;
+    REQUIRE(w.machine.OnEndTurn());
+    for (int i = 0; i < 100 && w.machine.GetPhase() != Phase::Idle; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.machine.GetPhase() == Phase::Idle);
+    CHECK(w.machine.View().notice.empty());
+    w.mode = Mode::Explore;
+    w.Frame();
+    w.Get(kGenlock).down = false;
+    w.Get(kHurlock).down = false;
+    w.StartFight();
+    REQUIRE(w.machine.Active());
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.machine.View().notice.empty());
 }
 
 TEST_CASE("an AI whose actions were given back twice in a turn has nothing it can get to: its turn ends", "[time]")
@@ -1671,11 +1790,14 @@ TEST_CASE("the engine's own conjuring that fails before it conjures is not pendi
     World w(Timed());
     w.StartFight();
     REQUIRE(w.Queue(Conjured(kHero)) == Verdict::Conjure);
-    // No way to its target: the engine fails it before its conjure.
+    // A shut door on the way to its target: the engine fails it before its
+    // conjure.
     w.Get(kHero).conjureHeld = false;
-    CHECK(w.machine.OnCommandFailed(kHero, CommandType::UseAbility, 10211, "COMMAND_FAILED_INVALID_PATH"));
+    CHECK(w.machine.OnCommandFailed(kHero, CommandType::UseAbility, 10211, "COMMAND_FAILED_PATH_ACTION_REQUIRED"));
     w.Finish(kHero);
     w.RunFor(300);
+    CHECK(w.Said(L"A door is in the way"));
+    CHECK(w.machine.View().notice == L"A door is in the way: Hero's ability is given back");
     CHECK(w.machine.State().charging.empty());
     CHECK(w.Current() == kHero); // its action given back, its turn goes on
 }

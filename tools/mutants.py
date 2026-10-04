@@ -76,6 +76,7 @@ RULES = "src/core/Rules.cpp"
 SETTINGS = "src/core/Settings.cpp"
 BAR = "src/core/Bar.cpp"
 BARWINDOW = "src/core/BarWindow.cpp"
+GIVENBACK = "src/core/GivenBack.cpp"
 PORTRAITS = "src/core/Portraits.cpp"
 JSON = "src/core/Json.cpp"
 KEYS = "src/core/Keys.h"
@@ -1875,20 +1876,113 @@ MUTANTS = [
     Mutant(
         "an action given back is not said over the player's own",
         MACHINE,
-        '    if (PlayerControls(*current))\n    {\n        const bool way = why.find("PATH")',
-        '    if (PlayerControls(*current) && who == kNoObject)\n    {\n        const bool way = why.find("PATH")',
+        "    if (PlayerControls(*current))\n    {\n        SayGivenBack(pending_, *current, type, WhyGivenBack(why));\n    }\n    return true;\n}",
+        "    if (PlayerControls(*current) && who == kNoObject)\n    {\n        SayGivenBack(pending_, *current, type, WhyGivenBack(why));\n    }\n    return true;\n}",
     ),
     Mutant(
         "an action given back is said over an enemy too",
         MACHINE,
-        '    if (PlayerControls(*current))\n    {\n        const bool way = why.find("PATH")',
-        '    if (current != nullptr)\n    {\n        const bool way = why.find("PATH")',
+        "    if (PlayerControls(*current))\n    {\n        SayGivenBack(pending_, *current, type, WhyGivenBack(why));\n    }\n    return true;\n}",
+        "    if (current != nullptr)\n    {\n        SayGivenBack(pending_, *current, type, WhyGivenBack(why));\n    }\n    return true;\n}",
+    ),
+    # What the player is told of an action given back, by the engine's
+    # reason (core/GivenBack.h; issue 21): over the character, and on the
+    # bar's caption for a while.
+    Mutant(
+        "a line of sight's refusal is said as nothing happened, and no reason as a line of sight",
+        GIVENBACK,
+        'if (why.find("LINE_OF_SIGHT") != std::string_view::npos)',
+        'if (why.find("LINE_OF_SIGHT") == std::string_view::npos)',
     ),
     Mutant(
-        "no way through is said for a line of sight",
+        "a door in the way is said as nothing happened",
+        GIVENBACK,
+        'if (why.find("PATH_ACTION_REQUIRED") != std::string_view::npos)',
+        'if (why.find("PATH_ACTION_REQUIRED") != std::string_view::npos && why.empty())',
+    ),
+    Mutant(
+        "no room at the target is said as nothing happened",
+        GIVENBACK,
+        'if (why.find("MELEE_RING") != std::string_view::npos)',
+        'if (why.find("MELEE_RING") != std::string_view::npos && why.empty())',
+    ),
+    Mutant(
+        "no path is said as nothing happened",
+        GIVENBACK,
+        'if (why.find("INVALID_PATH") != std::string_view::npos)',
+        'if (why.find("INVALID_PATH") != std::string_view::npos && why.empty())',
+    ),
+    Mutant(
+        "the caption's line calls an ability an attack",
+        GIVENBACK,
+        'type == CommandType::UseAbility ? L"ability"',
+        'type == CommandType::UseAbility ? L"attack"',
+    ),
+    Mutant(
+        "the caption's line does not say whose action was given back",
+        GIVENBACK,
+        'return std::format(L"{}: {}\'s {} is given back", words, name, what);',
+        'return std::format(L"{}: {}\'s {} is given back", words, name.substr(0, 0), what);',
+    ),
+    Mutant(
+        "an action given back is not said on the bar's caption: its line is past before it is seen",
         MACHINE,
-        '        const bool sight = why.find("LINE_OF_SIGHT") != std::string_view::npos;\n        Floaty(pending_, who, way ? L"No way through" : sight ? L"No line of sight" : L"Nothing happened", kGold);\n    }\n    return true;\n}',
-        '        const bool sight = why.find("LINE_OF_SIGHT") == std::string_view::npos && !way;\n        Floaty(pending_, who, way ? L"No way through" : sight ? L"No line of sight" : L"Nothing happened", kGold);\n    }\n    return true;\n}',
+        "    notice_ = Notice{GivenBackLine(words, who.name, type), lastNow_};\n",
+        "    notice_ = Notice{GivenBackLine(words, who.name, type), lastNow_ - kNoticeMs};\n",
+    ),
+    Mutant(
+        "the caption's line of an action given back never goes",
+        MACHINE,
+        "        if (notice_ && lastNow_ - notice_->at < kNoticeMs)\n",
+        "        if (notice_)\n",
+    ),
+    Mutant(
+        "the caption's line is gone in half a second: not long enough to read",
+        "src/core/TurnMachine.h",
+        "static constexpr std::uint32_t kNoticeMs = 5000;",
+        "static constexpr std::uint32_t kNoticeMs = 500;",
+    ),
+    Mutant(
+        "the caption's line outlives the player's next order",
+        MACHINE,
+        "    if (request.source == Source::Player)\n    {\n        notice_.reset();\n    }\n",
+        "",
+    ),
+    Mutant(
+        "another's command takes the caption's line away before it is read",
+        MACHINE,
+        "    if (request.source == Source::Player)\n    {\n        notice_.reset();\n    }\n",
+        "    notice_.reset();\n",
+    ),
+    Mutant(
+        "a new fight begins with the last fight's line on its caption",
+        MACHINE,
+        "    notice_.reset(); // what the caption said of the last fight's order is not this one's\n",
+        "",
+    ),
+    Mutant(
+        "a creature that cannot get to its target is stopped with no word on the caption",
+        MACHINE,
+        '                    SayGivenBack(fx, *current, budget_.lastType, L"No way through");\n',
+        '                    Floaty(fx, actor.id, L"No way through", kGold);\n',
+    ),
+    Mutant(
+        "a spell that failed before its conjure is given back with no word",
+        MACHINE,
+        "        if (PlayerControls(*current))\n        {\n            SayGivenBack(pending_, *current, type, WhyGivenBack(why));\n        }\n        return true;\n",
+        "        return true;\n",
+    ),
+    Mutant(
+        "the bar's string leaves the caption's line out",
+        BAR,
+        "    Field(out, std::wstring_view{view.notice});\n",
+        "    Field(out, std::wstring_view{});\n",
+    ),
+    Mutant(
+        "the state a tool reads leaves the caption's line out",
+        "src/core/State.cpp",
+        "    Text(out, Utf8(view.notice));\n",
+        '    Text(out, "");\n',
     ),
     Mutant(
         "an AI given its action back twice is asked a third time",

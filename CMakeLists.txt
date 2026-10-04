@@ -112,6 +112,7 @@ add_library(
     src/core/Bar.cpp
     src/core/BarWindow.cpp
     src/core/Events.cpp
+    src/core/GivenBack.cpp
     src/core/Json.cpp
     src/core/Keys.cpp
     src/core/Portraits.cpp

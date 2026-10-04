@@ -323,6 +323,11 @@ struct TurnView
     // What of this turn's bar rolled over from the turn before: why it is
     // longer than a turn's seconds.
     std::uint32_t rolledMs = 0;
+    // What the bar's caption says for a while in place of what the turn has
+    // left: an action of a party member's that came to nothing and was given
+    // back, and why (core/GivenBack.h; issue 21). Empty when there is
+    // nothing to say.
+    std::wstring notice;
     // Every turn to come, the current one first, each fighter once: all of
     // them, however many fight. Cut to a row's worth until 2026-10-03, when
     // those past it were on no card and in no count, and a tool that read
@@ -492,6 +497,13 @@ class TurnMachine
     // creature's action, spent when the gate let it through, is given back
     // once a turn, as for an approach cut short. True if it was.
     bool OnCommandFailed(ObjectId who, CommandType type, std::int32_t ability, std::string_view why);
+
+    // How long the bar's caption says that a party member's action was
+    // given back and why (TurnView::notice), of the real clock: the world
+    // may stand still while the player reads it. Long enough to read a line
+    // of fifty letters twice; gone sooner if the player's next order is let
+    // through, since it is of the order before.
+    static constexpr std::uint32_t kNoticeMs = 5000;
 
     // A creature was struck (the scripts' EVENT_TYPE_DAMAGED, once the
     // damage is done): a spell it has pending is interrupted by physical
@@ -775,6 +787,17 @@ class TurnMachine
     void Emit(EventKind kind, ObjectId who = kNoObject, std::string detail = {}, std::int32_t value = 0,
               std::string command = {}, std::string note = {}) const;
     std::string lastPlayerRefusal_; // what the player was last told, for the state: "Too far (attack: ...)"
+    // A party member's action that came to nothing and was given back: the
+    // words over the character, as ever, and the bar's caption's line for
+    // kNoticeMs from `at` (lastNow_'s clock), which the view carries (issue
+    // 21: with the floaty alone the same order was tried again and again).
+    void SayGivenBack(std::vector<Effect> &fx, const Combatant &who, CommandType type, std::wstring_view words);
+    struct Notice
+    {
+        std::wstring text;
+        std::uint32_t at = 0;
+    };
+    std::optional<Notice> notice_;
     // When a round last aged effects (real ms, lastNow_'s clock): a hold
     // gone soon after ran out on the clock; gone any other time while
     // effects' time is held, something took it off (a cure, a dispel).

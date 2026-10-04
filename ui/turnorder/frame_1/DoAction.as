@@ -16,7 +16,7 @@
 // Outside the game there is no plugin to ask, and it draws a sample fight,
 // so the look can be checked in any Flash player.
 
-var BAR_VERSION = 9;
+var BAR_VERSION = 10;
 var CARD = String.fromCharCode(30);
 var FIELD = String.fromCharCode(31);
 
@@ -196,6 +196,9 @@ function sampleView()
     sampleFirst = before;
     var shown = Math.min(ROW, cards.length - before);
     head.push(before, shown, cards.length - before - shown);
+    // What the caption says for a while of an action given back (version 10;
+    // the parameter notice=1): a spell at a target behind a shut door.
+    head.push(_root.notice == "1" ? "A door is in the way: Morrigan's ability is given back" : "");
     var text = head.join(FIELD);
     for (var i = 0; i < cards.length; i++)
     {
@@ -238,7 +241,8 @@ function parse(text)
             playerTurn: head[4] == "1", actions: Number(head[5]), movementLeft: head[6], movementMax: head[7],
             timed: head[8] == "1", timeLeft: head[9], time: head[10], turn: head[11], paid: Number(head[12]),
             delay: Number(head[13]), rolled: Number(head[14]), paused: head[15] == "1", before: before, shown: shown,
-            after: Number(head[18]), cards: cards, row: cards.slice(before, before + shown),
+            after: Number(head[18]), notice: head[19] == undefined ? "" : head[19], cards: cards,
+            row: cards.slice(before, before + shown),
             rowText: records.slice(1 + before, 1 + before + shown).join(CARD)};
 }
 
@@ -1062,8 +1066,12 @@ var captionText = "";
 function caption()
 {
     var strip = _root.bar.strip;
-    var line = _root.hovered != undefined && _root.hovered.length > 0 ? _root.hovered : captionText;
+    var pointed = _root.hovered != undefined && _root.hovered.length > 0;
+    var line = pointed ? _root.hovered : captionText;
     strip.text.text = line;
+    // After the text, as the preview's plate sets its own, which was seen so
+    // in play.
+    strip.text.textColor = !pointed && captionNotice ? GOLD : PARCHMENT;
     var w = Math.max(CAPTION_W, strip.text.textWidth + 44);
     strip.plate.removeMovieClip();
     panel(strip.createEmptyMovieClip("plate", 1), strip.middle - w / 2, strip.top, w, CAPTION_H, 8);
@@ -1125,8 +1133,20 @@ function pendingOf(state)
 // The caption's words: that the player has the game paused, on anyone's
 // turn (the pause key pauses; nothing else on the screen said so: play test
 // 29), else what the turn has left.
+// Before either, for as long as the plugin sends it: that an order of a
+// party member's came to nothing and is given back, and why (issue 21; the
+// words are core's, GivenBack.h). In the game's gold, as the same words
+// over the character are, so that it does not read as the turn's count; and
+// before what the order under the cursor would cost, since the cursor is
+// still on the target the order was for.
+var captionNotice = false;
 function words(state)
 {
+    captionNotice = state.notice.length > 0;
+    if (captionNotice)
+    {
+        return state.notice;
+    }
     return state.paused ? "Paused: Space runs the game again" : describe(state);
 }
 
