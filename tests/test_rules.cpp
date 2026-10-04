@@ -638,8 +638,9 @@ TEST_CASE("a kept attack whose target fell is turned on the nearest enemy its cr
     flawed[3].seen = false;
     CHECK(tb::NearestInReach(flawed) == tb::kNoObject);
 
-    // A bow reaches far, and a shot wants a line: the bandit of issue 11
-    // stood 26 s at a target 21.6 m off, inside its reach of 45.7 m. One in
+    // A bow reaches far, and a shot wants a line (issue 11: an archer with
+    // none stands; its bandit stood 26 s at a target 21.6 m off, inside its
+    // reach of 45.7 m, whether for want of a line was not read). One in
     // reach and out of sight is not shot at; the next that is seen is.
     std::vector<tb::Foe> archer{foe(0x101, 21.6f, 45.7f), foe(0x102, 38.0f, 45.7f), foe(0x103, 50.0f, 45.7f)};
     CHECK(tb::NearestInReach(archer) == 0x101);

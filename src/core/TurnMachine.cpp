@@ -270,8 +270,10 @@ Needs TurnMachine::WhatToObserve(std::uint32_t nowMs)
     {
         needs.actor = current->id;
     }
-    // Fresh at every turn start: whether a creature is stunned decides
-    // whether its turn is taken at all.
+    // Every half second; fresh at every turn start: whether a creature is
+    // stunned decides whether its turn is taken at all; and when asked for
+    // (statusWanted_): as an action ends and before the turn goes on after
+    // it, so that the cards and the state are what the action left.
     if (nowMs - lastStatusNow_ >= 500 || phase_ == Phase::TurnStart || std::exchange(statusWanted_, false))
     {
         lastStatusNow_ = nowMs;
@@ -2306,6 +2308,18 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     const int wait = player ? settings_.settleMs : std::max(settings_.settleMs, settings_.aiFollowUpMs);
     deadline_ = clock_ + static_cast<std::uint32_t>(wait);
     phase_ = Phase::Settling;
+    // An action has ended: everyone is looked at with the next step, not
+    // when the half second comes round, so that the cards follow a heal or a
+    // hit at once (the user, 2026-10-03, issue 23: "Yeah we should do that,
+    // reads should be pretty cheap"). A poultice drunk showed on its card
+    // only at the next look, up to half a second on, and a script that read
+    // the state right after a drink saw the old health and drank again,
+    // three times in one turn (the playthrough).
+    statusWanted_ = true;
+    if (Logs(LogLevel::Debug))
+    {
+        Log(LogLevel::Debug, "its command is over: everyone is looked at with the next step");
+    }
 }
 
 void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
@@ -2425,6 +2439,16 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
     if (TurnSpent())
     {
         EndTurn(fx, "nothing left to spend");
+        return;
+    }
+    // The turn waits again only on a look at everyone taken with this step,
+    // as an AI is told to choose again only on one: what landed while the
+    // world settled (an arrow in flight as its shot's command ended) is on
+    // the cards and in the state as the turn waits, for whoever reads them
+    // then (issue 23). A frame more of settling when the last look is older.
+    if (lastStatusNow_ != lastNow_)
+    {
+        statusWanted_ = true;
         return;
     }
     if (Logs(LogLevel::Debug))
@@ -2765,9 +2789,22 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
         }
         if (Combatant *known = order_.Find(seen.id))
         {
+            // A scan says who fights and how it stands; its mana or stamina
+            // is the statuses' to read (CombatantStatus), and is kept as
+            // they last read it, as its initiative is kept. Written over
+            // with the scan's blank (full, and nobody's mana), every card
+            // showed full from each scan to the next look at the statuses:
+            // from each turn's start, and from each time a turn waited again
+            // after an action, for up to half a second (read in the code
+            // with issue 23's second half, 2026-10-03; not looked for in
+            // play).
             const int initiative = known->initiative;
+            const float energy = known->energy;
+            const bool mana = known->mana;
             *known = seen;
             known->initiative = initiative;
+            known->energy = energy;
+            known->mana = mana;
             absentSince_.erase(seen.id);
             if (left_.erase(seen.id) > 0 && !seen.down)
             {
@@ -2854,6 +2891,15 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses, st
         if (c == nullptr)
         {
             continue;
+        }
+        // Said at debug as a look finds it changed, so that when the cards
+        // learned of a heal or a hit can be read off the log against the
+        // action's own lines (issue 23: at once as the action ends, not up
+        // to half a second on).
+        if (Logs(LogLevel::Debug) && status.exists && std::abs(status.health - c->health) >= 0.005f)
+        {
+            Log(LogLevel::Debug, std::format("{}'s health on its card: {:.0f}% to {:.0f}%", Utf8(c->name),
+                                             c->health * 100.0f, status.health * 100.0f));
         }
         c->health = status.health;
         c->energy = status.energy;

@@ -3411,3 +3411,112 @@ TEST_CASE("the fight's speed is set as a turn begins, before the camera moves to
     REQUIRE(camera != w.applied.end());
     CHECK(speed < camera);
 }
+
+namespace
+{
+// A combatant's card on the turn bar, as the view has it now.
+CardView CardOf(const World &w, ObjectId id)
+{
+    const TurnView view = w.machine.View();
+    const auto card = std::ranges::find(view.upcoming, id, &CardView::id);
+    REQUIRE(card != view.upcoming.end());
+    return *card;
+}
+} // namespace
+
+TEST_CASE("everyone is looked at as an action ends: the cards follow a heal at once", "[machine][status]")
+{
+    // Issue 23, its second half (the user, 2026-10-03: "Yeah we should do
+    // that, reads should be pretty cheap"). A poultice drunk showed on its
+    // card only at the next look, up to half a second on, and a script that
+    // read the state right after a drink saw the old health and drank again,
+    // three times in one turn.
+    World w;
+    w.Get(kHero).health = 0.4f;
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(CardOf(w, kHero).health == 0.4f);
+    const int looks = w.statusReads;
+    // She drinks, and it heals her as she does.
+    CHECK(w.Order(kHero, CommandType::UseItem, Source::Player) == Verdict::Allow);
+    w.Frame();
+    w.Get(kHero).health = 0.9f;
+    w.Finish(kHero);
+    // Two frames idle say her command is over; nobody has looked yet.
+    w.Frame();
+    w.Frame();
+    CHECK(w.statusReads == looks);
+    CHECK(CardOf(w, kHero).health == 0.4f);
+    // The next step looks: 64 ms after the turn's own look, not 500.
+    w.Frame();
+    CHECK(w.statusReads == looks + 1);
+    CHECK(CardOf(w, kHero).health == 0.9f);
+    CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
+        return line.find("Hero's health on its card: 40% to 90%") != std::string::npos;
+    }));
+}
+
+TEST_CASE("a turn waits again on a look taken as the world has settled: what landed late is on the cards",
+          "[machine][status]")
+{
+    // An arrow still in flight as its shot's command ends lands while the
+    // world settles: the look at the command's end is before it.
+    World w;
+    std::vector<float> asItWaits; // the genlock's health on its card as the turn starts waiting again
+    w.machine.SetEventSink([&](const TurnEvent &e) {
+        if (e.kind == EventKind::AwaitingOrder && e.detail == "after its action")
+        {
+            asItWaits.push_back(CardOf(w, kGenlock).health);
+        }
+    });
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
+    w.Frame();
+    w.Finish(kHero);
+    w.RunFor(64); // her command over, and its look taken: the genlock whole
+    REQUIRE(w.machine.GetPhase() == Phase::Settling);
+    CHECK(CardOf(w, kGenlock).health == 1.0f);
+    const int looks = w.statusReads;
+    w.Get(kGenlock).health = 0.3f; // the arrow lands
+    w.RunFor(600);
+    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+    REQUIRE(asItWaits.size() == 1);
+    CHECK(asItWaits.front() == 0.3f);
+    // One look for it, as the settling ended; not one a frame while it ran.
+    CHECK(w.statusReads == looks + 1);
+}
+
+TEST_CASE("a scan of who is fighting leaves the cards' mana and stamina as the statuses read them", "[machine][status]")
+{
+    // A scan does not read them (the game layer's Describe), and wrote its
+    // blank over what the statuses had read: full, and nobody's mana, from
+    // each turn's start and each time a turn waited again after an action,
+    // until the next look.
+    World w;
+    w.Get(kGenlock).energy = 0.4f;
+    w.Get(kGenlock).mana = true; // an emissary
+    w.Get(kHero).energy = 0.7f;
+    w.StartFight();
+    // The first turn has begun: its scan came in the step that looked at
+    // everyone, after the look.
+    REQUIRE(w.Current() == kHero);
+    CHECK(CardOf(w, kGenlock).energy == 0.4f);
+    CHECK(CardOf(w, kGenlock).mana);
+    CHECK(CardOf(w, kHero).energy == 0.7f);
+    CHECK_FALSE(CardOf(w, kHero).mana);
+    // A swing costs her stamina; the turn waits again, which asks for a scan
+    // (who her action showed the party), and no look follows it for half a
+    // second.
+    const int scans = w.scans;
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
+    w.Frame();
+    w.Get(kHero).energy = 0.5f;
+    w.Finish(kHero);
+    w.RunFor(600);
+    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+    REQUIRE(w.scans > scans);
+    CHECK(CardOf(w, kHero).energy == 0.5f);
+    CHECK(CardOf(w, kGenlock).energy == 0.4f);
+    CHECK(CardOf(w, kGenlock).mana);
+}

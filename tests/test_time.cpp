@@ -501,12 +501,14 @@ TEST_CASE("an AI whose kept attack has nobody in reach to be turned on is told t
     CHECK(w.turned.empty());
     CHECK(w.released.empty());
     REQUIRE(pokes == 1);
-    // Within three frames it is told to choose: the step that hears its
-    // attack was not given, and the next, with a fresh look at everyone.
-    for (int frame = 0; frame < 3 && pokes < 2; ++frame)
-    {
-        w.Frame();
-    }
+    // Two frames and it is told to choose: the step that hears its attack
+    // was not given, and the next, with a fresh look at everyone. (Were it
+    // not handed over there, the settling that follows a kept action that
+    // never came would still hand it over: a frame later, and two frames
+    // later before an action's end was looked at at once, issue 23.)
+    w.Frame();
+    REQUIRE(pokes == 1);
+    w.Frame();
     REQUIRE(pokes == 2);
     CHECK(barAsToldAgain == 4000); // what it paid given back: the bar whole
     CHECK(chosenAnew == Verdict::Allow);
@@ -1016,11 +1018,45 @@ TEST_CASE("with time, an AI stunned since the last look is not told to choose ag
     REQUIRE(pokes == 1);
     // Its swing ends and it is stunned, both between two looks at the
     // statuses (they are read twice a second): with 2.5 s left it would be
-    // told to choose again, on a look that still shows it free.
+    // told to choose again, on a look that still shows it free. (Since
+    // issue 23 the look taken as its action ends sees this one; the case
+    // after this is of a stun that lands later.)
     w.Finish(kGenlock);
     w.Get(kGenlock).condition = Condition::Disabled;
     w.Get(kGenlock).conditionSeconds = 3.0f;
     w.RunFor(160);
+    CHECK(pokes == 1);
+    CHECK(w.Current() != kGenlock); // the rest of its turn is the stun's
+}
+
+TEST_CASE("with time, an AI stunned while the world settles after its action is not told to choose again", "[time]")
+{
+    // The look taken as its action ends shows it free; the stun lands after
+    // it, while the world settles (a riposte, an arrow in flight). It is told
+    // to choose again only on a look taken with that step, which sees it.
+    Settings s = Timed();
+    s.settleMs = 0;
+    s.aiFollowUpMs = 200; // well short of the half second's own look
+    World w(s);
+    int pokes = 0;
+    w.onPoke = [&](ObjectId id) {
+        ++pokes;
+        CHECK(Act(w, id, CommandType::Attack, Source::Script, 1.5f, 0.0f) == Verdict::Allow);
+    };
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    (void)w.machine.OnEndTurn();
+    w.RunFor(100);
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(pokes == 1);
+    w.Finish(kGenlock);
+    const int looks = w.statusReads;
+    w.RunFor(48); // two frames idle, and the look at its action's end
+    REQUIRE(w.statusReads == looks + 1);
+    REQUIRE(w.machine.GetPhase() == Phase::Settling);
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.Get(kGenlock).conditionSeconds = 3.0f;
+    w.RunFor(400);
     CHECK(pokes == 1);
     CHECK(w.Current() != kGenlock); // the rest of its turn is the stun's
 }

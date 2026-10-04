@@ -1613,6 +1613,37 @@ MUTANTS = [
         "    const bool fresh = player || !Timed() || lastStatusNow_ == lastNow_;",
         "    const bool fresh = player || !Timed() || lastStatusNow_ <= lastNow_;",
     ),
+    # Issue 23, its second half: the cards follow a heal or a hit at once.
+    Mutant(
+        "nobody is looked at as an action ends: the cards wait for the half second",
+        MACHINE,
+        "    // three times in one turn (the playthrough).\n    statusWanted_ = true;",
+        "    // three times in one turn (the playthrough).",
+    ),
+    Mutant(
+        "a turn waits again on a look as old as its action's end",
+        MACHINE,
+        "    if (lastStatusNow_ != lastNow_)\n    {\n        statusWanted_ = true;\n        return;\n    }",
+        "    if (false)\n    {\n        statusWanted_ = true;\n        return;\n    }",
+    ),
+    Mutant(
+        "a turn about to wait again is looked at every frame, and never waits",
+        MACHINE,
+        "    if (lastStatusNow_ != lastNow_)\n    {\n        statusWanted_ = true;\n        return;\n    }",
+        "    if (lastStatusNow_ <= lastNow_)\n    {\n        statusWanted_ = true;\n        return;\n    }",
+    ),
+    Mutant(
+        "a scan fills every card's mana or stamina",
+        MACHINE,
+        "            known->energy = energy;",
+        "            known->energy = energy * 0.0f + 1.0f;",
+    ),
+    Mutant(
+        "a scan makes every mage's mana stamina",
+        MACHINE,
+        "            known->mana = mana;",
+        "            known->mana = mana && false;",
+    ),
     Mutant(
         "the fight's speed does not reach a turn",
         MACHINE,

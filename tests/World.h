@@ -47,6 +47,7 @@ struct Creature
     int rank = 0;             // CREATURE_RANK_*: an enemy's Combat Tactics is by it, with time
     int tactics = 0;          // Combat Tactics' rank, a party member's
     int survival = 0;         // Survival's rank
+    float health = 1.0f;      // current over maximum, while it stands
 };
 
 inline Creature Make(ObjectId id, Side side, bool hero, std::wstring name, float dexterity)
@@ -164,6 +165,9 @@ class World
                 x.rank = c.rank;
                 x.tactics = c.tactics;
                 x.survival = c.survival;
+                // Its health as the scan reads it; not its mana or stamina,
+                // which the game's scan does not read (Bridge::Describe).
+                x.health = c.down ? 0.0f : c.health;
                 seen.push_back(x);
             }
             obs.scan = seen;
@@ -177,9 +181,10 @@ class World
         for (const ObjectId id : needs.statuses)
         {
             const Creature &c = Get(id);
-            obs.statuses.push_back({id, c.exists, c.down, c.down ? 0.0f : 1.0f, c.condition, c.energy, c.mana,
+            obs.statuses.push_back({id, c.exists, c.down, c.down ? 0.0f : c.health, c.condition, c.energy, c.mana,
                                     c.condition != Condition::None ? c.conditionSeconds : 0.0f});
         }
+        statusReads += needs.statuses.empty() ? 0 : 1;
         obs.keptVoid = std::exchange(keptVoid, {});
         Apply(machine.Step(obs));
     }
@@ -365,6 +370,7 @@ class World
     bool inCombat = true;
     std::uint32_t now = 1000;
     int scans = 0;
+    int statusReads = 0; // frames in which the machine asked for everyone's health and standing
 
   private:
     void Apply(const std::vector<Effect> &effects)

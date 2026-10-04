@@ -203,9 +203,10 @@ struct Foe
     ObjectId id = kNoObject;
     bool standing = false; // there, and alive
     bool hostile = false;  // to the attacker, by the game's own word
-    // The attacker perceives it and has a clear line to it. A shot at one out
-    // of its line is not loosed: its archer walks for one, or stands (a bandit
-    // 21.6 m from its target, inside its bow's reach, stood 26 s: issue 11).
+    // Not in stealth, and the attacker has a clear line to it. A shot at one
+    // out of its line is not loosed: its archer walks for one, or stands
+    // (issue 11, whose bandit, 21.6 m from its target and inside its bow's
+    // reach, stood 26 s; whether that one lacked a line was not read).
     bool seen = false;
     float meters = 0.0f; // between the two
     float reach = 0.0f;  // the attacker's reach on it (Reach)

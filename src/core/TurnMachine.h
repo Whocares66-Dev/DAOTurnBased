@@ -966,7 +966,9 @@ class TurnMachine
     bool haveNow_ = false;
     bool anyRefusal_ = false;
     // The statuses are wanted with the next step, whatever their time
-    // (WhatToObserve): before an AI is told to choose again in mid-turn.
+    // (WhatToObserve): as an action ends, so that the cards follow what it
+    // did at once (issue 23); and before a turn goes on after one, the
+    // player waited on again or an AI told to choose again in mid-turn.
     bool statusWanted_ = false;
     std::uint32_t lastNow_ = 0;
     std::uint32_t clock_ =
