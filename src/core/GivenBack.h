@@ -26,6 +26,12 @@
 //   COMMAND_FAILED_INVALID_DATA            nothing to say why
 // and the machine's own for an action that was over at once and did
 // nothing, which has no reason either.
+//
+// Three of them the engine can be asked for before the order is let through
+// (NoAttack, core/Types.h; issue 27): no place, no path, no line for a shot.
+// Asked and answered no, the attack is refused before a step, in the words
+// the failure under way would have had, and the caption says it is refused:
+// nothing was taken, so nothing is given back.
 #pragma once
 
 #include "core/Types.h"
@@ -44,5 +50,19 @@ namespace tb
 // attack is given back". An attack and an ability are named; anything else
 // is "action".
 [[nodiscard]] std::wstring GivenBackLine(std::wstring_view words, std::wstring_view name, CommandType type);
+
+// An attack the engine has no way to make, asked before it is let through:
+// the words, the same as a failure's for the same reason; the engine's
+// answer in plain words, for the log, the refusal's event and the state; and
+// the caption's line, "No room at the target: Sten's attack is refused".
+[[nodiscard]] std::wstring_view WhyNoAttack(NoAttack why);
+[[nodiscard]] std::string_view NoAttackNote(NoAttack why);
+[[nodiscard]] std::wstring RefusedLine(std::wstring_view words, std::wstring_view name, CommandType type);
+
+// And for an attack kept from the turn before, asked the same as its turn
+// comes and answered no: "No room at the target: Sten's attack is not made".
+// It was no order of this turn's to refuse, and what this turn paid for it
+// is back in its bar with no word needed: the bar shows it whole.
+[[nodiscard]] std::wstring NotMadeLine(std::wstring_view words, std::wstring_view name, CommandType type);
 
 } // namespace tb

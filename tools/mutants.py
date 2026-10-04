@@ -792,6 +792,110 @@ MUTANTS = [
         "        if (player && asked && request.doorInTheWay)",
         "        if (player && asked && request.doorInTheWay && request.inCombat && !request.inCombat)",
     ),
+    # What the engine answers no to is refused before a step (issue 27;
+    # tests/test_noattack.cpp): the game layer says which no it had
+    # (CommandRequest::noAttack: no place, no path, no line for a shot), the
+    # player is told why, and an AI's is given back and its AI told again.
+    # Nothing of a no is remembered: the rule that did ("ruled out for the
+    # rest of its turn") was withdrawn after play, and its mutants with it.
+    Mutant(
+        "an attack on a target with no place left at it is let through",
+        MACHINE,
+        "    if (request.noAttack == NoAttack::None)\n",
+        "    if (request.noAttack == NoAttack::None || request.noAttack == NoAttack::NoPlace)\n",
+    ),
+    Mutant(
+        "an attack with no path to its target is let through",
+        MACHINE,
+        "    if (request.noAttack == NoAttack::None)\n",
+        "    if (request.noAttack == NoAttack::None || request.noAttack == NoAttack::NoPath)\n",
+    ),
+    Mutant(
+        "a shot with no line to be had on the way is let through",
+        MACHINE,
+        "    if (request.noAttack == NoAttack::None)\n",
+        "    if (request.noAttack == NoAttack::None || request.noAttack == NoAttack::NoLine)\n",
+    ),
+    Mutant(
+        "an attack refused before a step is refused with no word over the character and no event",
+        MACHINE,
+        "        Refuse(who.id, std::wstring{words}, request.type, std::string{note});\n",
+        "",
+    ),
+    Mutant(
+        "an attack refused before a step does not say the engine's answer in its event's note",
+        MACHINE,
+        "        Refuse(who.id, std::wstring{words}, request.type, std::string{note});\n",
+        "        Refuse(who.id, std::wstring{words}, request.type);\n",
+    ),
+    Mutant(
+        "an attack refused before a step is not said on the bar's caption",
+        MACHINE,
+        "        notice_ = Notice{RefusedLine(words, who.name, request.type), lastNow_};\n",
+        "",
+    ),
+    Mutant(
+        "an AI refused before a step stands out its thinking time",
+        MACHINE,
+        "    if (phase_ == Phase::AiThinking)\n    {\n        phase_ = Phase::Settling;\n    }\n    return true;\n",
+        "    return true;\n",
+    ),
+    Mutant(
+        "an AI refused before a step is not told to choose again",
+        MACHINE,
+        "    budget_.refunded = true;\n    ++budget_.givenBack;\n    Log(LogLevel::Info,\n",
+        "    ++budget_.givenBack;\n    Log(LogLevel::Info,\n",
+    ),
+    Mutant(
+        "an AI refused before a step again and again never has its turn ended for it",
+        MACHINE,
+        "    budget_.refunded = true;\n    ++budget_.givenBack;\n    Log(LogLevel::Info,\n",
+        "    budget_.refunded = true;\n    Log(LogLevel::Info,\n",
+    ),
+    Mutant(
+        "an attack refused in an unaware hostile's beat is counted as given back, and its turn settles",
+        MACHINE,
+        "    if (unaware_ && phase_ == Phase::AiThinking)\n    {\n        Refused(LogLevel::Info,",
+        "    if (unaware_ && phase_ == Phase::Idle)\n    {\n        Refused(LogLevel::Info,",
+    ),
+    # A kept attack is asked of the engine too, as it is given at its turn's
+    # start (TurnMachine::KeptAttackNotMade).
+    Mutant(
+        "a kept attack the engine has no room for is given to its creature all the same",
+        MACHINE,
+        "        if (landing && request.type == CommandType::Attack && request.noAttack != NoAttack::None)\n",
+        "        if (landing && request.type != CommandType::Attack && request.noAttack != NoAttack::None)\n",
+    ),
+    Mutant(
+        "a kept attack not made keeps what its turn paid for it",
+        MACHINE,
+        "    if (const std::uint32_t paid = std::exchange(budget_.pendingPaidMs, 0); paid > 0)\n    {\n        budget_.spend.GiveActionBack(paid);\n",
+        "    if (const std::uint32_t paid = std::exchange(budget_.pendingPaidMs, 0); paid > 0)\n    {\n",
+    ),
+    Mutant(
+        "the player's kept attack is not made with no word over the character",
+        MACHINE,
+        "        Floaty(pending_, who.id, std::wstring{words}, kGrey);\n",
+        "",
+    ),
+    Mutant(
+        "the player's kept attack is not made with no word on the bar's caption",
+        MACHINE,
+        "        notice_ = Notice{NotMadeLine(words, who.name, request.type), lastNow_};\n",
+        "",
+    ),
+    Mutant(
+        "an AI's kept attack not made is not counted as given back: it is refused once more before its turn ends",
+        MACHINE,
+        "    else\n    {\n        ++budget_.givenBack;\n    }\n",
+        "    else\n    {\n    }\n",
+    ),
+    Mutant(
+        "a failed attack's line in the log does not say whom it was at",
+        MACHINE,
+        '                                    aimed.empty() ? std::string{} : " on " + aimed, why));\n',
+        '                                    aimed.empty() ? " on " + aimed : std::string{}, why));\n',
+    ),
     Mutant(
         "a creature standing at a walk is left to max_action_ms",
         MACHINE,
@@ -1621,8 +1725,8 @@ MUTANTS = [
     Mutant(
         "time: an AI that waited is left thinking, and its turn ends having chosen nothing",
         MACHINE,
-        "    if (phase_ == Phase::AiThinking)\n    {\n        phase_ = Phase::Settling;",
-        "    if (false)\n    {\n        phase_ = Phase::Settling;",
+        "    if (phase_ == Phase::AiThinking)\n    {\n        phase_ = Phase::Settling;\n        deadline_ = clock_;",
+        "    if (false)\n    {\n        phase_ = Phase::Settling;\n        deadline_ = clock_;",
     ),
     Mutant(
         "time: the time a wait takes has not passed on its creature's clock as it chooses again",
@@ -2399,6 +2503,38 @@ MUTANTS = [
         GIVENBACK,
         'return std::format(L"{}: {}\'s {} is given back", words, name, what);',
         'return std::format(L"{}: {}\'s {} is given back", words, name.substr(0, 0), what);',
+    ),
+    # And of an attack the engine has no way to make, refused before a step
+    # (issue 27): the words its failure would have had, and "is refused".
+    Mutant(
+        "no place when asked is said as no way through",
+        GIVENBACK,
+        'case NoAttack::NoPlace:\n        return L"No room at the target";',
+        'case NoAttack::NoPlace:\n        return L"No way through";',
+    ),
+    Mutant(
+        "no path when asked is said as no room at the target",
+        GIVENBACK,
+        'case NoAttack::NoPath:\n        return L"No way through";',
+        'case NoAttack::NoPath:\n        return L"No room at the target";',
+    ),
+    Mutant(
+        "a shot with no line to be had is said as no way through",
+        GIVENBACK,
+        'case NoAttack::NoLine:\n        return L"No line of sight";',
+        'case NoAttack::NoLine:\n        return L"No way through";',
+    ),
+    Mutant(
+        "a kept attack not made is said on the caption as refused",
+        GIVENBACK,
+        'return std::format(L"{}: {}\'s {} is not made", words, name, Named(type));',
+        'return std::format(L"{}: {}\'s {} is refused", words, name, Named(type));',
+    ),
+    Mutant(
+        "an attack refused before a step is said on the caption as given back",
+        GIVENBACK,
+        'return std::format(L"{}: {}\'s {} is refused", words, name, Named(type));',
+        'return std::format(L"{}: {}\'s {} is given back", words, name, Named(type));',
     ),
     Mutant(
         "an action given back is not said on the bar's caption: its line is past before it is seen",

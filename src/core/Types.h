@@ -143,4 +143,20 @@ enum class CommandType : std::int32_t
 // The highest number the table has.
 inline constexpr std::int32_t kLastCommandType = 42;
 
+// Why the engine itself has no attack to make for a pair as they stand: its
+// own answer, asked before the command is let through (src/game/Gate.cpp,
+// WalkToTarget, of DAOLib's dao::attack::ApproachOf and Walk; issue 27,
+// 2026-10-04). The user's rule: where the engine decides, ask it and act on
+// its answer, with no figure of the mod's in its place. Until then two of
+// these were passed over with a guess, the attack let through, failed by the
+// engine and given back. It is the answer for where the two stood when it
+// was asked, and each attack is asked anew: nothing of it is remembered.
+enum class NoAttack : std::uint8_t
+{
+    None,    // it has one, or was not asked
+    NoPlace, // no room on the target's melee ring: none as it stands, or none once filled and no blow at once
+    NoPath,  // out of reach, and the engine's search finds no path to where its approach goes
+    NoLine,  // a shot out of range or sight that the engine would give up on the way: no line to be had
+};
+
 } // namespace tb

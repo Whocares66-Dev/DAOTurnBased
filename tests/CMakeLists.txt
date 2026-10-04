@@ -37,6 +37,7 @@ add_executable(
     test_json.cpp
     test_keys.cpp
     test_machine.cpp
+    test_noattack.cpp
     test_perception.cpp
     test_portraits.cpp
     test_preview.cpp

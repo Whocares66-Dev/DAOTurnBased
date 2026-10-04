@@ -117,11 +117,66 @@ void NoteCaller(const Caller &caller, std::uintptr_t from, CommandType type)
 // Script commands belong on the scripts' thread, which in play is the
 // game's, where the engine's approach may be asked; so this answers only
 // there, and elsewhere the gate measures the walk as it happens instead.
+//
+// Both questions have a "no" among their answers, and the gate passes it on
+// as it is (issue 27, 2026-10-04; core/Types.h, NoAttack): the user's rule is
+// that where the engine decides, the mod asks it and acts on what it says,
+// and puts no figure of its own in its place. Until then a "no" was passed
+// over with a guess and the attack let through:
+// - no approach for a creature at a creature, the target's melee ring having
+//   no place for the attacker: let through with its walk unknown, and failed
+//   by the engine within 2 ms (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING, 6 of 6
+//   in the caverns above Haven);
+// - out of reach, the path searched and none found, with no door in the way:
+//   let through on a walk reckoned by the straight line, and failed 0.4 s on
+//   (COMMAND_FAILED_INVALID_PATH, 15 times for a party member who stood at
+//   one spot through four fights on the forest road; 4 more of his were
+//   refused "Too far" by that walk, the wrong reason).
+// The straight line is kept for what it was meant for: where no search was
+// made (its creature at a command already, or path_check off), and where one
+// was made and did not answer.
+//
+// Every attack is asked, each time it comes: a no is for where the two stood
+// when it was asked, and nothing is kept of one. (A memory of targets "ruled
+// out for the turn" was built, tried in play and withdrawn the same day:
+// core/TurnMachine.cpp, NoAttackToMake.)
+//
+// Whether the engine's attack will find room on its target's melee ring is
+// the engine's own to say as well, and DAOLib asks it by the engine's own
+// code (its issue 19, 151e624: Approach::findsRoom). The first build here
+// took a place answered by ApproachOf for the engine's promise, and play
+// showed it was not one: in a crowd staged round one party member (twelve
+// dragonlings, 2026-10-04) the engine failed 16 attacks the gate had let
+// through as "in its reach" or "0.5 m to walk", 45 to 180 ms on, 7 at the
+// blow (sub-action 1) and 9 with the command still at its approach (4). The
+// cause, as DAOLib then read it in the exe: a ring nobody has claimed is
+// emptied by its creature's update every frame, so the attack's first ask
+// claims on an empty ring and finds room; the claim makes the ring active,
+// the next frame's refresh fills it with whoever stands round the target
+// and wipes the claim, and the approach's next ask or the blow's finds no
+// free run of places. Only an attacker that strikes in its command's first
+// update (in reach, facing its target already, the target near level and in
+// sight) strikes on its fresh claim, however crowded the ring. So the
+// approach says both now: strikesAtOnce, and roomOnceFilled, the ring asked
+// as it stands a frame after the claim; findsRoom is either, and false too
+// where the ring as it stands has no place, the approach failing at its
+// first run. In the same crowd on that build (DAOLib's validation, 184
+// attacks): 24 with no room, each then failed by the engine; 160 with room,
+// none failed for want of it. What can still fail under way is a walker
+// stuck against bodies (COMMAND_FAILED_INVALID_PATH, 3 of those 160), which
+// by DAOLib's reading cannot be known before the walk: the engine's own
+// stuck timer, under 2 cm an update for a second of the walker's time.
+// Those are given back as the failure comes (WatchCommandEnds).
 // What it found, for the gate and the log.
 struct Reached
 {
-    float walk = 0.0f;              // what it walks before it strikes (dao::attack::Walk; none in reach)
-    dao::attack::Approach approach; // the engine's approach: a shot's or a blow's, in reach or not, where it goes
+    // What it walks before it strikes (dao::attack::Walk; none in reach).
+    // Nothing where the engine has no attack to make.
+    std::optional<float> walk;
+    // The engine's approach: a shot's or a blow's, in reach or not, whether
+    // it finds room, where it goes.
+    dao::attack::Approach approach;
+    NoAttack none = NoAttack::None; // the engine's own "no", if that was its answer
     float line = 0.0f;              // between the two, for the log
     std::int32_t weaponType = -1;   // the main hand's base item type; -1 for none
     bool door = false;              // the game's path to the target ends at a shut door
@@ -163,6 +218,19 @@ std::atomic<bool> g_pathOnDemand{true};
 // path: the hero's read 15.6 m all fight and every order of his was
 // refused (the second play test, 2026-09-30), and DAOLib took it out.
 constexpr std::int32_t kDoorInTheWay = 6; // PathSearch::result
+// And the rest of the pathfinder's answers (DAOLib's dao/World.h,
+// PathSearch::result): 1 found, which with no path that arrives is a search
+// that gave up part way, as the engine's own walker's would; 5 none; 8 no
+// mesh there. Anything else is no answer: 0 not asked, others a search DAOLib
+// stopped when its 40 ms ran out.
+constexpr std::int32_t kSearchEnded = 1;
+constexpr std::int32_t kNoPathThere = 5;
+constexpr std::int32_t kNoMeshThere = 8;
+
+bool Answered(std::int32_t result)
+{
+    return result == kSearchEnded || result == kNoPathThere || result == kNoMeshThere;
+}
 
 std::optional<float> PathLength(ObjectId creature, const dao::Vector &to, ObjectId toward = dao::kInvalidObject)
 {
@@ -173,6 +241,28 @@ std::optional<float> PathLength(ObjectId creature, const dao::Vector &to, Object
     }
     const dao::Vector &end = path->waypoints.back();
     return path->Length() + std::hypot(end.x - to.x, end.y - to.y);
+}
+
+// What a blow's approach says of its target's ring, in DAOLib's own terms,
+// for the log: a tester reads which of them an attack was let through or
+// refused by. Nothing for a shot, which asks no ring.
+std::string RoomOf(const dao::attack::Approach &approach)
+{
+    if (approach.ranged)
+    {
+        return {};
+    }
+    const auto said = [](bool yes) { return yes ? "yes" : "no"; };
+    // No room is one of two things: the filled ring has no place and the
+    // blow does not come before it is filled; or, with a place on the
+    // filled ring all the same, none on the ring as it stands, where the
+    // approach fails at its first run.
+    const std::string_view room = approach.findsRoom        ? "finds room"
+                                  : approach.roomOnceFilled ? "no place on its ring as it stands now"
+                                                            : "no room once its ring is filled, and it does not "
+                                                              "strike at once";
+    return std::format("{} (in reach {}, strikes at once {}, room once its ring is filled {})", room,
+                       said(approach.inReach), said(approach.strikesAtOnce), said(approach.roomOnceFilled));
 }
 
 std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Command &command)
@@ -195,12 +285,12 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     const std::optional<dao::attack::Approach> approach = dao::attack::ApproachOf(attacker, *target);
     if (!approach)
     {
-        // Not creatures both, or the target's ring has no place for the
-        // attacker: the engine's own approach fails there and says so
-        // (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING), which gives the action
-        // back (WatchCommandEnds).
-        spdlog::debug("attack on {:#010x}: the engine has no approach for it (no place at its target, or not a "
-                      "creature); its walk is not known",
+        // Not asked: not creatures both (an attack on a crate, a door), the
+        // only nothing ApproachOf has since DAOLib 151e624. There is no ring
+        // to ask, and the engine's approach for it is not read: let through
+        // as before, its walk not known.
+        spdlog::debug("attack on {:#010x}: not a creature's on a creature, so the engine has no approach to ask for; "
+                      "its walk is not known",
                       *target);
         return std::nullopt;
     }
@@ -209,16 +299,34 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     reached.line = api::GetDistanceBetween(attacker, *target);
     reached.weaponType = MainHandType(attacker);
     const std::string_view kind = approach->ranged ? "ranged" : "melee";
-    if (approach->inReach)
+    // What the blow will meet on the ring, said with every line of it.
+    const std::string room = approach->ranged ? std::string{} : "; " + RoomOf(*approach);
+    if (!approach->ranged && !approach->findsRoom)
     {
-        spdlog::debug("attack on {:#010x}: {:.1f} m away, in its reach by the engine's {} approach: nothing to walk",
-                      *target, reached.line, kind);
+        // The engine's attack will find no room on its target's ring (above):
+        // none on the ring as it stands, where its approach fails at its
+        // first run (each of the six let through so in the caverns above
+        // Haven, within 2 ms), or a place for its first ask and none once
+        // the ring is filled, with no blow in its first update: the engine
+        // would take the command and fail it a frame or more on, at its
+        // approach's next ask or at the blow
+        // (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING either way).
+        reached.none = NoAttack::NoPlace;
+        spdlog::debug("attack on {:#010x}: {:.1f} m away, and the engine's attack will find no room for {:#x}: {}",
+                      *target, reached.line, attacker, RoomOf(*approach));
         return reached;
     }
-    // Out of reach. Where the engine's path is not to be searched (below),
-    // the walk is the line to where the approach goes, less how near it
-    // stops: the approach's own goal and distance, on the ground as the
-    // engine measures them.
+    if (approach->inReach)
+    {
+        reached.walk = 0.0f;
+        spdlog::debug("attack on {:#010x}: {:.1f} m away, in its reach by the engine's {} approach: nothing to walk{}",
+                      *target, reached.line, kind, room);
+        return reached;
+    }
+    // Out of reach. Where the engine's path is not searched, or is searched
+    // and gives no answer (below), the walk is the line to where the
+    // approach goes, less how near it stops: the approach's own goal and
+    // distance, on the ground as the engine measures them.
     const dao::Vector from = api::GetPosition(attacker);
     reached.walk =
         std::max(0.0f, std::hypot(approach->goal.x - from.x, approach->goal.y - from.y) - approach->stopWithin);
@@ -259,19 +367,59 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
             // What is in the way, as the game finds it (DAOLib cb08d00: a
             // placeable within 5 m of where the path stopped). Only shut
             // doors have been seen; said, in case it is ever something else.
-            const std::string what =
-                door && search.blocker != dao::kInvalidObject
-                    ? std::format("{} ({:#x}) is in the way", Utf8(api::GetName(search.blocker)), search.blocker)
-                    : std::string{door ? "a door is in the way" : "judged by the straight line"};
-            spdlog::debug("attack on {:#010x}: the game finds no path to it ({}); {}", *target, search.result, what);
+            const std::string across =
+                search.blocker != dao::kInvalidObject
+                    ? std::format("{} ({:#x})", Utf8(api::GetName(search.blocker)), search.blocker)
+                    : std::string{};
+            if (door)
+            {
+                spdlog::debug("attack on {:#010x}: the game finds no path to it ({}); {} is in the way", *target,
+                              search.result, across.empty() ? std::string{"a door"} : across);
+            }
+            else if (!Answered(search.result))
+            {
+                // Not asked, or stopped when its time ran out: the engine
+                // has not said no, and the walk is not known.
+                spdlog::debug("attack on {:#010x}: the search for a path to it gave no answer ({}); judged by the "
+                              "straight line",
+                              *target, search.result);
+            }
+            else
+            {
+                // The engine's own "no": it has no walk for this attack
+                // (dao::attack::Walk, which makes the engine's search to
+                // where the approach goes, a blow's to its place on the
+                // ring once filled; one with no such place was refused
+                // above). A shot whose path to its target
+                // does arrive is one the engine would give up on the way, no
+                // line of sight to be had along it (Walk follows the move
+                // update's own tests); anything else is no path there. With
+                // the search's own account of itself: nobody has yet read
+                // why a creature had no path from where it stood (issue 27's
+                // second case).
+                const bool shot = approach->ranged && search.path.has_value();
+                reached.none = shot ? NoAttack::NoLine : NoAttack::NoPath;
+                reached.walk.reset();
+                spdlog::debug("attack on {:#010x}: {:.1f} m away, out of its reach by the engine's {} approach{}, and "
+                              "the engine has no walk for it: {} (the search to its target answers {}{}); the "
+                              "search: {}",
+                              *target, reached.line, kind, approach->lineOfSight ? "" : " (no line of sight)",
+                              shot ? "its path arrives and its shot would be given up on the way, no line of sight "
+                                     "to be had"
+                                   : "no path to where its approach goes",
+                              search.result, across.empty() ? std::string{} : "; " + across + " lies across the way",
+                              search.trace);
+                return reached;
+            }
         }
     }
     // Said with what it was judged by: the log is where a wrong walk shows.
     // A shot in range with no line of sight walks for one, and how far the
     // engine does not say before it has.
     spdlog::debug("attack on {:#010x}: {:.1f} m away, out of its reach by the engine's {} approach{}: {:.1f} m to "
-                  "walk, by {}",
-                  *target, reached.line, kind, approach->lineOfSight ? "" : " (no line of sight)", reached.walk, by);
+                  "walk, by {}{}",
+                  *target, reached.line, kind, approach->lineOfSight ? "" : " (no line of sight)",
+                  reached.walk.value_or(0.0f), by, room);
     return reached;
 }
 
@@ -314,10 +462,13 @@ std::optional<float> MoveLength(const dao::CCObject &self, const dao::Command &c
 void SayAiAttack(const dao::CCObject &self, const dao::Command &command, const std::optional<Reached> &reached)
 {
     const std::optional<ObjectId> target = command.Target();
-    if (!reached || !target)
+    // Not one that will find no room on its target's ring: the machine says
+    // that, as it refuses it, and in a crowd there are many.
+    if (!reached || !target || reached->none == NoAttack::NoPlace)
     {
         return;
     }
+    const dao::attack::Approach &approach = reached->approach;
     // With where the line is cut, which the aim's own answer leaves out.
     const dao::world::Sight sight = dao::world::LineOfSight(self.Id(), *target);
     // The same attacker on the same target at most every 3 s: a companion's
@@ -327,7 +478,7 @@ void SayAiAttack(const dao::CCObject &self, const dao::Command &command, const s
     static std::map<std::pair<ObjectId, ObjectId>, std::uint64_t> lastSaid;
     const std::uint64_t now = GetTickCount64();
     std::uint64_t &last = lastSaid[{self.Id(), *target}];
-    if ((said < 3 || !reached->approach.inReach || !sight) && (last == 0 || now - last >= 3000))
+    if ((said < 3 || !approach.inReach || !sight) && (last == 0 || now - last >= 3000))
     {
         ++said;
         last = now;
@@ -339,9 +490,8 @@ void SayAiAttack(const dao::CCObject &self, const dao::Command &command, const s
         }
         spdlog::info("{:#010x} attacks {:#010x}: {:.1f} m away, {} its reach by the engine's {} approach (base item "
                      "{}), line of sight {}{}",
-                     self.Id(), *target, reached->line, reached->approach.inReach ? "in" : "out of",
-                     reached->approach.ranged ? "ranged" : "melee", reached->weaponType, sight ? "clear" : "blocked",
-                     blocked);
+                     self.Id(), *target, reached->line, approach.inReach ? "in" : "out of",
+                     approach.ranged ? "ranged" : "melee", reached->weaponType, sight ? "clear" : "blocked", blocked);
     }
 }
 
@@ -660,7 +810,7 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             {
                 SayAiAttack(*self, *command, reached);
             }
-            std::optional<float> walk = reached ? std::optional<float>{reached->walk} : std::nullopt;
+            std::optional<float> walk = reached ? reached->walk : std::nullopt;
             if (source == Source::Player && type == CommandType::MoveToLocation)
             {
                 walk = MoveLength(*self, *command);
@@ -676,6 +826,9 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             request.inCombat = creature != nullptr && creature->CombatState() != 0;
             request.walk = walk;
             request.doorInTheWay = reached && reached->door;
+            // The engine's own "no", for the machine to refuse by: the gate
+            // only passes on what it was answered (WalkToTarget).
+            request.noAttack = reached ? reached->none : NoAttack::None;
             if (type == CommandType::UseAbility)
             {
                 DescribeAbility(*self, *command, request);
@@ -689,13 +842,14 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
                 const std::lock_guard lock(*g_mutex);
                 verdict = g_machine->OnCommand(request);
             }
-            if (verdict == Verdict::Block && source == Source::Player && reached && reached->walk > 0.0f)
+            if (verdict == Verdict::Block && source == Source::Player && reached && reached->walk &&
+                *reached->walk > 0.0f)
             {
                 // Why an attack was too far, at info: what the engine's
                 // approach for it was, and what it would walk.
                 spdlog::info("the refused attack: {:.1f} m away, {:.1f} m to walk by the engine's {} approach, main "
                              "hand base item {} (bitm_base){}",
-                             reached->line, reached->walk, reached->approach.ranged ? "ranged" : "melee",
+                             reached->line, *reached->walk, reached->approach.ranged ? "ranged" : "melee",
                              reached->weaponType, reached->approach.lineOfSight ? "" : ", no line of sight");
             }
             if (verdict == Verdict::Hold)
@@ -1116,8 +1270,13 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
             return;
         }
         const std::int32_t ability = command.Ability().value_or(-1);
+        // With what it was aimed at, for the machine's line of it ("X's
+        // attack on Y failed"): in a crowd the names alone do not say which
+        // attack on whom. Seen in play 2026-10-04: the target is still on
+        // the command as it ends, the right one in each of 18 failures.
+        const ObjectId target = command.Target().value_or(dao::kInvalidObject);
         const std::lock_guard lock(mutex);
-        (void)machine.OnCommandFailed(object, type, ability, why);
+        (void)machine.OnCommandFailed(object, type, ability, why, target);
     });
 }
 

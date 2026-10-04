@@ -322,8 +322,29 @@ class World
             Creature &started = Get(id);
             started.busy = true;
             started.current = type;
+            running[id] = request;
         }
         return verdict;
+    }
+
+    // An attack at someone, as the gate's request names its target, with
+    // what the engine answered when the game layer asked it for the attack's
+    // approach and walk (src/game/Gate.cpp, WalkToTarget): nothing to walk by
+    // default, the target in reach; or its own "no" (NoAttack: no place on
+    // the target's ring, no path, no line for a shot).
+    Verdict Attack(ObjectId id, ObjectId target, Source source, NoAttack none = NoAttack::None,
+                   std::optional<float> walk = 0.0f, float seconds = 0.0f)
+    {
+        CommandRequest request;
+        request.object = id;
+        request.type = CommandType::Attack;
+        request.source = source;
+        request.inCombat = Get(id).fighting;
+        request.walk = none == NoAttack::None ? walk : std::nullopt;
+        request.actionSeconds = seconds;
+        request.target = target;
+        request.noAttack = none;
+        return Queue(request);
     }
 
     void Finish(ObjectId id)
@@ -332,6 +353,20 @@ class World
         c.busy = false;
         c.moving = false;
         c.current = CommandType::Invalid;
+    }
+
+    // The engine fails a creature's command without acting, by its own name
+    // for why (COMMAND_FAILED_...): the game layer hears it end and tells
+    // the machine, with what the command was and what it was aimed at
+    // (Gate.cpp's OnEnd), and the creature is idle. Answers what the machine
+    // answered: whether its action was given back.
+    bool Fail(ObjectId id, std::string_view why)
+    {
+        const auto found = running.find(id);
+        const CommandRequest failed = found != running.end() ? found->second : CommandRequest{};
+        const bool givenBack = machine.OnCommandFailed(id, failed.type, failed.ability, why, failed.target);
+        Finish(id);
+        return givenBack;
     }
 
     bool Did(EffectKind kind, ObjectId target = kNoObject) const
@@ -400,6 +435,7 @@ class World
     std::unordered_map<ObjectId, std::int64_t> agedOwn;     // each creature's own
     std::unordered_set<ObjectId> onOwnClock;                // as DAOLib's dao::clock::OwnClock leaves it
     std::unordered_map<ObjectId, CommandRequest> heldCasts; // casts the game layer keeps while they charge
+    std::unordered_map<ObjectId, CommandRequest> running;   // each creature's last command let through (Fail)
     std::unordered_set<ObjectId> heldConjures;              // the engine's casts, held in their conjure
     std::function<void(ObjectId)> onConjureReleased;        // a held conjure let complete
     std::vector<Verdict> released;                          // what each cast given again was answered

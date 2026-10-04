@@ -134,7 +134,9 @@ EventDescription Describe(EventKind kind)
     case EventKind::Refused:
         return {"The player's order was refused; nothing happened.",
                 true,
-                "what the player was told: Too far, Not <name>'s turn, No action left, No movement left, Held",
+                "what the player was told: Too far, Not <name>'s turn, No action left, No movement left, Held, A door "
+                "is in the way; and of an attack the engine has no way to make: No room at the target, No way "
+                "through, No line of sight",
                 nullptr,
                 "the command refused (attack, move to location, use ability...)",
                 "its numbers, when there are some: 12.1 m to walk, 9.0 m left"};
@@ -226,12 +228,15 @@ EventDescription Describe(EventKind kind)
                 nullptr,
                 nullptr};
     case EventKind::ActionGivenBack:
-        return {"A command failed without acting (an invalid path, no line of sight): its action is given back.",
+        return {"A command failed without acting (an invalid path, no line of sight): its action is given back. Or "
+                "an AI's attack was refused before a step, the engine having no way to make it as the two stood: its "
+                "AI is told to choose again.",
                 true,
-                "the failure (COMMAND_FAILED_...)",
+                "the failure (COMMAND_FAILED_...); of an attack refused before a step, the engine's answer (no place "
+                "at its target, no path to it, no line of sight)",
                 nullptr,
                 "the command",
-                nullptr};
+                "of an attack refused before a step, whom it was at"};
     case EventKind::CastCharging:
         return {"A slow cast charges: begun (its action spent, its turn over), or a turn of its caster's spent on it.",
                 true,
@@ -275,10 +280,11 @@ EventDescription Describe(EventKind kind)
         return {"A pending action will not land: what it still owed is not charged.",
                 true,
                 "why: held, struck, fell, gone, its target is gone (and for an attack, no enemy in its reach), the "
-                "fight over",
+                "fight over; or, of a kept attack the engine has no way to make as its turn comes, the engine's "
+                "answer (no place at its target, no path to it, no line of sight)",
                 "its ability (-1: an attack)",
                 "the command",
-                nullptr};
+                "of a kept attack the engine has no way to make, whom it was at"};
     case EventKind::TurnDelayed:
         return {"A party member's turn was put off to the round's end, nothing of it spent: the turn_started before "
                 "it has no turn_ended, and another turn_started follows when its turn comes.",

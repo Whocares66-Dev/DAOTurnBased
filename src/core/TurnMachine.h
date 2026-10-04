@@ -263,6 +263,13 @@ struct CommandRequest
     // The object it is aimed at, if any (an attack's, an ability's): last,
     // since tests fill the fields above by place.
     ObjectId target = kNoObject;
+    // For an attack: the engine itself has no attack to make for the two as
+    // they stand, and which of its answers that was (NoAttack, core/Types.h;
+    // src/game/Gate.cpp asks, of every attack as it comes). Refused before
+    // a step, nothing spent: the player is told why, and an AI's is given
+    // back and its AI told to choose again (TurnMachine::NoAttackToMake;
+    // issue 27). After the target, for the same reason.
+    NoAttack noAttack = NoAttack::None;
 };
 
 // With a turn a bar of time: what an action costs of it, in milliseconds.
@@ -364,8 +371,9 @@ struct TurnView
     std::uint32_t rolledMs = 0;
     // What the bar's caption says for a while in place of what the turn has
     // left: an action of a party member's that came to nothing and was given
-    // back, and why (core/GivenBack.h; issue 21). Empty when there is
-    // nothing to say.
+    // back, and why (core/GivenBack.h; issue 21); or an attack of one's the
+    // engine has no way to make, refused before a step (issue 27). Empty
+    // when there is nothing to say.
     std::wstring notice;
     // Every turn to come, the current one first, each fighter once: all of
     // them, however many fight. Cut to a row's worth until 2026-10-03, when
@@ -534,8 +542,12 @@ class TurnMachine
     // From the game (DAOLib's command events): a creature's command ended
     // in a failure that did nothing, `why` the failure's name. The current
     // creature's action, spent when the gate let it through, is given back
-    // once a turn, as for an approach cut short. True if it was.
-    bool OnCommandFailed(ObjectId who, CommandType type, std::int32_t ability, std::string_view why);
+    // once a turn, as for an approach cut short. True if it was. `target` is
+    // what the failed command was aimed at, when the game layer says: for
+    // the log's line alone ("X's attack on Y failed"), and nothing is
+    // decided by it (issue 27).
+    bool OnCommandFailed(ObjectId who, CommandType type, std::int32_t ability, std::string_view why,
+                         ObjectId target = kNoObject);
 
     // How long the bar's caption says that a party member's action was
     // given back and why (TurnView::notice), of the real clock: the world
@@ -798,6 +810,13 @@ class TurnMachine
     void Floaty(std::vector<Effect> &fx, ObjectId target, std::wstring text, std::uint32_t colour) const;
     void Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId object, std::int32_t a, std::int32_t b) const;
     void Refuse(ObjectId target, std::wstring text, CommandType command, std::string note = {});
+    // An attack the engine itself has no way to make as the two stand:
+    // refused before a step (issue 27). True if it is.
+    [[nodiscard]] bool NoAttackToMake(const Combatant &who, const CommandRequest &request, bool player);
+    // The same for an attack kept from the turn before, as it is given to
+    // its creature: not made, what this turn paid for it given back.
+    void KeptAttackNotMade(const Combatant &who, const CommandRequest &request, bool player);
+    [[nodiscard]] std::string Aimed(ObjectId target) const;
     void Log(LogLevel level, std::string_view text) const;
     void Refused(LogLevel level, std::string text);
     [[nodiscard]] bool Logs(LogLevel level) const

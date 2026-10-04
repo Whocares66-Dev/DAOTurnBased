@@ -3440,6 +3440,175 @@ void TurnMachine::Refuse(ObjectId target, std::wstring text, CommandType command
     Floaty(pending_, target, std::move(text), kGrey);
 }
 
+// An attack the engine itself has no way to make (issue 27, 2026-10-04). The
+// game layer asks the engine for an attack's approach and its walk before
+// the command is let through, and says which "no" it had for an answer
+// (CommandRequest::noAttack): no room for the attacker on its target's melee
+// ring, as the engine's attack will find it; no path to where its approach
+// goes; or for a shot no line of sight to be had on the way. Until then the
+// gate went on past the first two with a guess. Dragonlings swarming one party member in the caverns above Haven
+// had 6 attacks let through "its walk not known" that the engine failed
+// within 2 ms (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING), and a party member
+// standing where the pathfinder found no way to anyone had 15 let through on
+// a walk reckoned by the straight line that failed 0.4 s on
+// (COMMAND_FAILED_INVALID_PATH), and 4 refused "Too far" by that walk, the
+// wrong reason. Each was given back, and an AI's own script chose the same
+// again as each ended, until max_commands_per_turn: 11 turns of that session
+// ended "has started 6 commands this turn".
+//
+// So the attack is refused here, nothing spent. The player's own order is
+// told why, in the words the failure would have had: over the character, as
+// "Too far" is, and on the bar's caption, as an action given back is (issue
+// 21: over the character alone the word was missed). An AI's is given back
+// before a step, and what its AI does about it is its own: it is told to
+// choose again once, and its turn ends at the second give-back, as after a
+// failure under way (StepSettling, kGivenBackEnough). Seen in play
+// (2026-10-04, twelve dragonlings staged round one party member): three
+// times an attack given back so, each followed by its AI choosing again,
+// with no attack let through and no engine failure between.
+//
+// Every attack is put to the engine afresh, an AI's as the player's. The
+// first build of this kept a memory beside it: a target the engine had
+// refused, or failed under way for want of a place or a path, was "ruled out
+// for the rest of its turn" and its AI's next attack on it refused unasked.
+// It was withdrawn after that play. The game's own AI answers a failure
+// with a move closer and the same target again (ai_main_h_2.nss,
+// AI_ExecuteAttack), and that second attack is often good: in three logs
+// from before, 17 turns had a failure for want of a place, and in 7 of them
+// a later attack on the same target that turn went through and landed. The
+// memory refused exactly those, 9 turns of 49 in the staged fight, the
+// gate's own line just above the refusal reading "in its reach by the
+// engine's melee approach: nothing to walk". And it did not get the AI onto
+// another target, its script choosing by threat: the same one 13 times of
+// 16. The engine's no is for where the two stood when it was asked. What
+// that play was short of was a better question, not a memory: the failures
+// under way were attacks the gate's question had called good, and DAOLib has
+// since found why and asks the engine the whole of it (src/game/Gate.cpp,
+// WalkToTarget: Approach::findsRoom).
+bool TurnMachine::NoAttackToMake(const Combatant &who, const CommandRequest &request, bool player)
+{
+    if (request.noAttack == NoAttack::None)
+    {
+        return false;
+    }
+    const std::string_view note = NoAttackNote(request.noAttack);
+    const std::string aimed = Aimed(request.target);
+    const std::string on = aimed.empty() ? std::string{} : " on " + aimed;
+    if (player)
+    {
+        const std::wstring_view words = WhyNoAttack(request.noAttack);
+        Refuse(who.id, std::wstring{words}, request.type, std::string{note});
+        // The caption's whatever the floaties' setting, and for as long as
+        // an action given back has it.
+        notice_ = Notice{RefusedLine(words, who.name, request.type), lastNow_};
+        Log(LogLevel::Info, std::format("{}: {}{} refused, {}", Utf8(who.name), Name(request.type), on, note));
+        return true;
+    }
+    // In an unaware hostile's beat (Handover; issue 29) its AI has not been
+    // told its turn has come, and an attack its script queues there is no
+    // choice of this turn's, as its wait there is none (Judge, Pass).
+    // Refused by the engine's answer all the same, and nothing more: not
+    // counted as given back, and its AI not told again, which would wake one
+    // that is not to be woken. Settled from here its turn would end "done"
+    // with its time rolled over, for an attack that never began. The beat
+    // goes on: to its end, the turn skipped "unaware"; or, if the attack
+    // came because its creature has noticed, to the step that sees so and
+    // tells its AI (StepThinking), whose choice is then asked of the engine
+    // like any.
+    if (unaware_ && phase_ == Phase::AiThinking)
+    {
+        Refused(LogLevel::Info,
+                std::format("{}'s {}{} is refused before a step ({}): it is unaware, and its AI has not been told its "
+                            "turn has come",
+                            Utf8(who.name), Name(request.type), on, note));
+        return true;
+    }
+    // Given back as a failure under way is, with nothing to give: counted,
+    // and its AI told again.
+    budget_.refunded = true;
+    ++budget_.givenBack;
+    Log(LogLevel::Info,
+        std::format("{}'s {}{} is given back before a step ({})", Utf8(who.name), Name(request.type), on, note));
+    Emit(EventKind::ActionGivenBack, who.id, std::string{note}, 0, Name(request.type), aimed);
+    // Its AI was thinking and its choice came to nothing: the gate frees a
+    // refused command, so nothing of its own will end and wake it, and its
+    // turn would stand out its thinking time and end "chose nothing". It
+    // settles from here.
+    if (phase_ == Phase::AiThinking)
+    {
+        phase_ = Phase::Settling;
+    }
+    return true;
+}
+
+// A kept attack is asked of the engine as any attack is (issue 27). With a
+// turn a bar of time an attack that does not fit is kept, and given to its
+// creature as its next turn begins (LandCast), by the game layer, through the
+// gate. It was let through there whatever the engine answered, the one way
+// left for an attack to go to the engine and fail for want of room: in the
+// staged crowd on the build before this (2026-10-04, 328 attacks let through
+// with room, none of them failed for it) two kept attacks were given with the
+// gate's own line above them saying "no room once its ring is filled", failed
+// 50 ms on, and what their turns had paid for them, 0.01 s and 0.84 s, was
+// not given back: a landed attack's time is its turns', not this command's.
+//
+// So where the engine has no attack to make, the kept one is not made. It is
+// dropped as one whose target is gone is (KeptVoid): what this turn paid for
+// it as it began is given back, and the turn is handed over whole, with the
+// step that next looks at everyone. What the turn before spent on it is
+// spent, as for a target gone. The player is told why, over the character
+// and on the caption; an AI's counts as an action given back, so that the
+// same answer to what it chooses next ends its turn (kGivenBackEnough), and
+// its being handed its turn is its being told.
+void TurnMachine::KeptAttackNotMade(const Combatant &who, const CommandRequest &request, bool player)
+{
+    if (!landing_)
+    {
+        return;
+    }
+    const std::string_view note = NoAttackNote(request.noAttack);
+    const std::string aimed = Aimed(request.target);
+    std::string back;
+    if (const std::uint32_t paid = std::exchange(budget_.pendingPaidMs, 0); paid > 0)
+    {
+        budget_.spend.GiveActionBack(paid);
+        back = std::format("; the {:.2f} s it owed given back", static_cast<float>(paid) / 1000.0f);
+    }
+    Log(LogLevel::Info, std::format("{}'s pending {}{} is not made: {}{}", Utf8(who.name), Name(request.type),
+                                    aimed.empty() ? std::string{} : " on " + aimed, note, back));
+    Emit(Timed() ? EventKind::ActionDropped : EventKind::CastInterrupted, who.id, std::string{note}, landing_->ability,
+         Name(landing_->type), aimed);
+    landing_.reset();
+    if (player)
+    {
+        const std::wstring_view words = WhyNoAttack(request.noAttack);
+        Floaty(pending_, who.id, std::wstring{words}, kGrey);
+        notice_ = Notice{NotMadeLine(words, who.name, request.type), lastNow_};
+    }
+    else
+    {
+        ++budget_.givenBack;
+    }
+    // Nothing is coming to wait for: handed over as a turn whose kept action
+    // will not come is (Step).
+    if (budget_.landing)
+    {
+        handoverWanted_ = who.id;
+    }
+}
+
+// Whom a command was aimed at, for a line about it: by name, by its id where
+// the fight does not know it, and nothing where it was aimed at no one.
+std::string TurnMachine::Aimed(ObjectId target) const
+{
+    if (target == kNoObject)
+    {
+        return {};
+    }
+    const Combatant *aimed = order_.Find(target);
+    return aimed != nullptr ? Utf8(aimed->name) : std::format("{:#x}", target);
+}
+
 Verdict TurnMachine::OnCommand(const CommandRequest &request)
 {
     const Verdict verdict = Judge(request);
@@ -3623,6 +3792,14 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     switch (kind)
     {
     case CommandKind::Action:
+        // A kept attack the engine has no way to make now is not made
+        // (CommandRequest::noAttack, as for any attack). Only a plain
+        // attack: a kept talent or spell carries no answer of the engine's.
+        if (landing && request.type == CommandType::Attack && request.noAttack != NoAttack::None)
+        {
+            KeptAttackNotMade(*who, request, player);
+            return Verdict::Block;
+        }
         if (landing)
         {
             // Given at another than it was kept for: its target had fallen,
@@ -3676,6 +3853,12 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
             Refuse(who->id, L"A door is in the way", request.type, "open it first: that costs no action");
             Log(LogLevel::Info,
                 std::format("{}: {} refused, a door is in the way of the walk", Utf8(who->name), Name(request.type)));
+            return Verdict::Block;
+        }
+        // An attack the engine has no way to make as the two stand
+        // (CommandRequest::noAttack): refused, whoever's.
+        if (NoAttackToMake(*who, request, player))
+        {
             return Verdict::Block;
         }
         // The player's order at something out of reach this turn is
@@ -3952,7 +4135,8 @@ MachineState TurnMachine::State() const
 // A companion's AI spent her action twice on an attack the engine then
 // failed with COMMAND_FAILED_INVALID_PATH, in a doorway (the third play
 // test, 2026-09-30).
-bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t ability, std::string_view why)
+bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t ability, std::string_view why,
+                                  ObjectId target)
 {
     const Combatant *current = order_.Current();
     if (!Active() || current == nullptr || current->id != who)
@@ -3999,8 +4183,13 @@ bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t a
     GiveActionBack();
     budget_.refunded = true;
     ++budget_.givenBack;
-    Log(LogLevel::Info,
-        std::format("{}'s {} failed ({}): its action is given back", Utf8(current->name), Name(type), why));
+    // With whom it was at, where the game layer says (issue 27): what a
+    // crowd's log is read by, a dozen of one name attacking three of the
+    // party. Nothing is decided by it: the next attack on the same target is
+    // put to the engine like any other.
+    const std::string aimed = Aimed(target);
+    Log(LogLevel::Info, std::format("{}'s {}{} failed ({}): its action is given back", Utf8(current->name), Name(type),
+                                    aimed.empty() ? std::string{} : " on " + aimed, why));
     Emit(EventKind::ActionGivenBack, who, std::string{why}, 0, Name(type));
     // Said over the player's own: the bar dropped and filled again with no
     // word, three tries running (play test 31). And on the bar's caption,

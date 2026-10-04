@@ -184,7 +184,15 @@ bool Gone(ObjectId id)
 //   not loosed (issue 11), and a blow at one behind a door is a walk round;
 // - how far, and whether in the attacker's reach: the engine's own answer
 //   for the pair (DAOLib's dao::attack::ApproachOf, what the gate judges an
-//   attack's walk by, so "in reach" here is a walk of none there).
+//   attack's walk by, so "in reach" here is a walk of none there). And
+//   whether the engine's attack will find room on its ring (the approach's
+//   findsRoom, DAOLib issue 19): in reach is by the ring as it stands, and
+//   in a crowd a blow that does not come in its first update meets the ring
+//   filled a frame on, with no place left (issue 27). A kept attack is
+//   asked of the engine again as it is given (the gate; core's
+//   KeptAttackNotMade), and one turned on a foe it finds no room at would
+//   be not made there, where another in reach might have had it: so it is
+//   turned only on one it will land on.
 // Not yet seen in play.
 Foe Measure(ObjectId attacker, ObjectId other)
 {
@@ -198,7 +206,14 @@ Foe Measure(ObjectId attacker, ObjectId other)
     foe.hostile = api::IsObjectHostile(attacker, other) != 0;
     foe.meters = api::GetDistanceBetween(attacker, other);
     const std::optional<dao::attack::Approach> approach = dao::attack::ApproachOf(attacker, other);
-    foe.inReach = approach && approach->inReach;
+    foe.inReach = approach && approach->inReach && approach->findsRoom;
+    if (approach && approach->inReach && !approach->findsRoom)
+    {
+        // Said apart: the line of each one measured reads it as out of reach.
+        spdlog::debug("{:#010x}: {:#x} is in its reach, and the engine's attack would find no room at it: not one "
+                      "to turn a kept attack on",
+                      attacker, other);
+    }
     foe.seen = api::GetHasEffects(other, k::EFFECT_TYPE_STEALTH) == 0 &&
                static_cast<bool>(dao::world::LineOfSight(attacker, other));
     return foe;
@@ -946,11 +961,17 @@ void Bridge::Apply(const std::vector<Effect> &effects)
                 const std::optional<dao::attack::Approach> approach = dao::attack::ApproachOf(e.target, kept->target);
                 // A blow's: how far from its target the engine's own place
                 // for the attacker on the target's ring is (the approach's
-                // goal), not a distance of the mod's.
+                // goal), not a distance of the mod's. A ring with no place
+                // for it at all has the target itself for a goal (DAOLib
+                // 151e624; it had no approach to say before): beside its
+                // target then too.
                 const dao::Vector at = api::GetPosition(kept->target);
+                const float toPlace =
+                    approach && !approach->ranged ? std::hypot(approach->goal.x - at.x, approach->goal.y - at.y) : 0.0f;
                 const float reach = !approach          ? kBeside
                                     : approach->ranged ? approach->stopWithin
-                                                       : std::hypot(approach->goal.x - at.x, approach->goal.y - at.y);
+                                    : toPlace > 0.0f   ? toPlace
+                                                       : kBeside;
                 const float within = std::max(0.5f, reach - kInside);
                 if (const dao::script::OwnedCommand walk = api::CommandMoveToObject(kept->target, 1, within))
                 {
