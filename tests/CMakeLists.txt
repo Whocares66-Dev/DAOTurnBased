@@ -11,6 +11,13 @@ if(NOT Catch2_FOUND)
         GIT_TAG v3.7.1
         GIT_SHALLOW TRUE
     )
+    # Built as the tests are: at Catch2's own default standard its library has
+    # no StringMaker for a std::wstring_view, and a CHECK of one
+    # (test_givenback.cpp, issue 21) did not link where Catch2 is fetched
+    # (2026-10-03: the core preset in a tree whose configure had not found
+    # vcpkg's, and so the mutants there; core-cov always).
+    set(CMAKE_CXX_STANDARD 20)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
     FetchContent_MakeAvailable(Catch2)
     list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 endif()

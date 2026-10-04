@@ -331,23 +331,8 @@ std::vector<Combatant> Bridge::Scan()
         return api::IsObjectValid(id) != 0 && !seen.contains(id) && api::GetCombatState(id) != 0 &&
                api::GetDistanceBetween(leader, id) <= settings_.combatRadius;
     };
-    // And a hostile that has not noticed the party, with the party in combat
-    // (core: FightsUnawares; issue 20): seen and within the join radius it
-    // is in the fight. Sight is a party member's line here whatever the
-    // rooms say: a room the game shows may hold a hostile behind a pillar,
-    // and this one is not fighting anyone to be seen by.
-    const bool partyInCombat = api::GetCombatState(leader) != 0 || api::GetCombatState(hero) != 0;
-    const auto unawares = [&](ObjectId id) {
-        if (!partyInCombat || api::IsObjectValid(id) == 0 || seen.contains(id) || api::GetCombatState(id) != 0 ||
-            api::IsDead(id) != 0 || api::GetDistanceBetween(leader, id) > settings_.combatRadius)
-        {
-            return false;
-        }
-        return FightsUnawares(partyInCombat, Sight(id, members, std::nullopt), settings_);
-    };
     const dao::script::Array hostiles =
         api::GetNearestObjectByHostility(leader, 1, k::OBJECT_TYPE_CREATURE, kMaxCreaturesInCombat, 1, 0, 0);
-    std::size_t drawnIn = 0;
     for (std::size_t i = 0; i < hostiles.Size(); ++i)
     {
         const ObjectId id = hostiles.Object(i);
@@ -356,22 +341,50 @@ std::vector<Combatant> Bridge::Scan()
             seen.insert(id);
             add(id, Side::Enemy);
         }
-        else if (unawares(id))
+    }
+    // And a hostile that has not noticed the party, with the party in combat
+    // and nobody in its fight to fight (core: FightsUnawares; issues 20 and
+    // 24): seen and within the join radius it is in the fight, and stays in
+    // it once drawn in. Sight is a party member's line here whatever the
+    // rooms say: a room the game shows may hold a hostile behind a pillar,
+    // and this one is not fighting anyone to be seen by.
+    const bool partyInCombat = api::GetCombatState(leader) != 0 || api::GetCombatState(hero) != 0;
+    const bool someoneToFight =
+        std::ranges::any_of(out, [](const Combatant &c) { return c.side == Side::Enemy && c.engaged; });
+    const auto unawares = [&](ObjectId id) {
+        if (!partyInCombat || api::IsObjectValid(id) == 0 || seen.contains(id) || api::GetCombatState(id) != 0 ||
+            api::IsDead(id) != 0 || api::GetDistanceBetween(leader, id) > settings_.combatRadius)
         {
-            seen.insert(id);
-            add(id, Side::Enemy, true);
-            ++drawnIn;
-            if (unawares_.insert(id).second)
-            {
-                spdlog::info("{} ({:#x}) has not noticed the party and is in sight within {:.0f} m: in the fight",
-                             Utf8(Remember(id).name), id, settings_.joinRadius);
-            }
+            return false;
         }
-    }
-    if (drawnIn == 0)
+        const bool drawnIn = unawares_.contains(id);
+        // The lines of sight are asked only where the answer hangs on them.
+        Sighting sighting;
+        if (!drawnIn && !someoneToFight)
+        {
+            sighting = Sight(id, members, std::nullopt);
+        }
+        return FightsUnawares(partyInCombat, someoneToFight, drawnIn, sighting, settings_);
+    };
+    std::unordered_set<ObjectId> drawn;
+    for (std::size_t i = 0; i < hostiles.Size(); ++i)
     {
-        unawares_.clear(); // said once a creature, until none is left to say it of
+        const ObjectId id = hostiles.Object(i);
+        if (!unawares(id))
+        {
+            continue;
+        }
+        seen.insert(id);
+        add(id, Side::Enemy, true);
+        if (!unawares_.contains(id))
+        {
+            spdlog::info("{} ({:#x}) has not noticed the party and is in sight within {:.0f} m, with nobody else to "
+                         "fight: in the fight",
+                         Utf8(Remember(id).name), id, settings_.joinRadius);
+        }
+        drawn.insert(id);
     }
+    unawares_ = std::move(drawn); // who is in the fight unawares now: each said once, and kept in while it is
     // Creatures in combat that are not hostile to the party fight beside it.
     const dao::script::Array others =
         api::GetNearestObjectByHostility(leader, 0, k::OBJECT_TYPE_CREATURE, kMaxCreaturesInCombat, 1, 0, 0);

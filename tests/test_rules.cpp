@@ -198,13 +198,13 @@ TEST_CASE("a battle near the party that is not the party's waits outside its fig
     CHECK(tb::InThePartysFight(sighting(false, false, 45.0f), everyone));
 }
 
-TEST_CASE("with the party in combat, a hostile seen within the join radius is fighting though it has not noticed",
+TEST_CASE("with the party in combat and nobody to fight, a hostile seen within the join radius is fighting though it "
+          "has not noticed",
           "[rules]")
 {
     // Issue 20: three corpses clawing at a cell's door 20 m from the party
     // in Redcliffe's dungeon, the game in combat and nobody to take turns
-    // against until one was struck. The user, 2026-10-03: "If they're
-    // within range and hostile they're fighting".
+    // against until one was struck.
     const tb::Settings settings;
     REQUIRE(settings.joinRadius == Approx(30.0f));
     const auto sighting = [](bool seen, float meters) {
@@ -213,27 +213,56 @@ TEST_CASE("with the party in combat, a hostile seen within the join radius is fi
         s.meters = meters;
         return s;
     };
-    CHECK(tb::FightsUnawares(true, sighting(true, 20.0f), settings));
-    CHECK(tb::FightsUnawares(true, sighting(true, 30.0f), settings));
+    const bool inCombat = true;
+    const bool nobody = false; // nobody in the party's fight to fight
+    const bool fresh = false;  // not drawn in before
+    CHECK(tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, 20.0f), settings));
+    CHECK(tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, 30.0f), settings));
     // Not beyond the radius: a second band 40 m down the road is not in
     // the fight just won until the party nears it.
-    CHECK_FALSE(tb::FightsUnawares(true, sighting(true, 30.5f), settings));
+    CHECK_FALSE(tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, 30.5f), settings));
     // Not unseen: the next room's, behind its door.
-    CHECK_FALSE(tb::FightsUnawares(true, sighting(false, 6.0f), settings));
+    CHECK_FALSE(tb::FightsUnawares(inCombat, nobody, fresh, sighting(false, 6.0f), settings));
     // Not with the party at peace: walking past a hostile that has not
     // noticed is the game's to make a fight of, not the mod's.
-    CHECK_FALSE(tb::FightsUnawares(false, sighting(true, 6.0f), settings));
+    CHECK_FALSE(tb::FightsUnawares(false, nobody, fresh, sighting(true, 6.0f), settings));
     // A distance that is none keeps it out.
-    CHECK_FALSE(tb::FightsUnawares(true, sighting(true, std::numeric_limits<float>::quiet_NaN()), settings));
+    CHECK_FALSE(
+        tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, std::numeric_limits<float>::quiet_NaN()), settings));
     // Sight is asked for whatever joinBySight says.
     tb::Settings everyone;
     everyone.joinBySight = false;
-    CHECK_FALSE(tb::FightsUnawares(true, sighting(false, 6.0f), everyone));
-    CHECK(tb::FightsUnawares(true, sighting(true, 6.0f), everyone));
+    CHECK_FALSE(tb::FightsUnawares(inCombat, nobody, fresh, sighting(false, 6.0f), everyone));
+    CHECK(tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, 6.0f), everyone));
     // The radius is the setting's.
     tb::Settings wide;
     wide.joinRadius = 50.0f;
-    CHECK(tb::FightsUnawares(true, sighting(true, 45.0f), wide));
+    CHECK(tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, 45.0f), wide));
+}
+
+TEST_CASE("a hostile that has not noticed is left out of a fight that has an enemy, and one drawn in stays in",
+          "[rules]")
+{
+    // Issue 24: the Fade's Darkspawn Invasion, a hurlock fighting the hero
+    // and three more darkspawn in sight within 30 m that had not noticed:
+    // drawn in, a pull of three became seven. The user, 2026-10-03, of
+    // drawing them in only when there is nobody else to fight: "Yeah, let's
+    // do that".
+    const tb::Settings settings;
+    tb::Sighting near;
+    near.seen = true;
+    near.meters = 12.0f;
+    const bool inCombat = true;
+    const bool someone = true; // an enemy is in the party's fight already
+    CHECK_FALSE(tb::FightsUnawares(inCombat, someone, false, near, settings));
+    // One drawn in while there was nobody stays in as another notices: its
+    // card does not go and come again. Its sighting is not asked again.
+    CHECK(tb::FightsUnawares(inCombat, someone, true, near, settings));
+    CHECK(tb::FightsUnawares(inCombat, someone, true, tb::Sighting{}, settings));
+    CHECK(tb::FightsUnawares(inCombat, false, true, tb::Sighting{}, settings));
+    // But not past the party's own combat.
+    CHECK_FALSE(tb::FightsUnawares(false, someone, true, near, settings));
+    CHECK_FALSE(tb::FightsUnawares(false, false, true, near, settings));
 }
 
 TEST_CASE("haste and slows multiply a creature's pace", "[rules]")

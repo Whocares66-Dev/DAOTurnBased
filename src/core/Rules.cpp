@@ -296,9 +296,18 @@ bool InThePartysFight(const Sighting &sighting, const Settings &settings)
     return sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;
 }
 
-bool FightsUnawares(bool partyInCombat, const Sighting &sighting, const Settings &settings)
+bool FightsUnawares(bool partyInCombat, bool someoneToFight, bool drawnIn, const Sighting &sighting,
+                    const Settings &settings)
 {
-    return partyInCombat && sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;
+    if (!partyInCombat)
+    {
+        return false;
+    }
+    if (drawnIn)
+    {
+        return true;
+    }
+    return !someoneToFight && sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;
 }
 
 bool AsksForTarget(std::int32_t targetType, std::int32_t useType)

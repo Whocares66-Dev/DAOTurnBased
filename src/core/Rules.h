@@ -116,17 +116,33 @@ struct Sighting
 [[nodiscard]] bool InThePartysFight(const Sighting &sighting, const Settings &settings);
 
 // Whether a hostile near the party that is not in combat itself is fighting
-// all the same: with the party in combat, one that is seen and within
-// joinRadius is. The game counts a creature as in combat once it has noticed
+// all the same. The game counts a creature as in combat once it has noticed
 // an enemy; one that has not (its back turned, a script keeping it at a
 // door) left the party "in combat" with nobody to take turns against, the
 // world running on in real time until someone struck it: three corpses at a
 // cell's door in Redcliffe's dungeon, a second band 40 m down the road after
-// an ambush was won (issue 20). The user, 2026-10-03: "If they're within
-// range and hostile they're fighting". Its first turn is its own AI's, which
-// may be to go on with what it was doing. Sight is asked for whatever
-// joinBySight says: a hostile behind a wall has not been met.
-[[nodiscard]] bool FightsUnawares(bool partyInCombat, const Sighting &sighting, const Settings &settings);
+// an ambush was won (issue 20). So with the party in combat and nobody in its
+// fight to fight (someoneToFight false), one that is seen and within
+// joinRadius is fighting. Its first turn is its own AI's, which may be to go
+// on with what it was doing. Sight is asked for whatever joinBySight says: a
+// hostile behind a wall has not been met.
+//
+// Only then: for an evening (2026-10-03) every hostile seen within the
+// radius was drawn in whenever the party was in combat (the user: "If
+// they're within range and hostile they're fighting"), and in the open that
+// made one fight of several bands: on the Fade's Darkspawn Invasion a pull
+// of three became seven, three of them drawn in unawares, and the hero
+// alone lost it five times running, where with the bands taken as they
+// noticed her it was six fights of two or three, all won (issue 24). The
+// user, of drawing them in only when there is nobody else to fight: "Yeah,
+// let's do that". A fight that has an enemy grows as the game's own
+// perception makes it grow.
+//
+// One already drawn in (drawnIn) stays in while the party is in combat,
+// though another has since noticed and there is now someone to fight: a
+// card that came would otherwise go and come again as its creature noticed.
+[[nodiscard]] bool FightsUnawares(bool partyInCombat, bool someoneToFight, bool drawnIn, const Sighting &sighting,
+                                  const Settings &settings);
 
 // The ability table's TargetType is a mask (TARGET_TYPE_*, the scripts'
 // constants): self 1, friendly 2, hostile 4, placeable 8, area 16, ground
