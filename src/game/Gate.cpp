@@ -1146,6 +1146,19 @@ bool DropEngineConjure(ObjectId caster)
         return false;
     }
     dao::commands::HoldConjure(caster, false);
+    // A caster that has fallen needs nothing cleared: the engine ends a dead
+    // creature's commands itself. And clearing them in the frame it dies
+    // took the victim's half out of a death blow: an ogre killed while a
+    // spell of its own was conjuring left its killer standing at the death
+    // blow 36 s of the game's time, the turn lost "took too long", twice in
+    // two fights; a third ogre, with no spell under way, died as it should
+    // (issue 28, the Brecilian Forest, 2026-10-04).
+    if (api::IsDead(caster) != 0)
+    {
+        spdlog::debug("{:#x} has fallen with a spell conjuring: its hold let go, its commands left to the engine",
+                      caster);
+        return true;
+    }
     api::ClearAllCommands(caster, 1);
     return true;
 }

@@ -698,6 +698,32 @@ ActorObservation Bridge::Actor(ObjectId id)
         // to end" by the path's length and stopped as it shot or swung
         // (issue 11). A read of the command's own list: nothing is searched
         // or cast each frame.
+        if (actor.current == CommandType::ExecuteEffect)
+        {
+            // What holds it, as the engine has it: every temporary effect
+            // standing on the creature, with the ability that applied it,
+            // who did and the seconds it has left (DAOLib's
+            // dao::effects::On). For the machine's log; what a hold costs
+            // is to go by these and not by a grace of the mod's (issue 30).
+            for (const dao::effects::Standing &effect : dao::effects::On(id))
+            {
+                if (!(effect.remaining > 0.0f))
+                {
+                    continue;
+                }
+                if (!actor.effects.empty())
+                {
+                    actor.effects += "; ";
+                }
+                actor.effects += std::format("effect type {} of ability {} by {:#x}, {:.1f} of {:.1f} s left",
+                                             static_cast<std::int32_t>(effect.type), effect.ability, effect.creator,
+                                             effect.remaining, effect.duration);
+            }
+            if (actor.effects.empty())
+            {
+                actor.effects = "no temporary effect stands on it";
+            }
+        }
         if (actor.current == CommandType::Attack)
         {
             const std::uint32_t at = dao::commands::RunningSubAction(id);
@@ -712,6 +738,33 @@ ActorObservation Bridge::Actor(ObjectId id)
                 lastAt = at;
                 spdlog::debug("{:#x}'s attack is at sub-action {}{}", id, at,
                               actor.approaching ? " (its approach)" : "");
+            }
+        }
+        else if (actor.current == CommandType::Deathblow)
+        {
+            // A death blow that stands (issue 28: twice an ogre's killer
+            // stood at one 36 s of the game's time): which sub-action it is
+            // at, and its victim's command, said as either changes, are what
+            // the next one's log is read for.
+            const std::uint32_t at = dao::commands::RunningSubAction(id);
+            const std::optional<ObjectId> victim = current.get()->Target();
+            std::int32_t victimAt = -1;
+            if (victim && api::IsObjectValid(*victim) != 0)
+            {
+                if (const dao::script::OwnedCommand theirs = api::GetCurrentCommand(*victim))
+                {
+                    victimAt = api::GetCommandType(*theirs.get());
+                }
+            }
+            static std::uint32_t lastAt = ~0U;
+            static std::int32_t lastVictimAt = -2;
+            if (at != lastAt || victimAt != lastVictimAt)
+            {
+                lastAt = at;
+                lastVictimAt = victimAt;
+                spdlog::debug("{:#x}'s death blow on {:#x} is at sub-action {}; its victim's command is {} ({})", id,
+                              victim.value_or(dao::kInvalidObject), at, victimAt,
+                              victim && api::IsDead(*victim) != 0 ? "dead" : "alive");
             }
         }
     }

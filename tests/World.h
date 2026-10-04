@@ -215,8 +215,9 @@ class World
         if (needs.actor != kNoObject)
         {
             const Creature &c = Get(needs.actor);
-            obs.actor = ActorObservation{c.id,       c.exists,      c.down,       c.busy,        c.moving,    c.current,
-                                         c.position, c.conjureHeld, c.timersHeld, c.approaching, c.perception};
+            obs.actor =
+                ActorObservation{c.id,       c.exists,      c.down,       c.busy,        c.moving,     c.current,
+                                 c.position, c.conjureHeld, c.timersHeld, c.approaching, c.perception, std::string{}};
         }
         for (const ObjectId id : needs.statuses)
         {

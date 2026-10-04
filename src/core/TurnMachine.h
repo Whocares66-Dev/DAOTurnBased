@@ -110,6 +110,14 @@ struct ActorObservation
     // come (core/Rules.h, Unaware). Read each frame so that it acts from the
     // moment it notices.
     Perception perception;
+    // At an effect's command: the effects standing on the creature as the
+    // engine has them (each one's type, the ability that applied it, who
+    // did, and the seconds it has left), in words for the log. Until
+    // 2026-10-05 the machine said only "an effect" of what held a creature,
+    // and against the high dragon 37 of the party's 176 turns were lost to
+    // effects nobody had looked at (issue 30; the user: "We should read the
+    // data since that's available").
+    std::string effects;
 };
 
 // What holds a creature, as far as turns go: disabled, it cannot act

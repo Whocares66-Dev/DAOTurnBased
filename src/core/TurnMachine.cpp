@@ -2106,7 +2106,8 @@ void TurnMachine::StepAwaiting(const Observation &obs, std::vector<Effect> &fx)
         if (Logs(LogLevel::Debug))
         {
             Log(LogLevel::Debug,
-                std::format("busy with a {} the gate did not see; letting it run", Name(obs.actor->current)));
+                std::format("busy with a {} the gate did not see; letting it run{}", Name(obs.actor->current),
+                            obs.actor->effects.empty() ? std::string{} : ": " + obs.actor->effects));
         }
         heldByEffect_ = obs.actor->current == CommandType::ExecuteEffect && !GettingUp();
         phase_ = Phase::Executing;
@@ -2467,7 +2468,8 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         {
             if (const Combatant *current = order_.Current())
             {
-                Log(LogLevel::Info, std::format("{} is held by an effect: its turn is lost", Utf8(current->name)));
+                Log(LogLevel::Info, std::format("{} is held by an effect: its turn is lost{}", Utf8(current->name),
+                                                actor.effects.empty() ? std::string{} : " (" + actor.effects + ")"));
                 Floaty(fx, current->id, current->name + L" loses the turn",
                        current->side == Side::Party ? kGold : kGrey);
             }
