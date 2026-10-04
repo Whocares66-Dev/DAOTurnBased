@@ -638,6 +638,79 @@ TEST_CASE("a menu over the fight holds everything as it is", "[machine]")
     CHECK(w.machine.GetPhase() == Phase::Executing);
 }
 
+TEST_CASE("everyone is looked at as a menu goes, not half a second after a look that fell under it", "[machine]")
+{
+    // The random fights' find (the long run with hostiles unaware, seed 59,
+    // 2026-10-04): the half second's look at everyone came in a menu's
+    // frame, where the machine takes nothing up, and the next was due half a
+    // second after it. With two menus in a second, a creature stunned in
+    // its own turn stood more than a second before its turn ended.
+    World w;
+    w.onPoke = [&](ObjectId id) { CHECK(w.Order(id, CommandType::Attack, Source::Script) == Verdict::Allow); };
+    w.StartFight();
+    CHECK(w.machine.OnEndTurn());
+    w.RunFor(100);
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(w.machine.GetPhase() == Phase::Executing);
+    // Stunned in its turn, and a menu opened before the machine has looked.
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.mode = Mode::Gui;
+    w.paused = true;
+    const int looks = w.statusReads;
+    w.RunFor(2000);
+    // At most the look that came with the menu's first frame: none under it.
+    CHECK(w.statusReads <= looks + 1);
+    REQUIRE(w.Current() == kGenlock);
+    w.mode = Mode::Combat;
+    w.paused = false;
+    w.Frame();
+    w.Frame();
+    w.Frame();
+    // Seen within a frame or two of the menu's going: the rest of its turn
+    // is the stun's.
+    CHECK(w.Current() != kGenlock);
+}
+
+TEST_CASE("a look at everyone that came with a menu's first frame is asked for again", "[machine]")
+{
+    // The other half of the same: the look is taken in the frame the menu
+    // opens (the machine learns of the menu with that frame), nothing is
+    // done with it, and a menu shorter than half a second leaves the next
+    // look that long away.
+    World w;
+    w.onPoke = [&](ObjectId id) { CHECK(w.Order(id, CommandType::Attack, Source::Script) == Verdict::Allow); };
+    w.StartFight();
+    CHECK(w.machine.OnEndTurn());
+    w.RunFor(100);
+    REQUIRE(w.Current() == kGenlock);
+    // To the frame before the next half second's look: a look, and 31 frames
+    // of 16 ms after it.
+    const int looks = w.statusReads;
+    for (int i = 0; i < 100 && w.statusReads == looks; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.statusReads == looks + 1);
+    for (int i = 0; i < 31; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(w.statusReads == looks + 1);
+    // Stunned, and a menu open for the one frame the look comes with.
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.mode = Mode::Gui;
+    w.paused = true;
+    w.Frame();
+    REQUIRE(w.statusReads == looks + 2);
+    REQUIRE(w.Current() == kGenlock);
+    w.mode = Mode::Combat;
+    w.paused = false;
+    w.Frame();
+    w.Frame();
+    w.Frame();
+    CHECK(w.Current() != kGenlock);
+}
+
 TEST_CASE("loading a game drops the fight without touching its objects", "[machine]")
 {
     World w;
@@ -2239,6 +2312,10 @@ TEST_CASE("an enemy missing from a scan or two is still in the fight; missing fo
     World w;
     std::vector<TurnEvent> events;
     w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    // Neither it nor the party perceives the other, all along: whether it
+    // is in the fight then goes by whether the scan finds it fighting
+    // (perceived, it would stay: issue 29, test_perception.cpp).
+    w.Get(kGenlock).perception = Unperceived();
     w.StartFight();
     for (int flap = 0; flap < 6; ++flap)
     {
@@ -2928,7 +3005,8 @@ TEST_CASE("one that left the fight and is back before the round is out is said t
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     w.Get(kGenlock).fighting = false;
-    UseSomething(w, kHero); // missed, from now
+    w.Get(kGenlock).perception = Unperceived(); // and out of perception: else it would stay (issue 29)
+    UseSomething(w, kHero);                     // missed, from now
     w.RunFor(4500);
     UseSomething(w, kHero); // missed for more than four seconds: it has left
     REQUIRE(w.machine.Order().Find(kGenlock) != nullptr);

@@ -253,6 +253,87 @@ TEST_CASE("a hostile that has not noticed is left out of a fight that has an ene
     CHECK_FALSE(tb::FightsUnawares(false, false, true, near, settings));
 }
 
+TEST_CASE("a hostile not in combat that perceives no party member and nobody else hostile to it is unaware", "[rules]")
+{
+    // Issue 29: unaware is the engine's word, read of its perception and of
+    // its combat state. The skeletons of the Brecilian ruins' lower level,
+    // in the fight and never having noticed the party ("chose nothing:
+    // combat state 0").
+    tb::Perception nobody;
+    nobody.ofParty = false;
+    nobody.ofFoes = false;
+    nobody.inCombat = false;
+    CHECK(tb::Unaware(tb::Side::Enemy, nobody));
+    // One the game has in combat is told its turn has come as before,
+    // whatever it perceives at this moment: the scripts run its combat AI
+    // then, and one with an AI of its own may act all the same.
+    tb::Perception fighting = nobody;
+    fighting.inCombat = true;
+    CHECK_FALSE(tb::Unaware(tb::Side::Enemy, fighting));
+    // Whether the party perceives it is not the question: the party's seeing
+    // it is how it came to be in the fight.
+    nobody.byParty = false;
+    CHECK(tb::Unaware(tb::Side::Enemy, nobody));
+    // It perceives a party member: it has noticed.
+    tb::Perception party = nobody;
+    party.ofParty = true;
+    CHECK_FALSE(tb::Unaware(tb::Side::Enemy, party));
+    // It perceives a foe that is not the party's (an ally of the party's it
+    // is fighting): it has someone to choose.
+    tb::Perception foe = nobody;
+    foe.ofFoes = true;
+    CHECK_FALSE(tb::Unaware(tb::Side::Enemy, foe));
+    // Nothing read: everything, and not unaware.
+    CHECK_FALSE(tb::Unaware(tb::Side::Enemy, tb::Perception{}));
+    // A hostile's only: an ally's turn, or a party member's, is not skipped
+    // for what it perceives.
+    CHECK_FALSE(tb::Unaware(tb::Side::Ally, nobody));
+    CHECK_FALSE(tb::Unaware(tb::Side::Party, nobody));
+}
+
+TEST_CASE("one in the fight stays in it while the engine's perception keeps it there", "[rules]")
+{
+    // Issue 29: the game ends combat by perception, not by a distance, and
+    // the mod's 50 m is no longer a way out of a fight.
+    const bool found = true; // by the scan's own rules: in combat within combat_radius, or drawn in unawares
+    const tb::Perception everything;
+    tb::Perception nothing;
+    nothing.byParty = false;
+    nothing.ofParty = false;
+    nothing.ofFoes = false;
+    // Found fighting, it stays, perceived or not, as it always did: those
+    // rules bring it in, and it would come again at once.
+    CHECK(tb::StaysInTheFight(tb::Side::Enemy, found, nothing));
+    CHECK(tb::StaysInTheFight(tb::Side::Ally, found, nothing));
+    // An enemy not found fighting (out of combat, or beyond the radius):
+    // while a party member perceives it, or it perceives a party member.
+    tb::Perception watched = nothing;
+    watched.byParty = true;
+    tb::Perception watching = nothing;
+    watching.ofParty = true;
+    CHECK(tb::StaysInTheFight(tb::Side::Enemy, !found, everything));
+    CHECK(tb::StaysInTheFight(tb::Side::Enemy, !found, watched));
+    CHECK(tb::StaysInTheFight(tb::Side::Enemy, !found, watching));
+    // Neither: it has left. Whom else it perceives does not make it the
+    // party's fight.
+    CHECK_FALSE(tb::StaysInTheFight(tb::Side::Enemy, !found, nothing));
+    tb::Perception elsewhere = nothing;
+    elsewhere.ofFoes = true;
+    CHECK_FALSE(tb::StaysInTheFight(tb::Side::Enemy, !found, elsewhere));
+    // An ally of the party's: while it perceives someone hostile to it, the
+    // test the game keeps it in combat by. That the party and it perceive
+    // each other is no fight.
+    CHECK(tb::StaysInTheFight(tb::Side::Ally, !found, elsewhere));
+    CHECK(tb::StaysInTheFight(tb::Side::Ally, !found, everything));
+    CHECK_FALSE(tb::StaysInTheFight(tb::Side::Ally, !found, nothing));
+    tb::Perception friendly = nothing;
+    friendly.byParty = true;
+    friendly.ofParty = true;
+    CHECK_FALSE(tb::StaysInTheFight(tb::Side::Ally, !found, friendly));
+    // The party's own are always in its fight.
+    CHECK(tb::StaysInTheFight(tb::Side::Party, !found, nothing));
+}
+
 TEST_CASE("haste and slows multiply a creature's pace", "[rules]")
 {
     CHECK(tb::MovementRate({}) == Approx(1.0f));

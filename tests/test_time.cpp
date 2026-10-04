@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace tb;
@@ -595,6 +596,226 @@ TEST_CASE("with time, what is left rolls over to the cap, and Combat Tactics add
     CHECK(w.machine.View().timeMs == 4500);
     UntilTurnOf(w, kHero);
     CHECK(w.machine.View().timeMs == 7000);
+}
+
+// Time rolls over only from a turn its actor ended itself (issue 29; the
+// user, 2026-10-04: "When turn is skipped, due to unawareness, incapacity,
+// etc, there should be no time rollover, because the actor did not explicitly
+// save any time"). core/TurnEnd.h has each reason's class; these are the
+// machine's turns ending for them, and the next turn's bar saying what came
+// over. A turn is 4 s here and a second may roll over.
+namespace
+{
+// Each turn's bar as it began, and why each turn ended, by whose it was.
+struct Turns
+{
+    explicit Turns(World &w)
+    {
+        w.machine.SetEventSink([this, &w](const TurnEvent &e) {
+            if (e.kind == EventKind::TurnStarted)
+            {
+                bars[e.who].push_back(w.machine.View().timeMs);
+            }
+            if (e.kind == EventKind::TurnEnded)
+            {
+                ends[e.who].push_back(e.detail);
+            }
+        });
+    }
+    std::unordered_map<ObjectId, std::vector<std::uint32_t>> bars;
+    std::unordered_map<ObjectId, std::vector<std::string>> ends;
+};
+
+// The player's turn ended, and the fight on to the hero's next.
+void RoundOn(World &w)
+{
+    REQUIRE(w.Current() == kHero);
+    (void)w.machine.OnEndTurn();
+    UntilTurnOf(w, kHero);
+}
+} // namespace
+
+TEST_CASE("with time, an AI that waits or is done with time left rolls it over, as the player's End does", "[time]")
+{
+    World w(Timed());
+    Turns turns(w);
+    // The genlock swings once (1.5 s of its 4) and then waits, as its AI does
+    // when a command of its ends with nothing more to choose; the hurlock
+    // waits as it is told its turn has come.
+    w.onPoke = [&](ObjectId id) {
+        if (id == kGenlock)
+        {
+            CHECK(Act(w, id, CommandType::Attack, Source::Script, 1.5f, 0.0f) == Verdict::Allow);
+        }
+        else
+        {
+            CHECK(w.Order(id, CommandType::Wait, Source::Script) == Verdict::Block);
+        }
+    };
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    (void)w.machine.OnEndTurn();
+    w.RunFor(300);
+    REQUIRE(w.Current() == kGenlock);
+    w.Finish(kGenlock);
+    CHECK(w.Order(kGenlock, CommandType::Wait, Source::Script) == Verdict::Block);
+    UntilTurnOf(w, kHero);
+    CHECK(turns.ends[kHero] == std::vector<std::string>{"ended by the player"});
+    CHECK(turns.ends[kGenlock] == std::vector<std::string>{"done"});
+    CHECK(turns.ends[kHurlock] == std::vector<std::string>{"waits"});
+    CHECK(Logged(w, "Genlock's turn ends: done; 1.00 s rolls over"));
+    CHECK(Logged(w, "Hurlock's turn ends: waits; 1.00 s rolls over"));
+    // Each begins its next turn with the second it saved.
+    CHECK(w.machine.View().timeMs == 5000);
+    (void)w.machine.OnEndTurn();
+    w.RunFor(300);
+    REQUIRE(w.Current() == kGenlock);
+    CHECK(w.machine.View().timeMs == 5000);
+    w.Finish(kGenlock);
+    CHECK(w.Order(kGenlock, CommandType::Wait, Source::Script) == Verdict::Block);
+    UntilTurnOf(w, kHero);
+    CHECK(turns.bars[kHurlock] == std::vector<std::uint32_t>{4000, 5000});
+}
+
+TEST_CASE("with time, an AI that chose nothing rolls nothing over", "[time]")
+{
+    // The issue's own line: `Skeleton's turn ends: chose nothing; 1.00 s
+    // rolls over`, every round, its bar a second longer for having done
+    // nothing.
+    World w(Timed());
+    Turns turns(w);
+    w.onPoke = [&](ObjectId id) {
+        if (id == kHurlock)
+        {
+            (void)w.Order(id, CommandType::Wait, Source::Script);
+        }
+    };
+    w.StartFight();
+    RoundOn(w);
+    RoundOn(w);
+    REQUIRE(turns.ends[kGenlock].size() == 2);
+    CHECK(turns.ends[kGenlock].front() == "chose nothing");
+    CHECK(turns.bars[kGenlock] == std::vector<std::uint32_t>{4000, 4000});
+    CHECK(Logged(w, "Genlock's turn ends: chose nothing; nothing rolls over, its actor not having ended it (1.00 s "
+                    "would have)"));
+    CHECK_FALSE(Logged(w, "Genlock's turn ends: chose nothing; 1.00 s rolls over"));
+    // The others, who ended theirs themselves, have their second.
+    CHECK(turns.bars[kHero].at(1) == 5000);
+    CHECK(turns.bars[kCompanion].at(1) == 5000);
+    CHECK(turns.bars[kHurlock].at(1) == 5000);
+}
+
+TEST_CASE("with time, a turn ended because its command never ended rolls nothing over", "[time]")
+{
+    Settings s = Timed();
+    s.maxActionMs = 2000;
+    World w(s);
+    Turns turns(w);
+    // A swing of a second that the engine never ends: stopped, 3 s unspent.
+    w.onPoke = [&](ObjectId id) {
+        if (id == kGenlock)
+        {
+            CHECK(Act(w, id, CommandType::Attack, Source::Script, 1.0f, 0.0f) == Verdict::Allow);
+        }
+        else
+        {
+            (void)w.Order(id, CommandType::Wait, Source::Script);
+        }
+    };
+    w.StartFight();
+    RoundOn(w);
+    REQUIRE_FALSE(turns.ends[kGenlock].empty());
+    CHECK(turns.ends[kGenlock].front() == "took too long");
+    (void)w.machine.OnEndTurn();
+    w.RunFor(300);
+    REQUIRE(w.Current() == kGenlock);
+    CHECK(w.machine.View().timeMs == 4000);
+}
+
+TEST_CASE("with time, a turn lost to an effect that holds its creature rolls nothing over", "[time]")
+{
+    // The issue's other line: `Alistair's turn ends: held by an effect; 1.00
+    // s rolls over`.
+    World w(Timed());
+    Turns turns(w);
+    w.onPoke = [&](ObjectId id) { (void)w.Order(id, CommandType::Wait, Source::Script); };
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    // An effect's command no condition names (a grab), there as its turn comes.
+    w.Get(kGenlock).busy = true;
+    w.Get(kGenlock).current = CommandType::ExecuteEffect;
+    (void)w.machine.OnEndTurn();
+    w.RunFor(300);
+    REQUIRE(w.Current() == kGenlock);
+    w.RunFor(TurnMachine::kEffectGraceMs + 200);
+    REQUIRE(w.Current() != kGenlock);
+    REQUIRE_FALSE(turns.ends[kGenlock].empty());
+    CHECK(turns.ends[kGenlock].front() == "held by an effect");
+    CHECK(Logged(w, "Genlock's turn ends: held by an effect; nothing rolls over"));
+    // Let go, its next turn is a turn's own seconds (and that one, which it
+    // ends itself by waiting, rolls its second over).
+    w.Finish(kGenlock);
+    UntilTurnOf(w, kHero);
+    RoundOn(w);
+    RoundOn(w);
+    CHECK(turns.bars[kGenlock] == std::vector<std::uint32_t>{4000, 4000, 5000});
+}
+
+TEST_CASE("with time, a creature that falls in its own turn rolls nothing over", "[time]")
+{
+    World w(Timed());
+    Turns turns(w);
+    w.onPoke = [&](ObjectId id) { (void)w.Order(id, CommandType::Wait, Source::Script); };
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    // Her bar whole, and she falls (a poison's tick): the turn was not hers
+    // to end.
+    w.Get(kHero).down = true;
+    w.RunFor(300);
+    REQUIRE(w.Current() != kHero);
+    REQUIRE_FALSE(turns.ends[kHero].empty());
+    CHECK(turns.ends[kHero].front() == "fell");
+    // Up again (revived), her next turn has no second more.
+    w.Get(kHero).down = false;
+    UntilTurnOf(w, kHero);
+    CHECK(w.machine.View().timeMs == 4000);
+}
+
+TEST_CASE("with time, an AI stopped with nothing it can get to rolls nothing over, its time given back or not",
+          "[time]")
+{
+    World w(Timed());
+    Turns turns(w);
+    w.onPoke = [&](ObjectId id) {
+        if (id == kGenlock)
+        {
+            (void)Act(w, id, CommandType::Attack, Source::Script, 1.5f, 0.0f);
+        }
+        else
+        {
+            (void)w.Order(id, CommandType::Wait, Source::Script);
+        }
+    };
+    w.StartFight();
+    (void)w.machine.OnEndTurn();
+    w.RunFor(200);
+    REQUIRE(w.Current() == kGenlock);
+    // No room at its target, twice: both swings' time is back in its bar,
+    // and its turn is ended for it.
+    for (int tries = 0; tries < 2; ++tries)
+    {
+        REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+        w.Finish(kGenlock);
+        w.RunFor(1500);
+    }
+    REQUIRE(w.Current() != kGenlock);
+    REQUIRE(turns.ends[kGenlock].size() == 1);
+    CHECK(turns.ends[kGenlock].front() == "nothing it can get to");
+    UntilTurnOf(w, kHero);
+    (void)w.machine.OnEndTurn();
+    w.RunFor(200);
+    REQUIRE(w.Current() == kGenlock);
+    CHECK(w.machine.View().timeMs == 4000);
 }
 
 TEST_CASE("with time, an AI chooses again while it has time, and its turn ends when its bar is spent", "[time]")

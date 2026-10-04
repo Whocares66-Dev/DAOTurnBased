@@ -37,6 +37,7 @@ add_executable(
     test_json.cpp
     test_keys.cpp
     test_machine.cpp
+    test_perception.cpp
     test_portraits.cpp
     test_preview.cpp
     test_rules.cpp
@@ -45,6 +46,7 @@ add_executable(
     test_time.cpp
     test_turnorder.cpp
     test_turnbudget.cpp
+    test_turnend.cpp
     test_turntime.cpp
     test_wait.cpp
 )

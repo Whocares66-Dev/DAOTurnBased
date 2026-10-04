@@ -144,6 +144,73 @@ struct Sighting
 [[nodiscard]] bool FightsUnawares(bool partyInCombat, bool someoneToFight, bool drawnIn, const Sighting &sighting,
                                   const Settings &settings);
 
+// Whether a creature in the fight has not noticed anyone to fight: a hostile
+// that the game does not have in combat, and that perceives no party member
+// and nobody else hostile to it, by the engine's own words (core/Types.h,
+// Perception). Its turn is skipped: "Unaware" over it, about a second, and
+// the next turn, its AI not told (TurnMachine::kUnawareMs). It acts by its
+// own AI from the moment it notices: struck, or the party come into its
+// perception.
+//
+// All three, so that a turn is skipped only where the engine says on every
+// count that there is nobody for it to fight. The game's scripts run a
+// creature's combat AI when a command of its ends only while it is in
+// combat (rules_core.nss, EVENT_TYPE_COMMAND_COMPLETE: "For normal creatures
+// this should run only during combat"), so one not in combat has nothing to
+// choose when told its turn has come; and its combat state is set as it
+// perceives a hostile. But one the game has in combat is told as before,
+// whatever its perception lists hold at that moment: a creature with an AI
+// of its own script's (a boss between two phases, the party gone from its
+// view) may act on being told all the same, and skipped it would stand for
+// good. At worst that is the turn it had before this rule.
+//
+// One drawn into a fight unawares (FightsUnawares, above) was told its turn
+// had come like anyone, and had nothing to choose: its AI picks among the
+// hostiles it perceives. In the Brecilian ruins' lower level three skeletons
+// that never noticed the party took a turn each round, 54 of them in one
+// fight, each poked, waited on for ai_think_ms, and ended "chose nothing"
+// (issue 29). Making them notice as they are drawn in was proposed, and the
+// user, 2026-10-04: "If they don't notice the party that gives the party the
+// initiative to close in and attack. I think that's a feature, not a bug";
+// and of their turns: "We can show text unaware above the enemy's head, pause
+// for about a second, then skip their turn."
+//
+// Only an enemy: an ally that perceives no hostile has its own AI's answer
+// for that, and nobody has asked for its turn to be skipped. And one that
+// perceives a foe that is not the party's (an ally of the party's it is
+// fighting) is not unaware: it has someone to choose.
+[[nodiscard]] bool Unaware(Side side, const Perception &perception);
+
+// Whether a creature that is in the fight stays in it (issue 29).
+//
+// The game itself ends combat by perception, not by a distance. When a
+// hostile drops out of a party member's perception the scripts ask whether
+// the party still perceives any hostile (IsPartyPerceivingHostiles), and if
+// not the game is back in explore mode three seconds later; a creature that
+// is not the party's leaves combat when it perceives no hostile (combat_h.nss,
+// Combat_HandleCreatureDisappear; module_core.nss,
+// EVENT_TYPE_DELAYED_GM_CHANGE). The mod had a distance of its own both
+// ways: a combatant further than combat_radius from the party's leader was
+// out of the fight, and stood frozen as one outside the order does, whoever
+// it was chasing. The user, 2026-10-04: "Once they're in the fight I think
+// they should stay in the fight for the distance that the game uses. The
+// game allows you to run away and exit a fight. Whatever distance that is,
+// that's the one we should use for fight exit, for consistency."
+//
+// So one in the fight that the scan's own rules still find fighting
+// (`fighting`: in combat within combat_radius, or drawn in unawares) stays,
+// as it always did: those rules bring it in, and it would come again at
+// once. One they no longer find stays by the engine's perception alone:
+// - an enemy, while a party member perceives it or it perceives a party
+//   member: either keeps the two in one fight by the game's own reckoning;
+// - an ally of the party's, while it perceives someone hostile to it: the
+//   test the game keeps it in combat by. Left to the radius, an ally that
+//   followed an enemy past it would stand frozen under the blows of an
+//   enemy that now stays in the fight.
+// What brings a creature into a fight is not this: one that is not in the
+// fight does not join for being perceived.
+[[nodiscard]] bool StaysInTheFight(Side side, bool fighting, const Perception &perception);
+
 // The ability table's TargetType is a mask (TARGET_TYPE_*, the scripts'
 // constants): self 1, friendly 2, hostile 4, placeable 8, area 16, ground
 // 32, body 64. UseType 2 is a mode (Shield Wall), turned on and off.

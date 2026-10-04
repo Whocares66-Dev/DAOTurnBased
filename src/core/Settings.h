@@ -159,7 +159,12 @@ struct Settings
     // as it comes (DAOLib's dao::timers::Trace): how issue 26's timers were
     // found, and how the next plot's will be.
     bool scriptTimersTrace = false;
-    float combatRadius = 50.0f; // meters from the party leader a creature may fight from and take turns
+    // Meters from the party leader within which a creature that is fighting
+    // is taken into the turns. Not a way out of them since 2026-10-04 (issue
+    // 29): one in the fight stays in it beyond this while the engine's
+    // perception keeps it there (core/Rules.h, StaysInTheFight), as the game
+    // itself ends combat by perception and not by a distance.
+    float combatRadius = 50.0f;
     // Abilities that charge for so many turns whatever their conjuring time
     // (ability id, turns): the game's own slow and ritual spells charge by
     // the rule (TurnMachine::ChargeTurns), and the base game has none.

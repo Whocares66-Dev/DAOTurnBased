@@ -44,6 +44,19 @@ struct Combatant
     // enemyTactics), and Survival, initiative (dev/REBALANCE.md).
     int tactics = 0;
     int survival = 0;
+    // The engine's perception between it and the party, and of anyone it
+    // would fight, as the scan read it (core/Types.h): a hostile that
+    // perceives nobody to fight has not noticed, and its turn is skipped
+    // (core/Rules.h, Unaware).
+    Perception perception;
+    // Found by the scan's own rules for who is fighting: in combat within
+    // combat_radius of the party's leader, or drawn in unawares
+    // (src/game/Bridge.cpp, Scan). False only for one of the fight that
+    // those rules no longer find, read all the same because the machine
+    // named it (Needs::inFight): whether it stays is then the engine's
+    // perception's to say (core/Rules.h, StaysInTheFight). It brings nobody
+    // into a fight.
+    bool fighting = true;
 };
 
 class TurnOrder

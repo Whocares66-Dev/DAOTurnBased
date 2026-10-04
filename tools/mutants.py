@@ -81,6 +81,7 @@ PORTRAITS = "src/core/Portraits.cpp"
 JSON = "src/core/Json.cpp"
 KEYS = "src/core/Keys.h"
 PREVIEW = "src/core/Preview.cpp"
+TURNEND = "src/core/TurnEnd.cpp"
 
 MUTANTS = [
     Mutant(
@@ -601,6 +602,87 @@ MUTANTS = [
         MACHINE,
         "        else if (!left_.contains(c->id) || status.down)",
         "        else if (!left_.contains(kNoObject) || status.down)",
+    ),
+    # Issue 29: leaving the fight is the engine's perception. One the scan's
+    # own rules no longer find fighting (out of combat, or beyond the radius)
+    # stays while the party perceives it or it the party.
+    Mutant(
+        "one the scan no longer finds fighting is out of the fight, perceived or not: nobody is named for it",
+        MACHINE,
+        "                needs.inFight.push_back(c.id);",
+        "",
+    ),
+    Mutant(
+        "an enemy beyond the radius leaves the fight though the party perceives it",
+        RULES,
+        "        return perception.byParty || perception.ofParty;",
+        "        return perception.ofParty;",
+    ),
+    Mutant(
+        "an enemy beyond the radius leaves the fight though it perceives the party",
+        RULES,
+        "        return perception.byParty || perception.ofParty;",
+        "        return perception.byParty;",
+    ),
+    Mutant(
+        "an enemy stays in the party's fight for perceiving someone else",
+        RULES,
+        "        return perception.byParty || perception.ofParty;",
+        "        return perception.byParty || perception.ofParty || perception.ofFoes;",
+    ),
+    Mutant(
+        "an ally beyond the radius leaves the fight though it perceives an enemy",
+        RULES,
+        "    return perception.ofFoes;",
+        "    return false;",
+    ),
+    Mutant(
+        "an ally stays in the fight for being in the party's perception",
+        RULES,
+        "    if (side == Side::Enemy)\n    {\n        return perception.byParty || perception.ofParty;",
+        "    if (side != Side::Party)\n    {\n        return perception.byParty || perception.ofParty;",
+    ),
+    Mutant(
+        "one the scan finds fighting leaves the fight when nobody perceives it",
+        RULES,
+        "    if (side == Side::Party || fighting)",
+        "    if (side == Side::Party || (fighting && side == Side::Party))",
+    ),
+    Mutant(
+        "one neither found fighting nor perceived stays in the fight for being read",
+        MACHINE,
+        "return s.id == c.id && stays(s); }))",
+        "return s.id == c.id; }))",
+    ),
+    Mutant(
+        "being perceived brings one that is not in the fight into it",
+        MACHINE,
+        "            if (in == nullptr || in->down || !stays(seen))",
+        "            if (in != nullptr && (in->down || !stays(seen)))",
+    ),
+    Mutant(
+        "being perceived brings one that left the fight back into it",
+        MACHINE,
+        "            if (in == nullptr || in->down || !stays(seen))",
+        "            if (in == nullptr || !stays(seen))",
+    ),
+    Mutant(
+        "one kept in the fight by perception is said so with every scan",
+        MACHINE,
+        "            if (afar_.insert(seen.id).second)",
+        "            if (!seen.fighting)",
+    ),
+    Mutant(
+        "one back in the fight goes on with what it took up while it was out of it",
+        MACHINE,
+        "                // seed 165, 2026-10-04).\n                fx.push_back(Effect::Of(EffectKind::ClearCommands, seen.id));",
+        "                // seed 165, 2026-10-04).",
+    ),
+    Mutant(
+        "one found fighting again and lost again is not said to stay a second time",
+        MACHINE,
+        "        if (seen.fighting)\n        {\n            afar_.erase(seen.id);",
+        "        if (seen.fighting)\n        {",
     ),
     Mutant(
         "the game's repeat of an order is told to the player",
@@ -1164,6 +1246,99 @@ MUTANTS = [
         "    if (!settings.joinBySight || sighting.fightsParty)",
         "    if (!settings.joinBySight)",
     ),
+    # Issue 29: a hostile that has noticed nobody to fight (the engine's
+    # perception) is not told its turn has come: "Unaware", a beat, the next
+    # turn.
+    Mutant(
+        "an unaware hostile is told its turn has come, and waited on",
+        MACHINE,
+        "    if (UnawareNow(who))\n    {\n        unaware_ = true;",
+        "    if (false)\n    {\n        unaware_ = true;",
+    ),
+    Mutant(
+        "an unaware hostile's turn is skipped at once, with no beat",
+        MACHINE,
+        "        deadline_ = clock_ + kUnawareMs;",
+        "        deadline_ = clock_;",
+    ),
+    Mutant(
+        "an unaware hostile's turn never ends",
+        MACHINE,
+        '        if (clock_ >= deadline_)\n        {\n            EndTurn(fx, "unaware");',
+        '        if (false)\n        {\n            EndTurn(fx, "unaware");',
+    ),
+    Mutant(
+        "Unaware is not said over a hostile whose turn is skipped",
+        MACHINE,
+        '        Floaty(fx, who.id, L"Unaware", kGrey);',
+        "",
+    ),
+    Mutant(
+        "an unaware hostile's name floats beside Unaware",
+        MACHINE,
+        "    else if (!UnawareNow(who))",
+        "    else",
+    ),
+    Mutant(
+        "an unaware hostile that notices in its beat is not told until its next turn",
+        MACHINE,
+        "        if (current != nullptr && !UnawareNow(*current))",
+        "        if (current != nullptr && !UnawareNow(*current) && current == nullptr)",
+    ),
+    Mutant(
+        "an unaware hostile that notices in its beat is told on a look half a second old",
+        MACHINE,
+        "            if (lastStatusNow_ != lastNow_)\n            {\n                statusWanted_ = true;\n                return;",
+        "            if (lastStatusNow_ != lastNow_ && current == nullptr)\n            {\n                statusWanted_ = true;\n                return;",
+    ),
+    Mutant(
+        "whether the acting creature has noticed is the scan's word, not the frame's",
+        MACHINE,
+        "    return Unaware(who.side, looked ? seenActor_->perception : who.perception);",
+        "    return Unaware(who.side, looked ? who.perception : who.perception);",
+    ),
+    Mutant(
+        "a hostile that perceives nobody is told to choose again after a command of its own",
+        MACHINE,
+        "    if (!player && UnawareNow(*current))",
+        "    if (!player && UnawareNow(*current) && current == nullptr)",
+    ),
+    Mutant(
+        "a command of its own in an unaware hostile's beat leaves its turn to be skipped under it",
+        MACHINE,
+        "    // script's order): its turn is not skipped under it.\n    unaware_ = false;",
+        "    // script's order): its turn is not skipped under it.",
+    ),
+    Mutant(
+        "a wait of its script's ends an unaware hostile's turn as its own choice",
+        MACHINE,
+        "        if (!player && unaware_)\n        {\n            return Verdict::Block;",
+        "        if (!player && unaware_ && who == nullptr)\n        {\n            return Verdict::Block;",
+    ),
+    Mutant(
+        "a hostile that perceives a foe that is not the party's is taken for unaware",
+        RULES,
+        "    return side == Side::Enemy && !perception.inCombat && !perception.ofParty && !perception.ofFoes;",
+        "    return side == Side::Enemy && !perception.inCombat && !perception.ofParty;",
+    ),
+    Mutant(
+        "a hostile that perceives the party is taken for unaware, perceiving no other foe",
+        RULES,
+        "    return side == Side::Enemy && !perception.inCombat && !perception.ofParty && !perception.ofFoes;",
+        "    return side == Side::Enemy && !perception.inCombat && !perception.ofFoes;",
+    ),
+    Mutant(
+        "a hostile the game has in combat is skipped as unaware when it perceives nobody",
+        RULES,
+        "    return side == Side::Enemy && !perception.inCombat && !perception.ofParty && !perception.ofFoes;",
+        "    return side == Side::Enemy && !perception.ofParty && !perception.ofFoes;",
+    ),
+    Mutant(
+        "an ally that perceives nobody has its turn skipped as unaware",
+        RULES,
+        "    return side == Side::Enemy && !perception.inCombat && !perception.ofParty && !perception.ofFoes;",
+        "    return side != Side::Party && !perception.inCombat && !perception.ofParty && !perception.ofFoes;",
+    ),
     Mutant(
         "effects are never aged a round",
         MACHINE,
@@ -1332,6 +1507,80 @@ MUTANTS = [
         MACHINE,
         "budget_.spend.Finish(TimeFromTactics(TacticsOf(*current)).rolloverCapMs);",
         "budget_.spend.Finish(1000);",
+    ),
+    # Issue 29: time rolls over only from a turn its actor ended itself; each
+    # reason a turn ends for has its class in core/TurnEnd.cpp.
+    Mutant(
+        "time: a turn its actor did not end rolls its time over",
+        MACHINE,
+        "            const std::uint32_t rolled = saved ? unspent : 0;",
+        "            const std::uint32_t rolled = unspent;",
+    ),
+    Mutant(
+        "time: an unaware hostile's skipped turn rolls its time over",
+        TURNEND,
+        'TurnEnd{"unaware", false},',
+        'TurnEnd{"unaware", true},',
+    ),
+    Mutant(
+        "time: an AI that chose nothing rolls its time over",
+        TURNEND,
+        'TurnEnd{"chose nothing", false},',
+        'TurnEnd{"chose nothing", true},',
+    ),
+    Mutant(
+        "time: a turn stopped as too long rolls its time over",
+        TURNEND,
+        'TurnEnd{"took too long", false},',
+        'TurnEnd{"took too long", true},',
+    ),
+    Mutant(
+        "time: an AI with nothing it can get to rolls its time over",
+        TURNEND,
+        'TurnEnd{"nothing it can get to", false},',
+        'TurnEnd{"nothing it can get to", true},',
+    ),
+    Mutant(
+        "time: an AI stopped where its movement ran out rolls time over",
+        TURNEND,
+        'TurnEnd{"out of movement", false},',
+        'TurnEnd{"out of movement", true},',
+    ),
+    Mutant(
+        "time: a creature that fell in its own turn rolls its time over",
+        TURNEND,
+        'TurnEnd{"fell", false},',
+        'TurnEnd{"fell", true},',
+    ),
+    Mutant(
+        "time: a turn lost to an effect that holds its creature rolls its time over",
+        TURNEND,
+        'TurnEnd{"held by an effect", false},',
+        'TurnEnd{"held by an effect", true},',
+    ),
+    Mutant(
+        "time: an AI that is done with time left rolls nothing over",
+        TURNEND,
+        'TurnEnd{"done", true},',
+        'TurnEnd{"done", false},',
+    ),
+    Mutant(
+        "time: an AI that waits rolls nothing over",
+        TURNEND,
+        'TurnEnd{"waits", true},',
+        'TurnEnd{"waits", false},',
+    ),
+    Mutant(
+        "time: a turn the player ended rolls nothing over",
+        TURNEND,
+        'TurnEnd{"ended by the player", true},',
+        'TurnEnd{"ended by the player", false},',
+    ),
+    Mutant(
+        "time: a turn ended for a reason with no class rolls its time over",
+        TURNEND,
+        "    return EndedByItsActor(why).value_or(false);",
+        "    return EndedByItsActor(why).value_or(true);",
     ),
     Mutant(
         "time: enemies have no Combat Tactics by rank",
@@ -1627,9 +1876,9 @@ MUTANTS = [
     ),
     Mutant(
         "time: a turn cut short by a hold rolls its time over",
-        MACHINE,
-        "                // Taken by the hold, not banked: nothing of it rolls over.\n                budget_.spend.SpendAllActions();",
-        "                // Taken by the hold, not banked: nothing of it rolls over.",
+        TURNEND,
+        'TurnEnd{"stunned", false},',
+        'TurnEnd{"stunned", true},',
     ),
     Mutant(
         "time: a hold taken off still costs its time",
@@ -1679,6 +1928,18 @@ MUTANTS = [
         MACHINE,
         "    if (lastStatusNow_ != lastNow_)\n    {\n        statusWanted_ = true;\n        return;\n    }",
         "    if (lastStatusNow_ <= lastNow_)\n    {\n        statusWanted_ = true;\n        return;\n    }",
+    ),
+    Mutant(
+        "everyone is looked at under a menu, where nothing is done with it: the look after is half a second on",
+        MACHINE,
+        "    if (lastMode_ != Mode::Gui &&\n",
+        "    if (lastMode_ != Mode::Unknown &&\n",
+    ),
+    Mutant(
+        "a look that came with a menu's first frame is not asked for again",
+        MACHINE,
+        "        statusWanted_ = statusWanted_ || !obs.statuses.empty();",
+        "",
     ),
     Mutant(
         "a scan fills every card's mana or stamina",

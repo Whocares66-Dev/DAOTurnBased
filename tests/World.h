@@ -52,7 +52,35 @@ struct Creature
     // reads it of the engine each frame (ActorObservation::approaching). A
     // case says so for an attacker that cannot get to its target.
     bool approaching = false;
+    // The engine's perception between it and the party, and of anyone it
+    // would fight, as the game layer reads it with every scan and, of the
+    // acting creature, every frame (issue 29). Everything, unless a case
+    // says otherwise: Unnoticing() for a hostile that has not noticed.
+    Perception perception;
 };
+
+// A hostile the party perceives that the game does not have in combat and
+// that perceives nobody to fight: it has not noticed (core/Rules.h, Unaware).
+inline Perception Unnoticing()
+{
+    Perception perception;
+    perception.ofParty = false;
+    perception.ofFoes = false;
+    perception.inCombat = false;
+    return perception;
+}
+
+// One the party has lost, and that has lost the party: neither perceives the
+// other (it may perceive whom else it fights). With `fighting` false, that
+// is one out of the fight by the game's own reckoning (core/Rules.h,
+// StaysInTheFight); with `fighting` false alone it is still in it.
+inline Perception Unperceived()
+{
+    Perception perception;
+    perception.byParty = false;
+    perception.ofParty = false;
+    return perception;
+}
 
 inline Creature Make(ObjectId id, Side side, bool hero, std::wstring name, float dexterity)
 {
@@ -152,8 +180,14 @@ class World
             std::vector<Combatant> seen;
             for (const Creature &c : creatures)
             {
-                // As the game's scan: the party, and living creatures in combat.
-                if (!c.exists || (c.side != Side::Party && (c.down || !c.fighting || !inCombat)))
+                // As the game's scan: the party, and living creatures in
+                // combat. And of those the machine named as in the fight
+                // (Needs::inFight), the living ones that are not found so:
+                // read all the same, with their perception, which is what
+                // keeps them in it or does not (issue 29).
+                const bool found = c.side == Side::Party || (!c.down && c.fighting && inCombat);
+                const bool named = !c.down && std::ranges::find(needs.inFight, c.id) != needs.inFight.end();
+                if (!c.exists || (!found && !named))
                 {
                     continue;
                 }
@@ -172,6 +206,8 @@ class World
                 // Its health as the scan reads it; not its mana or stamina,
                 // which the game's scan does not read (Bridge::Describe).
                 x.health = c.down ? 0.0f : c.health;
+                x.perception = c.perception;
+                x.fighting = found;
                 seen.push_back(x);
             }
             obs.scan = seen;
@@ -179,8 +215,8 @@ class World
         if (needs.actor != kNoObject)
         {
             const Creature &c = Get(needs.actor);
-            obs.actor = ActorObservation{c.id,      c.exists,   c.down,        c.busy,       c.moving,
-                                         c.current, c.position, c.conjureHeld, c.timersHeld, c.approaching};
+            obs.actor = ActorObservation{c.id,       c.exists,      c.down,       c.busy,        c.moving,    c.current,
+                                         c.position, c.conjureHeld, c.timersHeld, c.approaching, c.perception};
         }
         for (const ObjectId id : needs.statuses)
         {

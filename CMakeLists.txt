@@ -123,6 +123,7 @@ add_library(
     src/core/TurnMachine.cpp
     src/core/TurnOrder.cpp
     src/core/TurnBudget.cpp
+    src/core/TurnEnd.cpp
     src/core/TurnTime.cpp
 )
 tb_apply_warnings(tb_core)

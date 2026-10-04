@@ -75,6 +75,9 @@ class Bridge
     std::optional<bool> byRooms_; // whether the last scan went by the rooms seen (Scan)
     std::unordered_set<ObjectId>
         unawares_; // hostiles in the fight though they have not noticed, as of the last scan (Scan)
+    // The party as the last scan found it: whose perception of the acting
+    // creature, and its of them, is read each frame (Actor).
+    std::vector<ObjectId> party_;
     // Creatures whose kept cast or action was not given, its target gone
     // and, for a plain attack, no enemy in its reach to turn it on (Apply,
     // ReleaseCast): told to the machine with the next observation.
@@ -89,7 +92,7 @@ class Bridge
         int survival = 0;   // Survival's
     };
 
-    std::vector<Combatant> Scan();
+    std::vector<Combatant> Scan(const std::vector<ObjectId> &inFight);
     Combatant Describe(ObjectId id, Side side, bool hero);
     ActorObservation Actor(ObjectId id);
     CombatantStatus Status(ObjectId id);

@@ -73,6 +73,14 @@ struct Needs
     bool scan = false;              // everyone fighting near the party (a Combatant each)
     ObjectId actor = kNoObject;     // the one whose turn it is, closely
     std::vector<ObjectId> statuses; // health and standing of these
+    // With a scan: the enemies and allies standing in the fight. Each is to
+    // be in the scan while it lives, whether or not the scan's own rules for
+    // who is fighting still find it (Combatant::fighting says which), with
+    // the engine's perception between it and the party: one out of combat or
+    // beyond combat_radius stays in the fight while that perception holds
+    // (core/Rules.h, StaysInTheFight; issue 29). The machine names who, the
+    // game says what is so of each, and core decides.
+    std::vector<ObjectId> inFight;
 };
 
 struct ActorObservation
@@ -95,6 +103,13 @@ struct ActorObservation
     // until 2026-10-04 it worked that out for itself, from a walk it had
     // reckoned, and stopped 67 shots in one fight (issue 11).
     bool approaching = false;
+    // The engine's perception between it and the party, and of anyone it
+    // would fight, as of this frame (core/Types.h; the scan reads the same
+    // of everyone as a turn begins, Combatant::perception): a hostile that
+    // perceives nobody to fight is unaware, and is not told its turn has
+    // come (core/Rules.h, Unaware). Read each frame so that it acts from the
+    // moment it notices.
+    Perception perception;
 };
 
 // What holds a creature, as far as turns go: disabled, it cannot act
@@ -590,6 +605,13 @@ class TurnMachine
     // over, action and all, within two and a half (the playthrough of issue
     // 3, 2026-10-03).
     static constexpr std::uint32_t kGetUpMs = 5000;
+    // How long "Unaware" stands over a hostile that has noticed nobody to
+    // fight before its turn is skipped (unaware_), of the fight's clock (the
+    // world's time, as an AI's thinking is: at twice the speed half as long
+    // on the wall). The user, 2026-10-04 (issue 29): "We can show text
+    // unaware above the enemy's head, pause for about a second, then skip
+    // their turn."
+    static constexpr std::uint32_t kUnawareMs = 1000;
     // An action whose time the engine was read to take, a second or more,
     // and whose command was over in under a quarter of it, did not play:
     // its time is given back (OverAtOnce).
@@ -811,6 +833,14 @@ class TurnMachine
     // say) holds it as a stun does, and with effects' time held its command
     // may outlast the turn (a pin's did, 2026-09-30).
     bool heldByEffect_ = false;
+    // The current combatant is a hostile that has noticed nobody to fight
+    // (core/Rules.h, Unaware), in the beat its turn is skipped after
+    // (kUnawareMs): "Unaware" is over it, its AI has not been told its turn
+    // has come, and the world runs. Over as it notices (its AI is told
+    // then), as a command of its own is let through all the same (a
+    // script's order), or as the beat ends and its turn with it.
+    bool unaware_ = false;
+    [[nodiscard]] bool UnawareNow(const Combatant &who) const;
     // The current creature as the frame saw it: at a turn's start, the one
     // whose turn begins (the turn-start frame observes it). An AI held by
     // an effect is not told its turn has come, since it would choose at
@@ -972,6 +1002,10 @@ class TurnMachine
     static constexpr std::uint32_t kRefusedEventMs = 1000;
     // Fighting near, but not the party (Combatant::engaged): said once each.
     std::unordered_set<ObjectId> outside_;
+    // In the fight by the engine's perception alone, the scan's rules for
+    // who is fighting no longer finding them (Combatant::fighting false,
+    // StaysInTheFight): said once each, and again if it happens again.
+    std::unordered_set<ObjectId> afar_;
     // A scan asked for by a creature outside the order, and when: one
     // waiting outside the fight asks with every command it tries.
     std::optional<std::uint32_t> outsiderScanNow_;

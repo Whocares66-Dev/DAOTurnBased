@@ -322,6 +322,24 @@ bool FightsUnawares(bool partyInCombat, bool someoneToFight, bool drawnIn, const
     return !someoneToFight && sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;
 }
 
+bool Unaware(Side side, const Perception &perception)
+{
+    return side == Side::Enemy && !perception.inCombat && !perception.ofParty && !perception.ofFoes;
+}
+
+bool StaysInTheFight(Side side, bool fighting, const Perception &perception)
+{
+    if (side == Side::Party || fighting)
+    {
+        return true;
+    }
+    if (side == Side::Enemy)
+    {
+        return perception.byParty || perception.ofParty;
+    }
+    return perception.ofFoes;
+}
+
 bool AsksForTarget(std::int32_t targetType, std::int32_t useType)
 {
     return useType != kUseTypeMode && (targetType & ~kTargetSelf) != 0;

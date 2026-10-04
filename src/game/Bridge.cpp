@@ -251,12 +251,13 @@ Observation Bridge::Observe(const Needs &needs, std::uint32_t nowMs)
         // Ids are the save's: another game can reuse them.
         known_.clear();
         keptVoid_.clear();
+        party_.clear();
         return obs;
     }
     obs.keptVoid = std::exchange(keptVoid_, {});
     if (needs.scan)
     {
-        obs.scan = Scan();
+        obs.scan = Scan(needs.inFight);
     }
     if (needs.actor != kNoObject)
     {
@@ -310,9 +311,39 @@ Sighting Sight(ObjectId id, const std::vector<ObjectId> &party, const std::optio
     });
     return sighting;
 }
+
+// What the engine's perception says of a creature that is not the party's
+// (core: Perception; issue 29): whether a party member perceives it, whether
+// it perceives a party member, and whether it perceives anyone hostile to
+// it. The engine's own lists, asked through the scripts' calls: IsPerceiving
+// (A, B) is whether B is on A's perception list, "a cheap check ... it does
+// not perform expensive line of sight checking" (script.ldf), and
+// IsPerceivingHostiles is the test the game's own scripts take a creature
+// out of combat by (combat_h.nss, Combat_HandleCreatureDisappear). What a
+// creature has noticed is the engine's to say; the mod keeps no distance or
+// line of sight of its own for it. Not yet seen in play.
+Perception Perceived(ObjectId id, const std::vector<ObjectId> &party)
+{
+    Perception perception;
+    perception.byParty =
+        std::ranges::any_of(party, [&](ObjectId member) { return api::IsPerceiving(member, id) != 0; });
+    perception.ofParty =
+        std::ranges::any_of(party, [&](ObjectId member) { return api::IsPerceiving(id, member) != 0; });
+    perception.ofFoes = api::IsPerceivingHostiles(id) != 0;
+    // And the game's own word for its having noticed an enemy: its combat
+    // state, which the scripts set as it perceives a hostile and run its
+    // combat AI by (rules_core.nss).
+    perception.inCombat = api::GetCombatState(id) != 0;
+    return perception;
+}
 } // namespace
 
-std::vector<Combatant> Bridge::Scan()
+// Who is fighting near the party, by the rules that bring a creature into a
+// fight; and, of those the machine has in the fight already (inFight), the
+// living ones those rules no longer find, each with what the engine's
+// perception says of it, which is what keeps it in the fight or does not
+// (core: StaysInTheFight; issue 29).
+std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
 {
     std::vector<Combatant> out;
     const ObjectId hero = api::GetHero();
@@ -339,6 +370,7 @@ std::vector<Combatant> Bridge::Scan()
         }
     }
     const std::vector<ObjectId> members(seen.begin(), seen.end());
+    party_ = members; // for the acting creature's perception, read every frame (Actor)
     std::size_t outside = 0;
     // Those the player cannot see fighting, each with its room as the game
     // has it (seen: 0 never, 1 in view, 2 before; load: 0 loading, 1
@@ -377,6 +409,19 @@ std::vector<Combatant> Bridge::Scan()
     }
     const auto add = [&](ObjectId id, Side side, bool unaware = false) {
         Combatant c = Describe(id, side, false);
+        // What it has noticed, and whether the party has noticed it, by the
+        // engine's perception: a hostile that perceives nobody to fight has
+        // its turn skipped (core: Unaware). Said at debug for one that
+        // perceives nobody, each scan: a play test reads there when it
+        // noticed.
+        c.perception = Perceived(id, members);
+        if (!c.perception.ofParty && !c.perception.ofFoes)
+        {
+            spdlog::debug("{:#x} perceives no party member and nobody hostile to it, and is {} combat; the party "
+                          "{} it",
+                          id, c.perception.inCombat ? "in" : "not in",
+                          c.perception.byParty ? "perceives" : "does not perceive");
+        }
         // One drawn in though it has not noticed is in the party's fight by
         // the rule that drew it in (seen, within the join radius).
         if (settings_.joinBySight && !unaware)
@@ -403,6 +448,10 @@ std::vector<Combatant> Bridge::Scan()
     };
     // The game's own question for who is fighting the party (UT_Surrender,
     // utility_h.nss): the nearest living hostiles, those in combat.
+    // combat_radius is how far from the leader a fight takes a creature in
+    // from. It takes nobody out any more: one in the fight that this no
+    // longer finds is read further down, and stays by the engine's
+    // perception (issue 29).
     const auto fighting = [&](ObjectId id) {
         return api::IsObjectValid(id) != 0 && !seen.contains(id) && api::GetCombatState(id) != 0 &&
                api::GetDistanceBetween(leader, id) <= settings_.combatRadius;
@@ -473,9 +522,40 @@ std::vector<Combatant> Bridge::Scan()
             add(id, Side::Ally);
         }
     }
+    // Those the machine has in the fight that nothing above found (issue
+    // 29): out of combat, or further than combat_radius from the leader.
+    // Until 2026-10-04 that was the end of them: left out of the scan, they
+    // were out of the fight four seconds later, and stood where they were as
+    // any creature outside the order does, whoever they were chasing. The
+    // game itself keeps a fight by perception, not by a distance
+    // (combat_h.nss, Combat_HandleCreatureDisappear), so each is read with
+    // the engine's perception between it and the party, and core decides
+    // whether it stays (StaysInTheFight). Its side is the game's word as of
+    // now: one that has surrendered is no enemy. Not yet seen in play.
+    std::size_t afar = 0;
+    for (const ObjectId id : inFight)
+    {
+        if (seen.contains(id) || api::IsObjectValid(id) == 0 || api::IsDead(id) != 0)
+        {
+            continue;
+        }
+        seen.insert(id);
+        Combatant c = Describe(id, api::IsObjectHostile(leader, id) != 0 ? Side::Enemy : Side::Ally, false);
+        c.fighting = false;
+        c.perception = Perceived(id, members);
+        ++afar;
+        spdlog::debug("{:#x} is in the fight and not found fighting (combat state {}, {:.0f} m from the leader): "
+                      "the party {} it; it perceives {}, {}",
+                      id, api::GetCombatState(id), api::GetDistanceBetween(leader, id),
+                      c.perception.byParty ? "perceives" : "does not perceive",
+                      c.perception.ofParty ? "a party member" : "no party member",
+                      c.perception.ofFoes ? "someone hostile to it" : "nobody hostile to it");
+        out.push_back(std::move(c));
+    }
     spdlog::debug("scan: {} in the party, {} hostiles near, {} others near; {} fighting, {} of them not the "
-                  "party{}{}",
-                  party.Size(), hostiles.Size(), others.Size(), out.size(), outside, rooms.empty() ? "" : ":", rooms);
+                  "party{}{}; {} of the fight not found fighting",
+                  party.Size(), hostiles.Size(), others.Size(), out.size() - afar, outside, rooms.empty() ? "" : ":",
+                  rooms, afar);
     return out;
 }
 
@@ -626,6 +706,31 @@ ActorObservation Bridge::Actor(ObjectId id)
     actor.position = {position.x, position.y, position.z};
     actor.conjureHeld = dao::commands::ConjureHeld(id) && dao::commands::Conjure(id).has_value();
     actor.timersHeld = dao::timers::Waiting(id) > 0;
+    // What it has noticed, as of this frame (core: ActorObservation::
+    // perception): a hostile that perceives nobody to fight is not told its
+    // turn has come, and one that notices in its turn is told then (issue
+    // 29). The party's own is not asked about. A few reads of the engine's
+    // perception lists: IsPerceivingHostiles, and IsPerceiving of each party
+    // member until one answers yes.
+    if (std::ranges::find(party_, id) == party_.end())
+    {
+        actor.perception = Perceived(id, party_);
+        // Said as it changes, at debug: when a creature noticed is what a
+        // play test's log is read for.
+        static ObjectId lastWho = dao::kInvalidObject;
+        static bool lastUnaware = false;
+        const bool unaware = !actor.perception.inCombat && !actor.perception.ofParty && !actor.perception.ofFoes;
+        if (id != lastWho || unaware != lastUnaware)
+        {
+            lastWho = id;
+            lastUnaware = unaware;
+            spdlog::debug("{:#x} on its turn: it is {} combat, and perceives {}, {}; the party {} it", id,
+                          actor.perception.inCombat ? "in" : "not in",
+                          actor.perception.ofParty ? "a party member" : "no party member",
+                          actor.perception.ofFoes ? "someone hostile to it" : "nobody hostile to it",
+                          actor.perception.byParty ? "perceives" : "does not perceive");
+        }
+    }
     return actor;
 }
 
@@ -1038,13 +1143,19 @@ void Bridge::Explain(ObjectId id)
     {
         current = api::GetCommandType(*command.get());
     }
+    // And whether it perceives anyone to choose (issue 29): one not in
+    // combat that perceives no party member and no hostile is not told its
+    // turn has come at all, so this line with "combat state 0" and
+    // "perceiving hostiles 0" is worth a look.
     spdlog::info("{} ({:#010x}) chose nothing: combat state {}, disabled flags {:#x}, stun {} paralyze {} "
-                 "knockdown {} daze {} sleep {}, current command {}, {} queued, light AI {}, custom AI {}",
+                 "knockdown {} daze {} sleep {}, current command {}, {} queued, light AI {}, custom AI {}, "
+                 "perceiving hostiles {}",
                  Utf8(Remember(id).name), id, api::GetCombatState(id), api::GetEffectsFlags(id),
                  api::GetHasEffects(id, k::EFFECT_TYPE_STUN), api::GetHasEffects(id, k::EFFECT_TYPE_PARALYZE),
                  api::GetHasEffects(id, k::EFFECT_TYPE_KNOCKDOWN), api::GetHasEffects(id, k::EFFECT_TYPE_DAZE),
                  api::GetHasEffects(id, k::EFFECT_TYPE_SLEEP), current, api::GetCommandQueueSize(id),
-                 api::GetLocalInt(id, L"AI_LIGHT_ACTIVE"), api::GetLocalInt(id, L"AI_CUSTOM_AI_ACTIVE"));
+                 api::GetLocalInt(id, L"AI_LIGHT_ACTIVE"), api::GetLocalInt(id, L"AI_CUSTOM_AI_ACTIVE"),
+                 api::IsPerceivingHostiles(id));
 }
 
 void Bridge::Signal(const Effect &effect)

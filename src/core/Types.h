@@ -46,6 +46,29 @@ enum class Side : std::uint8_t
     Enemy,
 };
 
+// What the engine's perception says of a creature that is not the party's,
+// as the game layer reads it (src/game/Bridge.cpp: the scripts' IsPerceiving,
+// asked either way of each party member, and IsPerceivingHostiles). The
+// engine keeps for each creature a list of those it perceives, and the game's
+// own rules go by it: a creature's AI chooses among the hostiles it
+// perceives, and the party's combat ends when it perceives none
+// (combat_h.nss, Combat_HandleCreatureDisappear). The mod asks, and keeps no
+// figure of its own for what a creature has noticed (issue 29). Everything
+// true where nothing was read: the party's own, and a test that says nothing.
+struct Perception
+{
+    bool byParty = true; // a party member perceives it
+    bool ofParty = true; // it perceives a party member
+    bool ofFoes = true;  // it perceives someone hostile to it, of the party or not
+    // And the game has it in combat (its combat state), which is the game's
+    // own word for its having noticed an enemy: the scripts set it as a
+    // creature perceives a hostile, drop it when it perceives none, and run a
+    // creature's combat AI on a command's end only while it is set
+    // (rules_core.nss, EVENT_TYPE_PERCEPTION_APPEAR and
+    // EVENT_TYPE_COMMAND_COMPLETE, read 2026-10-04).
+    bool inCombat = true;
+};
+
 // The game's modes, the scripts' GM_* (dao::GameMode).
 enum class Mode : std::int32_t
 {

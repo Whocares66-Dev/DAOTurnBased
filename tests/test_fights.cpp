@@ -19,7 +19,19 @@
 //      own turn, and only party members are selected;
 //   9. the current combatant's wait is never let through, and a wait takes its
 //      own length of the bar or nothing: only an AI's on its own turn, with a
-//      turn a bar of time, and only one that fits what is left (issue 31).
+//      turn a bar of time, and only one that fits what is left (issue 31);
+//  10. with a turn a bar of time, a turn begins with time rolled over only
+//      if its creature's last turn was ended by its actor: the player's End,
+//      an AI that was done or waited (issue 29). A turn skipped, lost or
+//      ended for its creature rolls nothing over, and every turn ends for a
+//      reason that has its class (core/TurnEnd.h);
+//  11. a hostile that has noticed nobody to fight is never told to choose:
+//      its turn is skipped after its beat, not before, and never waited out
+//      on its AI (issue 29);
+//  12. nobody is taken out of a fight while the engine's perception keeps it
+//      there (an enemy the party perceives or that perceives the party, an
+//      ally that perceives an enemy), however far it has gone; and nobody
+//      the scan's rules do not find fighting is brought into one (issue 29).
 //
 // The arena is World.h's stand-in with the creatures made to act. An AI
 // chooses when told to and whenever its command ends, as COMMAND_COMPLETE
@@ -31,6 +43,7 @@
 #include "World.h"
 
 #include "core/Rules.h"
+#include "core/TurnEnd.h"
 #include "core/TurnMachine.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -122,36 +135,63 @@ struct Coverage
     int roundsAged = 0;
     int ownAged = 0; // a creature's own clock moved (Settings::ownClocks)
     // With a turn a bar of time.
-    int kept = 0;           // actions that did not fit, kept for a later turn
-    int landed = 0;         // kept actions given again and let through
-    int conjured = 0;       // spells given to the engine to conjure, held
-    int grabs = 0;          // abilities whose own effect held their creature and their target
-    int conjureLanded = 0;  // of them, let complete as their time was paid
-    int conjureCleared = 0; // of them, cleared by the game before (rules_core, a knockdown)
-    int wholeTurns = 0;     // turns spent whole on what a kept action owed
-    int owed = 0;           // actions that ran and owed time to the next turn
-    int choseAgain = 0;     // an AI told to choose again, its bar not spent
-    int rolledOver = 0;     // turns that left time to the next
-    int delays = 0;         // a party member's turn put off
-    int delayedTurns = 0;   // and taken at the round's end, as it was
-    int unplayed = 0;       // an action over at once, its time given back
-    int walkedOnAction = 0; // a walk past the bar took its action's time
-    int arrivals = 0;       // an action charged as its creature got there
-    int heldShares = 0;     // a hold shorter than a turn took its share of a bar
-    int approaches = 0;     // a kept attack's creature walked to its target
-    int targetsGone = 0;    // a kept action not given, its target gone
-    int turned = 0;         // a kept attack given at another in its reach, its target gone
-    int waitsPaid = 0;      // an AI's wait taken of its bar, its length (issue 31)
-    int waitsTooLong = 0;   // an AI's wait longer than what was left: its turn ended
+    int kept = 0;            // actions that did not fit, kept for a later turn
+    int landed = 0;          // kept actions given again and let through
+    int conjured = 0;        // spells given to the engine to conjure, held
+    int grabs = 0;           // abilities whose own effect held their creature and their target
+    int conjureLanded = 0;   // of them, let complete as their time was paid
+    int conjureCleared = 0;  // of them, cleared by the game before (rules_core, a knockdown)
+    int wholeTurns = 0;      // turns spent whole on what a kept action owed
+    int owed = 0;            // actions that ran and owed time to the next turn
+    int choseAgain = 0;      // an AI told to choose again, its bar not spent
+    int rolledOver = 0;      // turns that left time to the next
+    int forfeited = 0;       // turns not ended by their actors, with time left that did not roll over
+    int unawareTurns = 0;    // turns of hostiles that had noticed nobody, skipped
+    int noticed = 0;         // of those hostiles, how many noticed: struck, or by themselves
+    int noticedInBeat = 0;   // and of them, in the beat their turn was to be skipped after
+    int ranOff = 0;          // combatants gone where the scan's rules for who fights no longer find them
+    int stayedAfar = 0;      // of them, kept in the fight by the engine's perception
+    int leftUnperceived = 0; // and out of it, neither perceiving the other
+    int cameBack = 0;        // found fighting again
+    int delays = 0;          // a party member's turn put off
+    int delayedTurns = 0;    // and taken at the round's end, as it was
+    int unplayed = 0;        // an action over at once, its time given back
+    int walkedOnAction = 0;  // a walk past the bar took its action's time
+    int arrivals = 0;        // an action charged as its creature got there
+    int heldShares = 0;      // a hold shorter than a turn took its share of a bar
+    int approaches = 0;      // a kept attack's creature walked to its target
+    int targetsGone = 0;     // a kept action not given, its target gone
+    int turned = 0;          // a kept attack given at another in its reach, its target gone
+    int waitsPaid = 0;       // an AI's wait taken of its bar, its length (issue 31)
+    int waitsTooLong = 0;    // an AI's wait longer than what was left: its turn ended
 };
 
 class Arena
 {
   public:
-    Arena(std::uint64_t seed, Coverage &coverage, TurnClock clock = TurnClock::Actions)
-        : rng_(seed), reach_(seed ^ 0x22EAC4ull), waits_(seed ^ 0x3A175ull), settings_(RandomSettings(rng_, clock)),
-          world_(settings_, RandomFight(rng_, clock), seed), coverage_(coverage)
+    // strays: the fight has hostiles that have not noticed the party, and
+    // combatants that go where the scan's own rules no longer find them
+    // fighting (issue 29). A choice of the test's, not a draw, and all of it
+    // drawn on a stream of its own: a fight without them is draw for draw the
+    // fight it was before there were any, and what the eighty default fights
+    // reach, which the floors and the mutants were set against, is as it was.
+    // With them in three fights of ten of the default eighty, the fights
+    // took other courses and one floor was no longer reached (an action over
+    // at once, given back: 2 where 8 had been).
+    Arena(std::uint64_t seed, Coverage &coverage, TurnClock clock = TurnClock::Actions, bool strays = false)
+        : rng_(seed), reach_(seed ^ 0x22EAC4ull), waits_(seed ^ 0x3A175ull), notice_(seed ^ 0x29A11ull),
+          settings_(RandomSettings(rng_, clock)), world_(settings_, RandomFight(rng_, clock), seed),
+          coverage_(coverage), runners_(strays)
     {
+        // The engine's perception says of these that they perceive nobody
+        // to fight; the party perceives them.
+        for (Creature &c : world_.creatures)
+        {
+            if (strays && c.side == Side::Enemy && Chance(notice_, 0.5))
+            {
+                c.perception = Unnoticing();
+            }
+        }
         world_.record = false;
         world_.machine.SetLogLevel(LogLevel::Info); // the turns, for a failure's message
         world_.onPoke = [this](ObjectId id) { Decide(id, false); };
@@ -302,6 +342,26 @@ class Arena
             {
                 ++coverage_.rolledOver;
             }
+            if (line.find("; nothing rolls over, its actor not having ended it") != std::string_view::npos)
+            {
+                ++coverage_.forfeited;
+            }
+            // An unaware hostile's beat begins: its turn is skipped when it
+            // is out, not before (11).
+            if (line.find(": unaware, its AI is not told") != std::string_view::npos)
+            {
+                FollowTurn();
+                beatOf_ = world_.Current();
+                beatFromMs_ = turnRunMs_;
+            }
+            if (line.find(" has noticed someone to fight") != std::string_view::npos)
+            {
+                ++coverage_.noticedInBeat;
+            }
+            if (line.find(", and stays in the fight: ") != std::string_view::npos)
+            {
+                ++coverage_.stayedAfar;
+            }
             recent_.emplace_back(line);
             if (recent_.size() > 40)
             {
@@ -319,6 +379,7 @@ class Arena
         for (; frame < kMaxFrames; ++frame)
         {
             Tick();
+            grabbedBefore_ = world_.machine.OwnEffectTarget();
             world_.Frame(kFrameMs);
             Check();
             held = held || world_.machine.Active();
@@ -466,6 +527,7 @@ class Arena
             turnMeters_ = 0.0f;   // with time, read as the machine begins the turn (onLog)
             heldAtStart_ = false; // judged as the machine begins the turn (onLog)
             turnBeganAtMs_ = 0;
+            told_ = kNoObject;
         }
     }
 
@@ -684,6 +746,10 @@ class Arena
         {
             return; // a stunned creature's AI chooses nothing (_AI_IsCommandValid)
         }
+        if (Unaware(c.side, c.perception))
+        {
+            return; // nor one that perceives nobody to fight: it has nobody to choose
+        }
         if (PlayerControls(id))
         {
             // One not yet selected has its full AI run, which waits when it
@@ -784,6 +850,10 @@ class Arena
             Must(e.target == world_.Current(), "an AI told to choose out of its turn");
             Must(!PlayerControls(e.target), "the AI told to choose for a creature the player controls");
             Must(world_.Get(e.target).condition != Condition::Disabled, "a stunned creature's AI told to act");
+            Must(!Unaware(world_.Get(e.target).side, world_.Get(e.target).perception),
+                 "a hostile that has noticed nobody to fight told to choose");
+            FollowTurn();
+            told_ = e.target;
             break;
         case EffectKind::Select:
             Must(world_.Get(e.target).side == Side::Party, "a creature not in the party selected");
@@ -825,9 +895,14 @@ class Arena
                      "a creature's own clock moved with own clocks off");
                 Must(ownClock_.contains(e.target), "a creature's own clock moved though it was never put on one");
                 // (Or the target of the acting creature's own effect: a grab
-                // holds both, and both clocks move by its steps.)
+                // holds both, and both clocks move by its steps. As the
+                // machine has it now, or had it as this frame began: a step
+                // of the effect and the turn's end, stopped as too long, came
+                // in one frame, and the turn ended forgets its target: the
+                // long run with combatants out of reach, seed 86 with time,
+                // 2026-10-04.)
                 Must(e.target == world_.Current() || e.target == lastCurrent_ || turnsThisFrame_.contains(e.target) ||
-                         e.target == world_.machine.OwnEffectTarget(),
+                         e.target == world_.machine.OwnEffectTarget() || e.target == grabbedBefore_,
                      "a creature's own clock moved outside its own turn");
                 Must(e.b > 0, "a creature's own clock moved by nothing");
                 ++coverage_.ownAged;
@@ -850,10 +925,18 @@ class Arena
             break;
         case EffectKind::Cooldown:
             Must(e.target != kNoObject && e.a >= 0 && e.b >= 0, "a cooldown for nobody, or for no ability");
-            // Ready again only as its user's turn begins.
+            // Ready again only as its user's turn begins: the one last told
+            // its turn had come, or the one whose turn is beginning in this
+            // frame. With time, what a hold or a grab took of the bar as the
+            // turn began moves its clock before the scripts are told of the
+            // turn, and a cooldown that runs out in that share lifts there
+            // (the long run with combatants out of reach, seed 206 with
+            // time, 2026-10-04: the check went by the turn-start signal
+            // alone, which comes a few effects later in the same step).
             if (e.b == 0)
             {
-                Must(e.target == lastTurnStart_, "a cooldown released out of its user's turn");
+                Must(e.target == lastTurnStart_ || e.target == world_.Current(),
+                     "a cooldown released out of its user's turn");
                 ++coverage_.cooldownsReleased;
             }
             else if (e.b == TurnMachine::kCooldownHoldSeconds)
@@ -921,10 +1004,15 @@ class Arena
         }
         if (world_.mode == Mode::Dialog)
         {
-            // A cutscene's scripts move people about.
+            // A cutscene's scripts move people about. (Nobody, where the last
+            // of the party has just fallen and the enemy left is one the
+            // scan no longer finds fighting.)
             if (Chance(rng_, 0.05))
             {
-                Try(Pick(rng_, Living(&Arena::Anyone)), CommandType::MoveToLocation, Source::Script);
+                if (const auto about = Living(&Arena::Anyone); !about.empty())
+                {
+                    Try(Pick(rng_, about), CommandType::MoveToLocation, Source::Script);
+                }
             }
             Run();
             return;
@@ -938,9 +1026,113 @@ class Arena
             Run();
             OutOfTurn();
             Conditions();
+            Noticing();
+            Wandering();
         }
         Player();
         Happenings();
+    }
+
+    // Now and then one of the fight that is not the party's goes where the
+    // scan's own rules no longer find it fighting (past combat_radius of the
+    // party's leader, or out of combat), the engine's perception between it
+    // and the party as it may be (issue 29). After a while it is found
+    // fighting again, or it is lost for good, neither perceiving the other.
+    // On the stream of what is noticed, not the fight's own.
+    void Wandering()
+    {
+        for (auto it = away_.begin(); it != away_.end();)
+        {
+            Creature &c = world_.Get(it->first);
+            if (!c.down && --it->second > 0)
+            {
+                ++it;
+                continue;
+            }
+            if (!c.down && Chance(notice_, 0.5))
+            {
+                c.fighting = true;
+                c.perception = Perception{};
+                ++coverage_.cameBack;
+            }
+            else if (!c.down)
+            {
+                c.perception.byParty = false;
+                c.perception.ofParty = false;
+                c.perception.ofFoes = false;
+                c.perception.inCombat = false;
+            }
+            it = away_.erase(it);
+        }
+        if (!runners_ || !world_.machine.Active() || !Chance(notice_, 0.002))
+        {
+            return;
+        }
+        std::vector<ObjectId> standing;
+        for (const Creature &c : world_.creatures)
+        {
+            const Combatant *in = world_.machine.Order().Find(c.id);
+            if (c.side != Side::Party && c.exists && !c.down && c.fighting && in != nullptr && !in->down)
+            {
+                standing.push_back(c.id);
+            }
+        }
+        if (standing.empty())
+        {
+            return;
+        }
+        Creature &c = world_.Get(Pick(notice_, standing));
+        c.fighting = false;
+        if (c.side == Side::Enemy)
+        {
+            c.perception.byParty = Chance(notice_, 0.7);
+            c.perception.ofParty = Chance(notice_, 0.5);
+            c.perception.ofFoes = c.perception.ofParty || Chance(notice_, 0.3);
+            // In combat by the game's word while it perceives a foe; else
+            // as it may be (its combat state not yet dropped).
+            c.perception.inCombat = c.perception.ofFoes || Chance(notice_, 0.5);
+        }
+        else
+        {
+            c.perception.ofFoes = Chance(notice_, 0.7);
+        }
+        // Six seconds or more of running time, past the four a combatant must
+        // be missing to have left, and not so long that the fight drags on
+        // around those the party cannot get at.
+        away_[c.id] = 400 + static_cast<int>(notice_.Next() % 400);
+        ++coverage_.ranOff;
+    }
+
+    // Whether the engine's perception keeps a creature in the fight, the
+    // arena's own word for it (12): an enemy the party perceives or that
+    // perceives the party; an ally that perceives an enemy.
+    static bool Perceived(const Creature &c)
+    {
+        return c.side == Side::Enemy ? c.perception.byParty || c.perception.ofParty : c.perception.ofFoes;
+    }
+
+    // A hostile that had noticed nobody notices: struck (the game's own
+    // rules_core makes a creature perceive its attacker), or the party come
+    // into its perception as the world runs.
+    void Notices(Creature &c)
+    {
+        if (Unaware(c.side, c.perception))
+        {
+            c.perception = Perception{};
+            ++coverage_.noticed;
+        }
+    }
+    void Noticing()
+    {
+        for (Creature &c : world_.creatures)
+        {
+            // Seldom, so that turns are skipped; oftener in its own turn, so
+            // that some notice inside the beat.
+            if (!c.down && Unaware(c.side, c.perception) && Chance(notice_, c.id == world_.Current() ? 0.004 : 0.0003))
+            {
+                Notices(c);
+            }
+        }
     }
 
     // Commands progress while the game runs.
@@ -1048,6 +1240,7 @@ class Arena
             if (done.type == CommandType::Attack && done.target != kNoObject)
             {
                 Creature &victim = world_.Get(done.target);
+                Notices(victim);
                 const double kill = victim.side == Side::Party ? 0.05 : 0.35;
                 if (!victim.down && Chance(rng_, kill))
                 {
@@ -1335,6 +1528,11 @@ class Arena
             Must(!turnOpen_, "a fight began inside a turn");
             roundStarted_ = false;
             delayed_.clear();
+            endedWhy_.clear(); // nothing rolls over from one fight to the next
+            // And its rounds are counted anew: a second fight in the same
+            // combat (the last enemy lost, and then found fighting again)
+            // has a round 1 of its own.
+            started_.clear();
             break;
         case EventKind::RoundStarted:
             roundStarted_ = true;
@@ -1367,6 +1565,22 @@ class Arena
             Must(!turnOpen_, "a turn opened while another was open");
             Must(e.who == world_.Current(), "a turn opened for someone not current");
             turnOpen_ = true;
+            // Time rolled over into this turn only from one its actor ended
+            // (10). The arena's own word for which those are: the three ends
+            // that can leave time unspent by the actor's choice.
+            if (e.kind == EventKind::TurnStarted && world_.machine.View().rolledMs > 0)
+            {
+                const auto last = endedWhy_.find(e.who);
+                const bool saved = last != endedWhy_.end() && (last->second == "ended by the player" ||
+                                                               last->second == "done" || last->second == "waits");
+                if (!saved)
+                {
+                    const std::string what =
+                        "time rolled over from a turn its actor did not end: " +
+                        (last != endedWhy_.end() ? last->second : std::string{"it had no turn before"});
+                    Must(false, what.c_str());
+                }
+            }
             if (const auto asked = delayed_.find(e.who); asked != delayed_.end() && asked->second.awaited)
             {
                 // The turn it put off: in the same round, and with the bar
@@ -1394,18 +1608,62 @@ class Arena
         case EventKind::TurnEnded:
             turnsThisFrame_.insert(e.who);
             turnOpen_ = false;
+            Must(EndedByItsActor(e.detail).has_value(), "a turn ended for a reason core/TurnEnd.h does not class");
+            endedWhy_[e.who] = e.detail;
+            // An unaware hostile's turn (11): skipped only while it has
+            // noticed nobody, only after its beat was said and is out (of the
+            // fight's clock, which runs with its speed), and never waited out
+            // on an AI that had nobody to choose.
+            if (e.detail == "unaware")
+            {
+                const Creature &c = world_.Get(e.who);
+                Must(Unaware(c.side, c.perception), "a turn skipped as unaware though its creature has noticed");
+                Must(beatOf_ == e.who, "a turn skipped as unaware with no beat said for it");
+                const float ran = static_cast<float>(turnRunMs_ - beatFromMs_ + 2 * kFrameMs) * settings_.fightSpeed;
+                Must(ran >= static_cast<float>(TurnMachine::kUnawareMs),
+                     "an unaware hostile's turn skipped before its beat was out");
+                ++coverage_.unawareTurns;
+            }
+            // Only an AI that was told to choose is waited on: and one that
+            // had noticed nobody is never told (PokeAi, above).
+            if (e.detail == "chose nothing")
+            {
+                Must(told_ == e.who, "a turn waited out on an AI that was never told to choose");
+            }
+            beatOf_ = kNoObject;
             break;
         case EventKind::FightOver:
             turnOpen_ = false;
             delayed_.clear();
             break;
+        case EventKind::Gone:
+            Must(e.who != kNoObject, "an event about someone names no one");
+            // Out of the fight alive (12): only one the scan's rules do not
+            // find fighting and that the engine's perception does not keep
+            // in it, as this frame's scan read it.
+            if (e.detail == "no longer fighting")
+            {
+                const Creature &c = world_.Get(e.who);
+                Must(!c.exists || c.down || !c.fighting, "taken out of the fight while the scan finds it fighting");
+                Must(!c.exists || c.down || !Perceived(c),
+                     "taken out of the fight while the engine's perception keeps it there");
+                ++coverage_.leftUnperceived;
+            }
+            break;
+        case EventKind::UpAgain:
+        case EventKind::Joined:
+            Must(e.who != kNoObject, "an event about someone names no one");
+            // Into the fight, or back into it (12): only one the scan's
+            // rules find fighting. Being perceived brings nobody in.
+            if (e.kind == EventKind::Joined || e.detail == "fighting again")
+            {
+                Must(world_.Get(e.who).fighting, "one the scan does not find fighting brought into the fight");
+            }
+            break;
         case EventKind::ConditionHeld:
         case EventKind::ConditionEnded:
         case EventKind::ConditionStillHeld:
         case EventKind::Fell:
-        case EventKind::Gone:
-        case EventKind::UpAgain:
-        case EventKind::Joined:
         case EventKind::CooldownHeld:
         case EventKind::CooldownReleased:
         case EventKind::Refused:
@@ -1495,6 +1753,19 @@ class Arena
                     break;
                 }
                 const Creature &c = world_.Get(id);
+                // One that is not in this fight, the scan's rules not
+                // finding it fighting, is the game's own: what it took up in
+                // real time before the fight began goes on (an ally told
+                // the last fight was over, far from where the next begins:
+                // the long run with combatants out of reach, seed 409 with
+                // time); and so does what one that has left the fight was
+                // set to by a conversation's scripts (seed 215). Found
+                // fighting, it joins or is back, and is stopped.
+                const Combatant *in = world_.machine.Order().Find(id);
+                if (!c.fighting && (in == nullptr || in->down))
+                {
+                    continue;
+                }
                 // (A spell held in its conjure, the engine's own, waits
                 // through the others' turns: its caster draws it in.)
                 if (id != current && !c.down && Classify(task.type) != CommandKind::Involuntary &&
@@ -1562,8 +1833,9 @@ class Arena
     }
 
     Rng rng_;
-    Rng reach_; // what the game layer measures for a kept attack to be turned (onMeasure): its own stream
-    Rng waits_; // how long an AI's wait is, as the game layer reads it of the command (Try): its own stream
+    Rng reach_;  // what the game layer measures for a kept attack to be turned (onMeasure): its own stream
+    Rng waits_;  // how long an AI's wait is, as the game layer reads it of the command (Try): its own stream
+    Rng notice_; // who has not noticed the party, and when it does (issue 29): its own stream
     Settings settings_;
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
     std::set<ObjectId> secondsKnown_;             // held with seconds the machine could read, and not yet ended by it
@@ -1572,6 +1844,7 @@ class Arena
     std::unordered_set<ObjectId> ownClock_;       // creatures put on their own clocks
     std::unordered_set<ObjectId> turnsThisFrame_; // whose turn opened or closed in this frame
     ObjectId lastCurrent_ = kNoObject;            // whose turn it was as the last frame ended
+    ObjectId grabbedBefore_ = kNoObject;          // whom the acting creature's own effect held as this frame began
     World world_;
     Coverage &coverage_;
     std::map<ObjectId, Task> tasks_;
@@ -1597,6 +1870,12 @@ class Arena
         bool awaited = false;
     };
     std::unordered_map<ObjectId, DelayAsked> delayed_;
+    std::unordered_map<ObjectId, std::string> endedWhy_; // why each creature's last turn ended (its event's detail)
+    ObjectId beatOf_ = kNoObject;     // the unaware hostile whose beat was last said, its turn still open
+    std::uint32_t beatFromMs_ = 0;    // turnRunMs_ as it was said
+    ObjectId told_ = kNoObject;       // whose AI was told to choose this turn
+    bool runners_ = false;            // this fight has combatants that go out of the scan's reach (Wandering)
+    std::map<ObjectId, int> away_;    // those gone so, and the frames until each is back or lost for good
     std::uint32_t turnBeganAtMs_ = 0; // turnRunMs_ as the machine began the turn
     static constexpr std::uint32_t kEffectGraceSlackMs = 600;
     int interlude_ = 0;
@@ -1613,13 +1892,14 @@ namespace
 {
 
 // Plays fights from seed 1 up, and says what they reached.
-Coverage PlayFights(std::uint64_t count, TurnClock clock = TurnClock::Actions)
+Coverage PlayFights(std::uint64_t count, TurnClock clock = TurnClock::Actions, bool strays = false)
 {
     Coverage coverage;
     for (std::uint64_t seed = 1; seed <= count; ++seed)
     {
         CAPTURE(seed);
-        Arena arena{seed, coverage, clock};
+        CAPTURE(strays);
+        Arena arena{seed, coverage, clock, strays};
         arena.Play();
     }
     return coverage;
@@ -1699,7 +1979,11 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     CHECK(coverage.wholeTurns > 20);
     CHECK(coverage.owed > 5);
     CHECK(coverage.choseAgain > 24);
-    CHECK(coverage.rolledOver > 500);
+    // Time rolls over only from a turn its actor ended (issue 29,
+    // 2026-10-04: 1003 turns rolled time over, where 1627 had when every end
+    // did; 429 ended with time left that was not their actor's to save).
+    CHECK(coverage.rolledOver > 330);
+    CHECK(coverage.forfeited > 140);
     // Each creature's own clock moved as its turns were spent.
     CHECK(coverage.ownAged > 1000);
     // A kept attack's creature walking to its target, and a kept action's
@@ -1732,8 +2016,47 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     CHECK(coverage.waitsTooLong > 8);
 }
 
+// The same fights with what the engine's perception decides in them (issue
+// 29): about half the hostiles have not noticed the party, and notice when
+// struck or by themselves; and now and then a combatant goes where the scan's
+// own rules no longer find it fighting, perceived or not, and comes back or
+// is lost for good. Promises 10 to 12 are checked in every fight; here they
+// have something to hold against. Twenty-five fights a clock.
+TEST_CASE("random fights with hostiles unaware and combatants out of reach keep the promises", "[fights]")
+{
+    for (const TurnClock clock : {TurnClock::Actions, TurnClock::Time})
+    {
+        CAPTURE(clock == TurnClock::Time);
+        const Coverage coverage = PlayFights(25, clock, true);
+        CHECK(coverage.fights == 25);
+        // Each floor about a third of what seeds 1-25 reach (2026-10-04, as
+        // built and with time: 53 and 47 turns skipped as unaware, 57 and 70
+        // hostiles that noticed, 13 and 21 of them in their beat; 122 and
+        // 148 combatants out of the scan's reach, 98 and 120 kept in the
+        // fight by perception, 43 and 44 out of it, 46 and 59 found fighting
+        // again).
+        CHECK(coverage.unawareTurns > 15);
+        CHECK(coverage.noticed > 19);
+        CHECK(coverage.noticedInBeat > 4);
+        CHECK(coverage.ranOff > 40);
+        CHECK(coverage.stayedAfar > 32);
+        CHECK(coverage.leftUnperceived > 14);
+        CHECK(coverage.cameBack > 15);
+        // And with time, what rolls over where so many turns are not their
+        // actors' to end (272 turns rolled time over, 162 left time that was
+        // not saved).
+        if (clock == TurnClock::Time)
+        {
+            CHECK(coverage.rolledOver > 90);
+            CHECK(coverage.forfeited > 54);
+        }
+    }
+}
+
 // One fight by its seed, every line the machine logs printed: a failure's
-// replay. `set TB_SEED=63& set TB_CLOCK=time& tb_tests "[fight-seed]"`.
+// replay. `set TB_SEED=63& set TB_CLOCK=time& tb_tests "[fight-seed]"`; with
+// `set TB_STRAYS=1` too for one of the fights with hostiles unaware and
+// combatants out of reach.
 TEST_CASE("one random fight, by the seed in TB_SEED", "[.][fight-seed]")
 {
     const auto env = [](const char *name) {
@@ -1745,16 +2068,21 @@ TEST_CASE("one random fight, by the seed in TB_SEED", "[.][fight-seed]")
     REQUIRE_FALSE(seed.empty());
     Coverage coverage;
     Arena arena{std::strtoull(seed.c_str(), nullptr, 10), coverage,
-                env("TB_CLOCK") == "time" ? TurnClock::Time : TurnClock::Actions};
+                env("TB_CLOCK") == "time" ? TurnClock::Time : TurnClock::Actions, !env("TB_STRAYS").empty()};
     arena.echo = true;
     arena.Play();
 }
 
 // A thousand more, for a change to the machine: `tb_tests "[fights-long]"`.
+// And five hundred a clock with hostiles unaware and combatants out of reach.
 TEST_CASE("a thousand random fights keep them too", "[.][fights-long]")
 {
     const Coverage coverage = PlayFights(1000);
     CHECK(coverage.fights == 1000);
     const Coverage timed = PlayFights(1000, TurnClock::Time);
     CHECK(timed.fights == 1000);
+    const Coverage strays = PlayFights(500, TurnClock::Actions, true);
+    CHECK(strays.fights == 500);
+    const Coverage timedStrays = PlayFights(500, TurnClock::Time, true);
+    CHECK(timedStrays.fights == 500);
 }

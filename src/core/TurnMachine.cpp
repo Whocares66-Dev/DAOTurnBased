@@ -2,6 +2,7 @@
 
 #include "core/GivenBack.h"
 #include "core/Text.h"
+#include "core/TurnEnd.h"
 
 #include <algorithm>
 #include <cmath>
@@ -262,6 +263,20 @@ Needs TurnMachine::WhatToObserve(std::uint32_t nowMs)
         }
         return needs;
     }
+    // With a scan, those of the fight that are not the party's and still
+    // stand: read whether or not the scan's own rules still find them
+    // fighting, so that one out of combat or beyond the radius stays in the
+    // fight while the engine's perception keeps it there (Merge; issue 29).
+    if (needs.scan)
+    {
+        for (const Combatant &c : order_.All())
+        {
+            if (c.side != Side::Party && !c.down)
+            {
+                needs.inFight.push_back(c.id);
+            }
+        }
+    }
     if (phase_ == Phase::Suspended)
     {
         return needs;
@@ -274,7 +289,14 @@ Needs TurnMachine::WhatToObserve(std::uint32_t nowMs)
     // stunned decides whether its turn is taken at all; and when asked for
     // (statusWanted_): as an action ends and before the turn goes on after
     // it, so that the cards and the state are what the action left.
-    if (nowMs - lastStatusNow_ >= 500 || phase_ == Phase::TurnStart || std::exchange(statusWanted_, false))
+    // Not under a menu, where the machine does nothing with what it is shown
+    // (Step): a look that fell there was lost, and the next came half a
+    // second after it. With two menus in a second, a creature stunned in its
+    // own turn stood more than a second of the game's time before the
+    // machine saw it (test_fights.cpp's long run with hostiles unaware, seed
+    // 59, 2026-10-04). The look is taken as the menu goes.
+    if (lastMode_ != Mode::Gui &&
+        (nowMs - lastStatusNow_ >= 500 || phase_ == Phase::TurnStart || std::exchange(statusWanted_, false)))
     {
         lastStatusNow_ = nowMs;
         for (const Combatant &c : order_.All())
@@ -364,6 +386,10 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
     if (obs.mode == Mode::Gui)
     {
         // A menu over the fight pauses the game itself; everything waits.
+        // A look at everyone taken with the menu's first frame is not taken
+        // up, and is asked for again for when the menu has gone
+        // (WhatToObserve takes none under one).
+        statusWanted_ = statusWanted_ || !obs.statuses.empty();
         return fx;
     }
 
@@ -396,8 +422,8 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
                 const std::uint32_t turn = TurnMs();
                 const std::uint32_t rest = turn - std::min(turn, budget_.spend.ClockElapsedMs());
                 held->second.owedMs -= std::min(held->second.owedMs, rest);
-                // Taken by the hold, not banked: nothing of it rolls over.
-                budget_.spend.SpendAllActions();
+                // (Taken by the hold, not banked: nothing of it rolls over,
+                // as from any turn its actor did not end. core/TurnEnd.h.)
             }
         }
         EndTurn(fx, "stunned");
@@ -568,6 +594,7 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     holds_.clear();
     absentSince_.clear();
     outside_.clear();
+    afar_.clear();
     left_.clear();
     charges_.clear();
     rollover_.clear();
@@ -751,6 +778,7 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
 {
     budget_ = Budget{};
     heldByEffect_ = false;
+    unaware_ = false;
     budget_.spend = NewSpend(who);
     if (const auto rolled = rollover_.find(who.id); Timed() && rolled != rollover_.end())
     {
@@ -824,8 +852,10 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     {
         Floaty(fx, who.id, who.name + L"'s turn", kGold);
     }
-    else
+    else if (!UnawareNow(who))
     {
+        // (Over one that has noticed nobody to fight, "Unaware" alone:
+        // Handover.)
         Floaty(fx, who.id, who.name, who.side == Side::Enemy ? kRed : kGrey);
     }
     if (LandCast(who, fx))
@@ -1979,9 +2009,41 @@ void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
         idleTicks_ = 0;
         return;
     }
+    // A hostile that has noticed nobody to fight is not told its turn has
+    // come: its AI chooses among the hostiles it perceives, and has nothing
+    // to choose. "Unaware" stands over it for a beat with the world running,
+    // and its turn is skipped (StepThinking). Until 2026-10-04 it was told
+    // like anyone, waited on for ai_think_ms, and its turn ended "chose
+    // nothing": 54 such turns in one fight with three skeletons that never
+    // noticed the party (issue 29). It is not woken either: the user, "If
+    // they don't notice the party that gives the party the initiative to
+    // close in and attack."
+    if (UnawareNow(who))
+    {
+        unaware_ = true;
+        Log(LogLevel::Info,
+            std::format("{} has not noticed the party (not in combat, and it perceives nobody to fight): unaware, its "
+                        "AI is not told, and its turn is skipped in {:.1f} s",
+                        Utf8(who.name), static_cast<float>(kUnawareMs) / 1000.0f));
+        Floaty(fx, who.id, L"Unaware", kGrey);
+        deadline_ = clock_ + kUnawareMs;
+        phase_ = Phase::AiThinking;
+        return;
+    }
+    unaware_ = false;
     fx.push_back(Effect::Of(EffectKind::PokeAi, who.id));
     deadline_ = clock_ + static_cast<std::uint32_t>(settings_.aiThinkMs);
     phase_ = Phase::AiThinking;
+}
+
+// Whether the creature whose turn it is has noticed nobody to fight
+// (core/Rules.h, Unaware), by the freshest word there is: this frame's look
+// at it, where the frame looked at it (the game layer reads the acting
+// creature's perception every frame), else what the last scan read.
+bool TurnMachine::UnawareNow(const Combatant &who) const
+{
+    const bool looked = seenActor_ && seenActor_->id == who.id && seenActor_->exists;
+    return Unaware(who.side, looked ? seenActor_->perception : who.perception);
 }
 
 void TurnMachine::StepAwaiting(const Observation &obs, std::vector<Effect> &fx)
@@ -2086,6 +2148,40 @@ void TurnMachine::StepThinking(const Observation &obs, std::vector<Effect> &fx)
     if (ActorGone(obs))
     {
         EndTurn(fx, "fell");
+        return;
+    }
+    // An unaware hostile's turn (Handover): nothing is waited for but the
+    // beat "Unaware" is read in, and then its turn is skipped. Its AI was
+    // not told, so a wait of its script's is no choice of this turn's (the
+    // gate refuses it, and it neither passes the turn nor is paid for), and
+    // what the engine puts on it meanwhile is not waited out. It acts from
+    // the moment it notices (struck, or the party come into its perception
+    // as the world runs): its turn is then its AI's, told at once.
+    if (unaware_)
+    {
+        const Combatant *current = order_.Current();
+        if (current != nullptr && !UnawareNow(*current))
+        {
+            // Told only on a look at everyone taken with this step, as an AI
+            // is told to choose again in mid-turn (StepSettling): on a look
+            // up to half a second old, one stunned in its beat was told all
+            // the same (test_fights.cpp's long run with hostiles unaware,
+            // seed 135). Stunned, its turn ends above with the next step.
+            if (lastStatusNow_ != lastNow_)
+            {
+                statusWanted_ = true;
+                return;
+            }
+            unaware_ = false;
+            Log(LogLevel::Info,
+                std::format("{} has noticed someone to fight: its turn is its AI's", Utf8(current->name)));
+            Handover(*current, fx);
+            return;
+        }
+        if (clock_ >= deadline_)
+        {
+            EndTurn(fx, "unaware");
+        }
         return;
     }
     if (passRequested_)
@@ -2508,6 +2604,18 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
         EndTurn(fx, "nothing it can get to");
         return;
     }
+    // A hostile that perceives nobody to fight is not told to choose again
+    // (issue 29): it has nothing to choose, and would be waited on for
+    // ai_think_ms. What ran was a script's order, or its last foe has
+    // fallen or gone from its perception; its turn ends as that settles.
+    if (!player && UnawareNow(*current))
+    {
+        if (clock_ >= deadline_)
+        {
+            EndTurn(fx, "done");
+        }
+        return;
+    }
     if (!player && budget_.spend.ActionsLeft() > 0 && budget_.refunded && !budget_.retried && !budget_.outOfMovement)
     {
         budget_.retried = true;
@@ -2696,13 +2804,38 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
     if (const Combatant *current = order_.Current())
     {
         // With time, what is left of the bar rolls over, to the creature's
-        // cap; a turn lost whole, or spent, leaves none.
+        // cap; a turn lost whole, or spent, leaves none. And only from a turn
+        // its actor ended itself (core/TurnEnd.h has every reason's class):
+        // one skipped, lost or ended for it carries nothing over, whatever
+        // its bar still held. The user, 2026-10-04 (issue 29): "the actor did
+        // not explicitly save any time". Until then a skeleton that chose
+        // nothing, turn after turn, began each with a second more.
         if (budget_.spend.Timed())
         {
-            const std::uint32_t rolled = budget_.spend.Finish(TimeFromTactics(TacticsOf(*current)).rolloverCapMs);
+            // What would roll over, to the cap, were the turn its actor's to end.
+            const std::uint32_t unspent = budget_.spend.Finish(TimeFromTactics(TacticsOf(*current)).rolloverCapMs);
+            if (!EndedByItsActor(why))
+            {
+                Log(LogLevel::Warn, std::format("a turn ended for a reason core/TurnEnd.h does not class (\"{}\"): "
+                                                "nothing rolls over",
+                                                why));
+            }
+            const bool saved = RollsOver(why);
+            const std::uint32_t rolled = saved ? unspent : 0;
             rollover_[current->id] = rolled;
-            Log(LogLevel::Info, std::format("{}'s turn ends: {}; {:.2f} s rolls over", Utf8(current->name), why,
-                                            static_cast<float>(rolled) / 1000.0f));
+            if (saved)
+            {
+                Log(LogLevel::Info, std::format("{}'s turn ends: {}; {:.2f} s rolls over", Utf8(current->name), why,
+                                                static_cast<float>(rolled) / 1000.0f));
+            }
+            else
+            {
+                Log(LogLevel::Info,
+                    std::format("{}'s turn ends: {}; nothing rolls over{}", Utf8(current->name), why,
+                                unspent > 0 ? std::format(", its actor not having ended it ({:.2f} s would have)",
+                                                          static_cast<float>(unspent) / 1000.0f)
+                                            : std::string{}));
+            }
         }
         else
         {
@@ -2732,6 +2865,7 @@ void TurnMachine::LeaveTurn()
 {
     budget_ = Budget{};
     heldByEffect_ = false;
+    unaware_ = false;
     endedFor_ = kNoObject;
     approach_ = false;
     handoverWanted_.reset();
@@ -2892,11 +3026,45 @@ std::vector<Effect> TurnMachine::StandDown(std::string_view why)
 
 void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> &fx)
 {
+    // Leaving the fight is the engine's perception (core/Rules.h,
+    // StaysInTheFight; issue 29): one of the fight that the scan's own rules
+    // no longer find fighting (out of combat, or beyond combat_radius of the
+    // party's leader) was read all the same (Needs::inFight), and stays
+    // while a party member perceives it or it perceives one (an ally, while
+    // it perceives an enemy). Until 2026-10-04 the radius took it out, and it
+    // stood frozen outside the order, whoever it was chasing.
+    const auto stays = [](const Combatant &c) { return StaysInTheFight(c.side, c.fighting, c.perception); };
     for (const Combatant &seen : scan)
     {
         if (seen.hero)
         {
             hero_ = seen.id;
+        }
+        if (seen.fighting)
+        {
+            afar_.erase(seen.id);
+        }
+        else
+        {
+            // As one the scan did not find: where neither perceives the
+            // other; and where it is not in the fight, or has left it, since
+            // being perceived brings nobody in (who joins is as it was).
+            const Combatant *in = order_.Find(seen.id);
+            if (in == nullptr || in->down || !stays(seen))
+            {
+                continue;
+            }
+            if (afar_.insert(seen.id).second)
+            {
+                const std::string_view why = seen.side != Side::Enemy   ? "it perceives an enemy"
+                                             : !seen.perception.ofParty ? "the party perceives it"
+                                             : !seen.perception.byParty ? "it perceives the party"
+                                                                        : "it and the party perceive each other";
+                Log(LogLevel::Info,
+                    std::format("{} is not found fighting near the party any more (out of combat, or further than "
+                                "{:.0f} m from its leader), and stays in the fight: {}",
+                                Utf8(seen.name), settings_.combatRadius, why));
+            }
         }
         if (Combatant *known = order_.Find(seen.id))
         {
@@ -2921,6 +3089,15 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
             {
                 Log(LogLevel::Info, std::format("{} is fighting again", Utf8(seen.name)));
                 Emit(EventKind::UpAgain, seen.id, "fighting again");
+                // Whatever it took up while it was out of the fight stops, as
+                // a joiner's does: it waits for its turn like everyone else.
+                // One that had left and was set walking by a conversation's
+                // scripts (the gate stands aside for those, and the fight's
+                // return stops only those still in it) came back into the
+                // fight with its walk running on through another's turn
+                // (test_fights.cpp's long run with combatants out of reach,
+                // seed 165, 2026-10-04).
+                fx.push_back(Effect::Of(EffectKind::ClearCommands, seen.id));
             }
         }
         else if (!seen.down && !seen.engaged)
@@ -2955,14 +3132,15 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
             Emit(EventKind::Joined, joined, {}, initiative);
         }
     }
-    // An enemy or ally no longer seen fighting has left it: dead and gone,
-    // fled out of range, or out of combat. Once it has been missing a
-    // while: one scan without it is not that (absentSince_).
+    // An enemy or ally the scan no longer has in the fight has left it: dead
+    // and gone, or neither found fighting nor held in the fight by the
+    // engine's perception (it fled, and the party lost it). Once it has been
+    // so a while: one scan without it is not that (absentSince_).
     std::vector<ObjectId> absent;
     for (const Combatant &c : order_.All())
     {
         if (c.side != Side::Party && !c.down &&
-            std::ranges::none_of(scan, [&](const Combatant &s) { return s.id == c.id; }))
+            std::ranges::none_of(scan, [&](const Combatant &s) { return s.id == c.id && stays(s); }))
         {
             const std::uint32_t since = absentSince_.try_emplace(c.id, lastNow_).first->second;
             if (lastNow_ - since >= kAbsentMs)
@@ -2976,8 +3154,16 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
         Combatant *c = order_.Find(id);
         c->down = true;
         absentSince_.erase(id);
+        afar_.erase(id);
         left_.insert(id);
-        Log(LogLevel::Info, std::format("{} is no longer fighting", Utf8(c->name)));
+        // Why, where the scan read it: alive, and out of perception.
+        const bool read = std::ranges::any_of(scan, [&](const Combatant &s) { return s.id == id; });
+        Log(LogLevel::Info,
+            std::format("{} is no longer fighting{}", Utf8(c->name),
+                        !read                    ? ""
+                        : c->side == Side::Enemy ? ": out of combat or out of range, and neither it nor the party "
+                                                   "perceives the other"
+                                                 : ": out of combat or out of range, and it perceives no enemy"));
         Emit(EventKind::Gone, id, "no longer fighting");
     }
 }
@@ -3558,6 +3744,15 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         }
         break;
     case CommandKind::Pass:
+        // A wait in an unaware hostile's beat is no choice of its turn: its
+        // AI was not told the turn had come (Handover; issue 29). Neither
+        // taken of its bar nor a pass: refused, and the beat goes on to its
+        // end. Paid for, it would settle the turn and end it "done", its
+        // time rolled over, for an idle script's wait.
+        if (!player && unaware_)
+        {
+            return Verdict::Block;
+        }
         // With time a wait costs the time it waits, and its AI chooses
         // again with what is left (PayWait); else it passes the turn.
         if (!player && PayWait(*who, request))
@@ -3642,6 +3837,9 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     stoodAt_.reset();
     budget_.lastMeasured = std::isfinite(request.actionSeconds) && request.actionSeconds > 0.0f;
     orderPending_ = false;
+    // Something of its own runs after all in an unaware hostile's beat (a
+    // script's order): its turn is not skipped under it.
+    unaware_ = false;
     // What the caption says of an order given back is of the order before
     // this one: the player has gone on.
     if (request.source == Source::Player)

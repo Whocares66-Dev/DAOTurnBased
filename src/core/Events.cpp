@@ -119,7 +119,8 @@ EventDescription Describe(EventKind kind)
         return {"A turn ended.",
                 true,
                 "why: ended by the player, nothing left to spend, done, out of movement, chose nothing, waits, fell, "
-                "took too long, held by its condition, held by an effect, stunned",
+                "took too long, held by its condition, held by an effect, stunned, unaware (a hostile that has "
+                "noticed nobody to fight: its turn is skipped)",
                 nullptr,
                 nullptr,
                 nullptr};
@@ -149,7 +150,8 @@ EventDescription Describe(EventKind kind)
     case EventKind::Gone:
         return {"A combatant left the world (destroyed, vanished) or the fight.",
                 true,
-                "no longer fighting, for one that left the fight alive (out of combat, or out of range)",
+                "no longer fighting, for one that left the fight alive (out of combat or out of range, and neither "
+                "it nor the party perceiving the other)",
                 nullptr,
                 nullptr,
                 nullptr};
