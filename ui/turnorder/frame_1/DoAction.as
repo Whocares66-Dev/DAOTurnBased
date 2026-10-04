@@ -93,10 +93,17 @@ var PARCHMENT = 0xE8DFC8;
 var INK = 0x14100C;
 // A glow behind a medallion by its side (issue 13; the user, 2026-10-03:
 // "a red glow around the portraits of enemies ... and a blue glow around
-// allies that are not the party"): none for the party, whose mark is the
-// gold arrow under its cards. The red and the blue are those of the rings
-// the game draws on the ground under an enemy and under an ally.
-var SIDE_GLOW = [null, 0x3C9CF0, 0xE82C1C]; // party, ally, enemy (core's Side)
+// allies that are not the party"). The red and the blue are those of the
+// rings the game draws on the ground under an enemy and under an ally.
+// And yellow for the party (issue 25; the user, 2026-10-03: "Should we have
+// glowing yellow circles around the party portraits instead of the arrows?
+// It would match the selection circles, just as blue and red match the
+// allies and enemies", and of the two side by side in the sample: "Yeah go
+// with that"). Its mark was a gold arrow under its cards until then. The
+// yellow is chosen by eye to stand off the cards' gold rings, not read out
+// of the game. By side, so a companion playing by its tactics has it too,
+// where the arrow was for the cards the player commands.
+var SIDE_GLOW = [0xFFD21E, 0x3C9CF0, 0xE82C1C]; // party, ally, enemy (core's Side)
 var RANK_WORDS = ["", "", "", "a lieutenant", "a boss", "an elite boss"];
 
 // Whether the plugin is there to ask. In the game the call answers; in a
@@ -520,17 +527,10 @@ function drawCard(bar, card, index, x)
     // took it out (2026-10-02: "let's remove the dot. later we'll add a card
     // on hover that shows stats of actor"). The caption under the pointer
     // still says the rank.
-    if (card.yours)
-    {
-        // The game's gold arrow (the inventory's sort button's, inventory_I2F1),
-        // turned to point up at the card.
-        // Close under the portrait's ring: six pixels lower its tip lay on
-        // the bar of time under the current card (the user, 2026-10-02: "should
-        // be higher up closer to portrait, it's overlapping w/ the action
-        // time bar").
-        var pointer = art(clip, "inventory_I2F1", 18, mid - 7, CARD_H + 5, 14, 8);
-        pointer._yscale = -100;
-    }
+    // No arrow under the party's cards: until issue 25 a card the player
+    // commands had the game's gold arrow (the inventory's sort button's,
+    // inventory_I2F1) pointing up at it from under the ring. The party's
+    // mark is its glow now, as the other sides' is (SIDE_GLOW).
     if (card.owed > 0)
     {
         // An action of its creature's is pending (core: Charge), and lands
@@ -579,7 +579,7 @@ function drawCard(bar, card, index, x)
         // It has put its turn off (Delay) and waits for it at the round's
         // end: said under its card, the floaty over it being gone with the
         // camera in the frame it was shown (play test 28).
-        // Under the party's arrow, which stands close under the ring.
+        // Close under the ring, where the party's arrow stood until issue 25.
         var waits = label(clip, "waits", 22, -10, CARD_H + 4, CARD_W + 20, 16, 11, PARCHMENT, "center", false);
         waits.text = "waits";
         clip.fullName = card.name + " waits: its turn comes at the round's end";
@@ -874,9 +874,10 @@ function build(state)
     var barMiddle = width / 2;
     if (state.timed && state.playerTurn)
     {
-        // Clear of the current card's pointer and of "waits" under a card:
-        // eight pixels higher the pointer's tip lay on the bar's left end
-        // (seen in play, 2026-10-02).
+        // Clear of "waits" under a card and of the current card's frame:
+        // eight pixels higher the tip of the arrow the party's cards then
+        // had lay on the bar's left end (seen in play, 2026-10-02; the
+        // arrow is gone since issue 25, the place kept).
         captionTop += 8;
         // Centred under the medallions, as the strip is on the screen. For
         // an evening it began under the current card, the first (play test
