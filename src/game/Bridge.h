@@ -76,7 +76,8 @@ class Bridge
     std::unordered_set<ObjectId>
         unawares_; // hostiles in the fight though they have not noticed, as of the last scan (Scan)
     // Creatures whose kept cast or action was not given, its target gone
-    // (Apply, ReleaseCast): told to the machine with the next observation.
+    // and, for a plain attack, no enemy in its reach to turn it on (Apply,
+    // ReleaseCast): told to the machine with the next observation.
     std::vector<ObjectId> keptVoid_;
     struct Known
     {

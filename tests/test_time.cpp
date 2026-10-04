@@ -96,6 +96,41 @@ bool Released(const World &w, ObjectId id)
                                [&](const Effect &e) { return e.kind == EffectKind::ReleaseCast && e.target == id; });
 }
 
+// An attack at someone, as the gate's request names its target: in reach,
+// nothing to walk.
+Verdict Strike(World &w, ObjectId id, ObjectId target, Source source, float seconds)
+{
+    CommandRequest request;
+    request.object = id;
+    request.type = CommandType::Attack;
+    request.source = source;
+    request.inCombat = w.Get(id).fighting;
+    request.walk = 0.0f;
+    request.actionSeconds = seconds;
+    request.target = target;
+    return w.Queue(request);
+}
+
+// Those a kept action's release named for it to be turned on (the last
+// release for that creature).
+std::vector<ObjectId> NamedFor(const World &w, ObjectId id)
+{
+    std::vector<ObjectId> others;
+    for (const Effect &e : w.applied)
+    {
+        if (e.kind == EffectKind::ReleaseCast && e.target == id)
+        {
+            others = e.others;
+        }
+    }
+    return others;
+}
+
+bool Logged(const World &w, std::string_view text)
+{
+    return std::ranges::any_of(w.log, [&](const std::string &line) { return line.find(text) != std::string::npos; });
+}
+
 } // namespace
 
 TEST_CASE("with time, a swing spends its seconds and the turn goes on until the bar is spent", "[time]")
@@ -225,22 +260,262 @@ TEST_CASE("with time, a kept action whose target is gone gives back what it owed
     World w(Timed());
     std::vector<TurnEvent> events;
     w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    // No enemy within her reach to turn the attack on (issue 22): the
+    // hurlock stands ten metres off.
+    w.Get(kGenlock).position = {1.5f, 0.0f, 0.0f};
+    w.Get(kHurlock).position = {10.0f, 0.0f, 0.0f};
     w.StartFight();
     REQUIRE(w.Current() == kHero);
-    CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 3.0f, 0.0f) == Verdict::Allow);
+    CHECK(Strike(w, kHero, kGenlock, Source::Player, 3.0f) == Verdict::Allow);
     Done(w, kHero);
-    CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Hold); // owes 1 s
-    w.targetGone.insert(kHero); // its target falls before her next turn
+    CHECK(Strike(w, kHero, kGenlock, Source::Player, 2.0f) == Verdict::Hold); // owes 1 s
+    w.RunFor(900);
+    REQUIRE(w.Current() != kHero);
+    w.Get(kGenlock).down = true; // its target falls before her next turn
+    w.targetGone.insert(kHero);
     UntilTurnOf(w, kHero);
     w.RunFor(1200);
-    // Not given, the second she paid for it back, and her turn hers.
+    // Not given, the second she paid for it back, and her turn hers, handed
+    // over as a fresh one is: she waits for an order.
+    CHECK(NamedFor(w, kHero) == std::vector<ObjectId>{kHurlock});
     CHECK(w.released.empty());
+    CHECK(w.turned.empty());
     REQUIRE(w.Current() == kHero);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
     CHECK(w.machine.View().timeLeftMs == 4000);
     CHECK(std::ranges::any_of(events, [](const TurnEvent &e) {
         return e.kind == EventKind::ActionDropped && e.who == kHero && e.detail == "its target is gone";
     }));
+    CHECK(std::ranges::any_of(events, [](const TurnEvent &e) {
+        return e.kind == EventKind::AwaitingOrder && e.who == kHero && e.round == 2 &&
+               e.detail == "the turn is its player's" && e.value == 4000;
+    }));
+    CHECK(Logged(w, "Hero's pending attack is dropped: its target is gone, and no enemy is in its reach; the 1.00 s it "
+                    "owed given back"));
+    // And the order she gives then is taken, at the hurlock she must walk to.
+    CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 8.0f) == Verdict::Allow);
+}
+
+TEST_CASE("with time, a kept attack whose target fell is turned on the nearest enemy in reach, for nothing", "[time]")
+{
+    // Issue 22, the user's choice of 2026-10-03: "as the game's own
+    // auto-attack would". Dropped, the turn began with the decision lost.
+    World w(Timed());
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.Get(kGenlock).position = {1.5f, 0.0f, 0.0f};
+    w.Get(kHurlock).position = {0.0f, 1.8f, 0.0f};
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(Strike(w, kHero, kGenlock, Source::Player, 3.0f) == Verdict::Allow);
+    Done(w, kHero);
+    CHECK(Strike(w, kHero, kGenlock, Source::Player, 2.0f) == Verdict::Hold); // owes 1 s
+    w.RunFor(900);
+    REQUIRE(w.Current() != kHero);
+    w.Get(kGenlock).down = true; // to another's blow, before her next turn
+    w.targetGone.insert(kHero);
+    UntilTurnOf(w, kHero);
+    // Named: the enemies still standing, not the fallen one, not her own
+    // side. The hurlock is within her reach, and the attack is given at it.
+    CHECK(NamedFor(w, kHero) == std::vector<ObjectId>{kHurlock});
+    REQUIRE(w.turned.size() == 1);
+    CHECK(w.turned.front() == std::pair{kHero, kHurlock});
+    REQUIRE(w.released.size() == 1);
+    CHECK(w.released.front() == Verdict::Allow);
+    CHECK(w.Get(kHero).busy);
+    CHECK(w.Get(kHero).current == CommandType::Attack);
+    // For nothing more: the second it owed was paid as the turn began, and
+    // stays paid.
+    CHECK(w.machine.View().timeLeftMs == 3000);
+    CHECK(w.machine.View().pendingPaidMs == 1000);
+    CHECK(Logged(w, "Hero's pending attack is turned on Hurlock: its target has fallen"));
+    CHECK(std::ranges::any_of(events, [](const TurnEvent &e) {
+        return e.kind == EventKind::ActionLanded && e.who == kHero && e.detail == "turned on another" &&
+               e.note == "Hurlock" && e.command == "attack";
+    }));
+    CHECK(std::ranges::none_of(
+        events, [](const TurnEvent &e) { return e.kind == EventKind::ActionDropped && e.who == kHero; }));
+    // The swing over, the rest of the turn is hers, as after any kept action.
+    Done(w, kHero);
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(w.machine.View().timeLeftMs == 3000);
+    CHECK(Strike(w, kHero, kHurlock, Source::Player, 2.0f) == Verdict::Allow);
+    CHECK(w.machine.View().timeLeftMs == 1000);
+}
+
+TEST_CASE("a kept attack given at its own target is not said to be turned", "[time]")
+{
+    World w(Timed());
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(Strike(w, kHero, kGenlock, Source::Player, 3.0f) == Verdict::Allow);
+    Done(w, kHero);
+    CHECK(Strike(w, kHero, kGenlock, Source::Player, 2.0f) == Verdict::Hold);
+    UntilTurnOf(w, kHero);
+    REQUIRE(w.released.size() == 1);
+    CHECK(w.turned.empty());
+    CHECK_FALSE(Logged(w, "is turned on"));
+    CHECK(std::ranges::any_of(events, [](const TurnEvent &e) {
+        return e.kind == EventKind::ActionLanded && e.who == kHero && e.detail.empty() && e.note.empty();
+    }));
+}
+
+TEST_CASE("an enemy's kept attack whose target fell is turned on the nearest of the party and its allies", "[time]")
+{
+    // For everyone (the user): "enemy" is the attacker's own.
+    constexpr ObjectId kSoldier = 0x300;
+    std::vector<Creature> fight = StandardFight();
+    fight.push_back(Make(kSoldier, Side::Ally, false, L"Soldier", 12.0f)); // after Alistair, before the hurlock
+    World w(Timed(), fight);
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    // The genlock among them: Alistair and the soldier at hand, the hero ten
+    // metres off, the hurlock at its side.
+    w.Get(kCompanion).position = {1.0f, 0.0f, 0.0f};
+    w.Get(kSoldier).position = {0.0f, 1.5f, 0.0f};
+    w.Get(kHero).position = {10.0f, 0.0f, 0.0f};
+    w.Get(kHurlock).position = {0.0f, -1.0f, 0.0f};
+    bool kept = false;
+    w.onPoke = [&](ObjectId id) {
+        // Its first choice: a swing too long for its bar, kept, owing 2 s.
+        if (id == kGenlock && !std::exchange(kept, true))
+        {
+            CHECK(Strike(w, kGenlock, kCompanion, Source::Script, 6.0f) == Verdict::Hold);
+        }
+    };
+    w.StartFight();
+    UntilTurnOf(w, kGenlock);
+    w.RunFor(200);
+    REQUIRE(kept);
+    REQUIRE(w.heldCasts.contains(kGenlock));
+    w.Get(kCompanion).down = true; // Alistair falls before it lands
+    w.targetGone.insert(kGenlock);
+    UntilTurnOf(w, kGenlock);
+    // Named: the party and its allies still standing, in the order's order;
+    // not Alistair, fallen, nor the hurlock, its own side.
+    CHECK(NamedFor(w, kGenlock) == std::vector<ObjectId>{kHero, kSoldier});
+    // The hero is out of its reach; the soldier is not.
+    REQUIRE(w.turned.size() == 1);
+    CHECK(w.turned.front() == std::pair{kGenlock, kSoldier});
+    REQUIRE(w.released.size() == 1);
+    CHECK(w.released.front() == Verdict::Allow);
+    CHECK(w.Get(kGenlock).current == CommandType::Attack);
+    CHECK(w.machine.View().timeLeftMs == 2000); // what it owed paid, and no more
+    CHECK(Logged(w, "Genlock's pending attack is turned on Soldier: its target has fallen"));
+    CHECK(std::ranges::any_of(events, [&](const TurnEvent &e) {
+        return e.kind == EventKind::ActionLanded && e.who == kGenlock && e.detail == "turned on another" &&
+               e.note == "Soldier";
+    }));
+}
+
+TEST_CASE("a kept talent whose target fell is dropped, an enemy in reach or not: its target was chosen", "[time]")
+{
+    World w(Timed());
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.Get(kGenlock).position = {1.5f, 0.0f, 0.0f};
+    w.Get(kHurlock).position = {0.0f, 1.8f, 0.0f};
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(Strike(w, kHero, kGenlock, Source::Player, 3.0f) == Verdict::Allow);
+    Done(w, kHero);
+    CommandRequest talent;
+    talent.object = kHero;
+    talent.type = CommandType::UseAbility;
+    talent.source = Source::Player;
+    talent.inCombat = true;
+    talent.walk = 0.0f;
+    talent.ability = 5;
+    talent.abilityType = kAbilityTalent;
+    talent.actionSeconds = 2.0f;
+    talent.target = kGenlock;
+    CHECK(w.Queue(talent) == Verdict::Hold); // owes 1 s
+    w.RunFor(900);
+    REQUIRE(w.Current() != kHero);
+    w.Get(kGenlock).down = true;
+    w.targetGone.insert(kHero);
+    UntilTurnOf(w, kHero);
+    w.RunFor(1200);
+    // Nobody is named for it, the hurlock at her side or not: it is not
+    // given, and what it owed is given back.
+    CHECK(Released(w, kHero));
+    CHECK(NamedFor(w, kHero).empty());
+    CHECK(w.turned.empty());
+    CHECK(w.released.empty());
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(w.machine.View().timeLeftMs == 4000);
+    CHECK(std::ranges::any_of(events, [](const TurnEvent &e) {
+        return e.kind == EventKind::ActionDropped && e.who == kHero && e.detail == "its target is gone" && e.value == 5;
+    }));
+    CHECK(Logged(w, "Hero's pending use ability is dropped: its target is gone; the 1.00 s it owed given back"));
+}
+
+TEST_CASE("an AI whose kept attack has nobody in reach to be turned on is told to choose at once, its bar whole",
+          "[time]")
+{
+    // The user's question of issue 22, 2026-10-03: "what if there are no
+    // enemies within range? Does the AI need some kind of a kick to continue
+    // acting and not just stand there?" It gets one: what its turn paid is
+    // given back and the turn is handed over as any fresh turn is, which for
+    // an AI is being told to choose.
+    World w(Timed());
+    w.Get(kHero).position = {10.0f, 0.0f, 0.0f};
+    w.Get(kCompanion).position = {1.0f, 0.0f, 0.0f};
+    int pokes = 0;
+    std::uint32_t barAsToldAgain = 0;
+    Verdict chosenAnew = Verdict::Block;
+    w.onPoke = [&](ObjectId id) {
+        if (id != kGenlock)
+        {
+            return;
+        }
+        if (++pokes == 1)
+        {
+            // A swing too long for its bar, kept, owing 2 s.
+            CHECK(Strike(w, kGenlock, kCompanion, Source::Script, 6.0f) == Verdict::Hold);
+        }
+        else if (pokes == 2)
+        {
+            // Told again: it chooses anew, the hero this time, and walks
+            // the eight metres to him.
+            barAsToldAgain = w.machine.View().timeLeftMs;
+            chosenAnew = Act(w, kGenlock, CommandType::Attack, Source::Script, 2.0f, 8.0f);
+        }
+    };
+    w.StartFight();
+    UntilTurnOf(w, kGenlock);
+    w.RunFor(200);
+    REQUIRE(pokes == 1);
+    REQUIRE(w.heldCasts.contains(kGenlock));
+    w.Get(kCompanion).down = true; // its target falls, and the hero is far
+    w.targetGone.insert(kGenlock);
+    UntilTurnOf(w, kGenlock);
+    // Its turn has begun, 2 s of the bar paid for the attack that will not
+    // come. Not given: nobody it names is in its reach.
+    REQUIRE(w.Current() == kGenlock);
+    CHECK(NamedFor(w, kGenlock) == std::vector<ObjectId>{kHero});
+    CHECK(w.turned.empty());
+    CHECK(w.released.empty());
+    REQUIRE(pokes == 1);
+    // Within three frames it is told to choose: the step that hears its
+    // attack was not given, and the next, with a fresh look at everyone.
+    for (int frame = 0; frame < 3 && pokes < 2; ++frame)
+    {
+        w.Frame();
+    }
+    REQUIRE(pokes == 2);
+    CHECK(barAsToldAgain == 4000); // what it paid given back: the bar whole
+    CHECK(chosenAnew == Verdict::Allow);
+    REQUIRE(w.Current() == kGenlock);
+    CHECK(w.machine.GetPhase() == Phase::Executing);
+    CHECK(w.Get(kGenlock).current == CommandType::Attack);
+    CHECK(Logged(w, "Genlock's pending attack is dropped: its target is gone, and no enemy is in its reach; the 2.00 s "
+                    "it owed given back"));
+    CHECK_FALSE(Logged(w, "Genlock chooses again"));
 }
 
 TEST_CASE("with time, a kept action is said over the player's own, and nothing is interrupted as a fight ends",

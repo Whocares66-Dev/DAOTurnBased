@@ -571,3 +571,87 @@ TEST_CASE("a shot costs what its archer's last shot took, by its attack speed", 
     REQUIRE(shots.Learn(tamlen, 1.61f));
     CHECK(*shots.Seconds(tamlen) == Approx(1.71f));
 }
+
+TEST_CASE("the sides that fight each other: the enemies, and the party with its allies", "[rules]")
+{
+    using tb::Side;
+    CHECK(tb::Opposed(Side::Party, Side::Enemy));
+    CHECK(tb::Opposed(Side::Ally, Side::Enemy));
+    CHECK(tb::Opposed(Side::Enemy, Side::Party));
+    CHECK(tb::Opposed(Side::Enemy, Side::Ally));
+    CHECK_FALSE(tb::Opposed(Side::Party, Side::Party));
+    CHECK_FALSE(tb::Opposed(Side::Party, Side::Ally));
+    CHECK_FALSE(tb::Opposed(Side::Ally, Side::Party));
+    CHECK_FALSE(tb::Opposed(Side::Ally, Side::Ally));
+    CHECK_FALSE(tb::Opposed(Side::Enemy, Side::Enemy));
+}
+
+TEST_CASE("a kept attack whose target fell is turned on the nearest enemy its creature can strike without a step",
+          "[rules][time]")
+{
+    // Issue 22, the user's choice of 2026-10-03. Each as the game layer
+    // measured it: standing, hostile, seen, how far, and the attacker's
+    // reach on it.
+    const auto foe = [](tb::ObjectId id, float meters, float reach = 2.05f) {
+        tb::Foe f;
+        f.id = id;
+        f.standing = true;
+        f.hostile = true;
+        f.seen = true;
+        f.meters = meters;
+        f.reach = reach;
+        return f;
+    };
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+
+    // Nobody to turn it on: dropped, as before.
+    CHECK(tb::NearestInReach({}) == tb::kNoObject);
+    // The nearest of those in reach, wherever it stands in the list.
+    const std::vector<tb::Foe> three{foe(0x201, 1.9f), foe(0x202, 1.2f), foe(0x203, 1.6f)};
+    CHECK(tb::NearestInReach(three) == 0x202);
+    // Out of reach is a walk, and no walk was paid for: not that one, however
+    // few the others; and with all of them out of reach, none.
+    const std::vector<tb::Foe> oneNear{foe(0x201, 6.0f), foe(0x202, 2.0f), foe(0x203, 30.0f)};
+    CHECK(tb::NearestInReach(oneNear) == 0x202);
+    const std::vector<tb::Foe> allFar{foe(0x201, 6.0f), foe(0x202, 2.1f)};
+    CHECK(tb::NearestInReach(allFar) == tb::kNoObject);
+    // In reach is what the gate judges an attack's walk by: at the reach
+    // itself there is nothing to walk; a hair past it there is.
+    CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, 2.05f)}) == 0x201);
+    CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, 2.06f)}) == tb::kNoObject);
+    // Each by the attacker's reach on it: a giant spider's space puts it in
+    // reach from further off than a person.
+    const std::vector<tb::Foe> spider{foe(0x201, 2.3f, 2.4f), foe(0x202, 2.2f, 2.05f)};
+    CHECK(tb::NearestInReach(spider) == 0x201);
+    // Two as near: the first named.
+    const std::vector<tb::Foe> tie{foe(0x201, 1.5f), foe(0x202, 1.5f)};
+    CHECK(tb::NearestInReach(tie) == 0x201);
+
+    // A nearer one that has fallen, is not hostile or is not seen is passed
+    // over for one that is all three.
+    std::vector<tb::Foe> flawed{foe(0x201, 0.8f), foe(0x202, 1.0f), foe(0x203, 1.2f), foe(0x204, 1.8f)};
+    flawed[0].standing = false;
+    flawed[1].hostile = false;
+    flawed[2].seen = false;
+    CHECK(tb::NearestInReach(flawed) == 0x204);
+    flawed[3].seen = false;
+    CHECK(tb::NearestInReach(flawed) == tb::kNoObject);
+
+    // A bow reaches far, and a shot wants a line: the bandit of issue 11
+    // stood 26 s at a target 21.6 m off, inside its reach of 45.7 m. One in
+    // reach and out of sight is not shot at; the next that is seen is.
+    std::vector<tb::Foe> archer{foe(0x101, 21.6f, 45.7f), foe(0x102, 38.0f, 45.7f), foe(0x103, 50.0f, 45.7f)};
+    CHECK(tb::NearestInReach(archer) == 0x101);
+    archer[0].seen = false;
+    CHECK(tb::NearestInReach(archer) == 0x102);
+    archer[1].seen = false;
+    CHECK(tb::NearestInReach(archer) == tb::kNoObject); // the third is past the bow's reach
+
+    // A distance or a reach that is none is out of reach.
+    CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, nan)}) == tb::kNoObject);
+    CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, inf)}) == tb::kNoObject);
+    CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, 1.0f, nan)}) == tb::kNoObject);
+    CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, 1.0f, inf)}) == tb::kNoObject);
+    CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, nan), foe(0x202, 1.0f)}) == 0x202);
+}

@@ -136,19 +136,39 @@ struct Coverage
     int heldShares = 0;     // a hold shorter than a turn took its share of a bar
     int approaches = 0;     // a kept attack's creature walked to its target
     int targetsGone = 0;    // a kept action not given, its target gone
+    int turned = 0;         // a kept attack given at another in its reach, its target gone
 };
 
 class Arena
 {
   public:
     Arena(std::uint64_t seed, Coverage &coverage, TurnClock clock = TurnClock::Actions)
-        : rng_(seed), settings_(RandomSettings(rng_, clock)), world_(settings_, RandomFight(rng_, clock), seed),
-          coverage_(coverage)
+        : rng_(seed), reach_(seed ^ 0x22EAC4ull), settings_(RandomSettings(rng_, clock)),
+          world_(settings_, RandomFight(rng_, clock), seed), coverage_(coverage)
     {
         world_.record = false;
         world_.machine.SetLogLevel(LogLevel::Info); // the turns, for a failure's message
         world_.onPoke = [this](ObjectId id) { Decide(id, false); };
         world_.onEffect = [this](const Effect &e) { Saw(e); };
+        // A kept attack whose target is gone is turned on one of those the
+        // machine named for it, if the game layer finds one in its creature's
+        // reach (issue 22). Each must be of the other side, and it is turned
+        // only as its creature's turn begins. Whether one is in reach and in
+        // sight is drawn on a stream of its own, so that a fight in which no
+        // attack is turned is the fight it was before any could be.
+        world_.onMeasure = [this](ObjectId attacker, ObjectId other) {
+            const Creature &to = world_.Get(other);
+            Must(Opposed(world_.Get(attacker).side, to.side), "a kept attack offered one of its creature's own side");
+            Must(attacker == world_.Current(), "a kept attack turned on another out of its creature's turn");
+            Foe foe;
+            foe.id = other;
+            foe.standing = to.exists && !to.down;
+            foe.hostile = true;
+            foe.seen = Chance(reach_, 0.8);
+            foe.meters = Between(reach_, 0.0f, 5.0f);
+            foe.reach = world_.reach;
+            return foe;
+        };
         // A kept action given again as its creature's turn begins: it walks
         // a little (its target may have stepped away), then works.
         // The walk to a kept attack's target, given by the game layer: now
@@ -228,6 +248,10 @@ class Arena
                 {
                     world_.targetGone.insert(world_.Current());
                 }
+            }
+            if (line.find("'s pending attack is turned on ") != std::string_view::npos)
+            {
+                ++coverage_.turned;
             }
             if (line.find("is dropped: its target is gone") != std::string_view::npos)
             {
@@ -1499,6 +1523,7 @@ class Arena
     }
 
     Rng rng_;
+    Rng reach_; // what the game layer measures for a kept attack to be turned (onMeasure): its own stream
     Settings settings_;
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
     std::set<ObjectId> secondsKnown_;             // held with seconds the machine could read, and not yet ended by it
@@ -1637,6 +1662,11 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     // A kept attack's creature walking to its target, and a kept action's
     // target gone by the time it would land (2026-10-02: 49 and 61).
     CHECK(coverage.approaches > 15);
+    // And of those, a kept attack turned on another in its creature's reach,
+    // and a kept action dropped, nobody to turn it on or not an attack
+    // (2026-10-03, issue 22: 40 and 38).
+    CHECK(coverage.turned > 13);
+    CHECK(coverage.targetsGone > 12);
     // A hold shorter than a turn taking its share of a bar (2026-10-02: 304).
     CHECK(coverage.heldShares > 100);
     CHECK(coverage.movementCuts > 85);

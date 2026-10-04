@@ -256,6 +256,34 @@ float WalkToReach(float distance, float reach)
     return std::max(0.0f, distance - reach);
 }
 
+bool Opposed(Side a, Side b)
+{
+    return (a == Side::Enemy) != (b == Side::Enemy);
+}
+
+ObjectId NearestInReach(std::span<const Foe> foes)
+{
+    const Foe *nearest = nullptr;
+    for (const Foe &foe : foes)
+    {
+        if (!foe.standing || !foe.hostile || !foe.seen)
+        {
+            continue;
+        }
+        // A distance or a reach that is none (the engine's answer for an
+        // object it cannot place) is out of reach: the comparison fails.
+        if (!std::isfinite(foe.meters) || !std::isfinite(foe.reach) || WalkToReach(foe.meters, foe.reach) > 0.0f)
+        {
+            continue;
+        }
+        if (nearest == nullptr || foe.meters < nearest->meters)
+        {
+            nearest = &foe;
+        }
+    }
+    return nearest != nullptr ? nearest->id : kNoObject;
+}
+
 float MovementBudget(const Settings &settings, float speedModifier, float dexterity)
 {
     float meters = settings.movementMeters;

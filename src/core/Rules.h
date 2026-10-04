@@ -180,6 +180,42 @@ inline constexpr float kLongestRange = 60.0f;
 // Meters a creature must walk before it can strike a target this far away.
 [[nodiscard]] float WalkToReach(float distance, float reach);
 
+// Whether two sides fight each other: the enemies against the party and
+// its allies. An attacker's enemies are those of the other side, whichever
+// it is on (for a hostile, the party and its allies).
+[[nodiscard]] bool Opposed(Side a, Side b);
+
+// A kept plain attack whose target has fallen by the turn it lands on is
+// turned on the nearest enemy its creature can strike from where it stands,
+// for nothing: the swing was begun and paid for (the user, 2026-10-03, issue
+// 22: "as the game's own auto-attack would", for everyone, the party and the
+// AI). Until then it was dropped, and the turn began with the decision lost:
+// most turns end on a kept swing, and with several on one target it had
+// often fallen first, 8 to 24 times a fight at Redcliffe in the playthrough
+// (kept talents among them, which stay dropped: their target was chosen).
+//
+// One it might be turned on, as the game layer measured it against the
+// attacker (src/game/Bridge.cpp): the machine names who (the standing
+// combatants of the other side), the game says what is so of each, and
+// which of them it is turned on is decided here.
+struct Foe
+{
+    ObjectId id = kNoObject;
+    bool standing = false; // there, and alive
+    bool hostile = false;  // to the attacker, by the game's own word
+    // The attacker perceives it and has a clear line to it. A shot at one out
+    // of its line is not loosed: its archer walks for one, or stands (a bandit
+    // 21.6 m from its target, inside its bow's reach, stood 26 s: issue 11).
+    bool seen = false;
+    float meters = 0.0f; // between the two
+    float reach = 0.0f;  // the attacker's reach on it (Reach)
+};
+// The nearest of them the attacker can strike without a step (WalkToReach
+// of none: what the gate judges an attack's walk by), the first named of two
+// as near; kNoObject with none, and the attack is dropped as before, what
+// its turn paid for it given back.
+[[nodiscard]] ObjectId NearestInReach(std::span<const Foe> foes);
+
 // How long things take, with a turn a bar of time (Settings::turnClock,
 // dev/REBALANCE.md, "Current specification": every action costs its own
 // time).

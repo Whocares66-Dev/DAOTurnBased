@@ -1429,6 +1429,106 @@ MUTANTS = [
         "        budget_.spend.GiveActionBack(paid);\n        budget_.pendingPaidMs = 0;",
         "        budget_.pendingPaidMs = 0;",
     ),
+    # Issue 22: a kept plain attack whose target fell is turned on the nearest
+    # enemy its creature can strike from where it stands, for nothing.
+    Mutant(
+        "time: a kept attack is turned on one out of its reach",
+        RULES,
+        "        if (!std::isfinite(foe.meters) || !std::isfinite(foe.reach) || WalkToReach(foe.meters, foe.reach) > 0.0f)",
+        "        if (!std::isfinite(foe.meters) || !std::isfinite(foe.reach))",
+    ),
+    Mutant(
+        "time: a kept attack is turned on one at a distance that is none",
+        RULES,
+        "        if (!std::isfinite(foe.meters) || !std::isfinite(foe.reach) || WalkToReach(foe.meters, foe.reach) > 0.0f)",
+        "        if (!std::isfinite(foe.reach) || WalkToReach(foe.meters, foe.reach) > 0.0f)",
+    ),
+    Mutant(
+        "time: a reach that is none reaches everyone",
+        RULES,
+        "        if (!std::isfinite(foe.meters) || !std::isfinite(foe.reach) || WalkToReach(foe.meters, foe.reach) > 0.0f)",
+        "        if (!std::isfinite(foe.meters) || WalkToReach(foe.meters, foe.reach) > 0.0f)",
+    ),
+    Mutant(
+        "time: a kept attack is turned on one its creature cannot see",
+        RULES,
+        "        if (!foe.standing || !foe.hostile || !foe.seen)",
+        "        if (!foe.standing || !foe.hostile)",
+    ),
+    Mutant(
+        "time: a kept attack is turned on the fallen",
+        RULES,
+        "        if (!foe.standing || !foe.hostile || !foe.seen)",
+        "        if (!foe.hostile || !foe.seen)",
+    ),
+    Mutant(
+        "time: a kept attack is turned on one the game does not call hostile",
+        RULES,
+        "        if (!foe.standing || !foe.hostile || !foe.seen)",
+        "        if (!foe.standing || !foe.seen)",
+    ),
+    Mutant(
+        "time: a kept attack is turned on the first in reach, not the nearest",
+        RULES,
+        "        if (nearest == nullptr || foe.meters < nearest->meters)",
+        "        if (nearest == nullptr)",
+    ),
+    Mutant(
+        "time: of two as near a kept attack is turned on the last named",
+        RULES,
+        "        if (nearest == nullptr || foe.meters < nearest->meters)",
+        "        if (nearest == nullptr || foe.meters <= nearest->meters)",
+    ),
+    Mutant(
+        "an attacker's enemies are its own side",
+        RULES,
+        "    return (a == Side::Enemy) != (b == Side::Enemy);",
+        "    return (a == Side::Enemy) == (b == Side::Enemy);",
+    ),
+    Mutant(
+        "time: a kept talent whose target fell may be turned on another",
+        MACHINE,
+        "    if (landing_->type == CommandType::Attack)\n    {\n        for (const Combatant &c : order_.All())",
+        "    if (landing_->type != CommandType::Invalid)\n    {\n        for (const Combatant &c : order_.All())",
+    ),
+    Mutant(
+        "time: a kept attack may be turned on the fallen of the fight",
+        MACHINE,
+        "            if (!c.down && Opposed(who.side, c.side))",
+        "            if (Opposed(who.side, c.side))",
+    ),
+    Mutant(
+        "time: a kept attack may be turned on anyone standing, friend or foe",
+        MACHINE,
+        "            if (!c.down && Opposed(who.side, c.side))",
+        "            if (!c.down && c.id != who.id)",
+    ),
+    Mutant(
+        "time: a kept attack turned on another is not said",
+        MACHINE,
+        "            const bool turned = request.type == CommandType::Attack && request.target != kNoObject &&\n"
+        "                                request.target != landing_->target;",
+        "            const bool turned = false;",
+    ),
+    Mutant(
+        "time: a kept attack given at its own target is said to be turned",
+        MACHINE,
+        "            const bool turned = request.type == CommandType::Attack && request.target != kNoObject &&\n"
+        "                                request.target != landing_->target;",
+        "            const bool turned = request.type == CommandType::Attack && request.target != kNoObject;",
+    ),
+    Mutant(
+        "time: whom a kept attack was aimed at is forgotten",
+        MACHINE,
+        "                                  engine, request.target});",
+        "                                  engine});",
+    ),
+    Mutant(
+        "time: a turn whose kept action will not come is handed over only after a settling",
+        MACHINE,
+        "        handoverWanted_ = who;",
+        "        (void)who;",
+    ),
     Mutant(
         "time: Next turn is said over every creature",
         MACHINE,

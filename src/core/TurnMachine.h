@@ -123,8 +123,9 @@ struct Observation
     std::optional<ActorObservation> actor;
     std::vector<CombatantStatus> statuses;
     // Creatures whose kept cast or action the game layer did not give when
-    // asked to (ReleaseCast): its target was gone. What it owed is given
-    // back.
+    // asked to (ReleaseCast): its target was gone, and for a plain attack
+    // nobody it could be turned on was in reach (Effect::others). What it
+    // owed is given back.
     std::vector<ObjectId> keptVoid;
 };
 
@@ -145,7 +146,7 @@ enum class EffectKind : std::uint8_t
     AgeTime,       // every temporary effect aged b milliseconds, once; with a target, that creature's alone
     OwnClock,      // target's effects, regeneration and timers on a clock of its own (a 1), or the shared one (a 0)
     GameSpeed,     // the game runs at b thousandths of its speed (1000: as ever)
-    ReleaseCast,   // target's held cast of ability a is given to it now: it has charged its turns
+    ReleaseCast,   // target's held cast of ability a is given to it now: it has charged its turns (others: Effect)
     DropCast,      // target's held cast is forgotten (interrupted); no target: everyone's
     Approach,      // target walks to where it can do the action kept for it (within reach of its target)
 };
@@ -164,6 +165,12 @@ struct Effect
     // A cooldown's: the seconds its sweep is drawn against, b the seconds
     // left of them (0: as the scripts set one, both the same).
     std::int32_t c = 0;
+    // A kept plain attack's release (ReleaseCast): those it may be turned on
+    // if its target has fallen, the standing combatants of the other side,
+    // in the order's order (core/Rules.h, NearestInReach; issue 22). None
+    // for a kept talent or spell, which is dropped then: its target was its
+    // caster's choice.
+    std::vector<ObjectId> others;
 
     [[nodiscard]] static Effect Of(EffectKind kind, ObjectId target = kNoObject)
     {
@@ -881,6 +888,10 @@ class TurnMachine
         bool kept = true;
         bool spell = false;  // a spell being conjured: a blow may interrupt it (OnDamaged)
         bool engine = false; // the engine's own command, held in its conjure (Verdict::Conjure)
+        // What it was aimed at as it was kept: an attack given again at
+        // another was turned on it by the game layer, its own target fallen
+        // (Effect::others), and the log and its event say so.
+        ObjectId target = kNoObject;
     };
     std::vector<Charge> charges_;
     std::optional<Charge> landing_; // given again this turn, and not yet come through the gate

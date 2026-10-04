@@ -44,6 +44,8 @@ enum class EventKind : std::uint8_t
     // With a turn a bar of time (Settings::turnClock): an action that did
     // not fit what was left of its creature's bar.
     ActionPending, // who: begun, or a turn spent on it; detail: the time it still owes; command; value: its ability
+    // (detail "turned on another", note whom: an attack given at the nearest
+    // enemy in reach, its own target fallen.)
     ActionLanded,  // who: its time paid, it is given to its creature as its turn begins; command; value: its ability
     ActionDropped, // who: it will not land; detail: why; command; value: its ability
     // A party member's turn put off to the round's end, nothing of it spent

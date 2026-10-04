@@ -1007,7 +1007,7 @@ std::optional<Verdict> TurnMachine::PayAction(const Combatant &who, const Comman
         std::erase_if(charges_, [&](const Charge &c) { return c.caster == who.id; });
         charges_.push_back(Charge{who.id, request.ability, 1, owed, request.type, true,
                                   request.type == CommandType::UseAbility && request.abilityType == kAbilitySpell,
-                                  engine});
+                                  engine, request.target});
         if (engine)
         {
             // The turn is at it until its caster stands at the conjure the
@@ -1287,7 +1287,24 @@ bool TurnMachine::LandCast(const Combatant &who, std::vector<Effect> &fx)
     }
     Effect release = Effect::Of(EffectKind::ReleaseCast, who.id);
     release.a = landing_->ability;
-    fx.push_back(release);
+    // A plain attack whose target has fallen is turned on the nearest enemy
+    // its creature can strike from where it stands (core/Rules.h,
+    // NearestInReach; issue 22). Who its enemies are is the fight's to say:
+    // those of the other side still standing, as this turn's own look found
+    // them. Which of them is in its reach is the game layer's to measure. A
+    // talent or a spell names none and is dropped, as before: its target was
+    // chosen.
+    if (landing_->type == CommandType::Attack)
+    {
+        for (const Combatant &c : order_.All())
+        {
+            if (!c.down && Opposed(who.side, c.side))
+            {
+                release.others.push_back(c.id);
+            }
+        }
+    }
+    fx.push_back(std::move(release));
     if (landing_->engine)
     {
         // The engine's own cast, its conjure let complete: nothing comes back
@@ -1361,8 +1378,9 @@ void TurnMachine::Interrupt(ObjectId who, std::string_view why, std::vector<Effe
 }
 
 // The game layer did not give a kept cast or action when asked to: its
-// target was gone. What its creature's turn paid for it as it began is
-// given back; the turn goes on as when a cast does not come (StepSettling).
+// target was gone, and for a plain attack none of those it might have been
+// turned on was in its creature's reach (LandCast). What its creature's turn
+// paid for it as it began is given back, and the turn is its creature's, whole.
 void TurnMachine::KeptVoid(ObjectId who)
 {
     if (!landing_ || landing_->caster != who)
@@ -1378,17 +1396,22 @@ void TurnMachine::KeptVoid(ObjectId who)
     }
     const Combatant *c = order_.Find(who);
     Log(LogLevel::Info,
-        std::format("{}'s pending {} is dropped: its target is gone{}", c != nullptr ? Utf8(c->name) : std::string{"?"},
-                    Name(landing_->type),
+        std::format("{}'s pending {} is dropped: its target is gone{}{}",
+                    c != nullptr ? Utf8(c->name) : std::string{"?"}, Name(landing_->type),
+                    landing_->type == CommandType::Attack ? ", and no enemy is in its reach" : "",
                     paid > 0 ? std::format("; the {:.2f} s it owed given back", static_cast<float>(paid) / 1000.0f)
                              : std::string{}));
     Emit(Timed() ? EventKind::ActionDropped : EventKind::CastInterrupted, who, "its target is gone", landing_->ability,
          Name(landing_->type));
     landing_.reset();
     // Nothing is coming to wait for: the turn is its creature's now, handed
-    // over as any turn is (Step). Left at "executing", a creature held by an
-    // effect no condition names waited out its whole turn there, the grace
-    // never counted (test_fights.cpp's long run, seed 129 with time).
+    // over as any turn is (Step): an AI is told to choose, and chooses anew
+    // with its bar whole; a party member the player plays waits for an order
+    // (the user's question of issue 22, 2026-10-03: "Does the AI need some
+    // kind of a kick to continue acting and not just stand there?"; this is
+    // the kick). Left at "executing", a creature held by an effect no
+    // condition names waited out its whole turn there, the grace never
+    // counted (test_fights.cpp's long run, seed 129 with time).
     if (current != nullptr && current->id == who && budget_.landing)
     {
         handoverWanted_ = who;
@@ -3259,9 +3282,24 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     case CommandKind::Action:
         if (landing)
         {
+            // Given at another than it was kept for: its target had fallen,
+            // and the game layer turned it on the nearest enemy in its reach
+            // (LandCast). For nothing all the same: the swing was begun and
+            // paid for, whoever it lands on.
+            const bool turned = request.type == CommandType::Attack && request.target != kNoObject &&
+                                request.target != landing_->target;
+            std::string onto;
+            if (turned)
+            {
+                const Combatant *other = order_.Find(request.target);
+                onto = other != nullptr ? Utf8(other->name) : std::format("{:#x}", request.target);
+                Log(LogLevel::Info,
+                    std::format("{}'s pending attack is turned on {}: its target has fallen", Utf8(who->name), onto));
+            }
             if (Timed())
             {
-                Emit(EventKind::ActionLanded, who->id, {}, request.ability, Name(request.type));
+                Emit(EventKind::ActionLanded, who->id, turned ? "turned on another" : "", request.ability,
+                     Name(request.type), std::move(onto));
             }
             else
             {

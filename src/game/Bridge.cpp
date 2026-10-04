@@ -157,6 +157,71 @@ float Health(ObjectId id)
     return total > 0.0f ? std::clamp(current / total, 0.0f, 1.0f) : 1.0f;
 }
 
+bool Gone(ObjectId id)
+{
+    return api::IsObjectValid(id) == 0 || api::IsDead(id) != 0;
+}
+
+// One a kept attack might be turned on, its own target fallen, as the game
+// has it now (core/Rules.h, Foe; issue 22):
+// - there and alive;
+// - hostile to the attacker by the game's own word: the fight's sides are
+//   the party's view, and one fighting beside the party need not be an
+//   enemy's enemy;
+// - seen: not in stealth (the effect the scripts' IsStealthy asks for; its
+//   AI could not have chosen it either), and with a clear line from the
+//   attacker (the scripts' CheckLineOfSightObject's question, DAOLib's
+//   dao::world::LineOfSight: walls and doors block). A shot with no line is
+//   not loosed (issue 11), and a blow at one behind a door is a walk round;
+// - how far, against the attacker's reach on it (ReachOf: what the gate
+//   judges an attack's walk by, so "in reach" here is a walk of none there).
+// Not yet seen in play.
+Foe Measure(ObjectId attacker, ObjectId other)
+{
+    Foe foe;
+    foe.id = other;
+    foe.standing = !Gone(other);
+    if (!foe.standing)
+    {
+        return foe;
+    }
+    foe.hostile = api::IsObjectHostile(attacker, other) != 0;
+    foe.meters = api::GetDistanceBetween(attacker, other);
+    foe.reach = ReachOf(attacker, other);
+    foe.seen = api::GetHasEffects(other, k::EFFECT_TYPE_STEALTH) == 0 &&
+               static_cast<bool>(dao::world::LineOfSight(attacker, other));
+    return foe;
+}
+
+// Which of those the machine named a kept attack is turned on (core's
+// NearestInReach decides), each as it was measured said at debug: why one
+// was passed over is read there.
+ObjectId TurnedOn(ObjectId attacker, const std::vector<ObjectId> &others)
+{
+    std::vector<Foe> foes;
+    foes.reserve(others.size());
+    for (const ObjectId other : others)
+    {
+        const Foe &foe = foes.emplace_back(Measure(attacker, other));
+        spdlog::debug("{:#010x}: its kept attack on {:#x}? {}{:.1f} m away, reach {:.1f} m, {}, {}", attacker, other,
+                      foe.standing ? "" : "fallen; ", foe.meters, foe.reach, foe.hostile ? "hostile" : "not hostile",
+                      foe.seen ? "seen" : "not seen");
+    }
+    return NearestInReach(foes);
+}
+
+// An attack given as a script gives one: it comes back through the gate.
+bool GiveAttack(ObjectId attacker, ObjectId target)
+{
+    const dao::script::OwnedCommand attack = api::CommandAttack(target);
+    if (!attack)
+    {
+        return false;
+    }
+    api::AddCommand(attacker, *attack.get(), 1);
+    return true;
+}
+
 } // namespace
 
 Observation Bridge::Observe(const Needs &needs, std::uint32_t nowMs)
@@ -630,18 +695,47 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             // through the gate, which lets it through for nothing. Its
             // conjuring is short now, the turns having been its time.
             if (const std::optional<HeldCast> kept = TakeHeldCast(e.target);
-                kept && kept->target != dao::kInvalidObject &&
-                (api::IsObjectValid(kept->target) == 0 || api::IsDead(kept->target) != 0))
+                kept && kept->target != dao::kInvalidObject && Gone(kept->target))
             {
+                // A plain attack whose target fell is turned on the nearest
+                // enemy its creature can strike from where it stands, and
+                // given at that one: through the gate as the kept one would
+                // have come, for nothing, its time paid as the turn began
+                // (the user, 2026-10-03, issue 22: "as the game's own
+                // auto-attack would", for everyone). Who it may be is the
+                // machine's to name (Effect::others) and which the core's to
+                // choose; here they are measured and the attack given.
+                const ObjectId next = kept->type == CommandType::Attack ? TurnedOn(e.target, e.others) : kNoObject;
+                if (next != kNoObject)
+                {
+                    if (GiveAttack(e.target, next))
+                    {
+                        spdlog::info(
+                            "{:#010x}: the target of its kept attack ({:#x}) is gone: turned on {:#x}, the nearest of "
+                            "{} enemies standing that it can strike from where it is ({:.1f} m away, reach {:.1f} m)",
+                            e.target, kept->target, next, e.others.size(), api::GetDistanceBetween(e.target, next),
+                            ReachOf(e.target, next));
+                        break;
+                    }
+                    spdlog::warn("{:#010x}: could not make the command for its kept attack, turned on {:#x}", e.target,
+                                 next);
+                }
                 // Its target fell while it charged: not cast at nothing. In
                 // play the cast was given all the same, struck nothing, and
                 // put the talent on cooldown for five turns (the twelfth
                 // play test, 2026-10-01). Not given, nothing is spent: the
                 // machine says its cast did not come, and the turn goes on.
+                // A talent or a spell, always: its target was chosen. An
+                // attack, with no enemy in its reach: its creature's turn is
+                // handed over whole, and an AI chooses anew.
                 spdlog::info(
                     "{:#010x}: the target of its charged cast of ability {} ({:#x}) is gone: not cast, nothing "
-                    "spent",
-                    e.target, kept->ability, kept->target);
+                    "spent{}",
+                    e.target, kept->ability, kept->target,
+                    kept->type == CommandType::Attack
+                        ? std::format(" (an attack: none of {} enemies standing is in its reach and sight)",
+                                      e.others.size())
+                        : std::string{});
                 // Logged, not shown: "Its target is gone" floated here in
                 // grey, and with a turn a bar of time most turns end on a
                 // kept attack whose target has often fallen by the next,

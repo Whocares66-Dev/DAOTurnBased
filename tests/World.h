@@ -314,6 +314,24 @@ class World
         return c != nullptr ? c->id : kNoObject;
     }
 
+    Foe Measure(ObjectId attacker, ObjectId other) const
+    {
+        if (onMeasure)
+        {
+            return onMeasure(attacker, other);
+        }
+        const Creature &from = Get(attacker);
+        const Creature &to = Get(other);
+        Foe foe;
+        foe.id = other;
+        foe.standing = to.exists && !to.down;
+        foe.hostile = true;
+        foe.seen = true;
+        foe.meters = Distance(from.position, to.position);
+        foe.reach = reach;
+        return foe;
+    }
+
     TurnMachine machine;
     std::vector<Creature> creatures;
     std::vector<Effect> applied;
@@ -335,7 +353,13 @@ class World
     int approaches = 0;
     std::unordered_set<ObjectId> targetGone; // whose kept action's target is gone: not given
     std::vector<ObjectId> keptVoid;          // told to the machine with the next frame
-    bool record = true;                      // keep the log and the effects (a long random fight does not)
+    // What the game layer measures of one a kept attack may be turned on,
+    // its own target gone (src/game/Bridge.cpp, ReleaseCast): a test's own,
+    // or from where the two stand, hostile and in sight, with this reach.
+    std::function<Foe(ObjectId attacker, ObjectId other)> onMeasure;
+    float reach = 2.05f;                               // two people's (core/Rules.h, Reach)
+    std::vector<std::pair<ObjectId, ObjectId>> turned; // kept attacks turned on another: whose, and on whom
+    bool record = true;                                // keep the log and the effects (a long random fight does not)
     Mode mode = Mode::Explore;
     bool paused = false;
     bool inCombat = true;
@@ -439,11 +463,41 @@ class World
                 }
                 // The game layer gives the cast it kept, as a script's; not
                 // one whose target is gone, which it says with the next
-                // frame's observation.
+                // frame's observation. A plain attack is given all the same,
+                // at the nearest of those the machine named that its creature
+                // can strike from where it stands, if there is one.
                 if (targetGone.erase(e.target) > 0)
                 {
-                    heldCasts.erase(e.target);
-                    keptVoid.push_back(e.target);
+                    const auto kept = heldCasts.find(e.target);
+                    ObjectId next = kNoObject;
+                    if (kept != heldCasts.end() && kept->second.type == CommandType::Attack)
+                    {
+                        std::vector<Foe> foes;
+                        for (const ObjectId other : e.others)
+                        {
+                            foes.push_back(Measure(e.target, other));
+                        }
+                        next = NearestInReach(foes);
+                    }
+                    if (next != kNoObject)
+                    {
+                        CommandRequest again = kept->second;
+                        heldCasts.erase(kept);
+                        again.source = Source::Script;
+                        again.target = next;
+                        again.walk = 0.0f; // in reach: nothing to walk
+                        turned.emplace_back(e.target, next);
+                        released.push_back(Queue(again));
+                        if (onReleased)
+                        {
+                            onReleased(e.target, again, released.back());
+                        }
+                    }
+                    else
+                    {
+                        heldCasts.erase(e.target);
+                        keptVoid.push_back(e.target);
+                    }
                 }
                 else if (const auto kept = heldCasts.find(e.target); kept != heldCasts.end())
                 {

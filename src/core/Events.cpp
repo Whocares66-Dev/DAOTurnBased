@@ -262,16 +262,18 @@ EventDescription Describe(EventKind kind)
                 nullptr};
     case EventKind::ActionLanded:
         return {"A pending action's time is paid: it is given to its creature as its turn begins, which then has "
-                "the rest of its bar.",
+                "the rest of its bar. A plain attack whose target has fallen is given at the nearest enemy its "
+                "creature can strike from where it stands, for nothing more.",
                 true,
-                nullptr,
+                "turned on another, for an attack given at another than it was kept for; none otherwise",
                 "its ability (-1: an attack)",
                 "the command",
-                nullptr};
+                "whom it was turned on, by name"};
     case EventKind::ActionDropped:
         return {"A pending action will not land: what it still owed is not charged.",
                 true,
-                "why: held, struck, fell, gone, its target is gone, the fight over",
+                "why: held, struck, fell, gone, its target is gone (and for an attack, no enemy in its reach), the "
+                "fight over",
                 "its ability (-1: an attack)",
                 "the command",
                 nullptr};
