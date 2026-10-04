@@ -219,6 +219,19 @@ class World
         return Queue(request);
     }
 
+    // A wait, as the scripts' CommandWait(seconds) comes to the gate: its
+    // length the command's own, as the game layer reads it (0: not read).
+    Verdict Wait(ObjectId id, float seconds, Source source = Source::Script)
+    {
+        CommandRequest request;
+        request.object = id;
+        request.type = CommandType::Wait;
+        request.source = source;
+        request.inCombat = Get(id).fighting;
+        request.waitSeconds = seconds;
+        return Queue(request);
+    }
+
     // An ability used: its cooldown in seconds, and whether it is a
     // sustained one and on (so that this turns it off).
     // An ability with a conjuring time: a turn's worth or more charges.

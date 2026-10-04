@@ -16,7 +16,10 @@
 //   6. each combatant starts at most one turn a round;
 //   7. an AI's turn ends, and a fight ends when no enemy is left fighting;
 //   8. every effect names who it is for, the AI is told to choose only on its
-//      own turn, and only party members are selected.
+//      own turn, and only party members are selected;
+//   9. the current combatant's wait is never let through, and a wait takes its
+//      own length of the bar or nothing: only an AI's on its own turn, with a
+//      turn a bar of time, and only one that fits what is left (issue 31).
 //
 // The arena is World.h's stand-in with the creatures made to act. An AI
 // chooses when told to and whenever its command ends, as COMMAND_COMPLETE
@@ -33,6 +36,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -137,13 +141,15 @@ struct Coverage
     int approaches = 0;     // a kept attack's creature walked to its target
     int targetsGone = 0;    // a kept action not given, its target gone
     int turned = 0;         // a kept attack given at another in its reach, its target gone
+    int waitsPaid = 0;      // an AI's wait taken of its bar, its length (issue 31)
+    int waitsTooLong = 0;   // an AI's wait longer than what was left: its turn ended
 };
 
 class Arena
 {
   public:
     Arena(std::uint64_t seed, Coverage &coverage, TurnClock clock = TurnClock::Actions)
-        : rng_(seed), reach_(seed ^ 0x22EAC4ull), settings_(RandomSettings(rng_, clock)),
+        : rng_(seed), reach_(seed ^ 0x22EAC4ull), waits_(seed ^ 0x3A175ull), settings_(RandomSettings(rng_, clock)),
           world_(settings_, RandomFight(rng_, clock), seed), coverage_(coverage)
     {
         world_.record = false;
@@ -287,6 +293,10 @@ class Arena
             if (line.find(" chooses again: ") != std::string_view::npos)
             {
                 ++coverage_.choseAgain;
+            }
+            if (line.find("'s wait of ") != std::string_view::npos && line.ends_with(" it has left: its turn ends"))
+            {
+                ++coverage_.waitsTooLong;
             }
             if (line.ends_with(" s rolls over") && !line.ends_with("; 0.00 s rolls over"))
             {
@@ -541,14 +551,39 @@ class Arena
         spell.conjureAnim = 245;
         spell.conjureSeconds = 1.0f;
         spell.actionSeconds = seconds;
+        // A wait's length, the command's own as the game layer reads it: the
+        // AI's two (AI_DO_NOTHING_DELAY, 2 s, and its quick one, 1 s), and
+        // now and then none read. Drawn on a stream of its own, so that a
+        // fight of one action a turn, where a wait is a pass whatever its
+        // length, is the fight it was before a wait had one (issue 31).
+        const float wait = type != CommandType::Wait ? 0.0f
+                           : Chance(waits_, 0.15)    ? 0.0f
+                           : Chance(waits_, 0.7)     ? 2.0f
+                                                     : 1.0f;
         const std::uint32_t timeLeft = active ? world_.machine.View().timeLeftMs : 0;
         const Verdict verdict =
-            item                   ? world_.Order(id, CommandType::UseItem, source, std::nullopt, seconds)
-            : conjures             ? world_.Queue(spell)
-            : grabbed != kNoObject ? world_.Queue(grab)
+            item                        ? world_.Order(id, CommandType::UseItem, source, std::nullopt, seconds)
+            : conjures                  ? world_.Queue(spell)
+            : grabbed != kNoObject      ? world_.Queue(grab)
+            : type == CommandType::Wait ? world_.Wait(id, wait, source)
             : type == CommandType::UseAbility
                 ? world_.UseAbility(id, source, ability, cooldown, sustained, on)
                 : world_.Order(id, type, source, told ? std::optional{walk} : std::nullopt, seconds);
+        if (type == CommandType::Wait && active)
+        {
+            // A wait takes its own length of its creature's bar, or nothing:
+            // only an AI's on its own turn, with time, and only one that
+            // fits what was left. Paid for or not, it is never let through.
+            const std::uint32_t after = world_.machine.View().timeLeftMs;
+            const auto waitMs = static_cast<std::uint32_t>(std::lround(wait * 1000.0f));
+            const bool paid = after != timeLeft;
+            Must(!paid || (timed && id == current && !PlayerControls(id)),
+                 "a wait paid for that is not an AI's on its own turn, with time");
+            Must(!paid || (waitMs > 0 && waitMs <= timeLeft && after == timeLeft - waitMs),
+                 "a wait took other than its own length of the bar");
+            Must(id != current || verdict == Verdict::Block, "the current combatant's wait let through");
+            coverage_.waitsPaid += paid ? 1 : 0;
+        }
         if (told && active && verdict == Verdict::Allow && walk > left + TurnMachine::kReachSlack &&
             id == world_.Current())
         {
@@ -654,11 +689,15 @@ class Arena
             // One not yet selected has its full AI run, which waits when it
             // has no enemy to choose: never let through on a turn the player
             // plays, where each wait put the turn back at its command for
-            // good (issue 10). Asked without a draw; held, it changes nothing.
+            // good (issue 10). Asked without a draw; held, it changes nothing,
+            // and takes none of the turn's time (issue 31): a second, the
+            // quick wait that AI makes.
             if (afterCommand && world_.machine.Active() && world_.Current() == id)
             {
-                Must(world_.Order(id, CommandType::Wait, Source::Script) == Verdict::Block,
+                const std::uint32_t bar = world_.machine.View().timeLeftMs;
+                Must(world_.Wait(id, 1.0f) == Verdict::Block,
                      "its own AI's wait let through on a turn the player plays");
+                Must(world_.machine.View().timeLeftMs == bar, "its own AI's wait took time of a turn the player plays");
             }
             // A controlled creature's AI only carries on attacking.
             if (afterCommand && Chance(rng_, 0.5))
@@ -1524,6 +1563,7 @@ class Arena
 
     Rng rng_;
     Rng reach_; // what the game layer measures for a kept attack to be turned (onMeasure): its own stream
+    Rng waits_; // how long an AI's wait is, as the game layer reads it of the command (Try): its own stream
     Settings settings_;
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
     std::set<ObjectId> secondsKnown_;             // held with seconds the machine could read, and not yet ended by it
@@ -1627,6 +1667,9 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     // (2026-10-02: 88 turns put off, 74 of them taken; the rest fell or were held first.)
     CHECK(coverage.delays > 40);
     CHECK(coverage.delayedTurns > 30);
+    // With one action a turn a wait is a pass, whatever its length (issue 31).
+    CHECK(coverage.waitsPaid == 0);
+    CHECK(coverage.waitsTooLong == 0);
 }
 
 // With a turn a bar of time (Settings::turnClock), the same fights' kinds
@@ -1681,6 +1724,12 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     CHECK(coverage.cooldownsHeld > 35);
     CHECK(coverage.delays > 40); // 95, and 84 taken
     CHECK(coverage.delayedTurns > 30);
+    // An AI's wait taken of its bar, its creature told to choose again, and
+    // one longer than what was left, its turn ended (2026-10-04, issue 31:
+    // 176 and 27; 273 told to choose again, where 107 were before a wait
+    // cost its time).
+    CHECK(coverage.waitsPaid > 55);
+    CHECK(coverage.waitsTooLong > 8);
 }
 
 // One fight by its seed, every line the machine logs printed: a failure's

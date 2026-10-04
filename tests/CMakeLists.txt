@@ -46,6 +46,7 @@ add_executable(
     test_turnorder.cpp
     test_turnbudget.cpp
     test_turntime.cpp
+    test_wait.cpp
 )
 tb_apply_warnings(tb_tests)
 target_link_libraries(tb_tests PRIVATE tb_core Catch2::Catch2WithMain)

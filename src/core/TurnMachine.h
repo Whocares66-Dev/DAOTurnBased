@@ -239,6 +239,12 @@ struct CommandRequest
     std::int32_t abilityType = 0;
     std::int32_t conjureAnim = 0;
     bool staff = false;
+    // For a wait: how long it waits, in seconds, the command's own number as
+    // the game layer read it of the engine (the scripts' CommandWait(2.0):
+    // DAOLib's dao::Command::WaitMilliseconds); 0 where it could not be
+    // read. With a turn a bar of time an AI's wait costs that much of its
+    // creature's bar (TurnMachine::PayWait; issue 31).
+    float waitSeconds = 0.0f;
     // The object it is aimed at, if any (an attack's, an ability's): last,
     // since tests fill the fields above by place.
     ObjectId target = kNoObject;
@@ -625,6 +631,12 @@ class TurnMachine
         // its own cost still covers that time (none: no such effect yet).
         std::optional<std::uint32_t> ownEffectCover;
         int commands = 0;
+        // Waits its AI chose that were paid for out of the bar (PayWait).
+        // Counted apart from the commands let through, which a wait is not:
+        // it is refused all the same, and the camera goes to an AI's
+        // creature at the first command that is let through. Together they
+        // are what max_commands_per_turn bounds a wait by.
+        int waits = 0;
         bool outOfMovement = false;
         // With own clocks: how far this turn has moved its creature's
         // effects on (AgeOwnClock, and the steps of its action's own
@@ -685,6 +697,10 @@ class TurnMachine
     [[nodiscard]] int TacticsOf(const Combatant &who) const;
     [[nodiscard]] TurnBudget NewSpend(const Combatant &who) const;
     [[nodiscard]] std::optional<Verdict> PayAction(const Combatant &who, const CommandRequest &request);
+    // With time, an AI's wait takes its own length of its creature's bar:
+    // whether it was paid for (then its AI chooses again), or is the pass a
+    // wait was before, which ends the turn.
+    [[nodiscard]] bool PayWait(const Combatant &who, const CommandRequest &request);
     // What a cooldown's and an effect's seconds are counted in.
     [[nodiscard]] float CooldownTurnSeconds() const;
     [[nodiscard]] float EffectRoundSeconds() const;

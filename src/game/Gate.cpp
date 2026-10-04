@@ -414,6 +414,30 @@ void DescribeAbility(const dao::CCObject &self, const dao::Command &command, Com
     }
 }
 
+// How long a script's wait waits, in seconds: the command's own number, read
+// before it runs. CommandWait(fSeconds) keeps its seconds as milliseconds in
+// the command's first integer (DAOLib's dao::Command::WaitMilliseconds, read
+// from the script command's constructor, 9b9e067), and the game's AI waits
+// with AI_DO_NOTHING_DELAY, 2 s, or its quick one, 1 s (ai_main_h_2.nss).
+// Seen in play in DAOLib's example plugin, which logs what AddCommand is
+// given: "type 13, ..., wait 2000 ms, player issued false" (example.log,
+// 2026-10-02). With a turn a bar of time the wait costs that much of its
+// creature's bar (core: TurnMachine::PayWait; issue 31). 0 where the command
+// has no parameters or says no time: the wait then passes the turn, as every
+// wait did before, and the machine says so. The first one read is said, once
+// a session: the number the mod charges by has not been seen in play from
+// this plugin (2026-10-04).
+float WaitSecondsOf(const dao::CCObject &self, const dao::Command &command)
+{
+    const std::optional<std::int32_t> ms = command.WaitMilliseconds();
+    static std::once_flag said;
+    std::call_once(said, [&] {
+        spdlog::info("the first script's wait at the gate ({:#x}): {}, by the command's own parameter", self.Id(),
+                     ms ? std::format("{} ms", *ms) : std::string{"no length, the command has no parameters"});
+    });
+    return ms && *ms > 0 ? static_cast<float>(*ms) / 1000.0f : 0.0f;
+}
+
 // With a turn a bar of time (core: ActionCostMs, AttackSeconds): what a
 // plain attack of this creature's takes. A humanoid's melee swing by the
 // game's own formula (CalculateAttackTiming, core_h.nss: the weapon style,
@@ -646,6 +670,9 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             request.target = command->Target().value_or(dao::kInvalidObject);
             request.type = type;
             request.source = source;
+            // A script's wait is its AI's: how long it waits (core: PayWait).
+            request.waitSeconds =
+                type == CommandType::Wait && source == Source::Script ? WaitSecondsOf(*self, *command) : 0.0f;
             request.inCombat = creature != nullptr && creature->CombatState() != 0;
             request.walk = walk;
             request.doorInTheWay = reached && reached->door;

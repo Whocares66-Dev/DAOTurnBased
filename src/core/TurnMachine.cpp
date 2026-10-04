@@ -1087,6 +1087,78 @@ std::optional<Verdict> TurnMachine::PayAction(const Combatant &who, const Comman
     return std::nullopt;
 }
 
+// With time, an AI's wait costs the time it waits, and no more (issue 31;
+// the user: "Shouldn't this cost the time equal to how long it waits? If
+// it's less than the amount of time it has to take actions in a turn, it can
+// still take more actions"). The game's AI waits a second or two between two
+// things it does (CommandWait(AI_DO_NOTHING_DELAY), 2 s, or
+// AI_DO_NOTHING_DELAY_QUICK, 1 s: ai_main_h_2.nss, ai_constants_h.nss) and
+// chooses again as the wait ends. Taken for a pass, it ended the turn with
+// the rest of the bar unspent: the high dragon above Haven ended 20 of 77
+// turns so, 5 to 7 s left each time (the playthrough of issue 3).
+//
+// The wait is refused at the queue all the same: there is nothing of it to
+// see, and the world does not run two seconds for a creature standing. Its
+// length, the command's own as the game layer read it
+// (CommandRequest::waitSeconds), comes off the bar as an action's time does,
+// so that its creature's clock moves by it (its cooldowns, its effects); and
+// with time left its AI is told to choose again as after any command of its
+// turn (StepSettling), by the event the engine sends as a wait ends
+// (EffectKind::PokeAi).
+//
+// Answers whether the wait was paid for. It is not, and is the pass it was,
+// its turn ending: when it is longer than what is left; when it has no
+// length or its length was not read, since it would cost nothing and could
+// be chosen for ever; and past max_commands_per_turn, the turn's commands
+// and its waits counted together. Built 2026-10-04, not yet seen in play.
+bool TurnMachine::PayWait(const Combatant &who, const CommandRequest &request)
+{
+    if (!Timed())
+    {
+        return false; // as built a turn is one action, with no time to take a wait of
+    }
+    constexpr float kLongest = 60.0f; // as an action's (ActionCostMs)
+    const bool read = std::isfinite(request.waitSeconds) && request.waitSeconds > 0.0f;
+    const auto cost =
+        read ? static_cast<std::uint32_t>(std::lround(std::min(request.waitSeconds, kLongest) * 1000.0f)) : 0u;
+    const std::uint32_t left = budget_.spend.CapacityLeftMs();
+    if (cost == 0)
+    {
+        Log(LogLevel::Info, std::format("{}'s wait has no length that was read: it passes its turn", Utf8(who.name)));
+        return false;
+    }
+    if (cost > left)
+    {
+        Log(LogLevel::Info,
+            std::format("{}'s wait of {:.2f} s is longer than the {:.2f} s it has left: its turn ends", Utf8(who.name),
+                        static_cast<float>(cost) / 1000.0f, static_cast<float>(left) / 1000.0f));
+        return false;
+    }
+    if (budget_.commands + budget_.waits >= settings_.maxCommandsPerTurn)
+    {
+        Log(LogLevel::Info, std::format("{} has started {} commands this turn, its {} waits among them: no more",
+                                        Utf8(who.name), budget_.commands + budget_.waits, budget_.waits));
+        return false;
+    }
+    (void)budget_.spend.SpendAction(cost); // it fits: nothing of it is owed
+    ++budget_.waits;
+    Log(LogLevel::Info,
+        std::format("{} waits {:.2f} s; {}", Utf8(who.name), static_cast<float>(cost) / 1000.0f, BudgetLeft()));
+    MoveClock(pending_);
+    // Its answer to being told to choose: nothing was queued, so nothing
+    // will end and run its AI again, and thinking on, its turn would end
+    // "chose nothing". The turn settles at once, and there it is told to
+    // choose again, or ends, its bar spent. One that came as a command of
+    // its turn ended (the engine's COMMAND_COMPLETE) settles as that does.
+    if (phase_ == Phase::AiThinking)
+    {
+        phase_ = Phase::Settling;
+        deadline_ = clock_;
+        statusWanted_ = true;
+    }
+    return true;
+}
+
 void TurnMachine::ChargeOnArrival(std::vector<Effect> &fx)
 {
     const Combatant *current = order_.Current();
@@ -3486,6 +3558,12 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         }
         break;
     case CommandKind::Pass:
+        // With time a wait costs the time it waits, and its AI chooses
+        // again with what is left (PayWait); else it passes the turn.
+        if (!player && PayWait(*who, request))
+        {
+            return Verdict::Block;
+        }
         if (!player)
         {
             passRequested_ = true;
