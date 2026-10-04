@@ -220,7 +220,7 @@ A module script can handle them like any other event. A new script command (`IsT
 | Request | State |
 |---|---|
 | Cycle through party and enemies a turn at a time | Built: `TurnMachine`, the gate |
-| Whose turn and who is next, BG3's portrait bar | A prototype is built: the movie (`ui/turnorder`, `dev/images/turnorder-sample.png`), the plugin's side and the screen. Everyone's portraits come from the engine: the party's as the game has them, everyone else's rendered as the party's are (`dev/UI.md`, "Portraits"). Not yet seen in the game |
+| Whose turn and who is next, BG3's portrait bar | A prototype is built: the movie (`ui/turnorder`, `dev/images/turnorder-sample.png`), the plugin's side and the screen. Everyone's portraits come from the engine: the party's as the game has them, everyone else's rendered as the party's are (`dev/UI.md`, "Portraits"). Not yet seen in the game. It shows ten turns at a time; with more fighting, a golden arrow at each end of the row moves it along the turns to come, the row keeping its place as turns pass and staying on its fighters when one before it falls (issue 23, built 2026-10-03, not yet seen in the game; `src/core/BarWindow.h`, `dev/UI.md`, "More fighting than the row holds") |
 | One attack or ability per turn | Built |
 | Movement per turn | Built: speed-based, measured, enforced |
 | The movement arc, gold in reach, red too far | Built for a move, 2026-10-01: the path to the ground under the cursor, drawn by the turn bar's movie, ending in the game's own movement marker on the ground (`dev/UI.md`, "The movement preview"). Seen in play (play test 17): the clicks kept, the walk within a third of a meter of the path shown. Still to do: an attack's walk, the ring |

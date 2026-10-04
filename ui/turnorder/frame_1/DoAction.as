@@ -7,6 +7,8 @@
 // divider before the next round, and under them whose turn it is and what
 // the player has left. A card clicked centres the camera on its combatant
 // (TB_Focus); the button at the end ends the player's turn (TB_EndTurn).
+// With more fighting than the row holds, a golden arrow at an end of the row
+// moves it along the list (TB_Scroll).
 // When the fight is over it drops the cards, their portraits with them, and
 // says so (TB_Cleared): the plugin releases the portraits it rendered only
 // then, as the game's screens let go of theirs before releasing them.
@@ -14,7 +16,7 @@
 // Outside the game there is no plugin to ask, and it draws a sample fight,
 // so the look can be checked in any Flash player.
 
-var BAR_VERSION = 8;
+var BAR_VERSION = 9;
 var CARD = String.fromCharCode(30);
 var FIELD = String.fromCharCode(31);
 
@@ -46,6 +48,46 @@ var TOP = 14;
 // so the frame 72 against 50 (play test 5's capture, 2026-09-30).
 var CURRENT_SCALE = 143;
 
+// More fighting than the row holds (issue 23): an arrow at each end of the
+// row, and a click moves the row along the turns to come (TB_Scroll; where
+// the row stands is the plugin's to say, core/BarWindow.h). The user,
+// 2026-10-03: "What if we had arrows to the left and right of the ends of
+// the portraits, I think there are some golden arrows in the game zone
+// resources. Clicking on the right arrow moves down the list and shows
+// portraits beyond 10. Left arrow moves back. No arrows should be shown if
+// there are 10 or fewer portraits. If unable to move last or right, the
+// corresponding arrow is hidden."
+//
+// The art is the level-up screen's own golden arrows, the ones that lower
+// and raise an attribute (levelup.gfx's AttributePlusButton and its twin,
+// which chargen.gfx has too; read with FFDec's tags, 2026-10-03): a 40 x 40
+// texture each with the gold in the middle of it, 14 wide and 25 tall, drawn
+// here at its own size, and a glowing outline of the same that the game
+// fades in under the pointer. `left` and `top` are where the gold begins in
+// its texture. All four are in the shared atlas, as the cards' own art is.
+// Should one not load in the game, the next to try, by the same table:
+//   the abilities screen's character arrows (abilities.gfx, charselctL_m),
+//     35 x 30, the gold 26 x 21 at 2, 1: abilities_IA7 (earlier) and
+//     abilities_IB5 (later), no outline of their own shape;
+//   the journal's (journal.gfx), 42 x 42, the gold 24 x 20 at 9, 11:
+//     journal_IDC and journal_IE2, lit journal_IDE and journal_IE4.
+var ARROW_BOX = 40;
+var ARROW_W = 14;
+var ARROW_H = 25;
+var ARROWS = [
+    {art: "levelUp_I9B", lit: "levelUp_I9E", left: 11, top: 8}, // to earlier turns
+    {art: "levelUp_I94", lit: "levelUp_I96", left: 15, top: 8}  // to later ones
+];
+// From the row to an arrow, and from the right arrow on to End and Delay.
+// With these the buttons end 8 further right than they did at their
+// furthest, with ten cards and a round's divider: 31 screen pixels short of
+// the minimap at 1600 x 1000, where they were 41 short (issue 14's
+// measure: the minimap's frame begins at 1124 of the stage). The cards'
+// gap stays 5: the user allowed 4 "if necessary to make them fit", and the
+// pictures did not ask for it.
+var ARROW_GAP = 6;
+var ARROW_CLEAR = 8;
+
 var GOLD = 0xF0C850;
 var PARCHMENT = 0xE8DFC8;
 var INK = 0x14100C;
@@ -62,10 +104,20 @@ var RANK_WORDS = ["", "", "", "a lieutenant", "a boss", "an elite boss"];
 // player is told to show the sample (the parameter sample=1, as
 // tools/snapshot.ps1 passes it).
 var inGame = flash.external.ExternalInterface.available && _root.sample != "1" && _root.sample != "time" &&
-             _root.sample != "many";
+             _root.sample != "many" && _root.sample != "more";
 var lastView = null;
 var lastCards = null;
 var ticks = 0;
+// After a click on an arrow: the view is asked for every frame for a few,
+// not at the next third of a second, so the row moves under the hand. The
+// plugin publishes at once when an arrow moved the row.
+var hurry = 0;
+var HURRY_FRAMES = 6;
+// The sample's own row (sample=more), where the plugin's is not there to
+// ask: its first place, from the parameter `first` and its arrows' clicks.
+var sampleFirst = Number(_root.first) > 0 ? Math.floor(Number(_root.first)) : 0;
+var samplePointed = false; // the sample's own pointer has been put where it was asked (point=, click=)
+var ROW = 10; // the sample's row: core's TurnView::kShown
 
 // A fight of four against three, round 2, the hero's turn, for a player
 // with no game behind it.
@@ -75,10 +127,15 @@ function sampleView()
     // round 3's up to the current (core/TurnOrder.h, Upcoming).
     // With a turn a bar of time (sample=time): 3.1 s left of a bar of 5.5, a
     // turn being 4.
-    var timed = _root.sample == "time" || _root.sample == "many" || _root.time == "1";
-    var head = (timed ? [BAR_VERSION, 1, 2, 257, 1, 1, "14.4", "14.4", 1, "3.1", "5.5", "4.0", "0.0", 2, "1.0", 0]
-                      : [BAR_VERSION, 1, 2, 257, 1, 1, "9.0", "9.0", 0, "0.0", "0.0", "4.0", "0.0", 1, "0.0", 0])
-                   .join(FIELD);
+    var timed = _root.sample == "time" || _root.sample == "many" || _root.sample == "more" || _root.time == "1";
+    var head = timed ? [BAR_VERSION, 1, 2, 257, 1, 1, "14.4", "14.4", 1, "3.1", "5.5", "4.0", "0.0", 2, "1.0", 0]
+                     : [BAR_VERSION, 1, 2, 257, 1, 1, "9.0", "9.0", 0, "0.0", "0.0", "4.0", "0.0", 1, "0.0", 0];
+    if (_root.turn == "ai")
+    {
+        // Somebody else's turn (the parameter turn=ai): no End, no Delay.
+        head[4] = 0;
+        head[13] = 0;
+    }
     var cards = [
         [257, 0, 0, 65, 0, 1, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0, "0.0"],
         [513, 2, 2, 40, 0, 0, 0, 2, "Genlock", "g", "", 100, 0, timed ? "1.6" : "0.0", 0, timed ? 617 : -1,
@@ -107,7 +164,39 @@ function sampleView()
             [516, 2, 2, 100, 0, 0, 0, 3, "Walking Corpse", "c", "gui_portrait_49", 100, 0]
         ];
     }
-    var text = head;
+    if (_root.sample == "more")
+    {
+        // More than the row holds (sample=more; issue 23): fourteen, nine of
+        // them still to come this round, so that at the beginning the row is
+        // as wide as it gets (the current card and a round's divider), with
+        // an action kept on the card that then stands last, at the shoulder
+        // nearest the right arrow. The parameter `first` puts the row
+        // further along, as the arrows do.
+        cards = [
+            [257, 0, 0, 65, 0, 1, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0, "0.0"],
+            [513, 2, 2, 40, 0, 0, 0, 2, "Walking Corpse", "c", "gui_portrait_49", 100, 0, "0.0"],
+            [256, 0, 100, 100, 0, 0, 1, 2, "Warden", "player", "gui_portrait_09", 70, 0],
+            [514, 2, 2, 100, 0, 0, 0, 2, "Walking Corpse", "c", "gui_portrait_49", 100, 0, "0.8", 0, -1, "ic_attack", "Attack"],
+            [768, 1, 2, 90, 0, 0, 0, 2, "Militia", "m", "gui_portrait_09", 80, 0],
+            [259, 0, 0, 80, 0, 0, 1, 2, "Sten", "gen00fl_sten", "gui_portrait_09", 60, 0, "1.2", 0, -1, "ic_attack", "Attack"],
+            [515, 2, 2, 60, 0, 0, 0, 2, "Walking Corpse", "c", "gui_portrait_49", 100, 0],
+            [770, 1, 2, 100, 0, 0, 0, 2, "Dwyn", "d", "gui_portrait_09", 80, 0],
+            [516, 2, 2, 100, 0, 0, 0, 2, "Walking Corpse", "c", "gui_portrait_49", 100, 0],
+            [258, 0, 0, 100, 0, 0, 1, 3, "Morrigan", "gen00fl_morrigan", "gui_portrait_49", 30, 1, "1.6", 0, 10002,
+             "ico_wintersgrasp", "Winter's Grasp"],
+            [517, 2, 2, 100, 0, 0, 0, 3, "Walking Corpse", "c", "gui_portrait_49", 100, 0],
+            [769, 1, 2, 70, 0, 0, 0, 3, "Militia", "m", "gui_portrait_09", 80, 0, "0.6", 0, -1, "ic_attack", "Attack"],
+            [518, 2, 3, 100, 0, 0, 0, 3, "Devouring Corpse", "c", "gui_portrait_49", 100, 0],
+            [519, 2, 2, 80, 0, 0, 0, 3, "Walking Corpse", "c", "gui_portrait_49", 100, 0]
+        ];
+    }
+    // The row (core/BarWindow.h): how many turns stand before it, how many
+    // it shows, how many come after. Only sample=more has more than a row.
+    var before = Math.max(0, Math.min(sampleFirst, cards.length - ROW));
+    sampleFirst = before;
+    var shown = Math.min(ROW, cards.length - before);
+    head.push(before, shown, cards.length - before - shown);
+    var text = head.join(FIELD);
     for (var i = 0; i < cards.length; i++)
     {
         text += CARD + cards[i].join(FIELD);
@@ -140,10 +229,17 @@ function parse(text)
                     energy: Number(f[11]), mana: f[12] == "1", owed: Number(f[13]), waits: f[14] == "1",
                     icon: f[16] == undefined ? "" : f[16], ability: f[17] == undefined ? "" : f[17]});
     }
+    // The cards are every turn to come; the row is those the bar shows, a
+    // row's worth from `before` on (version 9). The rest are read for what
+    // is said of a creature with no card just now.
+    var before = Number(head[16]);
+    var shown = Number(head[17]);
     return {version: Number(head[0]), active: head[1] == "1", round: Number(head[2]), current: head[3],
             playerTurn: head[4] == "1", actions: Number(head[5]), movementLeft: head[6], movementMax: head[7],
             timed: head[8] == "1", timeLeft: head[9], time: head[10], turn: head[11], paid: Number(head[12]),
-            delay: Number(head[13]), rolled: Number(head[14]), paused: head[15] == "1", cards: cards};
+            delay: Number(head[13]), rolled: Number(head[14]), paused: head[15] == "1", before: before, shown: shown,
+            after: Number(head[18]), cards: cards, row: cards.slice(before, before + shown),
+            rowText: records.slice(1 + before, 1 + before + shown).join(CARD)};
 }
 
 // Text as the game's own movies set it: the fonts they import from the
@@ -590,6 +686,93 @@ function drawButton(bar, name, depth, word, command, x, y, live)
     };
 }
 
+// How wide the row's cards are, laid out: a gap between two, the current
+// card larger, a divider where the round changes.
+function rowWidth(state)
+{
+    var x = 0;
+    var round = state.round;
+    for (var i = 0; i < state.row.length; i++)
+    {
+        if (state.row[i].round != round)
+        {
+            x += DIVIDER + GAP;
+            round = state.row[i].round;
+        }
+        x += CARD_W + GAP + (state.row[i].current ? CARD_W * (CURRENT_SCALE - 100) / 100 : 0);
+    }
+    return x - GAP;
+}
+
+// And the widest a row of so many can be: with the current card and one
+// round's divider (each fighter is in the list once, so the round changes
+// once at most).
+function trackWidth(shown)
+{
+    return shown * CARD_W + CARD_W * (CURRENT_SCALE - 100) / 100 + DIVIDER + shown * GAP;
+}
+
+// An arrow at an end of the row, to later turns or to earlier ones: `x` is
+// where its gold begins, `count` how many turns lie that way. A click asks
+// the plugin to move the row (TB_Scroll, 1 or -1: how far a click goes is
+// core's, BarWindow::kStep); under the pointer the game's own glowing
+// outline shows over it, and the caption says how many more there are.
+// The art is not what the hand meets: a texture's whole 40 x 40 would take
+// the clicks of the card and the buttons beside it, so a box about the gold
+// does, and nothing wider. The box is filled too faintly to see, one part
+// in a hundred: a Flash player lets a fill of none take the mouse, and
+// whether the game's Scaleform does has not been seen.
+function drawArrow(bar, later, x, count)
+{
+    var look = ARROWS[later ? 1 : 0];
+    var clip = bar.createEmptyMovieClip(later ? "later" : "earlier", later ? 511 : 510);
+    clip._x = x - look.left;
+    clip._y = TOP + CARD_H / 2 - look.top - ARROW_H / 2;
+    art(clip, look.art, 1, 0, 0, ARROW_BOX, ARROW_BOX);
+    art(clip, look.lit, 2, 0, 0, ARROW_BOX, ARROW_BOX)._visible = false;
+    var hand = bar.createEmptyMovieClip(later ? "laterHand" : "earlierHand", later ? 513 : 512);
+    // Three pixels short of the buttons and of the track on either side.
+    box(hand, later ? x - 3 : x - 5, clip._y + look.top - 1, ARROW_W + 8, ARROW_H + 2, 0xFFFFFF, 1);
+    hand.arrow = clip;
+    hand.step = later ? 1 : -1;
+    hand.words = count + (count == 1 ? " turn " : " turns ") + (later ? "after these" : "before these");
+    hand.onRollOver = function()
+    {
+        this.arrow.art2._visible = true;
+        _root.hovered = this.words;
+        caption();
+    };
+    hand.onRollOut = function()
+    {
+        this.arrow.art2._visible = false;
+        this.arrow.art1._x = 0;
+        this.arrow.art1._y = 0;
+        _root.hovered = "";
+        caption();
+    };
+    hand.onDragOut = hand.onRollOut;
+    hand.onPress = function()
+    {
+        // Pressed, the game's own moves a pixel down and right.
+        this.arrow.art1._x = 1;
+        this.arrow.art1._y = 1;
+    };
+    hand.onRelease = function()
+    {
+        this.arrow.art1._x = 0;
+        this.arrow.art1._y = 0;
+        if (inGame)
+        {
+            fscommand("TB_Scroll", String(this.step));
+        }
+        else
+        {
+            sampleFirst = Math.max(0, sampleFirst + this.step);
+        }
+        hurry = HURRY_FRAMES;
+    };
+}
+
 // The cards, the dividers and the button, laid out left to right and
 // centred on the stage.
 function build(state)
@@ -599,11 +782,22 @@ function build(state)
     _root.hovered = "";
     _root.bar.removeMovieClip();
     var bar = _root.createEmptyMovieClip("bar", 10);
-    var x = 0;
+    // With more fighting than the row holds, the row has a track as wide as
+    // a row can be (its cards, the current one's size, one round's
+    // divider), and stands in the middle of it. The arrows and the buttons
+    // go by the track: as the row is moved the current card and the divider
+    // come and go, a row is 61 narrower without them, and by its own width
+    // the arrow moved 30 from under the pointer at a click. And an arrow
+    // that is hidden for the moment keeps its place, so nothing else moves
+    // as it comes and goes, as Delay's place is kept (play test 28).
+    var cardsWide = rowWidth(state);
+    var scrolls = state.before + state.after > 0;
+    var width = scrolls ? trackWidth(state.shown) : cardsWide;
+    var x = Math.round((width - cardsWide) / 2);
     var round = state.round;
-    for (var i = 0; i < state.cards.length; i++)
+    for (var i = 0; i < state.row.length; i++)
     {
-        var card = state.cards[i];
+        var card = state.row[i];
         if (card.round != round)
         {
             drawDivider(bar, card.round, i, x);
@@ -613,10 +807,22 @@ function build(state)
         drawCard(bar, card, i, x);
         x += CARD_W + GAP + (card.current ? CARD_W * (CURRENT_SCALE - 100) / 100 : 0);
     }
+    if (scrolls)
+    {
+        // Level with the cards' middle, which is below the shoulder where a
+        // pending action's icon stands on the last card, and clear of it.
+        if (state.before > 0)
+        {
+            drawArrow(bar, false, -ARROW_GAP - ARROW_W, state.before);
+        }
+        if (state.after > 0)
+        {
+            drawArrow(bar, true, width + ARROW_GAP, state.after);
+        }
+    }
     // The medallions are centred on the screen whether End is there or not;
     // End stands after them on the player's turn (the user: End made part of
     // the strip shifted its centring).
-    var width = x - GAP;
     if (state.playerTurn)
     {
         // Where Delay is offered the two stand one over the other about the
@@ -633,8 +839,9 @@ function build(state)
         var apart = (END_H + BUTTON_GAP) / 2;
         var offered = state.delay == 1 || state.delay == 2;
         // Clear of the last card's shoulder, where a pending ability's icon
-        // stands: it lay against End's edge (play test 29).
-        var buttonsAt = x + GAP + 10;
+        // stands: it lay against End's edge (play test 29). With arrows,
+        // clear of the right one, shown or not.
+        var buttonsAt = width + (scrolls ? ARROW_GAP + ARROW_W + ARROW_CLEAR : 2 * GAP + 10);
         drawButton(bar, "endTurn", 500, "End", "TB_EndTurn", buttonsAt, offered ? middle + apart : middle, true);
         if (offered)
         {
@@ -652,7 +859,11 @@ function build(state)
     // (The game's own "Paused", written across the top of the screen behind
     // the bar, is hidden by the plugin through a fight: src/game/Bar.cpp.
     // The plate was solid black over it while paused, for a day.)
-    panel(bar.createEmptyMovieClip("plate", 3), -16, TOP - 14, width + 32, CARD_H + 34, 10);
+    // The arrows stand on it, which makes them part of the strip: with them
+    // it is the track's width and their two places, so it does not change
+    // as the row is moved.
+    var rim = scrolls ? ARROW_GAP + ARROW_W + 6 : 16;
+    panel(bar.createEmptyMovieClip("plate", 3), -rim, TOP - 14, width + 2 * rim, CARD_H + 34, 10);
     // With a turn a bar of time, on the player's turn: the bar, and the
     // caption under it.
     var captionTop = TOP + CARD_H + 20;
@@ -1018,11 +1229,13 @@ function draw(view)
         }
         return;
     }
-    var at = view.indexOf(CARD);
-    // Rebuilt when the cards change, or whose turn it is, or whether Delay is
-    // to be had (it goes as soon as anything of the turn is spent).
-    var cards = (at < 0 ? "" : view.substr(at)) + (state.playerTurn ? "+" : "-") + state.delay +
-                (state.timed ? "t" : "") + state.round;
+    // Rebuilt when the row's cards change, or whose turn it is, or whether
+    // Delay is to be had (it goes as soon as anything of the turn is spent),
+    // or which arrows there are and what they count. Not for a card the row
+    // does not show: every turn to come is in the string, and a blow on one
+    // out of sight would load the row's portraits again.
+    var cards = state.rowText + (state.playerTurn ? "+" : "-") + state.delay + (state.timed ? "t" : "") +
+                state.round + "<" + state.before + ">" + state.after;
     if (cards != lastCards)
     {
         lastCards = cards;
@@ -1063,7 +1276,7 @@ function samplePreview()
     // own marker, which is the world's and not this movie's to draw.
     // With a turn a bar of time (sample=time): what the order would cost,
     // and that it fits.
-    var timed = _root.sample == "time" || _root.sample == "many" || _root.time == "1";
+    var timed = _root.sample == "time" || _root.sample == "many" || _root.sample == "more" || _root.time == "1";
     var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 2, "13.6", "6.5", 1, timed ? "1.9" : "0.0", 0, timed ? 513 : 0]
                    .join(FIELD);
     var reach = [300, 262, 470, 250, 560, 214, 640, 200].join(FIELD);
@@ -1359,10 +1572,33 @@ Stage.scaleMode = "showAll";
 _root.onEnterFrame = function()
 {
     // Three times a second is enough to follow a turn; the plugin's view is
-    // at most a tenth of a second old anyway.
-    if (ticks++ % 10 == 0)
+    // at most a tenth of a second old anyway. After a click on an arrow,
+    // every frame for a few: the row is moved by the plugin's next frame.
+    if (hurry > 0)
+    {
+        hurry--;
+        draw(ask());
+    }
+    else if (ticks++ % 10 == 0)
     {
         draw(ask());
+    }
+    // Outside the game, for a picture with no hand to move the mouse
+    // (tools/snapshot.ps1 -Set): point=later or point=earlier puts the
+    // pointer on that arrow, click=later or click=earlier clicks it once.
+    if (!inGame && !samplePointed && ticks >= 20)
+    {
+        samplePointed = true;
+        var pointed = _root.bar[(_root.click != undefined ? _root.click : _root.point) + "Hand"];
+        if (pointed != undefined)
+        {
+            pointed.onRollOver();
+            if (_root.click != undefined)
+            {
+                pointed.onPress();
+                pointed.onRelease();
+            }
+        }
     }
     drawPreview(askPreview());
 };

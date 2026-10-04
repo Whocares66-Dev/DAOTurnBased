@@ -110,6 +110,7 @@ add_library(
     STATIC
     src/core/ActionTime.cpp
     src/core/Bar.cpp
+    src/core/BarWindow.cpp
     src/core/Events.cpp
     src/core/Json.cpp
     src/core/Keys.cpp

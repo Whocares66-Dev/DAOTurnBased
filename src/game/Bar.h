@@ -5,6 +5,7 @@
 //   fscommand("TB_EndTurn")               end the player's turn, as the pause key does
 //   fscommand("TB_Delay")                 put the player's turn off to the round's end
 //   fscommand("TB_Focus", "<id>")         centre the camera on a combatant
+//   fscommand("TB_Scroll", "1" or "-1")   an arrow at the row's end: to later turns, or earlier
 //   fscommand("TB_Cleared")               it has dropped its cards and their images
 //
 // The handlers only read the view the frame callback last published and
@@ -16,6 +17,7 @@
 // lookups of the game's own UI calls stay undetoured.
 #pragma once
 
+#include "core/BarWindow.h"
 #include "core/Portraits.h"
 #include "core/TurnMachine.h"
 #include "core/Types.h"
@@ -33,7 +35,7 @@ namespace tb::game
 class BarLink
 {
   public:
-    // Registers the three names with the game's UI. Once; later calls do
+    // Registers the movie's names with the game's UI. Once; later calls do
     // nothing.
     void Install();
     [[nodiscard]] bool Installed() const
@@ -41,8 +43,15 @@ class BarLink
         return installed_;
     }
 
-    // The view the bar should show now, with the portraits got so far (the
-    // frame callback).
+    // Every frame, before the portraits and the view: where the bar's row
+    // stands among the turns to come (core/BarWindow.h), moved by what the
+    // arrows asked since the last frame. True if an arrow was clicked: the
+    // view is then published at once, not at the next tenth of a second, so
+    // the row moves under the hand.
+    [[nodiscard]] bool FollowRow(const TurnView &view);
+
+    // The view the bar should show now, with the row as last followed and
+    // the portraits got so far (the frame callback).
     void Publish(const TurnView &view);
 
     // Every frame: at a fight's end, forgets its portraits, and once the
@@ -51,8 +60,8 @@ class BarLink
     // CCCreature::ReleasePortrait), as the game's screens release theirs.
     void FollowFight(const TurnView &view, std::uint32_t nowMs);
 
-    // One combatant's portrait a call, until each card has one or has been
-    // tried (core/Portraits.h): the one the game already has (the party's),
+    // One combatant's portrait a call, until each card of the row has one or
+    // has been tried (core/Portraits.h): the one the game already has (the party's),
     // else, with `render`, one the engine renders now (DAOLib's
     // CCCreature::RenderPortrait). From the frame callback: rendering is
     // the scripts' thread's.
@@ -73,6 +82,10 @@ class BarLink
 
   private:
     PortraitBook portraits_; // the frame callback's alone
+    // The row and where it stands: the frame callback's alone. The arrows'
+    // clicks wait in scroll_, under the mutex, for the frame to take.
+    BarWindow window_;
+    BarSpan row_;
     // An ability's icon and name, as found: the frame callback's alone.
     struct AbilityArt
     {
@@ -84,6 +97,7 @@ class BarLink
     std::wstring encoded_;
     bool endTurn_ = false;
     bool delay_ = false;
+    int scroll_ = 0; // the arrows' clicks not yet taken: later ones less earlier ones
     bool movieLetGo_ = false;
     // The game's own "Paused" banner (the floaty layer's PauseIndicator_mc,
     // top centre: where the turn bar is) hidden through a fight, as the

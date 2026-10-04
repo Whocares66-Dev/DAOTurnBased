@@ -19,13 +19,20 @@ using namespace tb::test;
 namespace
 {
 
+// The bar's row as a fight begins: the first ten turns to come (core/BarWindow.h;
+// its own cases are test_barwindow.cpp's).
+BarSpan Row(const TurnView &view)
+{
+    return SpanOf(view.upcoming.size(), 0);
+}
+
 // What the plugin does each frame: one combatant asked for, and answered
 // with a name made from its id (or none, for those in `without`).
 std::vector<ObjectId> FillBook(PortraitBook &book, const TurnView &view, const std::vector<ObjectId> &without = {})
 {
     std::vector<ObjectId> asked;
     book.Follow(view, 0);
-    while (const auto id = book.Next(view))
+    while (const auto id = book.Next(view, Row(view)))
     {
         asked.push_back(*id);
         const bool none = std::ranges::find(without, *id) != without.end();
@@ -81,7 +88,7 @@ TEST_CASE("a combatant the engine made no portrait for is not asked again", "[po
     CHECK(book.Found() == 3);
     CHECK(book.Of(kHurlock).empty());
     w.RunFor(2000);
-    CHECK_FALSE(book.Next(w.machine.View()).has_value());
+    CHECK_FALSE(book.Next(w.machine.View(), Row(w.machine.View())).has_value());
 }
 
 TEST_CASE("a creature joining the fight is asked for when its card comes", "[portraits]")
@@ -115,7 +122,7 @@ TEST_CASE("portraits are kept through a conversation and forgotten when the figh
     CHECK(FillBook(book, w.machine.View()).empty());
     CHECK(book.Tried() == 4);
     PortraitBook fresh;
-    CHECK_FALSE(fresh.Next(w.machine.View()).has_value());
+    CHECK_FALSE(fresh.Next(w.machine.View(), Row(w.machine.View())).has_value());
     w.mode = Mode::Combat;
     w.RunFor(500);
     REQUIRE(w.machine.Active());
@@ -139,7 +146,7 @@ TEST_CASE("the bar's string carries each card's portrait, empty for none yet", "
     w.StartFight();
     PortraitBook book;
     book.Got(kGenlock, L"img://portrait_7", true);
-    const auto records = Split(EncodeBar(w.machine.View(), book), kBarCard);
+    const auto records = Split(EncodeBar(w.machine.View(), book, Row(w.machine.View())), kBarCard);
     REQUIRE(records.size() >= 3);
     const auto hero = Split(records[1], kBarField);
     const auto genlock = Split(records[2], kBarField);
@@ -227,7 +234,7 @@ TEST_CASE("a portrait a new fight shows again is not released under it", "[portr
     genlock.id = kGenlock;
     next.upcoming.push_back(genlock);
     book.Follow(next, 1100);
-    REQUIRE(book.Next(next) == kGenlock);
+    REQUIRE(book.Next(next, Row(next)) == kGenlock);
     book.Got(kGenlock, L"img://portrait_genlock", false);
     book.MovieLetGo();
     CHECK(book.TakeReleases(1200) == std::vector<ObjectId>{kHurlock});

@@ -43,11 +43,13 @@ TEST_CASE("the pause key pauses an enemy's turn, and the turn waits until it is 
     w.Frame();
     CHECK(w.paused);
     CHECK(ToJson(w.machine.State()).find(R"("player_paused":true)") != std::string::npos);
-    // The bar says so: its head's last field, which the movie turns into the
+    // The bar says so: its head's field before the row's three (nobody
+    // before the four cards, nobody after), which the movie turns into the
     // word. Nothing else on the screen did (play test 29).
     CHECK(w.machine.View().playerPaused);
+    const std::wstring row = std::wstring{kBarField} + L"0" + kBarField + L"4" + kBarField + L"0";
     const std::wstring bar = EncodeBar(w.machine.View());
-    CHECK(bar.substr(0, bar.find(kBarCard)).ends_with(std::wstring{kBarField} + L"1"));
+    CHECK(bar.substr(0, bar.find(kBarCard)).ends_with(std::wstring{kBarField} + L"1" + row));
     // The genlock chooses nothing, and its turn would be over in a second
     // or two of the world's time: paused, it is still its turn.
     w.RunFor(8000);
@@ -58,7 +60,7 @@ TEST_CASE("the pause key pauses an enemy's turn, and the turn waits until it is 
     CHECK_FALSE(w.machine.PlayerPaused());
     CHECK_FALSE(w.machine.View().playerPaused);
     const std::wstring again = EncodeBar(w.machine.View());
-    CHECK(again.substr(0, again.find(kBarCard)).ends_with(std::wstring{kBarField} + L"0"));
+    CHECK(again.substr(0, again.find(kBarCard)).ends_with(std::wstring{kBarField} + L"0" + row));
     w.Frame();
     CHECK_FALSE(w.paused);
     w.RunFor(8000);

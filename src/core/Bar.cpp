@@ -45,10 +45,10 @@ void Meters(std::wstring &out, float meters)
 
 std::wstring EncodeBar(const TurnView &view)
 {
-    return EncodeBar(view, PortraitBook{});
+    return EncodeBar(view, PortraitBook{}, SpanOf(view.upcoming.size(), 0));
 }
 
-std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits)
+std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits, const BarSpan &row)
 {
     std::wstring out = std::to_wstring(kBarVersion);
     Field(out, view.active);
@@ -77,6 +77,12 @@ std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits)
     Meters(out, static_cast<float>(view.rolledMs) / 1000.0f);
     // The player has the game paused: the bar says the word.
     Field(out, view.playerPaused);
+    // The row (version 9): of the cards that follow, how many stand before
+    // it, how many it shows and how many come after (core/BarWindow.h). An
+    // arrow stands at an end with any beyond it.
+    Field(out, static_cast<long long>(row.before));
+    Field(out, static_cast<long long>(row.shown));
+    Field(out, static_cast<long long>(row.after));
     for (const CardView &card : view.upcoming)
     {
         out += kBarCard;

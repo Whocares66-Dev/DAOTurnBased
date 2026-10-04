@@ -3629,7 +3629,8 @@ TurnView TurnMachine::View() const
         view.playerPaused = playerPaused_;
         view.rolledMs = budget_.rolledMs;
     }
-    for (const TurnOrder::Slot &slot : order_.Upcoming(TurnView::kShown))
+    // All of them: the bar's row is a window on these (core/BarWindow.h).
+    for (const TurnOrder::Slot &slot : order_.Upcoming(order_.All().size()))
     {
         const Combatant &c = *slot.who;
         const auto owes = std::ranges::find(charges_, c.id, &Charge::caster);

@@ -3,6 +3,8 @@
 // ones.
 #include "World.h"
 
+#include "core/BarWindow.h"
+#include "core/State.h"
 #include "core/TurnMachine.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -776,11 +778,14 @@ TEST_CASE("new settings apply from the next turn", "[machine]")
     CHECK(w.machine.View().movementMax == 14.0f);
 }
 
-TEST_CASE("the bar shows ten turns ahead, however many are fighting", "[machine]")
+TEST_CASE("the view lists every turn to come, and the bar's row shows ten of them", "[machine]")
 {
     // Issue 14: twelve portraits put the bar's buttons under the minimap.
     // The user, 2026-10-03: "let's make it 10 instead of 12 ... Large fights
-    // like these are going to overflow anyway".
+    // like these are going to overflow anyway". And issue 23: the view was
+    // cut to those ten, so the rest were on no card and in no count, and a
+    // tool that read the order lost a party member for four rounds. The
+    // view has them all; the row is ten of them (core/BarWindow.h).
     auto fight = StandardFight();
     for (ObjectId id = 0x300; id < 0x30a; ++id)
     {
@@ -789,9 +794,17 @@ TEST_CASE("the bar shows ten turns ahead, however many are fighting", "[machine]
     World w(Fixed(), fight);
     w.StartFight();
     const TurnView view = w.machine.View();
-    REQUIRE(w.machine.Order().All().size() > TurnView::kShown);
-    CHECK(view.upcoming.size() == 10);
+    REQUIRE(w.machine.Order().All().size() == 14);
+    REQUIRE(view.upcoming.size() == 14);
     CHECK(view.upcoming.front().current);
+    CHECK(view.upcoming.back().id == 0x309);
+    const BarSpan row = BarWindow{}.Follow(view);
+    CHECK(row.before == 0);
+    CHECK(row.shown == 10);
+    CHECK(row.after == 4);
+    // And the state a tool reads has all fourteen in its order.
+    const std::string state = ToJson(w.machine.State());
+    CHECK(state.find(R"("id":"0x309")") != std::string::npos);
 }
 
 TEST_CASE("the pause key is the game's outside a turn-based fight", "[machine]")

@@ -19,6 +19,7 @@
 // the game keeps, never are.
 #pragma once
 
+#include "core/BarWindow.h"
 #include "core/TurnMachine.h"
 #include "core/Types.h"
 
@@ -146,10 +147,12 @@ class PortraitBook
     // be released. Each frame, before Next.
     void Follow(const TurnView &view, std::uint32_t nowMs);
 
-    // The combatant to get a portrait for this frame, if a card lacks one:
-    // the first such card, so the current turn's and the next come first.
+    // The combatant to get a portrait for this frame, if a card of the bar's
+    // row lacks one: the first such card, so the row's first and the next
+    // come first. Only the row's (core/BarWindow.h): a fight of thirty has
+    // ten rendered until the row is moved to the others, and each then once.
     // None while the fight stands aside (a conversation, a menu).
-    [[nodiscard]] std::optional<ObjectId> Next(const TurnView &view) const;
+    [[nodiscard]] std::optional<ObjectId> Next(const TurnView &view, const BarSpan &row) const;
 
     // What getting one gave: its URL, or empty for none (not asked again),
     // and whether it was rendered for the bar (to be released after) or

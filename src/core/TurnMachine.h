@@ -323,13 +323,18 @@ struct TurnView
     // What of this turn's bar rolled over from the turn before: why it is
     // longer than a turn's seconds.
     std::uint32_t rolledMs = 0;
-    std::vector<CardView> upcoming; // the current turn first
-    // How many turns the bar shows ahead, the current one first. Twelve
-    // until 2026-10-03: with twelve the bar's buttons lay under the minimap,
-    // and the user, of the strip made to give way for them: "Maybe instead
-    // of shifting the portraits we have 10 instead of 12? ... Large fights
-    // like these are going to overflow anyway, 12 is not even enough to show
-    // everything", then "let's make it 10" (issue 14).
+    // Every turn to come, the current one first, each fighter once: all of
+    // them, however many fight. Cut to a row's worth until 2026-10-03, when
+    // those past it were on no card and in no count, and a tool that read
+    // the order lost a party member for four rounds (issue 23). Which of
+    // them the bar's row shows is core/BarWindow.h's.
+    std::vector<CardView> upcoming;
+    // How many cards the bar's row has room for. Twelve until 2026-10-03:
+    // with twelve the bar's buttons lay under the minimap, and the user, of
+    // the strip made to give way for them: "Maybe instead of shifting the
+    // portraits we have 10 instead of 12? ... Large fights like these are
+    // going to overflow anyway, 12 is not even enough to show everything",
+    // then "let's make it 10" (issue 14).
     static constexpr std::size_t kShown = 10;
 };
 

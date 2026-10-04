@@ -16,6 +16,7 @@
 .EXAMPLE
     .\tools\snapshot.ps1                                    # build\ui\turnorder.swf -> build\ui\turnorder.png
     .\tools\snapshot.ps1 -Movie other.swf -Out other.png -Seconds 5
+    .\tools\snapshot.ps1 -Sample more -Set first=2          # fourteen fighting, the row moved two along
 #>
 [CmdletBinding()]
 param(
@@ -25,8 +26,14 @@ param(
     [int] $Width = 1280,
     [int] $Height = 720,
     [int] $Seconds = 3,
-    # The movie's sample: 1, the fight as built; time, with a turn a bar of time.
-    [string] $Sample = '1'
+    # The movie's sample: 1, the fight as built; time, with a turn a bar of time;
+    # many, ten in the bar; more, fourteen, more than its row holds.
+    [string] $Sample = '1',
+    # More of the movie's parameters, each name=value: first=2 (the row's first
+    # place, with -Sample more), turn=ai (somebody else's turn: no End, no Delay),
+    # point=later or point=earlier (the pointer on that arrow), click=later or
+    # click=earlier (one click on it).
+    [string[]] $Set = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,9 +82,9 @@ function Test-Blank([System.Drawing.Bitmap] $Image) {
     return $true
 }
 
-$process = Start-Process -FilePath $Ruffle -PassThru -ArgumentList @(
-    '--width', $Width, '--height', $Height, '--storage', 'memory', '--filesystem-access-mode', 'allow',
-    "-Psample=$Sample", $Movie)
+$process = Start-Process -FilePath $Ruffle -PassThru -ArgumentList (@(
+        '--width', $Width, '--height', $Height, '--storage', 'memory', '--filesystem-access-mode', 'allow',
+        "-Psample=$Sample") + @($Set | ForEach-Object { "-P$_" }) + @($Movie))
 try {
     $title = "Ruffle - $(Split-Path -Leaf $Movie)"
     $window = [IntPtr]::Zero

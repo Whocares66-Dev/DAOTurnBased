@@ -67,6 +67,19 @@ void BarLink::Install()
         const std::lock_guard lock(mutex_);
         focus_ = id;
     });
+    // An arrow at an end of the row (issue 23): 1 to later turns, -1 to
+    // earlier. Only which way: how far a click goes is core's.
+    dao::gui::OnFSCommand("TB_Scroll", [this](void *, std::string_view args) {
+        int way = 0;
+        const auto [end, error] = std::from_chars(args.data(), args.data() + args.size(), way);
+        if (error != std::errc{} || end != args.data() + args.size() || way == 0)
+        {
+            spdlog::warn("TB_Scroll with '{}': not a way to move the row (1 to later turns, -1 to earlier)", args);
+            return;
+        }
+        const std::lock_guard lock(mutex_);
+        scroll_ += way > 0 ? 1 : -1;
+    });
     dao::gui::OnFSCommand("TB_Cleared", [this](void *, std::string_view) {
         {
             const std::lock_guard lock(mutex_);
@@ -82,7 +95,38 @@ void BarLink::Install()
             spdlog::error("TB_Cleared: {}", e.what());
         }
     });
-    spdlog::info("the turn bar's calls are answered: TB_GetView, TB_EndTurn, TB_Delay, TB_Focus, TB_Cleared");
+    spdlog::info("the turn bar's calls are answered: TB_GetView, TB_EndTurn, TB_Delay, TB_Focus, TB_Scroll, "
+                 "TB_Cleared");
+}
+
+bool BarLink::FollowRow(const TurnView &view)
+{
+    int clicks = 0;
+    {
+        const std::lock_guard lock(mutex_);
+        clicks = std::exchange(scroll_, 0);
+    }
+    const BarSpan was = row_;
+    window_.Scroll(clicks);
+    row_ = window_.Follow(view);
+    // Said when the row has moved in a fight: by an arrow, or with the order
+    // (one before it gone, or the list too short for where it stood). Not
+    // at a fight's end, when it goes back to the beginning with the bar.
+    if (view.active && was.shown > 0 && row_.before != was.before)
+    {
+        spdlog::info("the turn bar's row shows turns {} to {} of {} ({}); it began at turn {}", row_.before + 1,
+                     row_.before + row_.shown, row_.before + row_.shown + row_.after,
+                     clicks > 0   ? "its right arrow"
+                     : clicks < 0 ? "its left arrow"
+                                  : "moved with the order: one before it gone, or the list shorter",
+                     was.before + 1);
+    }
+    else if (clicks != 0)
+    {
+        spdlog::debug("an arrow of the turn bar's was clicked and the row stays at turns {} to {} of {}",
+                      row_.before + 1, row_.before + row_.shown, row_.before + row_.shown + row_.after);
+    }
+    return clicks != 0;
 }
 
 namespace
@@ -201,7 +245,7 @@ void BarLink::Publish(const TurnView &view)
         card.pendingName = known->second.name;
     }
     fightShown_.store(view.active);
-    std::wstring encoded = EncodeBar(shown, portraits_);
+    std::wstring encoded = EncodeBar(shown, portraits_, row_);
     const std::lock_guard lock(mutex_);
     encoded_ = std::move(encoded);
 }
@@ -381,7 +425,7 @@ Looks LooksOf(ObjectId id)
 
 void BarLink::KeepPortraits(const TurnView &view, bool render)
 {
-    const auto id = portraits_.Next(view);
+    const auto id = portraits_.Next(view, row_);
     if (!id)
     {
         return;

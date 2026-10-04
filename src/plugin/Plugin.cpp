@@ -522,7 +522,12 @@ void ServeBar(std::uint32_t now)
     // Every frame, not with the bar's tenth of a second: the path's place
     // on the screen moves with the camera.
     g.preview.Update(view, now, g.turnBar && g.movePreview, g.movePreviewGround);
-    if (now - g.lastBarPublish >= 100)
+    // Where the bar's row stands among the turns to come, every frame, so
+    // that nobody's leaving the order is missed between two views. A click
+    // on one of its arrows is published at once: the movie asks every frame
+    // for a few after one (ui/turnorder: hurry).
+    const bool arrowClicked = g.bar.FollowRow(view);
+    if (arrowClicked || now - g.lastBarPublish >= 100)
     {
         g.lastBarPublish = now;
         g.bar.KeepPortraits(view, g.portraits);

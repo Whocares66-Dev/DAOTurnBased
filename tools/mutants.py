@@ -75,6 +75,7 @@ ORDER = "src/core/TurnOrder.cpp"
 RULES = "src/core/Rules.cpp"
 SETTINGS = "src/core/Settings.cpp"
 BAR = "src/core/Bar.cpp"
+BARWINDOW = "src/core/BarWindow.cpp"
 PORTRAITS = "src/core/Portraits.cpp"
 JSON = "src/core/Json.cpp"
 KEYS = "src/core/Keys.h"
@@ -1006,10 +1007,89 @@ MUTANTS = [
         "KeyChord delayKey{0x44, false, false, false}; // None",
     ),
     Mutant(
-        "the bar shows twelve turns ahead again, its buttons under the minimap",
+        "the bar's row holds twelve again, its buttons under the minimap",
         "src/core/TurnMachine.h",
         "static constexpr std::size_t kShown = 10;",
         "static constexpr std::size_t kShown = 12;",
+    ),
+    # The bar's row among the turns to come, and its arrows (issue 23).
+    Mutant(
+        "the view is cut to ten turns again: those past them are on no card and in no count",
+        MACHINE,
+        "order_.Upcoming(order_.All().size())",
+        "order_.Upcoming(TurnView::kShown)",
+    ),
+    Mutant(
+        "one before the row falls and the row stays: it shows other fighters",
+        BARWINDOW,
+        "    first_ -= std::min(first_, gone);\n",
+        "    first_ -= std::min(first_, gone * 0);\n",
+    ),
+    Mutant(
+        "one whose turn has passed counts as gone: the row follows its fighters round the list",
+        BARWINDOW,
+        "return std::ranges::find(view.upcoming, id, &CardView::id) == view.upcoming.end();",
+        "return view.upcoming.empty() || view.upcoming.front().id != id;",
+    ),
+    Mutant(
+        "the row runs past the list's end when the list gets shorter",
+        BARWINDOW,
+        "    first_ = std::min(first_, LastFirst(view.upcoming.size()));\n",
+        "",
+    ),
+    Mutant(
+        "outside a fight the row keeps its place while the view still holds cards",
+        BARWINDOW,
+        "if (!view.active)",
+        "if (!view.active && view.upcoming.empty())",
+    ),
+    Mutant(
+        "an arrow's click moves the row two cards",
+        "src/core/BarWindow.h",
+        "static constexpr std::size_t kStep = 1;",
+        "static constexpr std::size_t kStep = 2;",
+    ),
+    Mutant(
+        "the left arrow takes the row past the list's beginning",
+        BARWINDOW,
+        "first_ - std::min(first_, by)",
+        "first_ - by",
+    ),
+    Mutant(
+        "the right arrow takes the row past the list's end, unseen",
+        BARWINDOW,
+        "std::min(LastFirst(ids_.size()), first_ + by)",
+        "first_ + by",
+    ),
+    Mutant(
+        "the right arrow shows with nobody after the row",
+        BARWINDOW,
+        "span.after = turns - span.before - span.shown;",
+        "span.after = turns - span.before;",
+    ),
+    Mutant(
+        "portraits are rendered for every fighter, the row's or not",
+        PORTRAITS,
+        "    const std::size_t to = std::min(from + row.shown, view.upcoming.size());\n",
+        "    const std::size_t to = view.upcoming.size();\n",
+    ),
+    Mutant(
+        "portraits are got for the list's first ten wherever the row stands",
+        PORTRAITS,
+        "    const std::size_t from = std::min(row.before, view.upcoming.size());\n",
+        "    const std::size_t from = 0;\n",
+    ),
+    Mutant(
+        "the bar's string says the row is at the beginning wherever it stands",
+        BAR,
+        "    Field(out, static_cast<long long>(row.before));\n",
+        "    Field(out, 0LL);\n",
+    ),
+    Mutant(
+        "the bar's string does not say how many come after the row",
+        BAR,
+        "    Field(out, static_cast<long long>(row.after));\n",
+        "    Field(out, 0LL);\n",
     ),
     Mutant(
         "those of the fight still standing when it ends are never told it is over",

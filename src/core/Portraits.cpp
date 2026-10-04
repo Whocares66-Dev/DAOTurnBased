@@ -38,14 +38,17 @@ void PortraitBook::Follow(const TurnView &view, std::uint32_t nowMs)
     urls_.clear();
 }
 
-std::optional<ObjectId> PortraitBook::Next(const TurnView &view) const
+std::optional<ObjectId> PortraitBook::Next(const TurnView &view, const BarSpan &row) const
 {
     if (view.phase == Phase::Idle || view.phase == Phase::Suspended)
     {
         return std::nullopt;
     }
-    for (const CardView &card : view.upcoming)
+    const std::size_t from = std::min(row.before, view.upcoming.size());
+    const std::size_t to = std::min(from + row.shown, view.upcoming.size());
+    for (std::size_t i = from; i < to; ++i)
     {
+        const CardView &card = view.upcoming[i];
         if (card.id != kNoObject && !urls_.contains(card.id))
         {
             return card.id;
