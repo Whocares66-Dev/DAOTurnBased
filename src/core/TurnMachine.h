@@ -86,6 +86,15 @@ struct ActorObservation
     Vec3 position;
     bool conjureHeld = false; // at a conjure the game layer holds (Verdict::Conjure)
     bool timersHeld = false;  // its scripts' timers held for it (a damage over time's ticks)
+    // At an attack: its command is still at its approach, the walk to where
+    // it strikes from, as the engine itself says (the sub-action its command
+    // is at: DAOLib's dao::commands::RunningSubAction, 4 for a melee
+    // approach and 15 for a ranged one; the blow comes after). False at the
+    // blow, and at no attack. What the machine tells an attacker that
+    // cannot get to its target from one that is striking by (StepActing):
+    // until 2026-10-04 it worked that out for itself, from a walk it had
+    // reckoned, and stopped 67 shots in one fight (issue 11).
+    bool approaching = false;
 };
 
 // What holds a creature, as far as turns go: disabled, it cannot act
@@ -195,9 +204,11 @@ struct CommandRequest
     // For an object the fight does not know: whether it is in combat (its
     // combat state), so that a creature joining the fight waits its turn.
     bool inCombat = false;
-    // For an attack: the meters its creature must walk to reach the target
-    // (WalkToReach), when the game layer could tell. A player's attack that
-    // cannot reach this turn is refused before a step is taken.
+    // For an attack: the meters its creature must walk before it strikes,
+    // as the engine's own approach would walk them (DAOLib's
+    // dao::attack::Walk: none with the target in its reach), when the game
+    // layer could tell. A player's attack that cannot reach this turn is
+    // refused before a step is taken.
     std::optional<float> walk;
     // For an attack: the game's own path to the target ends at a shut door
     // (src/game/Gate.cpp). The player's is refused: told to attack through
@@ -1000,12 +1011,22 @@ class TurnMachine
     std::uint32_t stoodSince_ = 0;
     static constexpr std::uint32_t kStoodMs = 2500;
     static constexpr float kStoodStill = 0.05f;
-    // An attack whose creature stands this far short of where its walk was
-    // to end is not swinging: it cannot get there.
-    static constexpr float kStuckShort = 1.0f;
     // Why a spell the engine conjured, held, was lost (OnConjureCleared).
     static constexpr std::string_view kConjureCleared = "interrupted while conjuring";
-    // And is given this long standing there, not kStoodMs: nobody else moves
+    // An attack whose command is still at its approach
+    // (ActorObservation::approaching) and whose creature takes no step is
+    // not swinging: it cannot get there. An attack at its blow stands still
+    // while it turns to face, draws, aims and strikes, and is never judged
+    // so: that it will strike is the engine's to say, and it says it by
+    // where the command is.
+    //
+    // Until 2026-10-04 the machine told the two apart by a walk the gate had
+    // reckoned from the path's length: an archer in range whose path was the
+    // longer, or a skeleton in reach with others to walk round, stood "short
+    // of where its walk was to end" while it shot or swung, and was stopped
+    // a second in (issue 11: 67 shots in one fight).
+    //
+    // It is given this long standing there, not kStoodMs: nobody else moves
     // in its turn, so what blocks it will not clear, and the engine's own
     // answer comes only after seconds (blocked spiders' turns were 4 to 6 s
     // still: play test 31).

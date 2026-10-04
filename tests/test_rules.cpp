@@ -128,18 +128,6 @@ TEST_CASE("movement is meters, times speed under the speed rule, clamped", "[rul
     CHECK(tb::MovementBudget(settings, 1.0f, 40.0f) == Approx(20.0f));
 }
 
-TEST_CASE("reach is the engine's: both personal spaces and 1.2 m, or a ranged weapon's range", "[rules]")
-{
-    CHECK(tb::Reach(0.0f, 0.35f, 0.70f) == Approx(2.4f));  // Lyna on a giant spider, as play test 23 measured
-    CHECK(tb::Reach(0.0f, 0.35f, 0.35f) == Approx(2.05f)); // two people
-    CHECK(tb::Reach(0.0f, 0.35f, 3.0f) == Approx(4.7f));   // a high dragon
-    CHECK(tb::Reach(0.0f, -1.0f, std::numeric_limits<float>::quiet_NaN()) == Approx(1.35f)); // no space to read
-    CHECK(tb::Reach(45.0f, 0.35f, 0.70f) == Approx(46.05f));                                 // a bow, and both spaces
-    CHECK(tb::Reach(500.0f, 0.0f, 0.0f) == Approx(60.0f));                                   // at most 60 m
-    CHECK(tb::WalkToReach(10.0f, 2.4f) == Approx(7.6f));
-    CHECK(tb::WalkToReach(2.0f, 2.4f) == Approx(0.0f));
-}
-
 TEST_CASE("a creature's pace is its appearance's combat speed against a person's", "[rules]")
 {
     // apr_base's Game_CbtSpeed, read 2026-09-30.
@@ -590,16 +578,17 @@ TEST_CASE("a kept attack whose target fell is turned on the nearest enemy its cr
           "[rules][time]")
 {
     // Issue 22, the user's choice of 2026-10-03. Each as the game layer
-    // measured it: standing, hostile, seen, how far, and the attacker's
-    // reach on it.
-    const auto foe = [](tb::ObjectId id, float meters, float reach = 2.05f) {
+    // measured it: standing, hostile, seen, how far, and whether in the
+    // attacker's reach, which is the engine's own answer for the pair
+    // (issue 11: the mod has no reach rule of its own).
+    const auto foe = [](tb::ObjectId id, float meters, bool inReach = true) {
         tb::Foe f;
         f.id = id;
         f.standing = true;
         f.hostile = true;
         f.seen = true;
         f.meters = meters;
-        f.reach = reach;
+        f.inReach = inReach;
         return f;
     };
     const float nan = std::numeric_limits<float>::quiet_NaN();
@@ -612,18 +601,15 @@ TEST_CASE("a kept attack whose target fell is turned on the nearest enemy its cr
     CHECK(tb::NearestInReach(three) == 0x202);
     // Out of reach is a walk, and no walk was paid for: not that one, however
     // few the others; and with all of them out of reach, none.
-    const std::vector<tb::Foe> oneNear{foe(0x201, 6.0f), foe(0x202, 2.0f), foe(0x203, 30.0f)};
+    const std::vector<tb::Foe> oneNear{foe(0x201, 6.0f, false), foe(0x202, 2.0f), foe(0x203, 30.0f, false)};
     CHECK(tb::NearestInReach(oneNear) == 0x202);
-    const std::vector<tb::Foe> allFar{foe(0x201, 6.0f), foe(0x202, 2.1f)};
+    const std::vector<tb::Foe> allFar{foe(0x201, 6.0f, false), foe(0x202, 2.1f, false)};
     CHECK(tb::NearestInReach(allFar) == tb::kNoObject);
-    // In reach is what the gate judges an attack's walk by: at the reach
-    // itself there is nothing to walk; a hair past it there is.
-    CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, 2.05f)}) == 0x201);
-    CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, 2.06f)}) == tb::kNoObject);
-    // Each by the attacker's reach on it: a giant spider's space puts it in
-    // reach from further off than a person.
-    const std::vector<tb::Foe> spider{foe(0x201, 2.3f, 2.4f), foe(0x202, 2.2f, 2.05f)};
-    CHECK(tb::NearestInReach(spider) == 0x201);
+    // In reach is the engine's word and not the distance: one nearer and out
+    // of reach (its place at that target past a doorway, say) is passed over
+    // for one further off and in it.
+    const std::vector<tb::Foe> ring{foe(0x201, 1.4f, false), foe(0x202, 2.2f)};
+    CHECK(tb::NearestInReach(ring) == 0x202);
     // Two as near: the first named.
     const std::vector<tb::Foe> tie{foe(0x201, 1.5f), foe(0x202, 1.5f)};
     CHECK(tb::NearestInReach(tie) == 0x201);
@@ -638,21 +624,17 @@ TEST_CASE("a kept attack whose target fell is turned on the nearest enemy its cr
     flawed[3].seen = false;
     CHECK(tb::NearestInReach(flawed) == tb::kNoObject);
 
-    // A bow reaches far, and a shot wants a line (issue 11: an archer with
-    // none stands; its bandit stood 26 s at a target 21.6 m off, inside its
-    // reach of 45.7 m, whether for want of a line was not read). One in
-    // reach and out of sight is not shot at; the next that is seen is.
-    std::vector<tb::Foe> archer{foe(0x101, 21.6f, 45.7f), foe(0x102, 38.0f, 45.7f), foe(0x103, 50.0f, 45.7f)};
+    // A bow reaches far. One in reach and not seen (in stealth) is not shot
+    // at; the next that is seen is.
+    std::vector<tb::Foe> archer{foe(0x101, 21.6f), foe(0x102, 38.0f), foe(0x103, 50.0f, false)};
     CHECK(tb::NearestInReach(archer) == 0x101);
     archer[0].seen = false;
     CHECK(tb::NearestInReach(archer) == 0x102);
     archer[1].seen = false;
     CHECK(tb::NearestInReach(archer) == tb::kNoObject); // the third is past the bow's reach
 
-    // A distance or a reach that is none is out of reach.
+    // A distance that is none is no nearest.
     CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, nan)}) == tb::kNoObject);
     CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, inf)}) == tb::kNoObject);
-    CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, 1.0f, nan)}) == tb::kNoObject);
-    CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, 1.0f, inf)}) == tb::kNoObject);
     CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, nan), foe(0x202, 1.0f)}) == 0x202);
 }

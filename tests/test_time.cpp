@@ -1475,10 +1475,11 @@ TEST_CASE("an attack whose creature stands short of its target is stopped, its a
         REQUIRE(w.Current() == kGenlock);
         REQUIRE(pokes == 1);
         // It walks a meter and stands there, others in its way: busy at its
-        // attack, not a step more.
+        // attack, its command still at its approach, not a step more.
         Walk(w, kGenlock, 1.0f);
         w.Get(kGenlock).busy = true;
         w.Get(kGenlock).current = CommandType::Attack;
+        w.Get(kGenlock).approaching = true;
         w.applied.clear();
         w.RunFor(kStood + 200);
         CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
@@ -1495,6 +1496,7 @@ TEST_CASE("an attack whose creature stands short of its target is stopped, its a
         w.StartFight();
         REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 1.5f, 5.0f) == Verdict::Allow);
         w.Get(kHero).moving = false;
+        w.Get(kHero).approaching = true; // as the engine has it: its walk not made
         w.applied.clear();
         w.RunFor(kStood - 300);
         CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero)); // not yet
@@ -1530,6 +1532,161 @@ TEST_CASE("an attack whose creature stands short of its target is stopped, its a
         w.applied.clear();
         w.RunFor(kStood + 500);
         CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+    }
+}
+
+namespace
+{
+// An attack as the gate's request has it since issue 11: the walk the core
+// worked out for it, and the swing's or the shot's own time.
+Verdict Attack(World &w, ObjectId id, Source source, float seconds, float walk)
+{
+    CommandRequest request;
+    request.object = id;
+    request.type = CommandType::Attack;
+    request.source = source;
+    request.inCombat = w.Get(id).fighting;
+    request.walk = walk;
+    request.actionSeconds = seconds;
+    return w.Queue(request);
+}
+
+bool GivenBack(const std::vector<TurnEvent> &events, ObjectId who)
+{
+    return std::ranges::any_of(
+        events, [&](const TurnEvent &e) { return e.kind == EventKind::ActionGivenBack && e.who == who; });
+}
+} // namespace
+
+TEST_CASE("an attack that stands still is judged by where the engine has its command, not by a walk it was told",
+          "[time]")
+{
+    // Issue 11, Zevran's ambush: 67 shots stopped a second in, each by an
+    // archer in range of its target with a clear line, whose path round the
+    // slope was the longer. The game layer says each frame whether the
+    // attack's command is still at its approach, as the engine has it.
+    constexpr std::uint32_t kStood = 1000;
+    World w(Timed());
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+
+    SECTION("at its blow, an archer's shot runs its length, whatever walk the gate was told")
+    {
+        // A walk as the gate was told (wrongly, as it was until then), a
+        // flat 1.4 s, and a shot that takes six and a half: an enemy
+        // archer's, turning to face, drawing and aiming where it stands.
+        REQUIRE(Attack(w, kHero, Source::Player, 1.4f, 5.0f) == Verdict::Allow);
+        w.Get(kHero).approaching = false;
+        w.applied.clear();
+        w.RunFor(6500);
+        CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+        CHECK_FALSE(GivenBack(events, kHero));
+        CHECK_FALSE(w.Said(L"No way through"));
+        CHECK(w.Current() == kHero);
+    }
+    SECTION("still at its approach and not a step taken, it is stopped, whatever walk the gate was told")
+    {
+        // Told nothing to walk (the walk could not be told, or its place at
+        // the target is past a doorway): the engine has it approaching, and
+        // it stands.
+        REQUIRE(Attack(w, kHero, Source::Player, 1.5f, 0.0f) == Verdict::Allow);
+        w.Get(kHero).approaching = true;
+        w.applied.clear();
+        w.RunFor(kStood - 300);
+        CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+        w.RunFor(500);
+        CHECK(w.Did(EffectKind::ClearCommands, kHero));
+        CHECK(GivenBack(events, kHero));
+        CHECK(w.Said(L"No way through"));
+        CHECK(Logged(w, "(its command still at its approach): stopped; it cannot get to its target"));
+    }
+    SECTION("its approach over as it stands, it is let be from then")
+    {
+        REQUIRE(Attack(w, kHero, Source::Player, 1.5f, 0.0f) == Verdict::Allow);
+        w.Get(kHero).approaching = true;
+        w.applied.clear();
+        w.RunFor(kStood - 300);
+        w.Get(kHero).approaching = false; // in place: the blow begins
+        w.RunFor(3000);
+        CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+    }
+    SECTION("how long it has stood is counted for the command it is at alone")
+    {
+        // The ambush replayed: an attacker that had stood through a swing on
+        // the spot was sent at a target far off and stopped as it set out,
+        // 157 ms into the new command with "3141 ms" stood.
+        REQUIRE(Attack(w, kHero, Source::Player, 1.0f, 0.0f) == Verdict::Allow);
+        w.Get(kHero).approaching = true;
+        w.applied.clear();
+        w.RunFor(kStood - 300);
+        // The next attack, let through while it still stands where it stood.
+        REQUIRE(Attack(w, kHero, Source::Player, 1.0f, 0.0f) == Verdict::Allow);
+        w.Get(kHero).approaching = true;
+        w.RunFor(500);
+        CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero)); // not 1.2 s at this one
+        w.RunFor(kStood);
+        CHECK(w.Did(EffectKind::ClearCommands, kHero));
+    }
+}
+
+TEST_CASE("a kept attack is not given to a creature an effect holds as its turn begins", "[time]")
+{
+    // Issue 11's bandit archer: its kept shot was given while it stood at an
+    // effect's command, queued behind it, and the effect was taken for the
+    // shot's own: 26 s of the turn, at three times the patience.
+    World w(Timed());
+    bool kept = false;
+    int pokes = 0;
+    w.onPoke = [&](ObjectId id) {
+        ++pokes;
+        // Its first choice: a shot too long for its bar, kept, owing 2 s.
+        if (id == kGenlock && !std::exchange(kept, true))
+        {
+            CHECK(Strike(w, kGenlock, kHero, Source::Script, 6.0f) == Verdict::Hold);
+        }
+    };
+    w.StartFight();
+    UntilTurnOf(w, kGenlock);
+    w.RunFor(200);
+    REQUIRE(kept);
+    REQUIRE(w.heldCasts.contains(kGenlock));
+    // Something lays an effect on it that no condition names, before its
+    // next turn: it stands at that effect's command.
+    UntilTurnOf(w, kCompanion);
+    REQUIRE(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+
+    SECTION("held past the grace: the turn is lost, and what it kept lands on its next")
+    {
+        UntilTurnOf(w, kGenlock);
+        CHECK(w.released.empty()); // not given behind the effect
+        CHECK(w.heldCasts.contains(kGenlock));
+        CHECK(Logged(w, "Genlock's pending attack waits: an effect holds its creature"));
+        w.RunFor(TurnMachine::kEffectGraceMs + 200);
+        CHECK(w.Current() != kGenlock);
+        CHECK(w.Said(L"Genlock loses the turn"));
+        CHECK_FALSE(Logged(w, "its action's own effect holds it"));
+        CHECK_FALSE(Logged(w, "still at a"));
+        CHECK(w.released.empty());
+        // The effect over, its next turn: the shot lands, for nothing more.
+        w.Finish(kGenlock);
+        UntilTurnOf(w, kGenlock);
+        REQUIRE(w.released.size() == 1);
+        CHECK(w.released.front() == Verdict::Allow);
+        CHECK(w.Get(kGenlock).current == CommandType::Attack);
+    }
+    SECTION("let go within the grace: it lands then, and the turn is its own")
+    {
+        UntilTurnOf(w, kGenlock);
+        REQUIRE(w.released.empty());
+        w.RunFor(TurnMachine::kEffectGraceMs / 2);
+        REQUIRE(w.Current() == kGenlock);
+        w.Finish(kGenlock); // the effect lets go
+        w.RunFor(100);
+        REQUIRE(w.released.size() == 1);
+        CHECK(w.released.front() == Verdict::Allow);
+        CHECK(w.Current() == kGenlock);
+        CHECK(w.Get(kGenlock).current == CommandType::Attack);
     }
 }
 

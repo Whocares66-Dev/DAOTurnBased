@@ -36,6 +36,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -88,9 +89,10 @@ class Preview
     Vec3 to_;                     // the cursor's point it was found for
     bool searched_ = false;
     std::uint32_t searchedAt_ = 0;
-    std::vector<Vec3> path_; // empty: the game finds no path there
-    float route_ = 0;        // the waypoints' own length, as the gate measures an order
-    Vec3 routeEnd_;          // the last of them
+    std::vector<Vec3> path_;      // empty: the game finds no path there
+    float route_ = 0;             // the waypoints' own length, as the gate measures an order
+    std::optional<float> strike_; // to a creature: the walk the engine's approach for an attack on it would make
+    Vec3 routeEnd_;               // the last of them
     int logged_ = 0;
     // The game's movement marker at the path's end, while one is placed,
     // and the area it was placed in: an effect goes with its area, and its

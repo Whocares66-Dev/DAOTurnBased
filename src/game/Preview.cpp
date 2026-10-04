@@ -4,6 +4,7 @@
 #include "core/Rules.h"
 #include "game/Gate.h"
 
+#include "dao/Attack.h"
 #include "dao/ClientExoApp.h"
 #include "dao/GameModes.h"
 #include "dao/Gui.h"
@@ -422,6 +423,20 @@ void Preview::Search(ObjectId walker, const Vec3 &from, const Vec3 &to, ObjectId
     searched_ = true;
     searchedAt_ = nowMs;
     path_.clear();
+    // To a creature: the walk the engine's own approach for an attack on it
+    // would make (DAOLib's dao::attack::Walk: none in reach, else its path
+    // to where the approach goes), which is what the gate will charge. Asked
+    // here, as often as the path is searched and no oftener: it is a search
+    // of its own. (The call gives that path's points too; the line drawn is
+    // still the game's path to the target, cut at the walk's length.)
+    strike_.reset();
+    if (toward != kNoObject)
+    {
+        if (const std::optional<dao::attack::Walked> walk = dao::attack::Walk(walker, toward))
+        {
+            strike_ = walk->metres;
+        }
+    }
     const ULONGLONG began = GetTickCount64();
     // To a creature, with its own obstacle lifted, as the gate searches
     // for an attack's walk.
@@ -575,14 +590,15 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     const float order = route_ + Flat(routeEnd_, to);
     const float drawn = PathLength(path_);
     // What is walked: all of a move's path; of an attack's, as far as where
-    // the attacker can strike, by the gate's own sum (WalkToTarget: the
-    // path or the straight line, whichever is longer, less the reach).
+    // the attacker can strike, which is the engine's to say and the gate's
+    // own number (WalkToTarget: nothing with the target in its reach; else
+    // the engine's path to where its approach goes). Where the engine has no
+    // answer (no creature, no path), the whole way is shown.
     float walk = order;
     std::vector<Vec3> walked = path_;
     if (target != kNoObject)
     {
-        const float distance = api::GetDistanceBetween(view.current, target);
-        walk = WalkToReach(std::max(order, distance), ReachOf(view.current, target));
+        walk = strike_.value_or(order);
         walked = SplitPath(path_, walk + (drawn - order)).reach;
         // Under half a meter is the shuffle of a strike, not a walk: a plate
         // "0.1 m, 1.5 s" lay at Lyna's feet with the spider beside her (seen

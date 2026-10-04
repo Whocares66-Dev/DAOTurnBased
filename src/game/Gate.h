@@ -38,12 +38,6 @@ bool InstallGate(TurnMachine &machine, std::mutex &mutex);
 // by the engine's own path (DAOLib's world::FindPath).
 void SetPathCheck(bool on);
 
-// How near `attacker` must come to strike `target`: its weapon's range and
-// the target's own space (core/Rules.h, Reach), from the game's tables, as
-// the gate judges a player's attack by. `weaponType`, if asked for, is the
-// main hand's base item type, -1 for none. Script calls: on the scripts'
-// thread. The movement preview shows an attack's walk by the same number.
-[[nodiscard]] float ReachOf(ObjectId attacker, ObjectId target, std::int32_t *weaponType = nullptr);
 // With a turn a bar of time, the seconds a plain attack of this creature's
 // costs, as the gate will charge it (the swing by the game's formula, or
 // the core's stand-in). On the scripts' thread.

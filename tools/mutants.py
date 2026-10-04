@@ -309,24 +309,6 @@ MUTANTS = [
         "closing in is its turn.\n        if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + 999.0f)",
     ),
     Mutant(
-        "reach ignores the attacker's size",
-        RULES,
-        "const float spaces = space(attackerSpace) + space(targetSpace);",
-        "const float spaces = 0.0f * space(attackerSpace) + space(targetSpace);",
-    ),
-    Mutant(
-        "reach forgets the swing's play",
-        RULES,
-        "    return spaces + kMeleeGap + kSwingPlay;",
-        "    return spaces + kMeleeGap;",
-    ),
-    Mutant(
-        "a ranged weapon reaches past 60 m",
-        RULES,
-        "        return std::min(weaponRange, kLongestRange) + spaces;",
-        "        return weaponRange + spaces;",
-    ),
-    Mutant(
         "the bar's string keeps a name's separators",
         BAR,
         "if (c >= 0x20)",
@@ -731,8 +713,8 @@ MUTANTS = [
     Mutant(
         "a creature standing at a walk is left to max_action_ms",
         MACHINE,
-        "        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs : kStoodMs))",
-        "        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs : kStoodMs * 1000))",
+        "        const std::uint32_t limit = Patience(short_ ? kStuckMs : kStoodMs);",
+        "        const std::uint32_t limit = Patience(short_ ? kStuckMs : kStoodMs * 1000);",
     ),
     Mutant(
         "a swing on the spot is taken for standing at a walk",
@@ -1446,20 +1428,14 @@ MUTANTS = [
     Mutant(
         "time: a kept attack is turned on one out of its reach",
         RULES,
-        "        if (!std::isfinite(foe.meters) || !std::isfinite(foe.reach) || WalkToReach(foe.meters, foe.reach) > 0.0f)",
-        "        if (!std::isfinite(foe.meters) || !std::isfinite(foe.reach))",
+        "        if (!foe.inReach || !std::isfinite(foe.meters))",
+        "        if (!std::isfinite(foe.meters))",
     ),
     Mutant(
         "time: a kept attack is turned on one at a distance that is none",
         RULES,
-        "        if (!std::isfinite(foe.meters) || !std::isfinite(foe.reach) || WalkToReach(foe.meters, foe.reach) > 0.0f)",
-        "        if (!std::isfinite(foe.reach) || WalkToReach(foe.meters, foe.reach) > 0.0f)",
-    ),
-    Mutant(
-        "time: a reach that is none reaches everyone",
-        RULES,
-        "        if (!std::isfinite(foe.meters) || !std::isfinite(foe.reach) || WalkToReach(foe.meters, foe.reach) > 0.0f)",
-        "        if (!std::isfinite(foe.meters) || WalkToReach(foe.meters, foe.reach) > 0.0f)",
+        "        if (!foe.inReach || !std::isfinite(foe.meters))",
+        "        if (!foe.inReach)",
     ),
     Mutant(
         "time: a kept attack is turned on one its creature cannot see",
@@ -2013,8 +1989,26 @@ MUTANTS = [
     Mutant(
         "an attack swinging where it stands is taken for one that cannot get there",
         MACHINE,
-        "                        budget_.lastWalk - (budget_.spend.Walked() - budget_.movementAtCommand) > kStuckShort;",
-        "                        budget_.lastWalk - (budget_.spend.Walked() - budget_.movementAtCommand) > -100.0f;",
+        "    const bool short_ = attacking && actor.approaching;",
+        "    const bool short_ = attacking;",
+    ),
+    # Issue 11: an attack that stands still is judged by whether the engine
+    # has its command still at its approach, as the game layer reads it each
+    # frame, and by how long it has stood at that command alone; and a kept
+    # action is not given to a creature an effect holds. (An attack's reach
+    # and walk are the engine's own, asked in src/game: no rule of the core's
+    # to break.)
+    Mutant(
+        "a kept action is given to a creature an effect holds as its turn begins",
+        MACHINE,
+        "Name(charge->type)));\n        return false;\n    }\n    landing_ = *charge;",
+        "Name(charge->type)));\n    }\n    landing_ = *charge;",
+    ),
+    Mutant(
+        "a kept action that waited on an effect is not given as the effect lets go",
+        MACHINE,
+        "        if (!actor.busy && current != nullptr && LandCast(*current, fx))",
+        "        if (!actor.busy && current != nullptr && current->down && LandCast(*current, fx))",
     ),
     Mutant(
         "time: an action that did nothing is given back once a turn only",
@@ -2160,14 +2154,26 @@ MUTANTS = [
     Mutant(
         "an attack standing short of its target is given as long as a walk",
         MACHINE,
-        "        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs : kStoodMs))",
-        "        else if (clock_ - stoodSince_ >= Patience(kStoodMs + (short_ ? 1000 : 0)))",
+        "        const std::uint32_t limit = Patience(short_ ? kStuckMs : kStoodMs);",
+        "        const std::uint32_t limit = Patience(short_ ? kStoodMs + 1000 : kStoodMs);",
     ),
     Mutant(
         "an attack standing short of its target is stopped at once",
         MACHINE,
-        "        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs : kStoodMs))",
-        "        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs / 4 : kStoodMs))",
+        "        const std::uint32_t limit = Patience(short_ ? kStuckMs : kStoodMs);",
+        "        const std::uint32_t limit = Patience(short_ ? kStuckMs / 4 : kStoodMs);",
+    ),
+    Mutant(
+        "an attack still at its approach is taken for one at its blow",
+        MACHINE,
+        "    const bool short_ = attacking && actor.approaching;",
+        "    const bool short_ = attacking && !actor.approaching;",
+    ),
+    Mutant(
+        "how long a creature has stood is carried over from the command before",
+        MACHINE,
+        "    // replay of the ambush, 2026-10-04).\n    stoodAt_.reset();\n",
+        "    // replay of the ambush, 2026-10-04).\n",
     ),
     Mutant(
         "a party member's lost turn is said in grey",

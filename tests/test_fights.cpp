@@ -166,7 +166,7 @@ class Arena
             foe.hostile = true;
             foe.seen = Chance(reach_, 0.8);
             foe.meters = Between(reach_, 0.0f, 5.0f);
-            foe.reach = world_.reach;
+            foe.inReach = foe.meters <= world_.reach;
             return foe;
         };
         // A kept action given again as its creature's turn begins: it walks

@@ -5,6 +5,7 @@
 
 #include "dao/Addresses.h"
 #include "dao/Animation.h"
+#include "dao/Attack.h"
 #include "dao/Clock.h"
 #include "dao/CommandEvents.h"
 #include "dao/Conjure.h"
@@ -107,21 +108,30 @@ void NoteCaller(const Caller &caller, std::uintptr_t from, CommandType type)
     }
 }
 
-// How far a player's attack must walk before it can strike (core/Rules.h,
-// Reach: the AI's own rule, with the weapon's range and the target's
-// personal space from the data tables). Script commands belong on the
-// scripts' thread, so this answers only there; elsewhere the gate measures
-// the walk as it happens instead. Which thread the player's orders come on
-// is not known yet: the first one says, once.
-// What the reach check found, for the log when an attack is refused.
+// How far an attack must walk before it can strike: the attack command's own
+// approach, asked of the engine for the pair as they stand (DAOLib's
+// dao::attack, its issue 16). The mod keeps no reach rule of its own: the
+// one it had, written from notes of the exe, went by the path's length where
+// the engine goes by where the two stand, and cut off 67 archers' shots in
+// one ambush (issue 11; the user, 2026-10-04: call the engine's functions).
+// Script commands belong on the scripts' thread, which in play is the
+// game's, where the engine's approach may be asked; so this answers only
+// there, and elsewhere the gate measures the walk as it happens instead.
+// What it found, for the gate and the log.
 struct Reached
 {
-    float walk = 0.0f;
-    float distance = 0.0f;
-    float reach = 0.0f;
-    std::int32_t weaponType = -1; // the main hand's base item type; -1 for none
-    bool door = false;            // the game's path to the target ends at a shut door
+    float walk = 0.0f;              // what it walks before it strikes (dao::attack::Walk; none in reach)
+    dao::attack::Approach approach; // the engine's approach: a shot's or a blow's, in reach or not, where it goes
+    float line = 0.0f;              // between the two, for the log
+    std::int32_t weaponType = -1;   // the main hand's base item type; -1 for none
+    bool door = false;              // the game's path to the target ends at a shut door
 };
+
+std::int32_t MainHandType(ObjectId creature)
+{
+    const ObjectId weapon = api::GetItemInEquipSlot(k::INVENTORY_SLOT_MAIN, creature);
+    return api::IsObjectValid(weapon) != 0 ? api::GetBaseItemType(weapon) : -1;
+}
 
 // path_check (Settings::pathCheck): the player's orders measured by the
 // path the engine would walk, not a straight line. Read on the scripts'
@@ -165,7 +175,7 @@ std::optional<float> PathLength(ObjectId creature, const dao::Vector &to, Object
     return path->Length() + std::hypot(end.x - to.x, end.y - to.y);
 }
 
-std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Command &command, bool byPath)
+std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Command &command)
 {
     static std::once_flag said;
     const bool onScripts = GetCurrentThreadId() == dao::script::ScriptThreadId();
@@ -178,11 +188,43 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
         return std::nullopt;
     }
     const ObjectId attacker = self.Id();
-    const float distance = api::GetDistanceBetween(attacker, *target);
-    std::int32_t weaponType = -1;
-    const float reach = ReachOf(attacker, *target, &weaponType);
-    // Around what stands between them: the path to where the target stands.
-    // Only for a creature at rest, as it is when the player gives an order.
+    // The approach the attack command would queue for the two as they stand:
+    // in reach, it ends at once and the blow begins from where the attacker
+    // is, whatever the path between them (issue 11's archers on the slopes,
+    // 20 m from their target and 75 m by the path).
+    const std::optional<dao::attack::Approach> approach = dao::attack::ApproachOf(attacker, *target);
+    if (!approach)
+    {
+        // Not creatures both, or the target's ring has no place for the
+        // attacker: the engine's own approach fails there and says so
+        // (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING), which gives the action
+        // back (WatchCommandEnds).
+        spdlog::debug("attack on {:#010x}: the engine has no approach for it (no place at its target, or not a "
+                      "creature); its walk is not known",
+                      *target);
+        return std::nullopt;
+    }
+    Reached reached;
+    reached.approach = *approach;
+    reached.line = api::GetDistanceBetween(attacker, *target);
+    reached.weaponType = MainHandType(attacker);
+    const std::string_view kind = approach->ranged ? "ranged" : "melee";
+    if (approach->inReach)
+    {
+        spdlog::debug("attack on {:#010x}: {:.1f} m away, in its reach by the engine's {} approach: nothing to walk",
+                      *target, reached.line, kind);
+        return reached;
+    }
+    // Out of reach. Where the engine's path is not to be searched (below),
+    // the walk is the line to where the approach goes, less how near it
+    // stops: the approach's own goal and distance, on the ground as the
+    // engine measures them.
+    const dao::Vector from = api::GetPosition(attacker);
+    reached.walk =
+        std::max(0.0f, std::hypot(approach->goal.x - from.x, approach->goal.y - from.y) - approach->stopWithin);
+    std::string_view by = "the line to where its approach goes";
+    // The engine's path there, for what stands between them. Only for a
+    // creature at rest, as it is when the player gives an order.
     // The game's own second go at an attack comes while the creature is at
     // something else: with a shut door in the way the attack fails "path
     // action required", and the game queues the door's use and the attack
@@ -191,29 +233,29 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     // "use object", its turn lost (the ninth play test, 2026-10-01). Whether
     // the search disturbed the creature's own request for a path is not
     // proven; it is not made while one may be pending.
-    std::optional<float> path;
     const bool atRest = self.CurrentCommand() == nullptr && api::GetCommandQueueSize(attacker) == 0;
-    if (byPath && g_pathCheck.load() && !atRest)
+    if (g_pathCheck.load() && !atRest)
     {
         spdlog::debug("attack on {:#010x}: its creature is at a command already; judged by the straight line", *target);
     }
-    bool door = false;
-    if (byPath && g_pathCheck.load() && atRest)
+    if (g_pathCheck.load() && atRest)
     {
-        // The whole search, for why there is no path: the pathfinder's
-        // answer 6 is a door or the like in the way, what the game ends a
-        // move at with COMMAND_FAILED_PATH_ACTION_REQUIRED (DAOLib's
-        // Pathfind, seen in play behind the Elven Ruins' shut doors).
-        const dao::Vector to = api::GetPosition(*target);
-        const dao::world::PathSearch search = dao::world::Pathfind(attacker, to, *target);
-        if (search.path && !search.path->waypoints.empty())
+        if (const std::optional<dao::attack::Walked> walk = dao::attack::Walk(attacker, *target))
         {
-            const dao::Vector &end = search.path->waypoints.back();
-            path = search.path->Length() + std::hypot(end.x - to.x, end.y - to.y);
+            reached.walk = walk->metres;
+            by = "the engine's path";
         }
         else
         {
-            door = search.result == kDoorInTheWay;
+            // No path reaches, or the engine would give a shot up on the
+            // way for want of a line. The whole search, for why there is no
+            // path: the pathfinder's
+            // answer 6 is a door or the like in the way, what the game ends
+            // a move at with COMMAND_FAILED_PATH_ACTION_REQUIRED (DAOLib's
+            // Pathfind, seen in play behind the Elven Ruins' shut doors).
+            const dao::world::PathSearch search = dao::world::Pathfind(attacker, api::GetPosition(*target), *target);
+            const bool door = search.result == kDoorInTheWay;
+            reached.door = door;
             // What is in the way, as the game finds it (DAOLib cb08d00: a
             // placeable within 5 m of where the path stopped). Only shut
             // doors have been seen; said, in case it is ever something else.
@@ -224,19 +266,13 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
             spdlog::debug("attack on {:#010x}: the game finds no path to it ({}); {}", *target, search.result, what);
         }
     }
-    // Never less than the straight line: a path that ends short of it is
-    // not a shorter walk.
-    const float walked = path ? std::max(*path, distance) : distance;
-    if (path)
-    {
-        spdlog::debug("attack on {:#010x}: {:.1f} m away, {:.1f} m of path, reach {:.1f} m", *target, distance, *path,
-                      reach);
-    }
-    else
-    {
-        spdlog::debug("attack on {:#010x}: {:.1f} m away, reach {:.1f} m", *target, distance, reach);
-    }
-    return Reached{WalkToReach(walked, reach), walked, reach, weaponType, door};
+    // Said with what it was judged by: the log is where a wrong walk shows.
+    // A shot in range with no line of sight walks for one, and how far the
+    // engine does not say before it has.
+    spdlog::debug("attack on {:#010x}: {:.1f} m away, out of its reach by the engine's {} approach{}: {:.1f} m to "
+                  "walk, by {}",
+                  *target, reached.line, kind, approach->lineOfSight ? "" : " (no line of sight)", reached.walk, by);
+    return reached;
 }
 
 // A player's move, measured as the engine would walk it.
@@ -273,15 +309,16 @@ std::optional<float> MoveLength(const dao::CCObject &self, const dao::Command &c
 // test (2026-09-30) saw archers walk their 9 m a turn for four rounds and
 // never shoot. Whether they had a shot (the engine's own line of sight,
 // DAOLib 859f2db, not yet seen in play) and their reach say why. Their
-// first three attacks a fight, and every one out of reach or sight.
-void SayAiAttack(const dao::CCObject &self, const dao::Command &command)
+// first three attacks a fight, and every one out of reach or sight. By the
+// line between the two, as the gate measured it for the command.
+void SayAiAttack(const dao::CCObject &self, const dao::Command &command, const std::optional<Reached> &reached)
 {
-    const std::optional<Reached> reached = WalkToTarget(self, command, false);
     const std::optional<ObjectId> target = command.Target();
     if (!reached || !target)
     {
         return;
     }
+    // With where the line is cut, which the aim's own answer leaves out.
     const dao::world::Sight sight = dao::world::LineOfSight(self.Id(), *target);
     // The same attacker on the same target at most every 3 s: a companion's
     // own AI tried one out of turn some 45 times in two seconds (the second
@@ -290,7 +327,7 @@ void SayAiAttack(const dao::CCObject &self, const dao::Command &command)
     static std::map<std::pair<ObjectId, ObjectId>, std::uint64_t> lastSaid;
     const std::uint64_t now = GetTickCount64();
     std::uint64_t &last = lastSaid[{self.Id(), *target}];
-    if ((said < 3 || reached->walk > 0.0f || !sight) && (last == 0 || now - last >= 3000))
+    if ((said < 3 || !reached->approach.inReach || !sight) && (last == 0 || now - last >= 3000))
     {
         ++said;
         last = now;
@@ -300,9 +337,11 @@ void SayAiAttack(const dao::CCObject &self, const dao::Command &command)
             blocked =
                 std::format(" at ({:.1f}, {:.1f}, {:.1f})", sight.blockedAt->x, sight.blockedAt->y, sight.blockedAt->z);
         }
-        spdlog::info("{:#010x} attacks {:#010x}: {:.1f} m away, reach {:.1f} m (base item {}), line of sight {}{}",
-                     self.Id(), *target, reached->distance, reached->reach, reached->weaponType,
-                     sight ? "clear" : "blocked", blocked);
+        spdlog::info("{:#010x} attacks {:#010x}: {:.1f} m away, {} its reach by the engine's {} approach (base item "
+                     "{}), line of sight {}{}",
+                     self.Id(), *target, reached->line, reached->approach.inReach ? "in" : "out of",
+                     reached->approach.ranged ? "ranged" : "melee", reached->weaponType, sight ? "clear" : "blocked",
+                     blocked);
     }
 }
 
@@ -419,6 +458,8 @@ struct ShotBegun
     dao::Vector where;
 };
 std::unordered_map<ObjectId, ShotBegun> g_shotsBegun;
+// And every attack's, shot or swing: each creature's last (WatchAttacksBegin).
+std::unordered_map<ObjectId, ShotBegun> g_attacksBegun;
 
 float SwingSecondsOf(ObjectId attacker)
 {
@@ -589,11 +630,11 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             // stopped a step short and lost the turn: play test 25's duel).
             const std::optional<Reached> reached =
                 type == CommandType::Attack && (source == Source::Player || source == Source::Script)
-                    ? WalkToTarget(*self, *command, true)
+                    ? WalkToTarget(*self, *command)
                     : std::nullopt;
             if (source == Source::Script && type == CommandType::Attack)
             {
-                SayAiAttack(*self, *command);
+                SayAiAttack(*self, *command, reached);
             }
             std::optional<float> walk = reached ? std::optional<float>{reached->walk} : std::nullopt;
             if (source == Source::Player && type == CommandType::MoveToLocation)
@@ -623,10 +664,12 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             }
             if (verdict == Verdict::Block && source == Source::Player && reached && reached->walk > 0.0f)
             {
-                // Why an attack was too far, at info: whether a bow was read
-                // as one is what the first refusals in play left open.
-                spdlog::info("the refused attack: {:.1f} m away, reach {:.1f} m, main hand base item {} (bitm_base)",
-                             reached->distance, reached->reach, reached->weaponType);
+                // Why an attack was too far, at info: what the engine's
+                // approach for it was, and what it would walk.
+                spdlog::info("the refused attack: {:.1f} m away, {:.1f} m to walk by the engine's {} approach, main "
+                             "hand base item {} (bitm_base){}",
+                             reached->line, reached->walk, reached->approach.ranged ? "ranged" : "melee",
+                             reached->weaponType, reached->approach.lineOfSight ? "" : ", no line of sight");
             }
             if (verdict == Verdict::Hold)
             {
@@ -938,27 +981,6 @@ void DropHeldCast(ObjectId creature)
     }
 }
 
-float ReachOf(ObjectId attacker, ObjectId target, std::int32_t *weaponType)
-{
-    float weaponRange = 0.0f;
-    std::int32_t type = -1;
-    const ObjectId weapon = api::GetItemInEquipSlot(k::INVENTORY_SLOT_MAIN, attacker);
-    if (api::IsObjectValid(weapon) != 0)
-    {
-        type = api::GetBaseItemType(weapon);
-        weaponRange = dao::gda::GetFloat(dao::script::Table::Items, type, "Range").value_or(0.0f);
-    }
-    if (weaponType != nullptr)
-    {
-        *weaponType = type;
-    }
-    const auto space = [](ObjectId creature) {
-        return dao::gda::GetFloat(dao::script::Table::Appearance, api::GetAppearanceType(creature), "PerSpace")
-            .value_or(0.0f);
-    };
-    return Reach(weaponRange, space(attacker), space(target));
-}
-
 float AttackSeconds(ObjectId attacker)
 {
     CommandRequest request;
@@ -1018,6 +1040,8 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
             return;
         }
         const std::lock_guard lock(g_swingMutex);
+        // Any attack's, for what the engine says of it after (WatchAttacksBegin).
+        g_attacksBegun[object] = ShotBegun{GetTickCount64(), dao::script::api::GetPosition(object)};
         if (const auto asked = g_askedSwings.find(object);
             asked != g_askedSwings.end() && asked->second.key.style == WeaponStyle::Ranged)
         {
@@ -1067,6 +1091,58 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
         const std::int32_t ability = command.Ability().value_or(-1);
         const std::lock_guard lock(mutex);
         (void)machine.OnCommandFailed(object, type, ability, why);
+    });
+}
+
+// When the engine says an attack is about to be struck: the scripts'
+// EVENT_TYPE_COMMAND_PENDING, which rules_core answers with the blow's
+// result (rules_core.nss, Combat_HandleCommandAttack). The swing sends it,
+// once its target is alive, its creature faces the target within 60 degrees
+// and has a line to it (DAOLib's reading of the exe, 2026-10-04, dao/
+// Attack.h): so after the approach, and after the turn to face, which is why
+// an archer's first shot of a turn was announced 0.4 s of the wall's time
+// later than its others (the ambush replayed for issue 11: of 181 attacks,
+// 174 announced, and the 8 that never were all still approaching). Only
+// said, at debug, with the wall's time since the command began, the
+// sub-action the command is at as the engine has it, and how far the
+// attacker has come since. Nothing is decided by it: what the machine tells
+// a stuck attacker by is the sub-action itself (Bridge's Scan).
+void WatchAttacksBegin()
+{
+    dao::events::OnScriptEvent(dao::script::EventType::CommandPending, [](ObjectId, const dao::CScriptEvent &event) {
+        try
+        {
+            if (!spdlog::should_log(spdlog::level::debug) || event.Integer(0) != k::COMMAND_TYPE_ATTACK)
+            {
+                return;
+            }
+            const ObjectId attacker = event.Object(0);
+            const ObjectId target = event.Object(1);
+            if (api::IsObjectValid(attacker) == 0 || api::IsObjectValid(target) == 0)
+            {
+                return;
+            }
+            std::optional<ShotBegun> began;
+            {
+                const std::lock_guard lock(g_swingMutex);
+                if (const auto found = g_attacksBegun.find(attacker); found != g_attacksBegun.end())
+                {
+                    began = found->second;
+                }
+            }
+            const dao::Vector now = api::GetPosition(attacker);
+            const std::string since =
+                began ? std::format("{} ms", GetTickCount64() - began->atMs) : std::string{"? ms"};
+            const float walked = began ? std::hypot(now.x - began->where.x, now.y - began->where.y) : 0.0f;
+            spdlog::debug("{:#x}'s attack on {:#x} is to be struck (EVENT_TYPE_COMMAND_PENDING), {} after its command "
+                          "began: {:.1f} m away, at sub-action {}, {:.1f} m walked",
+                          attacker, target, since, api::GetDistanceBetween(attacker, target),
+                          dao::commands::RunningSubAction(attacker), walked);
+        }
+        catch (...)
+        {
+            Report("an attack about to be struck");
+        }
     });
 }
 
@@ -1162,6 +1238,7 @@ bool InstallGate(TurnMachine &machine, std::mutex &mutex)
 {
     WatchCommandEnds(machine, mutex);
     WatchDamage(machine, mutex);
+    WatchAttacksBegin();
     g_machine = &machine;
     g_mutex = &mutex;
     const bool queue = Place(g_queue, dao::addr::kCCObject_QueueCommand, &QueueCommand, "CCObject::QueueCommand");

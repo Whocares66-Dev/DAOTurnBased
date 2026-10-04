@@ -240,22 +240,6 @@ int RollInitiative(Rng &rng, float dexterity, const Settings &settings, int surv
     return rng.Roll(settings.initiativeDie) + static_cast<int>(bonus) + static_cast<int>(ranks);
 }
 
-float Reach(float weaponRange, float attackerSpace, float targetSpace)
-{
-    const auto space = [](float meters) { return std::isfinite(meters) && meters > 0.0f ? meters : 0.0f; };
-    const float spaces = space(attackerSpace) + space(targetSpace);
-    if (std::isfinite(weaponRange) && weaponRange > 0.0f)
-    {
-        return std::min(weaponRange, kLongestRange) + spaces;
-    }
-    return spaces + kMeleeGap + kSwingPlay;
-}
-
-float WalkToReach(float distance, float reach)
-{
-    return std::max(0.0f, distance - reach);
-}
-
 bool Opposed(Side a, Side b)
 {
     return (a == Side::Enemy) != (b == Side::Enemy);
@@ -270,9 +254,9 @@ ObjectId NearestInReach(std::span<const Foe> foes)
         {
             continue;
         }
-        // A distance or a reach that is none (the engine's answer for an
-        // object it cannot place) is out of reach: the comparison fails.
-        if (!std::isfinite(foe.meters) || !std::isfinite(foe.reach) || WalkToReach(foe.meters, foe.reach) > 0.0f)
+        // A distance that is none (the engine's answer for an object it
+        // cannot place) is no nearest: the comparison would fail.
+        if (!foe.inReach || !std::isfinite(foe.meters))
         {
             continue;
         }

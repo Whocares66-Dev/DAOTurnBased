@@ -158,28 +158,6 @@ inline constexpr std::int32_t kUseTypeMode = 2;
 // the game uses those on the caster, and so do they here.
 [[nodiscard]] bool AsksForTarget(std::int32_t targetType, std::int32_t useType);
 
-// How far apart, centre to centre, a creature's walk to strike ends: the
-// engine's, read in the exe by DAOLib (2026-10-02, its dev/TURN_BASED.md,
-// "How close a melee attack strikes from"). In melee, the attacker's
-// personal space and the target's (the appearance table's PerSpace: a
-// person 0.35, a child 0.30, a giant spider 0.70) and 1.2 m, the
-// creature's in-reach test (ID 14499); the swing's set-up stands the
-// attacker there with 0.15 m of play (ID 17720), and the walk ends that
-// much further out. Lyna on a giant spider: 0.35 + 0.70 + 1.2 + 0.15 =
-// 2.4 m, as play test 23 measured; two people, 2.05 m. A ranged weapon
-// reaches its Range (bitm_base: 45 m for bows, crossbows and staves; 0 for
-// every melee weapon, which so adds nothing), at most 60 m, and both
-// personal spaces. Until then this was the AI's judgement of a melee
-// target, AI_MELEE_RANGE's 3.5 m, and the game walked a metre further
-// than the gate and the preview said.
-inline constexpr float kMeleeGap = 1.2f;
-inline constexpr float kSwingPlay = 0.15f;
-inline constexpr float kLongestRange = 60.0f;
-[[nodiscard]] float Reach(float weaponRange, float attackerSpace, float targetSpace);
-
-// Meters a creature must walk before it can strike a target this far away.
-[[nodiscard]] float WalkToReach(float distance, float reach);
-
 // Whether two sides fight each other: the enemies against the party and
 // its allies. An attacker's enemies are those of the other side, whichever
 // it is on (for a hostile, the party and its allies).
@@ -209,10 +187,14 @@ struct Foe
     // reach, stood 26 s; whether that one lacked a line was not read).
     bool seen = false;
     float meters = 0.0f; // between the two
-    float reach = 0.0f;  // the attacker's reach on it (Reach)
+    // The attacker would strike it from where it stands: the engine's own
+    // answer for the pair (DAOLib's dao::attack::ApproachOf, the attack
+    // command's approach asked whether it would end at once), which the
+    // game layer asks. The mod keeps no reach rule of its own (issue 11).
+    bool inReach = false;
 };
-// The nearest of them the attacker can strike without a step (WalkToReach
-// of none: what the gate judges an attack's walk by), the first named of two
+// The nearest of them the attacker can strike without a step (Foe::inReach:
+// what the gate judges an attack's walk by), the first named of two
 // as near; kNoObject with none, and the attack is dropped as before, what
 // its turn paid for it given back.
 [[nodiscard]] ObjectId NearestInReach(std::span<const Foe> foes);

@@ -48,6 +48,10 @@ struct Creature
     int tactics = 0;          // Combat Tactics' rank, a party member's
     int survival = 0;         // Survival's rank
     float health = 1.0f;      // current over maximum, while it stands
+    // At an attack: its command is still at its approach, as the game layer
+    // reads it of the engine each frame (ActorObservation::approaching). A
+    // case says so for an attacker that cannot get to its target.
+    bool approaching = false;
 };
 
 inline Creature Make(ObjectId id, Side side, bool hero, std::wstring name, float dexterity)
@@ -175,8 +179,8 @@ class World
         if (needs.actor != kNoObject)
         {
             const Creature &c = Get(needs.actor);
-            obs.actor = ActorObservation{c.id,      c.exists,   c.down,        c.busy,      c.moving,
-                                         c.current, c.position, c.conjureHeld, c.timersHeld};
+            obs.actor = ActorObservation{c.id,      c.exists,   c.down,        c.busy,       c.moving,
+                                         c.current, c.position, c.conjureHeld, c.timersHeld, c.approaching};
         }
         for (const ObjectId id : needs.statuses)
         {
@@ -333,7 +337,7 @@ class World
         foe.hostile = true;
         foe.seen = true;
         foe.meters = Distance(from.position, to.position);
-        foe.reach = reach;
+        foe.inReach = foe.meters <= reach;
         return foe;
     }
 
@@ -360,9 +364,9 @@ class World
     std::vector<ObjectId> keptVoid;          // told to the machine with the next frame
     // What the game layer measures of one a kept attack may be turned on,
     // its own target gone (src/game/Bridge.cpp, ReleaseCast): a test's own,
-    // or from where the two stand, hostile and in sight, with this reach.
+    // or from where the two stand, hostile and in sight, in reach within this.
     std::function<Foe(ObjectId attacker, ObjectId other)> onMeasure;
-    float reach = 2.05f;                               // two people's (core/Rules.h, Reach)
+    float reach = 2.05f;                               // the stand-in's own: the game layer asks the engine
     std::vector<std::pair<ObjectId, ObjectId>> turned; // kept attacks turned on another: whose, and on whom
     bool record = true;                                // keep the log and the effects (a long random fight does not)
     Mode mode = Mode::Explore;

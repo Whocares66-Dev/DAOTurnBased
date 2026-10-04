@@ -1275,6 +1275,25 @@ bool TurnMachine::LandCast(const Combatant &who, std::vector<Effect> &fx)
     {
         return false;
     }
+    // Not to a creature at an effect's command: given then, it queues behind
+    // the effect, and the machine took the effect for the action's own (a
+    // command of its creature's had been let through) and ran its time with
+    // it, at three times the patience. A bandit archer whose kept shot was
+    // given so stood 26 s before "still at a attack after 36000 ms", its
+    // target's clock aged with it (issue 11, the playthrough, 2026-10-03
+    // 13:07: the gate said "its creature is at a command already" as the
+    // shot was given, and 45 ms on "its action's own effect holds it"). It is
+    // held by that effect, as any creature found so when its turn comes
+    // (Handover), and what it kept waits: for the effect to let go within the
+    // grace (StepExecuting), or for its next turn.
+    const bool atAnEffect = seenActor_ && seenActor_->id == who.id && seenActor_->busy && !GettingUp() &&
+                            seenActor_->current == CommandType::ExecuteEffect;
+    if (atAnEffect)
+    {
+        Log(LogLevel::Info,
+            std::format("{}'s pending {} waits: an effect holds its creature", Utf8(who.name), Name(charge->type)));
+        return false;
+    }
     landing_ = *charge;
     charges_.erase(charge);
     budget_.landing = true;
@@ -2155,6 +2174,12 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     {
         heldByEffect_ = false; // let go within the grace: the turn is its own again
         const Combatant *current = order_.Current();
+        // What it kept for this turn, and was not given while the effect
+        // held it (LandCast), is given now; its turn follows it.
+        if (!actor.busy && current != nullptr && LandCast(*current, fx))
+        {
+            return;
+        }
         if (!actor.busy && current != nullptr && !PlayerControls(*current))
         {
             // Its AI was not told, or told while it could not choose: handed
@@ -2168,33 +2193,47 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     // Standing at a walk it does not take (kStoodMs): stopped. The player's
     // turn goes on, and an action that waited behind the walk and never
     // began is given back; an AI's turn ends as its command does.
-    // An attack too, while its creature stands well short of where its walk
-    // was to end: it is not swinging, it cannot get there (others stand in
-    // the way), and the engine gives up only after ten seconds of the
-    // world's time. A spider stood five seconds of a fight at twice the
-    // speed so (play test 29); stopped, its action is given back and its AI
-    // chooses again, once.
+    // An attack too, while its command is still at its approach
+    // (ActorObservation::approaching, the engine's own word): it is not
+    // swinging, it cannot get there (others stand in the way, or its place
+    // at the target is past a doorway), and the engine gives up only after
+    // ten seconds of the world's time. A spider stood five seconds of a
+    // fight at twice the speed so (play test 29); stopped, its action is
+    // given back and its AI chooses again, once. One at its blow is the
+    // engine's to end, however long it stands: a watch for "a swing that
+    // does not begin" stopped fourteen swings that were landing, in one
+    // fight (issue 11).
     const CommandKind at = Classify(actor.current);
-    const bool short_ = actor.current == CommandType::Attack && budget_.lastType == CommandType::Attack &&
-                        budget_.lastWalk - (budget_.spend.Walked() - budget_.movementAtCommand) > kStuckShort;
+    const bool attacking = actor.current == CommandType::Attack && budget_.lastType == CommandType::Attack;
+    const bool short_ = attacking && actor.approaching;
     if (actor.busy && !heldByEffect_ && (at == CommandKind::Move || at == CommandKind::Free || short_))
     {
+        const std::uint32_t limit = Patience(short_ ? kStuckMs : kStoodMs);
         if (!stoodAt_ || Distance(*stoodAt_, actor.position) > kStoodStill)
         {
             stoodAt_ = actor.position;
             stoodSince_ = clock_;
         }
-        else if (clock_ - stoodSince_ >= Patience(short_ ? kStuckMs : kStoodMs))
+        else if (clock_ - stoodSince_ >= limit)
         {
             const Combatant *current = order_.Current();
             const bool waited = budget_.lastKind == CommandKind::Action && ActionToGiveBack() &&
                                 (short_ || budget_.lastType != actor.current);
-            Log(LogLevel::Info, std::format("{} stood {} ms at a {} without a step: stopped{}",
+            // With what it was judged by, for an attack.
+            std::string where;
+            std::string why;
+            if (short_)
+            {
+                where = " (its command still at its approach)";
+                why = "; it cannot get to its target";
+            }
+            if (waited)
+            {
+                why += short_ ? ", and its action is given back" : "; the action waiting behind it is given back";
+            }
+            Log(LogLevel::Info, std::format("{} stood {} ms at a {} without a step{}: stopped{}",
                                             current != nullptr ? Utf8(current->name) : std::string{"?"},
-                                            clock_ - stoodSince_, Name(actor.current),
-                                            !waited  ? ""
-                                            : short_ ? "; it cannot get to its target, and its action is given back"
-                                                     : "; the action waiting behind it is given back"));
+                                            clock_ - stoodSince_, Name(actor.current), where, why));
             if (waited)
             {
                 GiveActionBack();
@@ -3517,6 +3556,12 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     budget_.lastTarget = request.target;
     budget_.lastAt = lastNow_;
     budget_.lastClock = clock_;
+    // How long its creature has stood is counted for this command alone
+    // (StepActing): one that stood through the command before, a swing on
+    // the spot say, and is then sent at a target far off was stopped as it
+    // set out, 157 ms into the new command with "3141 ms" stood (issue 11's
+    // replay of the ambush, 2026-10-04).
+    stoodAt_.reset();
     budget_.lastMeasured = std::isfinite(request.actionSeconds) && request.actionSeconds > 0.0f;
     orderPending_ = false;
     // What the caption says of an order given back is of the order before

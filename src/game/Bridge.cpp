@@ -7,6 +7,7 @@
 #include "core/Text.h"
 
 #include "dao/Abilities.h"
+#include "dao/Attack.h"
 #include "dao/ClientExoApp.h"
 #include "dao/Clock.h"
 #include "dao/Conjure.h"
@@ -114,6 +115,14 @@ constexpr std::int32_t kKickstartAi = 9998;
 // A charged cast's conjuring when it is given at last: a moment for the
 // gesture, the turns it charged having been its casting time.
 constexpr float kChargedConjureSeconds = 1.0f;
+// An attack command's approach, by the type of the sub-action it queues
+// first (DAOLib's reading of the exe, 2026-10-04, dao/Attack.h and dao/
+// Conjure.h): 4 for a blow, a walk to the attacker's place on its target's
+// melee ring, and 15 for a shot (a bow, a crossbow, a staff), a walk to
+// within range and sight. Each ends at once when its creature is in reach
+// already; the attack itself comes after (50, and the swing, 1).
+constexpr std::uint32_t kMeleeApproach = 4;
+constexpr std::uint32_t kRangedApproach = 15;
 
 // The game's mode as the core names it; none yet (no game modes) is
 // Unknown, as before the world (DAOLib 3c8cccf made it an optional).
@@ -173,8 +182,9 @@ bool Gone(ObjectId id)
 //   attacker (the scripts' CheckLineOfSightObject's question, DAOLib's
 //   dao::world::LineOfSight: walls and doors block). A shot with no line is
 //   not loosed (issue 11), and a blow at one behind a door is a walk round;
-// - how far, against the attacker's reach on it (ReachOf: what the gate
-//   judges an attack's walk by, so "in reach" here is a walk of none there).
+// - how far, and whether in the attacker's reach: the engine's own answer
+//   for the pair (DAOLib's dao::attack::ApproachOf, what the gate judges an
+//   attack's walk by, so "in reach" here is a walk of none there).
 // Not yet seen in play.
 Foe Measure(ObjectId attacker, ObjectId other)
 {
@@ -187,7 +197,8 @@ Foe Measure(ObjectId attacker, ObjectId other)
     }
     foe.hostile = api::IsObjectHostile(attacker, other) != 0;
     foe.meters = api::GetDistanceBetween(attacker, other);
-    foe.reach = ReachOf(attacker, other);
+    const std::optional<dao::attack::Approach> approach = dao::attack::ApproachOf(attacker, other);
+    foe.inReach = approach && approach->inReach;
     foe.seen = api::GetHasEffects(other, k::EFFECT_TYPE_STEALTH) == 0 &&
                static_cast<bool>(dao::world::LineOfSight(attacker, other));
     return foe;
@@ -203,9 +214,9 @@ ObjectId TurnedOn(ObjectId attacker, const std::vector<ObjectId> &others)
     for (const ObjectId other : others)
     {
         const Foe &foe = foes.emplace_back(Measure(attacker, other));
-        spdlog::debug("{:#010x}: its kept attack on {:#x}? {}{:.1f} m away, reach {:.1f} m, {}, {}", attacker, other,
-                      foe.standing ? "" : "fallen; ", foe.meters, foe.reach, foe.hostile ? "hostile" : "not hostile",
-                      foe.seen ? "seen" : "not seen");
+        spdlog::debug("{:#010x}: its kept attack on {:#x}? {}{:.1f} m away, {} its reach, {}, {}", attacker, other,
+                      foe.standing ? "" : "fallen; ", foe.meters, foe.inReach ? "in" : "out of",
+                      foe.hostile ? "hostile" : "not hostile", foe.seen ? "seen" : "not seen");
     }
     return NearestInReach(foes);
 }
@@ -583,6 +594,31 @@ ActorObservation Bridge::Actor(ObjectId id)
     if (const dao::script::OwnedCommand current = api::GetCurrentCommand(id))
     {
         actor.current = static_cast<CommandType>(api::GetCommandType(*current.get()));
+        // At an attack: whether its command is still at its approach, as the
+        // engine itself has it (the sub-action the command is at). The
+        // machine judges an attacker that stands still by this (core:
+        // ActorObservation::approaching), not by a walk worked out as the
+        // command was let through: an archer in range, or a swordsman in
+        // reach with others to walk round, was "short of where its walk was
+        // to end" by the path's length and stopped as it shot or swung
+        // (issue 11). A read of the command's own list: nothing is searched
+        // or cast each frame.
+        if (actor.current == CommandType::Attack)
+        {
+            const std::uint32_t at = dao::commands::RunningSubAction(id);
+            actor.approaching = at == kMeleeApproach || at == kRangedApproach;
+            // Said as it changes, at debug: which sub-action a standing
+            // attacker is at is what a play test's log is read for.
+            static ObjectId lastWho = dao::kInvalidObject;
+            static std::uint32_t lastAt = 0;
+            if (id != lastWho || at != lastAt)
+            {
+                lastWho = id;
+                lastAt = at;
+                spdlog::debug("{:#x}'s attack is at sub-action {}{}", id, at,
+                              actor.approaching ? " (its approach)" : "");
+            }
+        }
     }
     actor.busy = actor.current != CommandType::Invalid || api::GetCommandQueueSize(id) > 0;
     actor.moving = api::IsMoving(id) != 0;
@@ -712,9 +748,8 @@ void Bridge::Apply(const std::vector<Effect> &effects)
                     {
                         spdlog::info(
                             "{:#010x}: the target of its kept attack ({:#x}) is gone: turned on {:#x}, the nearest of "
-                            "{} enemies standing that it can strike from where it is ({:.1f} m away, reach {:.1f} m)",
-                            e.target, kept->target, next, e.others.size(), api::GetDistanceBetween(e.target, next),
-                            ReachOf(e.target, next));
+                            "{} enemies standing that it can strike from where it is ({:.1f} m away)",
+                            e.target, kept->target, next, e.others.size(), api::GetDistanceBetween(e.target, next));
                         break;
                     }
                     spdlog::warn("{:#010x}: could not make the command for its kept attack, turned on {:#x}", e.target,
@@ -794,13 +829,24 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             // With a turn a bar of time, an attack that did not fit is kept
             // for its creature's next turn, and the creature walks to where
             // it can strike now (core: TurnMachine::PayAction): a move to
-            // its target, given as a script gives one, to end inside the
-            // reach its attack will be judged by.
+            // its target, given as a script gives one, to end inside what
+            // the engine's own approach for the attack asks (DAOLib's
+            // dao::attack::ApproachOf: for a shot the distance its approach
+            // stops at, for a blow the centres' furthest, its range).
             if (const std::optional<HeldCast> kept = PeekHeldCast(e.target);
                 kept && kept->target != dao::kInvalidObject && api::IsObjectValid(kept->target) != 0)
             {
                 constexpr float kInside = 0.3f; // meters inside the reach, so that the attack need not step
-                const float within = std::max(0.5f, ReachOf(e.target, kept->target) - kInside);
+                constexpr float kBeside = 1.5f; // where the engine has no approach to say: beside its target
+                const std::optional<dao::attack::Approach> approach = dao::attack::ApproachOf(e.target, kept->target);
+                // A blow's: how far from its target the engine's own place
+                // for the attacker on the target's ring is (the approach's
+                // goal), not a distance of the mod's.
+                const dao::Vector at = api::GetPosition(kept->target);
+                const float reach = !approach          ? kBeside
+                                    : approach->ranged ? approach->stopWithin
+                                                       : std::hypot(approach->goal.x - at.x, approach->goal.y - at.y);
+                const float within = std::max(0.5f, reach - kInside);
                 if (const dao::script::OwnedCommand walk = api::CommandMoveToObject(kept->target, 1, within))
                 {
                     api::AddCommand(e.target, *walk.get(), 0);
