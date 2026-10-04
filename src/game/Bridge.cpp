@@ -823,7 +823,15 @@ void Bridge::Apply(const std::vector<Effect> &effects)
         case EffectKind::HoldTime:
             // The clock temporary effects wear off on and regeneration ticks
             // on (DAOLib's dao/Clock.h, a42be67): held through a fight,
-            // moved on a round's worth at a time.
+            // moved on a round's worth at a time. And with it the scripts'
+            // own timers of a second or more, whatever their kind (issue 26,
+            // Settings::scriptTimersFrom): named before the hold, which takes
+            // what is already in the engine's queue by the same rule.
+            if (e.a != 0)
+            {
+                dao::timers::HoldFrom(settings_.scriptTimersFrom);
+                dao::timers::Trace(settings_.scriptTimersTrace);
+            }
             dao::clock::Hold(e.a != 0);
             if (e.a != 0)
             {

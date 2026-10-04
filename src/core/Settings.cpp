@@ -208,6 +208,8 @@ const std::vector<Entry> &Entries()
         {"turns", "give_back_unplayed", Bool(&Settings::giveBackUnplayed)},
         {"movement", "path_check", Bool(&Settings::pathCheck)},
         {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
+        {"turns", "script_timers_from", Float(&Settings::scriptTimersFrom, 0.0f, 60.0f)},
+        {"turns", "script_timers_trace", Bool(&Settings::scriptTimersTrace)},
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
         {"turns", "join_by_sight", Bool(&Settings::joinBySight)},
         {"turns", "join_radius", Float(&Settings::joinRadius, 5.0f, 200.0f)},
@@ -594,6 +596,16 @@ give_back_unplayed = true
 ; 30 s buff lasts five rounds, whoever is thinking how long. 0 leaves them
 ; on the game's clock.
 effect_seconds_per_round = 6
+; The scripts' own timers count rounds too: through a fight, a script event
+; sent with a delay of at least this many seconds waits on that clock and
+; comes as the rounds spend it (a boss's timed attack, a plot's countdown),
+; so that everyone has a turn before it runs out. Shorter delays, by which
+; the scripts put one thing after another, run as they do. 0: only damage
+; over time and lasting areas count rounds.
+script_timers_from = 1
+; Every script event the game delays said in the log, as it is sent and as
+; it comes: for finding what times something.
+script_timers_trace = false
 ; Creatures fighting within this many meters of the party leader take turns.
 combat_radius = 50
 ; Of those, only the ones you can see fighting: an enemy or ally joins the

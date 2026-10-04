@@ -137,6 +137,28 @@ struct Settings
     // Effects' and regeneration's time in rounds: held through a fight, and
     // this many seconds spent on them at each new round (0: the game's clock).
     float effectSecondsPerRound = 6.0f;
+    // The scripts' own timers in a fight: a script event sent with a delay of
+    // at least this many seconds is held with the effects' clock and spent by
+    // the round, whatever its kind (DAOLib's dao::timers::HoldFrom; 0: only a
+    // damage over time's tick and an area's pulse, as before). A round is 4 s
+    // for each fighter but as many times 4 s of the world's clock as there
+    // are fighters, so a plot's timer left on the world's clock runs that
+    // many times too fast against what the fighters do: in the Harrowing
+    // Chamber Uldred's turnings of the captive mages, a 35 s cycle and ten
+    // seconds from the light on a mage to its death, all fell in the first
+    // three rounds, and a mage was lost across one enemy's turn before any
+    // of the party could read the Litany of Adralla (issue 26). The user,
+    // 2026-10-04: "a round is supposed to be the same 4 seconds for everyone
+    // for things that apply over time or are environmental ... something
+    // like interruption with the litany of adralla should be allowed any
+    // position in the round". A second and more is a timer; under it the
+    // scripts put one thing after another (Uldred's change of shape, 0.01 s)
+    // and must run as they do.
+    float scriptTimersFrom = 1.0f;
+    // Every script event the engine delays said in the log as it is sent and
+    // as it comes (DAOLib's dao::timers::Trace): how issue 26's timers were
+    // found, and how the next plot's will be.
+    bool scriptTimersTrace = false;
     float combatRadius = 50.0f; // meters from the party leader a creature may fight from and take turns
     // Abilities that charge for so many turns whatever their conjuring time
     // (ability id, turns): the game's own slow and ritual spells charge by

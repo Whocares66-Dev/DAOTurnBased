@@ -1002,6 +1002,18 @@ MUTANTS = [
         "KeyChord toggleKey{0x54, true, false, false}; // None",
     ),
     Mutant(
+        "a plot's timers run on the world's clock unless the player asks",
+        "src/core/Settings.h",
+        "    float scriptTimersFrom = 1.0f;",
+        "    float scriptTimersFrom = 0.0f;",
+    ),
+    Mutant(
+        "every delayed script event is said in the log unasked",
+        "src/core/Settings.h",
+        "    bool scriptTimersTrace = false;",
+        "    bool scriptTimersTrace = true;",
+    ),
+    Mutant(
         "Delay has a key before the player gives it one",
         "src/core/Settings.h",
         "KeyChord delayKey{0, false, false, false}; // None",

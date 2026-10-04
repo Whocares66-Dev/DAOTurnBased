@@ -1,8 +1,11 @@
 #include "core/Settings.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
+
+using Catch::Approx;
 
 using tb::DefaultSettingsFile;
 using tb::ParseSettings;
@@ -263,6 +266,35 @@ TEST_CASE("End turn's key is Enter until the file names another", "[settings]")
     const tb::ParsedSettings none = tb::ParseSettings("[keys]\nend_turn = None\n");
     CHECK(none.warnings.empty());
     CHECK(none.settings.endTurnKey.key == 0);
+}
+
+TEST_CASE("the scripts' timers of a second or more count rounds unless the file says otherwise", "[settings]")
+{
+    // Issue 26: Uldred's turning of the captive mages, a 35 s cycle and ten
+    // seconds from the light to the death, ran on the world's clock through
+    // every fighter's turn. The user, 2026-10-04: "a round is supposed to be
+    // the same 4 seconds for everyone for things that apply over time or are
+    // environmental".
+    const tb::Settings defaults;
+    CHECK(defaults.scriptTimersFrom == Approx(1.0f));
+    CHECK_FALSE(defaults.scriptTimersTrace);
+    const tb::ParsedSettings file = tb::ParseSettings(tb::DefaultSettingsFile());
+    CHECK(file.warnings.empty());
+    CHECK(file.settings.scriptTimersFrom == Approx(1.0f));
+    CHECK_FALSE(file.settings.scriptTimersTrace);
+    CHECK(tb::DefaultSettingsFile().find("\nscript_timers_from = 1\n") != std::string::npos);
+    // Off, as before the rule: only damage over time and lasting areas.
+    const tb::ParsedSettings off = tb::ParseSettings("[turns]\nscript_timers_from = 0\nscript_timers_trace = true\n");
+    CHECK(off.warnings.empty());
+    CHECK(off.settings.scriptTimersFrom == Approx(0.0f));
+    CHECK(off.settings.scriptTimersTrace);
+    // A longer floor is the player's to set; a negative one is no floor.
+    CHECK(tb::ParseSettings("[turns]\nscript_timers_from = 2.5\n").settings.scriptTimersFrom == Approx(2.5f));
+    CHECK(tb::ParseSettings("[turns]\nscript_timers_from = -3\n").settings.scriptTimersFrom == Approx(0.0f));
+    // An older file gets it, with its comment.
+    const std::string whole = tb::WithMissingSettings("[turns]\nsettle_ms = 250\n");
+    CHECK(whole.find("script_timers_from = 1") != std::string::npos);
+    CHECK(whole.find("; The scripts' own timers count rounds too") != std::string::npos);
 }
 
 TEST_CASE("the toggle has no key until the file names one", "[settings]")
