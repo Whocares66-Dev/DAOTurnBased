@@ -53,14 +53,17 @@ class CameraDirector
         speed_ = speed;
     }
 
+    // The fight is over: the camera's distance is the game's own again.
+    void Release();
+
   private:
     void Pan(ObjectId id, std::uint64_t nowMs);
     [[nodiscard]] float MoveSeconds() const;
-    void ZoomFor(ObjectId id, dao::CameraController &camera);
+    void StandBackFor(ObjectId id);
 
-    // The player's own zoom, kept while the camera is pulled back for a big
-    // creature's turn, given back on the party's next (unless they zoomed).
-    std::optional<float> playerZoom_;
+    // The distance the camera has been given for a big creature's turn;
+    // nothing while it is the game's own.
+    std::optional<float> standing_;
 
     int logged_ = 0;
     ObjectId panning_ = kNoObject;

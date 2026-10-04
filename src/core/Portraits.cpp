@@ -143,14 +143,36 @@ std::optional<PortraitFraming> FrameBySize(float personalSpace, float personDist
     return PortraitFraming{*distance, personX + kPortraitXPerSize * more, personZ + kPortraitZPerSize * more};
 }
 
-std::optional<float> FollowZoom(float playerZoom, float personalSpace)
+std::optional<float> CloseDistanceFor(float extent)
 {
-    const float more = SizeOverPerson(personalSpace) - 1.0f;
-    if (!(more > 0.0f) || !std::isfinite(playerZoom) || playerZoom < kZoomLeast)
+    if (!std::isfinite(extent) || !(extent > kPersonExtent * kBiggerThanPerson))
     {
         return std::nullopt;
     }
-    return std::max(kZoomLeast, std::min(playerZoom, playerZoom - kZoomPerSize * more));
+    return std::min(kCloseMost, kCloseGame * extent / kPersonExtent);
+}
+
+ViewSide ChooseViewSide(bool rightClear, bool leftClear)
+{
+    if (rightClear)
+    {
+        return ViewSide::Right;
+    }
+    return leftClear ? ViewSide::Left : ViewSide::Behind;
+}
+
+float ViewYaw(float behind, ViewSide side)
+{
+    switch (side)
+    {
+    case ViewSide::Right:
+        return behind + kViewOffset;
+    case ViewSide::Left:
+        return behind - kViewOffset;
+    case ViewSide::Behind:
+        break;
+    }
+    return behind;
 }
 
 std::optional<float> PortraitDistance(float personalSpace, float personDistance)

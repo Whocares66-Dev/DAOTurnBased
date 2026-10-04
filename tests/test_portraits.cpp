@@ -381,21 +381,41 @@ TEST_CASE("a big creature's portrait camera moves with its size: distance and of
     CHECK(shriek->zAdjust == Approx(0.038f).margin(0.01f));
 }
 
-TEST_CASE("the camera pulls back on a big creature's turn, by its size, never into the tactical view", "[portraits]")
+TEST_CASE("the camera stands back on a big creature's turn, by its size, the zoom left alone", "[portraits]")
 {
     using Catch::Approx;
     // The user: "for ogre or dragon pull back more, for human sized enemies
-    // same as player".
-    CHECK_FALSE(tb::FollowZoom(1.0f, 0.4f)); // a person: the player's zoom
-    CHECK_FALSE(tb::FollowZoom(1.0f, 0.3f)); // a genlock
-    REQUIRE(tb::FollowZoom(1.0f, 0.95f));
-    CHECK(*tb::FollowZoom(1.0f, 0.95f) == Approx(0.80f).margin(0.01f)); // an ogre
-    CHECK(*tb::FollowZoom(1.0f, 0.70f) == Approx(0.90f).margin(0.01f)); // a giant spider
-    CHECK(*tb::FollowZoom(1.0f, 1.4f) == Approx(0.78f));                // a dragon: no further than the least
-    // The player already far back: never closer than the player's own, and
-    // never into the tactical view.
-    CHECK(*tb::FollowZoom(0.8f, 0.95f) == Approx(0.78f));
-    CHECK_FALSE(tb::FollowZoom(0.7f, 0.95f)); // already past the least: left as it is
-    CHECK_FALSE(tb::FollowZoom(0.3f, 0.95f)); // the tactical view
-    CHECK_FALSE(tb::FollowZoom(std::numeric_limits<float>::quiet_NaN(), 0.95f));
+    // same as player"; and of the high dragon: "Should do so automatically
+    // depending on enemy's size". The size is the creature's feet to its
+    // head, as the engine places them.
+    CHECK_FALSE(tb::CloseDistanceFor(1.7f)); // a person: the game's own distance
+    CHECK_FALSE(tb::CloseDistanceFor(1.2f)); // a genlock
+    CHECK_FALSE(tb::CloseDistanceFor(2.0f)); // a tall person: not yet bigger than one
+    REQUIRE(tb::CloseDistanceFor(3.4f));
+    CHECK(*tb::CloseDistanceFor(3.4f) == Approx(6.0f));            // an ogre: twice a person, twice the distance
+    CHECK(*tb::CloseDistanceFor(6.8f) == Approx(12.0f));           // a dragon's reach
+    CHECK(*tb::CloseDistanceFor(20.0f) == Approx(tb::kCloseMost)); // never past the most
+    CHECK(*tb::CloseDistanceFor(2.2f) > tb::kCloseGame);           // further than the game's own, whenever it is given
+    CHECK_FALSE(tb::CloseDistanceFor(std::numeric_limits<float>::quiet_NaN()));
+    CHECK_FALSE(tb::CloseDistanceFor(std::numeric_limits<float>::infinity()));
+    CHECK_FALSE(tb::CloseDistanceFor(-3.0f));
+}
+
+TEST_CASE(
+    "an enemy is looked at from its right, from its left if that is blocked, never from straight behind for choice",
+    "[portraits]")
+{
+    using Catch::Approx;
+    // The user: "maybe don't be directly behind enemies. Perhaps offset it by
+    // 30 or 45 degrees to the right (or left if something is blocking the
+    // right side)".
+    CHECK(tb::ChooseViewSide(true, true) == tb::ViewSide::Right);
+    CHECK(tb::ChooseViewSide(true, false) == tb::ViewSide::Right);
+    CHECK(tb::ChooseViewSide(false, true) == tb::ViewSide::Left);
+    CHECK(tb::ChooseViewSide(false, false) == tb::ViewSide::Behind); // both blocked: as it was
+    CHECK(tb::ViewYaw(1.0f, tb::ViewSide::Right) == Approx(1.0f + tb::kViewOffset));
+    CHECK(tb::ViewYaw(1.0f, tb::ViewSide::Left) == Approx(1.0f - tb::kViewOffset));
+    CHECK(tb::ViewYaw(1.0f, tb::ViewSide::Behind) == Approx(1.0f));
+    CHECK(tb::kViewOffset > 0.52f); // 30 degrees
+    CHECK(tb::kViewOffset < 0.79f); // 45 degrees
 }

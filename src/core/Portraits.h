@@ -117,21 +117,53 @@ inline constexpr float kPortraitZPerSize = -0.07f;
 [[nodiscard]] std::optional<PortraitFraming> FrameBySize(float personalSpace, float personDistance, float personX,
                                                          float personZ);
 
-// The camera's zoom on a creature's turn, the camera following (the user:
-// "shouldn't camera pull back depend on creature size? for ogre or dragon pull
-// back more, for human sized enemies same as player"): on the scene camera's
-// scale, 1 close in, 0 the tactical view high above, back from the player's
-// own by kZoomPerSize for each person's size more than one, never into the
-// tactical view, whose camera no longer follows: the game flips to it under
-// 0.75 on this scale (0.5 on the controller's -1..1: an ogre's 0.73 flipped
-// it, and the camera stayed high above for the rest of the fight, a run with
-// no hands, 2026-10-02). Nothing for a
-// creature a person's size or smaller, nor with the player's own zoom in the
-// tactical view already: the player's zoom as it is. An ogre's turn at the
-// player's 1 (close in) is 0.80.
-inline constexpr float kZoomPerSize = 0.075f;
-inline constexpr float kZoomLeast = 0.78f;
-[[nodiscard]] std::optional<float> FollowZoom(float playerZoom, float personalSpace);
+// How far from its pivot the camera stands on a creature's turn, the camera
+// following (the user, 2026-10-02: "shouldn't camera pull back depend on
+// creature size? for ogre or dragon pull back more, for human sized enemies
+// same as player"; and 2026-10-05, of the high dragon, whose turns showed the
+// inside of the dragon: "Camera needs to be pulled back more for the dragon
+// ... Should do so automatically depending on enemy's size"). The game's own
+// distance at its closest zoom is kCloseGame; for a creature of `extent`
+// meters (its feet to its head, as the engine places them) it is that in
+// proportion to a person's, and never past kCloseMost: the game's camera
+// tests no wall and no ground at a distance it was not made for. Nothing for
+// a creature a person's size or smaller, or an extent that is none: the
+// game's own.
+//
+// Until 2026-10-05 this was the zoom drawn back by the creature's personal
+// space, and no further than 0.78: under 0.75 the game flips to the tactical
+// view, whose camera no longer follows (an ogre's 0.73 flipped it, 2026-10-02).
+// That was enough for an ogre and not for a dragon. The distance is apart
+// from the zoom (DAOLib's dao::camera::SetCloseDistance, its issue 17), so the
+// zoom, and the view, are the player's own throughout.
+inline constexpr float kCloseGame = 3.0f;
+inline constexpr float kCloseMost = 14.0f;
+inline constexpr float kPersonExtent = 1.7f;
+inline constexpr float kBiggerThanPerson = 1.25f;
+[[nodiscard]] std::optional<float> CloseDistanceFor(float extent);
+
+// From which side the camera looks at an enemy on its turn. Straight behind
+// it, its own body hides what it does and whom it strikes (the high dragon's
+// buffet seen from its tail; the user, 2026-10-05: "maybe don't be directly
+// behind enemies. Perhaps offset it by 30 or 45 degrees to the right (or left
+// if something is blocking the right side)"). So: round to its right by
+// kViewOffset; to its left if the view from the right is blocked and from
+// the left is not; and where both are blocked, behind as before. Whether a
+// view is blocked is the engine's to say (a line from where the camera
+// would stand to the creature), asked by the game layer. The party's own
+// turns keep the camera behind: the player looks where their character does.
+inline constexpr float kViewOffset = 0.70f; // radians: 40 degrees
+enum class ViewSide
+{
+    Behind,
+    Right,
+    Left
+};
+[[nodiscard]] ViewSide ChooseViewSide(bool rightClear, bool leftClear);
+// The camera's yaw for that side, from the yaw straight behind the creature
+// (the direction from the creature to the camera, from +x toward +y: more of
+// it is round to the creature's right).
+[[nodiscard]] float ViewYaw(float behind, ViewSide side);
 
 [[nodiscard]] PortraitChoice ChoosePortrait(std::int32_t appearance, std::wstring_view appearanceLabel, bool person,
                                             std::wstring_view tag, const std::vector<PortraitRow> &rows);

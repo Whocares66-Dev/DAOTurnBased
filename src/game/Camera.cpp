@@ -7,12 +7,15 @@
 #include "dao/GameModes.h"
 #include "dao/Gda.h"
 #include "dao/Log.h"
+#include "dao/Portraits.h"
+#include "dao/World.h"
 #include "dao/generated/ScriptApi.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace tb::game
@@ -68,51 +71,115 @@ void CameraDirector::TurnTo(ObjectId id)
     {
         return;
     }
-    ZoomFor(id, *camera);
+    StandBackFor(id);
     const std::optional<float> behind = dao::camera::YawBehind(id);
     if (!behind)
     {
         return;
     }
-    dao::camera::EaseYaw(*behind, MoveSeconds());
-    if (dao::SceneCamera *scene = camera->Scene(); scene != nullptr && logged_ < 3)
+    // An enemy is looked at from its right, or its left where the right is
+    // blocked (core: ChooseViewSide; the user, 2026-10-05); the party from
+    // behind. Blocked or not is the engine's own line from where the camera
+    // would stand to the creature (DAOLib's dao::world::LineOfSight between
+    // two points, the creature itself not counted).
+    dao::SceneCamera *scene = camera->Scene();
+    float yaw = *behind;
+    std::string_view from = "behind";
+    const bool party = dao::script::api::IsHero(id) != 0 || dao::script::api::IsFollower(id) != 0;
+    if (!party && scene != nullptr)
+    {
+        const dao::Vector feet = dao::script::api::GetPosition(id);
+        const dao::Vector at = dao::portraits::HeadPosition(id).value_or(dao::Vector{feet.x, feet.y, feet.z + 1.5f});
+        // Where the orbit puts the camera (dao/CameraMoves.h): the zoom's
+        // blend of the close distance and the game's far one, about the
+        // focus, by the yaw and the pitch from straight above.
+        constexpr float kFar = 20.0f;
+        const float zoom = scene->Zoom();
+        const float radius = zoom * dao::camera::CloseDistance() + (1.0f - zoom) * kFar;
+        const float pitch = scene->Pitch();
+        const auto clear = [&](ViewSide side) {
+            const float angle = ViewYaw(*behind, side);
+            const dao::Vector eye{feet.x + radius * std::sin(pitch) * std::cos(angle),
+                                  feet.y + radius * std::sin(pitch) * std::sin(angle),
+                                  feet.z + radius * std::cos(pitch)};
+            return static_cast<bool>(dao::world::LineOfSight(eye, at, id));
+        };
+        const ViewSide side = ChooseViewSide(clear(ViewSide::Right), clear(ViewSide::Left));
+        yaw = ViewYaw(*behind, side);
+        from = side == ViewSide::Right  ? "its right"
+               : side == ViewSide::Left ? "its left, the right being blocked"
+                                        : "behind, both sides being blocked";
+    }
+    dao::camera::EaseYaw(yaw, MoveSeconds());
+    if (scene != nullptr && (logged_ < 3 || !party))
     {
         ++logged_;
-        spdlog::info("the camera comes round behind {:#010x}: yaw {:.2f} (it was {:.2f})", id, *behind, scene->Yaw());
+        spdlog::debug("the camera comes round {:#010x} from {}: yaw {:.2f} (it was {:.2f})", id, from, yaw,
+                      scene->Yaw());
     }
 }
 
-// The zoom by whose turn it is (core: FollowZoom): a creature bigger than a
-// person pulls the camera back by its size, so that a big creature does not
-// fill the frame (an ogre's back hid Lyna and the "Spell lost" over her, play
-// test 33); a person's, the party's above all, has the player's own zoom,
-// given back as it was unless the player zoomed meanwhile (DAOLib 752c52d's
-// EaseZoom and PlayerZoomed: the player wins).
-void CameraDirector::ZoomFor(ObjectId id, dao::CameraController &camera)
+// How far the camera stands by whose turn it is (core: CloseDistanceFor): a
+// creature bigger than a person has it further back by its size, so that it
+// does not fill the frame (an ogre's back hid Lyna and the "Spell lost" over
+// her, play test 33; the high dragon's turns showed the inside of the dragon,
+// issue 33); a person's, the party's above all, has the game's own. The zoom
+// is the player's throughout and is not touched: the distance is apart from
+// it (DAOLib's dao::camera::SetCloseDistance), so the tactical view, which
+// the game flips to by the zoom, never comes of this.
+//
+// The size is the engine's: from the creature's feet to its head, the node
+// the game's own portrait camera aims at (dao::portraits::HeadPosition).
+// Whether that point is the world's or about the creature's own origin was
+// not known as this was written: the shorter of the two readings is taken,
+// the other being the creature's distance from the map's origin, and which
+// it was is said. A model with no node of that name answers nothing, and
+// then it is the appearance table's personal space against a person's.
+void CameraDirector::StandBackFor(ObjectId id)
 {
-    dao::SceneCamera *scene = camera.Scene();
-    if (scene == nullptr)
+    namespace api = dao::script::api;
+    const bool party = api::IsHero(id) != 0 || api::IsFollower(id) != 0;
+    std::optional<float> close;
+    float extent = 0.0f;
+    std::string_view by = "one of the party";
+    if (!party)
+    {
+        const dao::Vector feet = api::GetPosition(id);
+        if (const std::optional<dao::Vector> head = dao::portraits::HeadPosition(id))
+        {
+            const float world = std::hypot(head->x - feet.x, head->y - feet.y, head->z - feet.z);
+            const float own = std::hypot(head->x, head->y, head->z);
+            extent = std::min(world, own);
+            by = world <= own ? "its head, a point in the world" : "its head, a point about its own origin";
+        }
+        else
+        {
+            const float space =
+                dao::gda::GetFloat(dao::script::Table::Appearance, api::GetAppearanceType(id), "PerSpace")
+                    .value_or(kPortraitPersonSpace);
+            extent = kPersonExtent * space / kPortraitPersonSpace;
+            by = "its personal space: its model has no head node";
+        }
+        close = CloseDistanceFor(extent);
+    }
+    if (close == standing_)
     {
         return;
     }
-    const float now = scene->Zoom();
-    if (!playerZoom_ || dao::camera::PlayerZoomed())
+    standing_ = close;
+    dao::camera::SetCloseDistance(close);
+    spdlog::info("the camera's distance for {:#010x}: {} ({:.1f} m from feet to head, by {})", id,
+                 close ? std::format("{:.1f} m", *close) : std::string{"the game's own"}, extent, by);
+}
+
+void CameraDirector::Release()
+{
+    if (standing_)
     {
-        playerZoom_ = now; // the player's own, as they left it
+        standing_.reset();
+        dao::camera::SetCloseDistance(std::nullopt);
+        spdlog::debug("the camera's distance is the game's own again");
     }
-    const std::int32_t appearance = dao::script::api::GetAppearanceType(id);
-    const float space =
-        dao::gda::GetFloat(dao::script::Table::Appearance, appearance, "PerSpace").value_or(kPortraitPersonSpace);
-    const bool party = dao::script::api::IsHero(id) != 0 || dao::script::api::IsFollower(id) != 0;
-    const std::optional<float> back = party ? std::nullopt : FollowZoom(*playerZoom_, space);
-    const float want = back.value_or(*playerZoom_);
-    if (std::abs(want - now) < 0.01f)
-    {
-        return;
-    }
-    dao::camera::EaseZoom(want, MoveSeconds());
-    spdlog::info("the camera's zoom for {:#010x} (personal space {:.2f}): {:.2f}, from {:.2f}{}", id, space, want, now,
-                 back ? "" : " (the player's own)");
 }
 
 float CameraDirector::MoveSeconds() const

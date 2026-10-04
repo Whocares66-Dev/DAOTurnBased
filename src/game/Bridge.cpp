@@ -1159,6 +1159,10 @@ void Bridge::Apply(const std::vector<Effect> &effects)
                 dao::timers::Trace(settings_.scriptTimersTrace);
             }
             dao::clock::Hold(e.a != 0);
+            if (e.a == 0)
+            {
+                camera_.Release(); // the fight is over: the camera as the game has it
+            }
             if (e.a != 0)
             {
                 ReadInstalledRules(); // what the installed scripts count (Gate.cpp)

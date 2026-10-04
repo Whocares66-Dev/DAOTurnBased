@@ -468,6 +468,20 @@ void BarLink::KeepPortraits(const TurnView &view, bool render)
                     spdlog::info("{:#010x} is bigger than a person (personal space {:.2f}): its portrait is framed "
                                  "from {:.2f} m, {:.2f} m aside, {:.2f} m up",
                                  *id, space, frame->distance, frame->xAdjust, frame->zAdjust);
+                    // Where the game's own portrait camera would aim (issue
+                    // 32: the high dragon's card came out a blank disc): its
+                    // model's head node, or none.
+                    const dao::Vector at = dao::script::api::GetPosition(*id);
+                    if (const std::optional<dao::Vector> head = dao::portraits::HeadPosition(*id))
+                    {
+                        spdlog::info("{:#010x}: its head node is at ({:.1f}, {:.1f}, {:.1f}), itself at ({:.1f}, "
+                                     "{:.1f}, {:.1f})",
+                                     *id, head->x, head->y, head->z, at.x, at.y, at.z);
+                    }
+                    else
+                    {
+                        spdlog::info("{:#010x}: its model has no head node for a portrait's camera to aim at", *id);
+                    }
                 }
                 url = creature->RenderPortrait();
                 how = "rendered";
