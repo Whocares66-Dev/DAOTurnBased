@@ -2694,11 +2694,25 @@ def test(mutant: Mutant, worker: Path) -> str:
         # One file changed: one compiler.
         if build(worker, 1).returncode != 0:
             return "did not compile"
-        try:
-            result = run([str(tests_of(worker))], worker, timeout=TIMEOUT_S)
-        except subprocess.TimeoutExpired:
-            return "caught (the tests hung)"
-        return "caught" if result.returncode != 0 else "SURVIVED"
+        # The scripted cases first, and the random fights only for a mutant
+        # they let pass: of a mutant's 30 s, 22 were the two random fights'
+        # tests, run to their end whatever had failed before them, and the
+        # 533 scripted ones take under 3 (timed 2026-10-04, when three gates
+        # at once made a full run an hour; the user: "Why does a full mutant
+        # run take an hour?"). The verdict is the same: caught if any test
+        # fails, and both halves together are every test the binary runs by
+        # default. Which half caught it is said, since a mutant only the
+        # fights catch is a promise with no scripted case of its own.
+        for spec, by in (("~[fights]", ""), ("[fights]", " (by the fights)")):
+            try:
+                result = run(
+                    [str(tests_of(worker)), spec, "--abort"], worker, timeout=TIMEOUT_S
+                )
+            except subprocess.TimeoutExpired:
+                return "caught (the tests hung)"
+            if result.returncode != 0:
+                return f"caught{by}"
+        return "SURVIVED"
     finally:
         path.write_text(original, encoding="utf-8")
 
@@ -2788,6 +2802,8 @@ def main() -> int:
     hung = [name for name, verdict in verdicts.items() if "hung" in verdict]
     for name in hung:
         print(f"hung, and counted as caught: {name}")
+    fights = sum(1 for verdict in verdicts.values() if "by the fights" in verdict)
+    print(f"{fights} caught by the random fights alone, with no scripted case")
     print(
         f"{len(chosen) - len(bad)} of {len(chosen)} caught in {time.monotonic() - started:.0f} s"
     )
