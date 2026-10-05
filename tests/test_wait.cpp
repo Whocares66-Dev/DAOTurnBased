@@ -13,7 +13,12 @@
 //   - a wait longer than what is left takes nothing and ends the turn, as
 //     every wait did;
 //   - so does one of no length, or whose length the game layer did not read;
-//   - a turn's waits and its commands together stop at max_commands_per_turn;
+//   - nothing counts a turn's waits: its bar bounds them (issue 38: they were
+//     counted with its commands against max_commands_per_turn, which is
+//     gone);
+//   - a wait that ends the turn is the last thing of its creature's judged
+//     in it: said once, and what its script or the engine queues on it while
+//     the turn settles is refused (test_time.cpp has the turn from play);
 //   - a turn the player plays is untouched, and so is a turn of one action
 //     and its meters (`clock = actions`).
 #include "World.h"
@@ -200,11 +205,13 @@ TEST_CASE("with time, a wait of no length, or one whose length was not read, end
     }
 }
 
-TEST_CASE("with time, a turn's waits and its commands together stop at max_commands_per_turn", "[time][wait]")
+TEST_CASE("with time, nothing counts a turn's waits: a swing and nine waits of half a second are its 5 s",
+          "[time][wait]")
 {
-    Settings s = Timed();
-    s.maxCommandsPerTurn = 3;
-    World w(s);
+    // Until 2026-10-04 a turn's waits were counted with its commands, and
+    // the seventh of them was not paid for whatever was left of the bar
+    // (max_commands_per_turn, gone with issue 38). The bar is the bound.
+    World w(Timed());
     std::vector<std::uint32_t> barAfter;
     w.onPoke = [&](ObjectId id) {
         if (barAfter.empty())
@@ -213,20 +220,20 @@ TEST_CASE("with time, a turn's waits and its commands together stop at max_comma
         }
         else
         {
-            CHECK(w.Wait(id, 1.0f) == Verdict::Block);
+            CHECK(w.Wait(id, 0.5f) == Verdict::Block);
         }
         barAfter.push_back(BarLeft(w));
     };
     EndTheHerosTurn(w);
     REQUIRE(w.Current() == kGenlock);
     w.Finish(kGenlock);
-    w.RunFor(900);
-    // A swing and two waits are its three: the third wait, with 2.5 s still
-    // to wait with, is not paid for and ends the turn.
-    CHECK(barAfter == std::vector<std::uint32_t>{4500, 3500, 2500, 2500});
+    w.RunFor(1500);
+    // Ten things in one turn, each paid for, and the turn over as the last
+    // takes the last of the bar.
+    CHECK(barAfter == std::vector<std::uint32_t>{4500, 4000, 3500, 3000, 2500, 2000, 1500, 1000, 500, 0});
     CHECK(w.Current() == kCompanion);
-    CHECK(Logged(w, "Genlock has started 3 commands this turn, its 2 waits among them: no more"));
-    CHECK(Logged(w, "Genlock's turn ends: waits"));
+    CHECK_FALSE(Logged(w, "commands this turn"));
+    CHECK(Logged(w, "Genlock's turn ends: done; 0.00 s rolls over"));
 }
 
 TEST_CASE("with time, the camera goes to an AI's creature at its first command let through, a wait before it or not",

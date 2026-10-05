@@ -400,11 +400,14 @@ TEST_CASE("the toggle is refused under a menu opened over a real-time fight", "[
     CHECK(w.machine.RequestToggle(false) == ToggleResult::Disabled);
 }
 
-TEST_CASE("the player's commands are not limited in number, an AI's are", "[machine]")
+TEST_CASE("nobody's commands are limited in number: the player's are not, and an AI's are not either", "[machine]")
 {
-    Settings settings = Fixed();
-    settings.maxCommandsPerTurn = 2;
-    World w{settings};
+    // Until 2026-10-04 an AI's were, by max_commands_per_turn, "a guard
+    // against an AI that loops". The user (issue 38): "What is the command
+    // cap? Do we need to limit the number of commands that can be issued? I
+    // thought we relied on time as the limiting factor", and: "Yeah let's
+    // get rid of the cap."
+    World w{Fixed()};
     w.StartFight();
     for (int i = 0; i < 5; ++i)
     {
@@ -413,20 +416,25 @@ TEST_CASE("the player's commands are not limited in number, an AI's are", "[mach
     }
     w.RunFor(500); // settled, awaiting the next order
     CHECK(w.machine.OnEndTurn());
+    // Eight weapon switches of its script's, one as each ends: more than the
+    // six the setting let through, and all of them are.
     int allowed = 0;
     w.onPoke = [&](ObjectId id) {
-        allowed += w.Order(id, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow ? 1 : 0;
-        w.Finish(id);
-        allowed += w.Order(id, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow ? 1 : 0;
-        w.Finish(id);
-        allowed += w.Order(id, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow ? 1 : 0;
+        for (int i = 0; i < 8; ++i)
+        {
+            allowed += w.Order(id, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow ? 1 : 0;
+            w.Finish(id);
+        }
     };
     w.Frame();
     w.Frame();
     CHECK(w.Current() == kGenlock);
-    CHECK(allowed == 2);
-    w.RunFor(100);
-    CHECK(w.Current() == kCompanion); // stopped there: its turn is over
+    CHECK(allowed == 8);
+    CHECK_FALSE(std::ranges::any_of(
+        w.log, [](const std::string &line) { return line.find("commands this turn") != std::string::npos; }));
+    // Its script queues no more, and its turn ends as it settles.
+    w.RunFor(1000);
+    CHECK(w.Current() == kCompanion);
 }
 
 namespace

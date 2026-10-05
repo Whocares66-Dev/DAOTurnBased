@@ -277,11 +277,90 @@ MUTANTS = [
         "if (!Active() || kind == CommandKind::Involuntary)",
         "if (!Active())",
     ),
+    # When a turn has ended, nothing more of its creature's own is accepted:
+    # here, a turn its AI ended with a wait (issue 38: the count of a turn's
+    # commands, which was what stopped a soldier's weapon commands of the
+    # engine's after its wait, is gone). The kept action's half of the rule
+    # has its mutant further down.
     Mutant(
-        "an AI may start commands without limit",
+        "what comes after an AI has passed is judged like anything: the engine's weapon commands are let through, and its wait is said again",
         MACHINE,
-        "if (!player && budget_.commands >= settings_.maxCommandsPerTurn)",
-        "if (false)",
+        "    const bool aiPassed = !player && passRequested_ && !landing && !approaching;",
+        "    const bool aiPassed = player && passRequested_ && !landing && !approaching;",
+    ),
+    Mutant(
+        "a kept action is refused its creature whose script waited as the turn began",
+        MACHINE,
+        "    const bool aiPassed = !player && passRequested_ && !landing && !approaching;",
+        "    const bool aiPassed = !player && passRequested_ && !approaching;",
+    ),
+    Mutant(
+        "the walk to a kept attack's target is refused a creature whose script waited in the frame it was kept",
+        MACHINE,
+        "    const bool aiPassed = !player && passRequested_ && !landing && !approaching;",
+        "    const bool aiPassed = !player && passRequested_ && !landing;",
+    ),
+    Mutant(
+        "a settings file that still has max_commands_per_turn is told nothing",
+        SETTINGS,
+        '             return "no longer a setting: nothing counts the commands an AI starts in a turn; its time is the limit, "\n                    "and max_turn_ms its turn\'s";',
+        "             return {};",
+    ),
+    # A turn an AI plays has a time limit, max_turn_ms (issue 38): what ends
+    # a turn of steps that take nothing, with nothing counting its commands.
+    Mutant(
+        "limit: a turn an AI plays may go on for ever",
+        MACHINE,
+        "    if (clock_ - turnSince_ <= limit)",
+        "    if (true)",
+    ),
+    Mutant(
+        "limit: a turn the player plays is ended at max_turn_ms too",
+        MACHINE,
+        "    if (current == nullptr || PlayerControls(*current) ||\n        (phase_ != Phase::AiThinking",
+        "    if (current == nullptr ||\n        (phase_ != Phase::AiThinking",
+    ),
+    Mutant(
+        "limit: max_turn_ms is of the fight's clock, not the wall's: a third as long at three times the speed",
+        MACHINE,
+        "    const std::uint32_t limit = Patience(static_cast<std::uint32_t>(settings_.maxTurnMs));",
+        "    const std::uint32_t limit = static_cast<std::uint32_t>(settings_.maxTurnMs);",
+    ),
+    Mutant(
+        "limit: max_turn_ms is counted from the fight's start, not the turn's",
+        MACHINE,
+        "    orderPending_ = false;\n    turnSince_ = clock_;\n",
+        "    orderPending_ = false;\n",
+    ),
+    Mutant(
+        "limit: a turn ended at max_turn_ms leaves its creature at what it was doing",
+        MACHINE,
+        "        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));\n        ForgiveGrab();",
+        "        ForgiveGrab();",
+    ),
+    Mutant(
+        "limit: a turn ended at max_turn_ms clears an effect's command that holds its creature",
+        MACHINE,
+        "    if (!heldByEffect_)\n    {\n        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));\n        ForgiveGrab();",
+        "    if (true)\n    {\n        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));\n        ForgiveGrab();",
+    ),
+    Mutant(
+        "limit: an action's own effect ended with its turn at max_turn_ms leaves its target owing it",
+        MACHINE,
+        "        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));\n        ForgiveGrab();",
+        "        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));",
+    ),
+    Mutant(
+        "limit: max_turn_ms in the settings file is not the turn's limit",
+        SETTINGS,
+        '        {"turns", "max_turn_ms", Int(&Settings::maxTurnMs, 1000, 600000)},',
+        '        {"turns", "max_turn_ms", Int(&Settings::maxActionMs, 1000, 600000)},',
+    ),
+    Mutant(
+        "the fight's clock runs through the player's pause: a hold is charged for the pause, and a turn's limit runs under it",
+        MACHINE,
+        "    if (!obs.paused)\n    {\n        // The world's time:",
+        "    if (true)\n    {\n        // The world's time:",
     ),
     Mutant(
         "rounds are never padded", MACHINE, "if (roundRunMs_ < minMs)", "if (false)"
@@ -505,7 +584,7 @@ MUTANTS = [
         "an AI that has waited and is then thrown is nobody's: neither held nor at its own action's effect",
         MACHINE,
         "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0)",
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands + budget_.waits == 0)",
+        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 &&\n            budget_.spend.ClockElapsedMs() == 0)",
     ),
     # Where a hold meets an attack the engine has no way to make (issue 27).
     Mutant(
@@ -1958,8 +2037,8 @@ MUTANTS = [
     Mutant(
         "time: an AI is not told to choose again with time left",
         MACHINE,
-        "        if (Timed() && budget_.spend.ActionsLeft() > 0 && !budget_.outOfMovement &&",
-        "        if (Timed() && budget_.spend.ActionsLeft() > 99 && !budget_.outOfMovement &&",
+        "        if (Timed() && budget_.spend.ActionsLeft() > 0 && !budget_.outOfMovement)",
+        "        if (Timed() && budget_.spend.ActionsLeft() > 99 && !budget_.outOfMovement)",
     ),
     Mutant(
         "time: an AI's wait ends its turn, whatever is left of its bar",
@@ -2004,16 +2083,10 @@ MUTANTS = [
         "    if (false)\n    {\n        Log(LogLevel::Info, std::format(\"{}'s wait has no length",
     ),
     Mutant(
-        "time: a turn's waits are not counted with its commands",
-        MACHINE,
-        "    if (budget_.commands + budget_.waits >= settings_.maxCommandsPerTurn)",
-        "    if (false)",
-    ),
-    Mutant(
         "time: a wait counts as a command let through, and the camera never goes to a creature that waited first",
         MACHINE,
-        "    ++budget_.waits;",
-        "    ++budget_.commands;",
+        '        std::format("{} waits {:.2f} s; {}", Utf8(who.name), static_cast<float>(cost) / 1000.0f, BudgetLeft()));\n',
+        '        std::format("{} waits {:.2f} s; {}", Utf8(who.name), static_cast<float>(cost) / 1000.0f, BudgetLeft()));\n    ++budget_.commands;\n',
     ),
     Mutant(
         "a wait is reckoned against a bar with one action a turn, where there is none",
@@ -3171,8 +3244,8 @@ MUTANTS = [
     Mutant(
         "an action stopped as too long leaves its target owing it",
         MACHINE,
-        "                debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0));",
-        "                debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0) * 0);",
+        "    debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0));",
+        "    debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0) * 0);",
     ),
     # A picture for every card (issue 32): which creatures are rendered, the
     # kind of body each is, the one table of framings and how a creature is
@@ -3487,8 +3560,8 @@ MUTANTS = [
     Mutant(
         "after its action is kept, a creature may still start something",
         MACHINE,
-        "    if ((chargeBegan_ || pendingEndNow_) && kind != CommandKind::Involuntary)",
-        "    if ((chargeBegan_ || pendingEndNow_) && kind == CommandKind::Action)",
+        "    const bool actionKept = chargeBegan_ || pendingEndNow_;",
+        "    const bool actionKept = (chargeBegan_ || pendingEndNow_) && kind == CommandKind::Action;",
     ),
     Mutant(
         "a door costs nothing with time",

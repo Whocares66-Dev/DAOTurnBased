@@ -475,6 +475,12 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
             statusWanted_ = true;
         }
     }
+    // A turn its AI plays has run past max_turn_ms: ended, whatever it is at.
+    if (TurnTooLong(fx))
+    {
+        EnforcePause(obs, fx);
+        return fx;
+    }
 
     switch (phase_)
     {
@@ -815,6 +821,7 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     endTurnRequested_ = false;
     passRequested_ = false;
     orderPending_ = false;
+    turnSince_ = clock_;
 
     HoldAtTurnStart(who, fx);
     GrabAtTurnStart(who, fx);
@@ -1140,10 +1147,17 @@ std::optional<Verdict> TurnMachine::PayAction(const Combatant &who, const Comman
 // (EffectKind::PokeAi).
 //
 // Answers whether the wait was paid for. It is not, and is the pass it was,
-// its turn ending: when it is longer than what is left; when it has no
+// its turn ending: when it is longer than what is left; and when it has no
 // length or its length was not read, since it would cost nothing and could
-// be chosen for ever; and past max_commands_per_turn, the turn's commands
-// and its waits counted together. Built 2026-10-04, not yet seen in play.
+// be chosen for ever. Built 2026-10-04, not yet seen in play.
+//
+// Nothing counts a turn's waits (issue 38: until then they were counted
+// with its commands against max_commands_per_turn, which is gone). Each
+// takes its own time of the bar, a millisecond at the least, and the bar
+// bounds them. And a wait that passes the turn is said once: it is the last
+// thing of its creature's that is judged in that turn (Judge), where its
+// script's next wait, a frame or a command later, was told "its turn ends"
+// again each time.
 bool TurnMachine::PayWait(const Combatant &who, const CommandRequest &request)
 {
     if (!Timed())
@@ -1167,14 +1181,7 @@ bool TurnMachine::PayWait(const Combatant &who, const CommandRequest &request)
                         static_cast<float>(cost) / 1000.0f, static_cast<float>(left) / 1000.0f));
         return false;
     }
-    if (budget_.commands + budget_.waits >= settings_.maxCommandsPerTurn)
-    {
-        Log(LogLevel::Info, std::format("{} has started {} commands this turn, its {} waits among them: no more",
-                                        Utf8(who.name), budget_.commands + budget_.waits, budget_.waits));
-        return false;
-    }
     (void)budget_.spend.SpendAction(cost); // it fits: nothing of it is owed
-    ++budget_.waits;
     Log(LogLevel::Info,
         std::format("{} waits {:.2f} s; {}", Utf8(who.name), static_cast<float>(cost) / 1000.0f, BudgetLeft()));
     MoveClock(pending_);
@@ -2644,19 +2651,7 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         {
             fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
             Log(LogLevel::Warn, std::format("still at a {} after {} ms: stopped", Name(actor.current), limit));
-            // Its target did not wait so long for anything the game meant:
-            // what this action's steps added to its debt is not owed (play
-            // test 33: a victim owing 31.8 s of a stall, its turns lost while
-            // an ogre killed it).
-            if (const auto debt = grabbedMs_.find(budget_.lastTarget);
-                budget_.grabbedNowMs > 0 && debt != grabbedMs_.end())
-            {
-                debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0));
-                if (debt->second == 0)
-                {
-                    grabbedMs_.erase(debt);
-                }
-            }
+            ForgiveGrab();
             EndTurn(fx, "took too long");
         }
         return;
@@ -2795,11 +2790,14 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
     }
     if (!player)
     {
-        // With time, an AI with time left chooses again, as many times as
-        // its commands allow (max_commands_per_turn): its turn ends as its
-        // bar is spent, as it waits, or as it chooses nothing.
-        if (Timed() && budget_.spend.ActionsLeft() > 0 && !budget_.outOfMovement &&
-            budget_.commands < settings_.maxCommandsPerTurn)
+        // With time, an AI with time left chooses again, as often as it has
+        // time: its turn ends as its bar is spent, as it waits, or as it
+        // chooses nothing. No count of its commands ends it (issue 38: until
+        // 2026-10-04 one that had started max_commands_per_turn was not told
+        // again, whatever its bar still held). One that answers each telling
+        // with what takes nothing of its bar is told for as long as its turn
+        // may last (max_turn_ms, Step).
+        if (Timed() && budget_.spend.ActionsLeft() > 0 && !budget_.outOfMovement)
         {
             if (!fresh)
             {
@@ -3553,6 +3551,88 @@ std::uint32_t TurnMachine::Patience(std::uint32_t ms) const
     return static_cast<std::uint32_t>(std::lround(static_cast<float>(ms) * std::max(1.0f, speedSet_)));
 }
 
+// A turn its AI plays has a time limit, max_turn_ms: still going then, it is
+// ended, whatever it is doing and whether or not it spends anything, "took
+// too long" as an action past max_action_ms is, and of the same clock (the
+// wall's, Patience). Counted from when the turn began (turnSince_). A turn
+// the player plays has none: a companion's too, unless its tactics play it
+// (PlayerControls).
+//
+// It is what bounds a turn made of steps that take nothing (issue 38). The
+// machine's other waits each bound one thing: ai_think_ms, an AI's choosing;
+// ai_follow_up_ms, its next move after an action; max_action_ms, one action;
+// the stuck rules, one standing. Until 2026-10-04 a count of the turn's
+// commands (max_commands_per_turn, six) bounded the rest, and cut turns that
+// had time to spend: the user, "I thought we relied on time as the limiting
+// factor". With the count gone, a script that queues a weapon set switched
+// as each one ends, a move that is over where it stands each time it is
+// told, a walk it cannot make again and again, each went on for as long as
+// its script did (tried in the tests' stand-in for the game: 215 switches in
+// two minutes); none is known in the game's scripts.
+//
+// Tried before this and dropped, all of that day, so that nobody builds
+// them again. "Told again only if something was spent": it took the turn of
+// a boss who opens by turning a sustained ability on, which costs nothing,
+// and acts only when told again. Its exception, "but for once a turn". And
+// "standing costs the time stood", a command that got nowhere charged the
+// time its creature stood at it: it charged a party member for a path the
+// engine itself gave up ("Wynne stood 1.03 s at a move to location that got
+// nowhere: 1.03 s of its bar"). The user, of the first two: "How about for
+// non-party members we apply a timeout? Don't we already have one? I'm
+// skeptical about hacking in all these conditions. We should keep things
+// simple."; and of the third: "Drop it then."
+//
+// The default, 30 s, is to cut nothing a turn does in play: in 54 logs
+// (5,303 turns AIs played, 4,253 of them at three times the speed) half took
+// 2.2 s of the wall's time and ninety-nine in a hundred under 7.4 s; the
+// longest that was not one action stopped at max_action_ms was a boss's,
+// 13.1 s (five commands, and a walk to her kept attack's target that stood
+// and was stopped), and ten more took over 10 s. Twelve seconds,
+// max_action_ms's own, would have cut that one and stood within two seconds
+// of the ten.
+bool TurnMachine::TurnTooLong(std::vector<Effect> &fx)
+{
+    const Combatant *current = order_.Current();
+    if (current == nullptr || PlayerControls(*current) ||
+        (phase_ != Phase::AiThinking && phase_ != Phase::Executing && phase_ != Phase::Settling))
+    {
+        return false;
+    }
+    const std::uint32_t limit = Patience(static_cast<std::uint32_t>(settings_.maxTurnMs));
+    if (clock_ - turnSince_ <= limit)
+    {
+        return false;
+    }
+    Log(LogLevel::Warn, std::format("{}'s turn is still going after {} ms, {} of its commands let through: ended",
+                                    Utf8(current->name), limit, budget_.commands));
+    // What it is at is stopped, as an action past max_action_ms is. Not an
+    // effect's command that holds it: that is the engine's to end.
+    if (!heldByEffect_)
+    {
+        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));
+        ForgiveGrab();
+    }
+    EndTurn(fx, "took too long");
+    return true;
+}
+
+// Its target did not wait so long for anything the game meant: what the
+// action's steps added to its debt is not owed (play test 33: a victim owing
+// 31.8 s of a stall, its turns lost while an ogre killed it).
+void TurnMachine::ForgiveGrab()
+{
+    const auto debt = grabbedMs_.find(budget_.lastTarget);
+    if (budget_.grabbedNowMs == 0 || debt == grabbedMs_.end())
+    {
+        return;
+    }
+    debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0));
+    if (debt->second == 0)
+    {
+        grabbedMs_.erase(debt);
+    }
+}
+
 bool TurnMachine::TurnSpent() const
 {
     if (budget_.spend.ActionsLeft() > 0)
@@ -3638,7 +3718,8 @@ void TurnMachine::Refuse(ObjectId target, std::wstring text, CommandType command
 // a walk reckoned by the straight line that failed 0.4 s on
 // (COMMAND_FAILED_INVALID_PATH), and 4 refused "Too far" by that walk, the
 // wrong reason. Each was given back, and an AI's own script chose the same
-// again as each ended, until max_commands_per_turn: 11 turns of that session
+// again as each ended, until the count of a turn's commands there was then
+// (max_commands_per_turn, gone since issue 38): 11 turns of that session
 // ended "has started 6 commands this turn".
 //
 // So the attack is refused here, nothing spent. The player's own order is
@@ -3888,16 +3969,62 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     // this turn's.
     const bool landing = landing_ && landing_->caster == who->id && request.type == landing_->type &&
                          request.ability == landing_->ability;
-    // Its action kept for its next turn: this turn is over, the end come
-    // with the next step (chargeBegan_) or after the beat over the player's
-    // (pendingEndNow_). A mode turned on in the same frame ran on into the
-    // next creature's turn (test_fights.cpp, seed 47 with time).
-    if ((chargeBegan_ || pendingEndNow_) && kind != CommandKind::Involuntary)
+    // The walk to its kept attack's target, given by the game layer
+    // (EffectKind::Approach): the mod's own doing, as a kept action given
+    // again is (landing), and no choice of its creature's.
+    const bool approaching = approach_ && kind == CommandKind::Move && request.source == Source::Script;
+    // When a turn has ended, nothing more of its creature's own is accepted:
+    // not its script's, not the engine's, not an order. It stays the current
+    // turn only until what its creature already has in hand is over and the
+    // world has settled.
+    //
+    // Two things end a turn before the machine closes it. An action kept for
+    // its next turn, or a cast begun to charge, with nothing else running:
+    // the end comes with the next step (chargeBegan_) or after the beat over
+    // the player's (pendingEndNow_). And an AI's own wait that is longer
+    // than what it has left, or has no length (passRequested_; PayWait): a
+    // wait is its AI passing, and what is left of its bar rolls over. Every
+    // other end is said as the turn is closed (EndTurn), and from then its
+    // creature's commands are refused as anyone's out of turn, above. What
+    // the mod itself gives a creature that has passed is still given: the
+    // action it kept, as its turn began, and the walk to its kept attack's
+    // target.
+    //
+    // The kept action's half is of 2026-10-01 (a mode turned on in the frame
+    // an action was kept ran on into the next creature's turn:
+    // test_fights.cpp, seed 47 with time). The wait's is of issue 38, and
+    // the mod's own doing was why it was needed. In a fight on a road
+    // (2026-10-04) an allied soldier's attack ended as the last enemy fell;
+    // its script answered with a wait of 2.00 s and the engine queued
+    // "sheathe or draw" on it. The wait did not fit the 1.07 s it had left
+    // and was refused, "its turn ends"; the weapon command was let through,
+    // free. Both were over at once, so its script was asked again at once,
+    // and the same pair came round every 40 to 150 ms: the game's AI paces
+    // itself by how long its commands take, and a wait refused takes no
+    // time. That is what play showed, and what stopped it there was the
+    // count of a turn's commands there was then (max_commands_per_turn): the
+    // fourth weapon command, a quarter of a second after the first, was the
+    // turn's sixth, "has started 6 commands this turn: no more" was said
+    // eleven times, and the turn ended half a second after its actor had
+    // ended it. That count is gone. Not from play but from the tests'
+    // stand-in for the game, with this rule off and no count: the same turn
+    // went on to its time limit, 1,844 weapon commands in 29.5 s, and "took
+    // too long" where its actor had ended it, "waits", the second it saved
+    // rolled over. The user, shown the turn (2026-10-05): "Why are we
+    // blocking a wait? Should we not allow it and then deduct the extra time
+    // from the next turn? Or we can just end the turn without allowing
+    // another command." The second: allowed, every pass would be watched in
+    // real time and what did not fit would be a debt against a turn that
+    // rolls time over.
+    const bool actionKept = chargeBegan_ || pendingEndNow_;
+    const bool aiPassed = !player && passRequested_ && !landing && !approaching;
+    if (actionKept || aiPassed)
     {
         if (Logs(refusals))
         {
-            Refused(refusals, std::format("{}: {} held, its turn is over with its action pending", Utf8(who->name),
-                                          Name(request.type)));
+            Refused(refusals,
+                    std::format("{}: {} from {} held, its turn is over: {}", Utf8(who->name), Name(request.type),
+                                Name(request.source), actionKept ? "its action is pending" : "it has passed"));
         }
         return Verdict::Block;
     }
@@ -3934,7 +4061,6 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     // a controlled character carries on attacking by itself (in real time,
     // AI_DetermineCombatRound_Partial), and in play that ended a pinned
     // character's turn before the player had chosen (2026-09-30, 11:30).
-    const bool approaching = approach_ && kind == CommandKind::Move && request.source == Source::Script;
     // Nor does it choose the character's weapons, free as they are. A
     // follower that is not the controlled one changes to melee with an
     // enemy at hand and turns its bow's mode off for it
@@ -3963,15 +4089,6 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
             Log(LogLevel::Debug, std::format("{}: {} from its own AI held: its turn is the player's", Utf8(who->name),
                                              Name(request.type)));
         }
-        return Verdict::Block;
-    }
-    // A guard against an AI that loops; the player steering with the keys
-    // starts a command a step.
-    if (!player && budget_.commands >= settings_.maxCommandsPerTurn)
-    {
-        passRequested_ = true;
-        Log(LogLevel::Info,
-            std::format("{} has started {} commands this turn: no more", Utf8(who->name), budget_.commands));
         return Verdict::Block;
     }
     switch (kind)
@@ -4360,7 +4477,7 @@ bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t a
     // three dagger attacks at a spider she could not get to, each over at
     // once, and the second and third were charged 1.5 s each with no swing
     // and no word (play test 30). An AI still chooses again but once for a
-    // failed action (StepSettling), and then as often as its commands allow.
+    // failed action (StepSettling), and then while it has time.
     if (Classify(type) != CommandKind::Action || !ActionToGiveBack() || (budget_.refunded && !Timed()))
     {
         return false;

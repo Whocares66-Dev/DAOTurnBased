@@ -35,7 +35,11 @@
 //  13. a creature an effect's command holds as its turn comes waits no longer
 //      than a turn's worth of time on it, and, let go before, has its turn
 //      with the time the hold ran gone from its bar (issue 30); one that has
-//      noticed nobody is not held, and is from the moment it notices.
+//      noticed nobody is not held, and is from the moment it notices;
+//  14. a turn an AI plays is over within max_turn_ms of the running game's
+//      time, whatever it is doing, and is ended for that only then, never a
+//      turn the player plays; no count of its commands ends a turn (issue
+//      38).
 //
 // The arena is World.h's stand-in with the creatures made to act. An AI
 // chooses when told to and whenever its command ends, as COMMAND_COMPLETE
@@ -170,6 +174,7 @@ struct Coverage
     int turned = 0;          // a kept attack given at another in its reach, its target gone
     int waitsPaid = 0;       // an AI's wait taken of its bar, its length (issue 31)
     int waitsTooLong = 0;    // an AI's wait longer than what was left: its turn ended
+    int turnLimits = 0;      // a turn an AI played ended at max_turn_ms (issue 38)
 };
 
 class Arena
@@ -273,6 +278,17 @@ class Arena
             {
                 ++coverage_.timeouts;
             }
+            if (line.find("'s turn is still going after ") != std::string_view::npos)
+            {
+                // Ended at its time limit (14): an AI's, and not before the
+                // limit, by the arena's own count of the turn's frames.
+                ++coverage_.turnLimits;
+                FollowTurn();
+                Must(!PlayerControls(world_.Current()), "a turn the player plays ended at max_turn_ms");
+                Must(turnFromMs_ &&
+                         turnRunMs_ - *turnFromMs_ + 4 * kFrameMs >= static_cast<std::uint32_t>(settings_.maxTurnMs),
+                     "an AI's turn ended as too long before max_turn_ms");
+            }
             if (line.find("is held by an effect's command past ") != std::string_view::npos)
             {
                 ++coverage_.heldByEffect;
@@ -314,6 +330,7 @@ class Arena
                 heldAtStartMs_ = 0;
                 heldPaidDue_ = heldAtStart_; // until the machine says it free: a frame or two after it is
                 turnBeganAtMs_ = turnRunMs_; // a padded round's wait came before
+                turnFromMs_ = turnRunMs_;
             }
             if (line.find(" m to walk with ") != std::string_view::npos)
             {
@@ -456,7 +473,12 @@ class Arena
         s.aiThinkMs = static_cast<int>(Between(rng, 200.0f, 2000.0f));
         s.aiFollowUpMs = static_cast<int>(Between(rng, 0.0f, 1000.0f));
         s.maxActionMs = Chance(rng, 0.3) ? 2000 : 12000;
-        s.maxCommandsPerTurn = Chance(rng, 0.3) ? 2 : 6;
+        // The draw max_commands_per_turn took until that setting went (issue
+        // 38: a cap of two in three fights of ten), so that what is drawn
+        // after it is what it was. In those three a turn an AI plays now has
+        // three seconds, where the default is thirty: its time limit ends
+        // turns there among everything else that goes on in a fight (14).
+        s.maxTurnMs = Chance(rng, 0.3) ? 3000 : 30000;
         s.floaties = Chance(rng, 0.5);
         s.scriptEvents = true; // the round check reads the turn-start events
         s.cameraFollow = Chance(rng, 0.2);
@@ -570,6 +592,7 @@ class Arena
             clears_ = 0;
             interruptions_ = 0;
             turnRunMs_ = 0;
+            turnFromMs_.reset();  // set as the machine begins the turn (onLog)
             turnMeters_ = 0.0f;   // with time, read as the machine begins the turn (onLog)
             heldAtStart_ = false; // judged as the machine begins the turn (onLog)
             heldAtStartMs_ = 0;
@@ -1878,21 +1901,16 @@ class Arena
                 }
                 if (!PlayerControls(current))
                 {
-                    // An AI's turn: thinking, then at most every command it may
-                    // start, each to its limit and settled after.
-                    // With time it is told to choose again after each, and
-                    // may take its thinking time to choose nothing.
-                    const int again =
-                        settings_.turnClock == TurnClock::Time ? settings_.maxCommandsPerTurn * settings_.aiThinkMs : 0;
-                    // A command held by its own effect has three times the
-                    // limit (kOwnEffectPatience: the long run's seed 364,
-                    // 2026-10-02, an attack whose creature an effect then held).
-                    const int bound = settings_.aiThinkMs + again +
-                                      settings_.maxCommandsPerTurn *
-                                          (settings_.maxActionMs * static_cast<int>(TurnMachine::kOwnEffectPatience) +
-                                           settings_.settleMs + settings_.aiFollowUpMs + 200) +
-                                      static_cast<int>(settings_.roundMinSeconds * 1000.0f) + 1000;
-                    Must(turnRunMs_ <= static_cast<std::uint32_t>(bound), "an AI's turn did not end");
+                    // An AI's turn has a time limit (14): max_turn_ms of the
+                    // running game's time from when the machine began it,
+                    // whatever it has been doing; nothing counts its commands
+                    // (issue 38: max_commands_per_turn did, and this bound was
+                    // by that count, each command to its own limit). Give or
+                    // take the frames the arena and the machine count apart,
+                    // and two more for a conversation.
+                    const std::uint32_t bound = static_cast<std::uint32_t>(settings_.maxTurnMs) +
+                                                (4 + 2 * static_cast<std::uint32_t>(interruptions_)) * kFrameMs;
+                    Must(!turnFromMs_ || turnRunMs_ - *turnFromMs_ <= bound, "an AI's turn went on past max_turn_ms");
                 }
             }
         }
@@ -1952,6 +1970,9 @@ class Arena
     bool runners_ = false;            // this fight has combatants that go out of the scan's reach (Wandering)
     std::map<ObjectId, int> away_;    // those gone so, and the frames until each is back or lost for good
     std::uint32_t turnBeganAtMs_ = 0; // turnRunMs_ as the machine began the turn
+    // The same, for the turn's time limit (14): not moved as one that had
+    // noticed nobody notices, and none until the machine has begun the turn.
+    std::optional<std::uint32_t> turnFromMs_;
     static constexpr std::uint32_t kHoldSlackMs = 600;
     int interlude_ = 0;
     int menu_ = 0;
@@ -2028,6 +2049,9 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     // With one action a turn a wait is a pass, whatever its length (issue 31).
     CHECK(coverage.waitsPaid == 0);
     CHECK(coverage.waitsTooLong == 0);
+    // A turn an AI played ended at max_turn_ms (issue 38, 2026-10-04: 43, in
+    // the three fights of ten where it has three seconds).
+    CHECK(coverage.turnLimits > 14);
 }
 
 // With a turn a bar of time (Settings::turnClock), the same fights' kinds
@@ -2059,7 +2083,9 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     CHECK(coverage.choseAgain > 24);
     // Time rolls over only from a turn its actor ended (issue 29,
     // 2026-10-04: 1003 turns rolled time over, where 1627 had when every end
-    // did; 429 ended with time left that was not their actor's to save).
+    // did; 429 ended with time left that was not their actor's to save.
+    // With issue 30's holds, and a limit on an AI's turn where a cap on its
+    // commands was, issue 38: 636 and 361).
     CHECK(coverage.rolledOver > 330);
     CHECK(coverage.forfeited > 140);
     // Each creature's own clock moved as its turns were spent.
@@ -2098,9 +2124,14 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
     // one longer than what was left, its turn ended (2026-10-04, issue 31:
     // 176 and 27; 273 told to choose again, where 107 were before a wait
     // cost its time. With issue 30's holds taking their time of the bar,
-    // the arena's draws other for it: 156 and 49, and 264 told again).
+    // the arena's draws other for it: 156 and 49, and 264 told again. With
+    // a limit on an AI's turn where a cap on its commands was, issue 38: 137
+    // and 50, and 253).
     CHECK(coverage.waitsPaid > 55);
     CHECK(coverage.waitsTooLong > 8);
+    // A turn an AI played ended at max_turn_ms (issue 38, 2026-10-04: 84, in
+    // the three fights of ten where it has three seconds).
+    CHECK(coverage.turnLimits > 28);
 }
 
 // The same fights with what the engine's perception decides in them (issue
@@ -2129,9 +2160,14 @@ TEST_CASE("random fights with hostiles unaware and combatants out of reach keep 
         CHECK(coverage.stayedAfar > 32);
         CHECK(coverage.leftUnperceived > 14);
         CHECK(coverage.cameBack > 15);
+        // A turn an AI played ended at max_turn_ms, among hostiles whose
+        // turns are skipped and combatants that come and go (issue 38: 19 as
+        // built, 32 with time).
+        CHECK(coverage.turnLimits > (clock == TurnClock::Time ? 10 : 6));
         // And with time, what rolls over where so many turns are not their
         // actors' to end (272 turns rolled time over, 162 left time that was
-        // not saved).
+        // not saved; 233 and 182 with issue 30's holds and a limit on an AI's
+        // turn where a cap on its commands was, issue 38).
         if (clock == TurnClock::Time)
         {
             CHECK(coverage.rolledOver > 90);

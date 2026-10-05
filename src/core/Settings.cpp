@@ -190,7 +190,14 @@ const std::vector<Entry> &Entries()
         {"turns", "ai_think_ms", Int(&Settings::aiThinkMs, 100, 10000)},
         {"turns", "ai_follow_up_ms", Int(&Settings::aiFollowUpMs, 0, 5000)},
         {"turns", "max_action_ms", Int(&Settings::maxActionMs, 1000, 60000)},
-        {"turns", "max_commands_per_turn", Int(&Settings::maxCommandsPerTurn, 1, 50)},
+        {"turns", "max_turn_ms", Int(&Settings::maxTurnMs, 1000, 600000)},
+        // Gone (issue 38, 2026-10-04: the user, "let's get rid of the cap"):
+        // a file that still has it is told, once, by the warning.
+        {"turns", "max_commands_per_turn",
+         [](Settings &, std::string_view) -> std::string {
+             return "no longer a setting: nothing counts the commands an AI starts in a turn; its time is the limit, "
+                    "and max_turn_ms its turn's";
+         }},
         {"turns", "order_run_ms", Int(&Settings::orderRunMs, 0, 2000)},
         {"turns", "condition_turns", Int(&Settings::conditionTurns, 0, 5)},
         {"turns", "cooldown_seconds_per_turn", Float(&Settings::cooldownSecondsPerTurn, 0.0f, 60.0f)},
@@ -527,9 +534,10 @@ ai_think_ms = 1500
 ai_follow_up_ms = 500
 ; An action still running after this long is stopped and the turn ends.
 max_action_ms = 12000
-; An AI creature that starts more commands than this in one turn is stopped
-; there: a guard against an AI that loops.
-max_commands_per_turn = 6
+; A turn an AI plays that is still going after this long is ended, whatever
+; it is doing. In play such a turn takes two or three seconds, and the
+; longest seen thirteen.
+max_turn_ms = 30000
 ; An order that queued no command while paused runs the world this long, in
 ; case the engine queues it only when the game runs. In play the engine
 ; queued orders at once while paused (2026-09-30), and the orders that queue

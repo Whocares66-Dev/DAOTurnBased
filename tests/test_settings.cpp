@@ -350,6 +350,35 @@ TEST_CASE("a fight has one speed; the setting that sped an AI's turns alone is g
     CHECK(tb::DefaultSettingsFile().find("ai_turn_speed") == std::string::npos);
 }
 
+TEST_CASE("the cap on an AI's commands is gone, and a file that still has it is told", "[settings]")
+{
+    // Issue 38 (the user, 2026-10-04: "let's get rid of the cap"): what
+    // bounds an AI's turn is its time, and max_turn_ms the turn's own.
+    const tb::ParsedSettings old = tb::ParseSettings("[turns]\nmax_commands_per_turn = 6\nmax_action_ms = 9000\n");
+    REQUIRE(old.warnings.size() == 1);
+    CHECK(old.warnings.front().find("max_commands_per_turn") != std::string::npos);
+    CHECK(old.warnings.front().find("no longer a setting") != std::string::npos);
+    CHECK(old.warnings.front().find("max_turn_ms") != std::string::npos);
+    CHECK(old.settings.maxActionMs == 9000); // the rest of the file is read as ever
+    CHECK(tb::DefaultSettingsFile().find("max_commands_per_turn") == std::string::npos);
+    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).warnings.empty());
+}
+
+TEST_CASE("a turn an AI plays has a time limit of its own setting: thirty seconds unless the file says", "[settings]")
+{
+    CHECK(tb::Settings{}.maxTurnMs == 30000);
+    CHECK(tb::DefaultSettingsFile().find("\nmax_turn_ms = 30000\n") != std::string::npos);
+    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.maxTurnMs == 30000);
+    const tb::ParsedSettings set = tb::ParseSettings("[turns]\nmax_turn_ms = 45000\n");
+    CHECK(set.warnings.empty());
+    CHECK(set.settings.maxTurnMs == 45000);
+    // Out of its range: told, and the nearest it may be. There is no "off":
+    // a second at the least.
+    const tb::ParsedSettings none = tb::ParseSettings("[turns]\nmax_turn_ms = 0\n");
+    CHECK(none.warnings.size() == 1);
+    CHECK(none.settings.maxTurnMs == 1000);
+}
+
 TEST_CASE("own clocks are on by default, and can be turned off", "[settings]")
 {
     CHECK(tb::Settings{}.ownClocks);

@@ -698,13 +698,16 @@ class TurnMachine
         std::uint32_t heldUnagedMs = 0;
         std::uint32_t holdRanMs = 0;
         std::uint32_t holdBarMs = 0;
+        // Commands of the turn's own let through. Nothing bounds the number
+        // (issue 38: max_commands_per_turn is gone, and a turn's time is its
+        // limit); it is kept for whoever asks whether anything was: an
+        // effect's command is a hold on a creature that has started nothing
+        // and its action's own effect on one that has (StepExecuting), a
+        // turn is put off only before its first (CanDelay), an order just
+        // taken that comes again is its echo (Judge), and the camera goes to
+        // an AI's creature at the first. A wait is not one: paid for or not,
+        // it is refused, and none is counted.
         int commands = 0;
-        // Waits its AI chose that were paid for out of the bar (PayWait).
-        // Counted apart from the commands let through, which a wait is not:
-        // it is refused all the same, and the camera goes to an AI's
-        // creature at the first command that is let through. Together they
-        // are what max_commands_per_turn bounds a wait by.
-        int waits = 0;
         bool outOfMovement = false;
         // With own clocks: how far this turn has moved its creature's
         // effects on (AgeOwnClock, and the steps of its action's own
@@ -804,6 +807,10 @@ class TurnMachine
     void ChargeHold(std::vector<Effect> &fx);
     [[nodiscard]] std::uint32_t HoldTurnMs() const;
     [[nodiscard]] std::uint32_t Patience(std::uint32_t ms) const;
+    // A turn its AI plays that is still going after max_turn_ms: ended.
+    [[nodiscard]] bool TurnTooLong(std::vector<Effect> &fx);
+    // What an action stopped as too long added to its target's debt.
+    void ForgiveGrab();
     [[nodiscard]] bool EngineConjures(const CommandRequest &request) const;
 
   public:
@@ -1102,6 +1109,9 @@ class TurnMachine
         0; // the world's milliseconds the fight has run unpaused (at the game's speed): deadlines count in this
     std::uint32_t deadline_ = 0;
     std::uint32_t executingSince_ = 0;
+    // The clock as the turn began: what max_turn_ms is counted from
+    // (TurnTooLong).
+    std::uint32_t turnSince_ = 0;
     std::uint32_t roundRunMs_ = 0; // milliseconds this round has run unpaused
     // Effects' time spent inside the round by an action that needed it: an
     // effect of the action's own that keeps its creature at it. A giant

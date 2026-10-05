@@ -13,8 +13,10 @@
 // 7 turns of 17 read in earlier logs that second attack went through and
 // landed. The cases below from "an attack failed at the blow" on hold what
 // replaced it: the engine is asked again, and what ends a turn that keeps
-// failing is what ended it before (the count of actions given back, the cap
-// on a turn's commands, and a wait's own time). Those failures were attacks
+// failing is the count of actions given back, a wait's own time, and where
+// the turn never settles for those to be looked at, the limit on a turn an
+// AI plays (max_turn_ms; the cap on a turn's commands, which ended that one
+// before, is gone: issue 38). Those failures were attacks
 // the gate's question had called good; DAOLib has since found why and the
 // gate asks the whole of it (Approach::findsRoom), which is the game
 // layer's and comes here as the same "no place". What still fails under way
@@ -389,11 +391,17 @@ TEST_CASE("the failure's line names no target where the game layer gave none", "
     CHECK(Logged(w, "Genlock's attack failed (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING): its action is given back"));
 }
 
-TEST_CASE("a turn that keeps failing at the blow is ended by the cap on its commands, as it was", "[noattack]")
+TEST_CASE("a turn that keeps failing at the blow, its script moving and trying again as each fails, is ended by the "
+          "limit on a turn an AI plays",
+          "[noattack][limit]")
 {
-    // Nothing is remembered of a failure, so what bounds an AI whose script
-    // moves and tries the same target again as each attack fails is what
-    // bounded it before: max_commands_per_turn.
+    // Nothing is remembered of a failure, and nothing counts a turn's
+    // commands (issue 38: until 2026-10-04 max_commands_per_turn ended this
+    // turn at three attacks and three moves, "done"). An AI whose script
+    // moves and tries the same target again as each attack fails never lets
+    // the turn settle, so the count of its actions given back, two, is not
+    // looked at, and each failed swing is given back whole: its bar never
+    // moves. What ends it is its turn's time, max_turn_ms.
     World w(Timed());
     std::vector<std::string> ends;
     KeepEnds(w, ends);
@@ -405,8 +413,10 @@ TEST_CASE("a turn that keeps failing at the blow is ended by the cap on its comm
         }
     };
     ToGenlock(w);
+    w.applied.clear();
     int swings = 1; // its first, by its AI's choice
-    for (int i = 0; i < 10 && w.Current() == kGenlock && w.Get(kGenlock).busy; ++i)
+    std::uint32_t ran = 0;
+    for (; ran < 60000 && w.Current() == kGenlock; ran += 32)
     {
         (void)w.Fail(kGenlock, kNoSpace);
         if (w.Order(kGenlock, CommandType::MoveToObject, Source::Script) != Verdict::Allow)
@@ -421,17 +431,20 @@ TEST_CASE("a turn that keeps failing at the blow is ended by the cap on its comm
         }
         w.Frame();
     }
-    // Three attacks and three moves are the six; the fourth attack is not
-    // begun.
-    CHECK(swings == 3);
-    CHECK(Logged(w, "Genlock has started 6 commands this turn: no more"));
-    w.RunFor(100);
+    // Thirty seconds of it, two frames a round: the attack begun in the
+    // frame the limit was passed is stopped, and nothing of the bar went to
+    // any of them.
     CHECK(w.Current() != kGenlock);
-    REQUIRE(ends.size() == 1);
-    CHECK(ends.front() == "done");
-    // Each failed swing was given back: nothing of the bar went to them.
+    CHECK(ran >= 30000);
+    CHECK(ran <= 30100);
+    CHECK(swings > 900);
     CHECK(Lines(w, "Genlock's attack on Hero failed (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING): its action is given "
-                   "back") == 3);
+                   "back") > 900);
+    CHECK(Logged(w, "Genlock's turn is still going after 30000 ms, "));
+    CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
+    REQUIRE(ends.size() == 1);
+    CHECK(ends.front() == "took too long");
+    CHECK_FALSE(Logged(w, "commands this turn"));
 }
 
 TEST_CASE("given back before a step and then at the blow: twice in a turn, and its turn ends", "[noattack]")

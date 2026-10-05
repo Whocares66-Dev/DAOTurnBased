@@ -41,7 +41,8 @@ constexpr std::array kTurnEnds{
     TurnEnd{"unaware", false},
     // Told its turn had come, its AI queued nothing within ai_think_ms.
     TurnEnd{"chose nothing", false},
-    // Its command ran past max_action_ms and was stopped.
+    // Its command ran past max_action_ms and was stopped; or, a turn its AI
+    // played, the turn itself ran past max_turn_ms and was ended (issue 38).
     TurnEnd{"took too long", false},
     // An AI whose actions were given back twice: stopped by the mod, the
     // time of what it could not do back in its bar.

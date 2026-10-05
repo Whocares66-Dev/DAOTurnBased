@@ -820,6 +820,500 @@ TEST_CASE("with time, an AI stopped with nothing it can get to rolls nothing ove
     CHECK(w.machine.View().timeMs == 4000);
 }
 
+// Nothing counts the commands an AI starts in a turn (issue 38). Until
+// 2026-10-04 max_commands_per_turn, six, was "a guard against an AI that
+// loops". The user, shown a turn of play the guard had ended: "What is the
+// command cap? Do we need to limit the number of commands that can be
+// issued? I thought we relied on time as the limiting factor", and: "Yeah
+// let's get rid of the cap. Most actions should have some kind of cooldown.
+// And I don't think the AI itself is going to do things like swap weapons
+// endlessly."
+//
+// That turn, in a fight on a road (the one turn of its 197 AI turns in which
+// the guard spoke: an allied soldier's, as the last enemy fell):
+//
+//   round 14: Redcliffe Soldier's turn (ally, AI), a bar of 4.00 s, 0.84 s of
+//       it paid for its pending use ability: 3.16 s and 15.7 m left
+//   Redcliffe Soldier: use ability (action, from script); 3.16 s ...
+//   Redcliffe Soldier: attack (action, from script); 1.07 s and 6.0 m left
+//   Redcliffe Soldier: sheathe or draw (free, from engine); 1.07 s ...
+//   Redcliffe Soldier's wait of 2.00 s is longer than the 1.07 s it has
+//       left: its turn ends
+//   (sheathe or draw let through, and the wait's line, twice more)
+//   Redcliffe Soldier: sheathe or draw (free, from engine); 1.07 s ...
+//   Redcliffe Soldier has started 6 commands this turn: no more  (11 times)
+//   Redcliffe Soldier's turn ends: waits; 1.00 s rolls over
+//
+// Its actor had ended that turn with its wait. What the engine queued on it
+// while it settled was let through, each time putting the turn back at its
+// command, and the count was what stopped that. With the count gone a turn
+// its AI has passed takes nothing more of its own: the wait is the turn's
+// end, said once.
+namespace
+{
+auto Lines(const World &w, std::string_view text)
+{
+    return std::ranges::count_if(w.log, [&](const std::string &line) { return line.find(text) != std::string::npos; });
+}
+} // namespace
+
+TEST_CASE("with time, a turn its AI ended with a wait ends so, whatever the engine and its script queue as it settles",
+          "[time][wait]")
+{
+    World w(Timed());
+    Turns turns(w);
+    // What its script does each time it runs with nobody to fight, as the
+    // soldier's did: the engine puts its weapon away or draws it, and it
+    // waits two seconds.
+    const auto idles = [&w](Verdict weapon) {
+        CHECK(w.Order(kGenlock, CommandType::SheatheWeapons, Source::Engine) == weapon);
+        CHECK(w.Wait(kGenlock, 2.0f) == Verdict::Block);
+    };
+    bool kept = false;
+    bool ended = false; // its second turn, its wait said: what its script queues from here is refused
+    int toldAfter = 0;
+    w.onPoke = [&](ObjectId id) {
+        if (id != kGenlock)
+        {
+            (void)w.Order(id, CommandType::Wait, Source::Script);
+        }
+        else if (!std::exchange(kept, true))
+        {
+            // Its first turn: a swing of 4.84 s on a bar of 4, kept.
+            CHECK(Strike(w, kGenlock, kHero, Source::Script, 4.84f) == Verdict::Hold);
+        }
+        else if (ended)
+        {
+            // Told as what it kept has landed and the turn settles: in a
+            // turn it has ended by then.
+            idles(Verdict::Block);
+            ++toldAfter;
+        }
+    };
+    w.StartFight();
+    UntilTurnOf(w, kGenlock);
+    w.RunFor(200);
+    REQUIRE(kept);
+    // Its next turn: 0.84 s of its bar paid for what it kept, which lands.
+    UntilTurnOf(w, kGenlock);
+    REQUIRE(w.released.size() == 1);
+    REQUIRE(w.released.front() == Verdict::Allow);
+    REQUIRE(w.machine.View().timeLeftMs == 3160);
+    // As that ends its script swings again, 2.09 s.
+    w.Finish(kGenlock);
+    REQUIRE(Strike(w, kGenlock, kHero, Source::Script, 2.09f) == Verdict::Allow);
+    REQUIRE(w.machine.View().timeLeftMs == 1070);
+    w.RunFor(500);
+    // The swing ends. The engine's weapon command is let through, as on any
+    // turn of its own, and its wait does not fit: its turn ends, by its own
+    // doing.
+    w.Finish(kGenlock);
+    idles(Verdict::Allow);
+    CHECK(Logged(w, "Genlock's wait of 2.00 s is longer than the 1.07 s it has left: its turn ends"));
+    ended = true;
+    // As each command of the engine's ends its script runs again. Nothing
+    // more is let through, the engine's neither: the turn is over, and its
+    // creature is not kept at one weapon command after another.
+    for (int again = 0; again < 3; ++again)
+    {
+        w.Frame();
+        w.Finish(kGenlock);
+        idles(Verdict::Block);
+        CHECK_FALSE(w.Get(kGenlock).busy);
+    }
+    CHECK(w.Current() == kGenlock);
+    w.RunFor(300);
+    CHECK(w.Current() != kGenlock);
+    CHECK(toldAfter == 1);
+    ended = false;
+    // Ended as its actor ended it, and the second it saved is its own.
+    // Nothing else is said: the wait's line once, the one weapon command
+    // that came before it, and no word of a count.
+    CHECK(turns.ends[kGenlock] == std::vector<std::string>{"its action pending", "waits"});
+    CHECK(Logged(w, "Genlock's turn ends: waits; 1.00 s rolls over"));
+    CHECK(Lines(w, "it has left: its turn ends") == 1);
+    CHECK(Lines(w, "Genlock: sheathe or draw (free, from engine)") == 1);
+    CHECK_FALSE(Logged(w, "commands this turn"));
+    UntilTurnOf(w, kGenlock);
+    CHECK(w.machine.View().timeMs == 5000);
+    CHECK(w.machine.View().rolledMs == 1000);
+}
+
+TEST_CASE("with time, an AI that starts many cheap commands in a long bar is let, until its time is spent", "[time]")
+{
+    // Twelve swings of half a second in a bar of 6 s, its script queuing the
+    // next as each ends: twice what max_commands_per_turn let through. Each
+    // takes its time, and the bar is what ends the turn.
+    Settings s = Timed();
+    s.secondsPerTurn = 6.0f;
+    World w(s);
+    Turns turns(w);
+    int swings = 0;
+    const auto swing = [&w, &swings] {
+        if (Act(w, kGenlock, CommandType::Attack, Source::Script, 0.5f, 0.0f) == Verdict::Allow)
+        {
+            ++swings;
+        }
+    };
+    w.onPoke = [&](ObjectId id) {
+        if (id == kGenlock)
+        {
+            swing();
+        }
+        else
+        {
+            (void)w.Order(id, CommandType::Wait, Source::Script);
+        }
+    };
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    (void)w.machine.OnEndTurn();
+    w.RunFor(300);
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(swings == 1);
+    std::vector<std::uint32_t> bar;
+    for (int again = 0; again < 100 && w.Current() == kGenlock; ++again)
+    {
+        w.Finish(kGenlock);
+        const int before = swings;
+        swing();
+        if (swings > before)
+        {
+            bar.push_back(w.machine.View().timeLeftMs);
+        }
+        w.Frame();
+    }
+    CHECK(swings == 12);
+    CHECK(bar == std::vector<std::uint32_t>{5000, 4500, 4000, 3500, 3000, 2500, 2000, 1500, 1000, 500, 0});
+    CHECK(w.Current() != kGenlock);
+    CHECK(turns.ends[kGenlock] == std::vector<std::string>{"done"});
+    CHECK(Logged(w, "Genlock's turn ends: done; 0.00 s rolls over"));
+    CHECK_FALSE(Logged(w, "commands this turn"));
+}
+
+TEST_CASE("with time, what its creature kept is given though its script waited first, and so is the walk to its "
+          "kept attack's target",
+          "[time][wait]")
+{
+    // A turn its AI has passed takes nothing more of its script's or the
+    // engine's. Not so what the mod itself gives its creature: neither is a
+    // choice of its AI's that came after the wait.
+    SECTION("a kept action, its script's wait come as the turn began, before the game layer gave it")
+    {
+        World w(Timed());
+        bool kept = false;
+        w.onPoke = [&](ObjectId id) {
+            if (id != kGenlock)
+            {
+                (void)w.Order(id, CommandType::Wait, Source::Script);
+            }
+            else if (!std::exchange(kept, true))
+            {
+                CHECK(Strike(w, kGenlock, kHero, Source::Script, 4.5f) == Verdict::Hold); // owes half a second
+            }
+        };
+        w.StartFight();
+        UntilTurnOf(w, kGenlock);
+        w.RunFor(200);
+        REQUIRE(kept);
+        int waited = 0;
+        w.onEffect = [&](const Effect &e) {
+            if (e.kind == EffectKind::ReleaseCast && e.target == kGenlock)
+            {
+                // Longer than the 3.5 s its bar has: the pass a wait was.
+                CHECK(w.Wait(kGenlock, 9.0f) == Verdict::Block);
+                ++waited;
+            }
+        };
+        UntilTurnOf(w, kGenlock);
+        REQUIRE(waited == 1);
+        CHECK(Logged(w, "Genlock's wait of 9.00 s is longer than the 3.50 s it has left: its turn ends"));
+        REQUIRE(w.released.size() == 1);
+        CHECK(w.released.front() == Verdict::Allow);
+        CHECK(w.Get(kGenlock).current == CommandType::Attack);
+    }
+    SECTION("the walk to its kept attack's target, its script's wait come in the frame the attack was kept")
+    {
+        World w(Timed());
+        int pokes = 0;
+        w.onPoke = [&](ObjectId id) {
+            if (id != kGenlock)
+            {
+                (void)w.Order(id, CommandType::Wait, Source::Script);
+            }
+            else if (++pokes == 1)
+            {
+                // 4.5 s of swing and 5 m to walk on a bar of 4 s: kept, and
+                // it walks to its target now; and its script, run again,
+                // waits, with nothing left to wait with.
+                CHECK(Act(w, id, CommandType::Attack, Source::Script, 4.5f, 5.0f) == Verdict::Hold);
+                CHECK(w.Wait(id, 2.0f) == Verdict::Block);
+            }
+        };
+        w.StartFight();
+        REQUIRE(w.Current() == kHero);
+        (void)w.machine.OnEndTurn();
+        w.RunFor(300);
+        REQUIRE(pokes == 1);
+        CHECK(Logged(w, "Genlock's wait of 2.00 s is longer than the 0.00 s it has left: its turn ends"));
+        CHECK(w.approaches == 1);
+        CHECK(w.Current() == kGenlock);
+        CHECK(w.Get(kGenlock).busy);
+        CHECK(w.Get(kGenlock).current == CommandType::MoveToObject);
+    }
+}
+
+// A turn its AI plays has a time limit (issue 38): max_turn_ms, thirty
+// seconds of the wall's time, counted from when the turn began. Still going
+// then, it is ended whatever it is doing, "took too long", as an action past
+// max_action_ms is. It bounds what nothing else does, a turn of steps that
+// take nothing of its bar, which the count of a turn's commands ended until
+// it went. The user, of the rules built for those first (2026-10-04): "How
+// about for non-party members we apply a timeout? Don't we already have one?
+// I'm skeptical about hacking in all these conditions. We should keep things
+// simple."
+namespace
+{
+// A genlock whose script answers every telling with `choose`; the others
+// wait as their turns come. The hero's first turn is ended, and the genlock
+// has been told.
+void ToTheGenlocksTurn(World &w, int &told, std::function<void(ObjectId)> choose)
+{
+    w.onPoke = [&w, &told, choose = std::move(choose)](ObjectId id) {
+        if (id != kGenlock)
+        {
+            (void)w.Order(id, CommandType::Wait, Source::Script);
+            return;
+        }
+        ++told;
+        choose(id);
+    };
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    (void)w.machine.OnEndTurn();
+    w.RunFor(300);
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(told == 1);
+}
+
+// What a script does in a turn that would not end by itself: when its
+// creature is told to choose, and with every frame of its turn after.
+struct Endless
+{
+    const char *what;
+    bool timedOnly; // of a turn a bar of time alone: as built an AI is not told to choose again
+    std::function<void(World &, ObjectId)> told;
+    std::function<void(World &, ObjectId, int)> frame;
+};
+
+std::vector<Endless> EndlessTurns()
+{
+    const auto nothing = [](World &, ObjectId, int) {};
+    // A command let through; over at once, or left running.
+    const auto queue = [](CommandType type, Source source, bool over) {
+        return [=](World &w, ObjectId id) {
+            CHECK(w.Order(id, type, source) == Verdict::Allow);
+            if (over)
+            {
+                w.Finish(id);
+            }
+        };
+    };
+    // The last one over and the same queued again, every frame: the turn is
+    // never without a command, and never settles.
+    const auto again = [](CommandType type, Source source) {
+        return [=](World &w, ObjectId id, int) {
+            w.Finish(id);
+            CHECK(w.Order(id, type, source) == Verdict::Allow);
+        };
+    };
+    return {
+        // Told again with time left, and answering each telling with what
+        // takes nothing of its bar (215 times in two minutes, tried with the
+        // count gone and no limit).
+        {"a weapon set switched each time it is told", true, queue(CommandType::SwitchWeaponSets, Source::Script, true),
+         nothing},
+        {"a move over where it stands each time it is told", true,
+         queue(CommandType::MoveToLocation, Source::Script, true), nothing},
+        // It stands two and a half seconds at the walk, is stopped, and is
+        // told again (39 times in two minutes).
+        {"a walk it cannot make each time it is told", true, queue(CommandType::MoveToLocation, Source::Script, false),
+         nothing},
+        // Queued again by its script as each ends: nothing is told, nothing
+        // stands and nothing fails.
+        {"a weapon set switched again as each ends", false, queue(CommandType::SwitchWeaponSets, Source::Script, false),
+         again(CommandType::SwitchWeaponSets, Source::Script)},
+        {"a move that ends where it began, again as each ends", false,
+         queue(CommandType::MoveToLocation, Source::Script, false), again(CommandType::MoveToLocation, Source::Script)},
+        {"the engine's own weapon commands, one as each ends", false,
+         queue(CommandType::SheatheWeapons, Source::Engine, false), again(CommandType::SheatheWeapons, Source::Engine)},
+        // The engine failed attacks within 2 ms before issue 27 had the gate
+        // refuse them unasked: no time runs between the two, each is given
+        // back whole, and the turn never settles for the count of them to be
+        // looked at. (As built an action is given back once a turn, the
+        // second attack is refused, and what is left is the weapon set
+        // switched again and again, above.)
+        {"an attack the engine fails in the frame it was let through, and a weapon set switched, by turns", true,
+         queue(CommandType::SwitchWeaponSets, Source::Script, false),
+         [](World &w, ObjectId id, int) {
+             w.Finish(id);
+             CHECK(Strike(w, id, kHero, Source::Script, 1.0f) == Verdict::Allow);
+             (void)w.Fail(id, "COMMAND_FAILED_INVALID_PATH");
+             CHECK(w.Order(id, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow);
+         }},
+        // The engine's own stuck timer gives a walk up after a second, and
+        // its script queues the same (401 walks in 404 s as built, tried).
+        {"a walk the engine fails after its own second, queued again as each fails", false,
+         queue(CommandType::MoveToLocation, Source::Script, false),
+         [](World &w, ObjectId id, int frame) {
+             if (frame % 62 == 0)
+             {
+                 (void)w.Fail(id, "COMMAND_FAILED_INVALID_PATH");
+                 CHECK(w.Order(id, CommandType::MoveToLocation, Source::Script) == Verdict::Allow);
+             }
+         }},
+    };
+}
+} // namespace
+
+TEST_CASE("a turn an AI plays that would not end by itself is ended at max_turn_ms, whatever it is doing",
+          "[time][machine][limit]")
+{
+    for (const TurnClock clock : {TurnClock::Time, TurnClock::Actions})
+    {
+        for (const Endless &endless : EndlessTurns())
+        {
+            if (endless.timedOnly && clock != TurnClock::Time)
+            {
+                continue;
+            }
+            CAPTURE(endless.what, clock == TurnClock::Time);
+            Settings s = Timed();
+            s.turnClock = clock;
+            World w(s);
+            Turns turns(w);
+            int told = 0;
+            ToTheGenlocksTurn(w, told, [&](ObjectId id) { endless.told(w, id); });
+            w.applied.clear();
+            std::uint32_t ran = 0;
+            for (int frame = 1; ran < 60000 && w.Current() == kGenlock; ran += 16, ++frame)
+            {
+                endless.frame(w, kGenlock, frame);
+                w.Frame();
+            }
+            // Thirty seconds from when its turn began, which was within the
+            // 0.3 s before this count of them.
+            CHECK(ran > 29700 - 16);
+            CHECK(ran <= 30000 + 16);
+            CHECK(turns.ends[kGenlock] == std::vector<std::string>{"took too long"});
+            CHECK(Lines(w, "Genlock's turn is still going after 30000 ms, ") == 1);
+            // What it was at is stopped, and nothing of its bar is saved.
+            CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
+            CHECK_FALSE(w.Get(kGenlock).busy);
+            if (clock == TurnClock::Time)
+            {
+                CHECK(Logged(w, "Genlock's turn ends: took too long; nothing rolls over"));
+            }
+            // The fight goes on, and the next one's time is its own: the
+            // hurlock is told, and waits.
+            UntilTurnOf(w, kGenlock);
+            CHECK(turns.ends[kHurlock] == std::vector<std::string>{"waits"});
+            CHECK(Lines(w, "turn is still going after") == 1);
+        }
+    }
+}
+
+TEST_CASE("max_turn_ms is of the wall's time, as max_action_ms is: at three times the speed as long on the wall",
+          "[time][limit]")
+{
+    for (const float speed : {1.0f, 3.0f})
+    {
+        CAPTURE(speed);
+        Settings s = Timed();
+        s.fightSpeed = speed;
+        s.maxTurnMs = 3000;
+        World w(s);
+        Turns turns(w);
+        int told = 0;
+        ToTheGenlocksTurn(w, told, [&w](ObjectId id) {
+            CHECK(w.Order(id, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow);
+        });
+        std::uint32_t ran = 0;
+        for (; ran < 20000 && w.Current() == kGenlock; ran += 16)
+        {
+            w.Finish(kGenlock);
+            CHECK(w.Order(kGenlock, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow);
+            w.Frame();
+        }
+        // Three seconds of frames at either speed, less the 0.3 s (of the
+        // wall's time at 1, a third of it at 3) its turn had run by then.
+        CHECK(ran > 2700 - 16);
+        CHECK(ran <= 3000 + 16);
+        CHECK(turns.ends[kGenlock] == std::vector<std::string>{"took too long"});
+        CHECK(Logged(w, std::format("Genlock's turn is still going after {} ms, ", speed > 1.0f ? 9000 : 3000)));
+    }
+}
+
+TEST_CASE("a turn the player plays has no time limit; a companion's has one when its tactics play it", "[time][limit]")
+{
+    SECTION("the hero's, 33 s of it at three walks: still hers")
+    {
+        World w(Timed());
+        Turns turns(w);
+        w.StartFight();
+        REQUIRE(w.Current() == kHero);
+        // Three walks of eleven seconds each, creeping: none stands long
+        // enough to be stopped, none is as long as max_action_ms.
+        for (int walk = 0; walk < 3; ++walk)
+        {
+            REQUIRE(w.Order(kHero, CommandType::MoveToLocation, Source::Player, 1.0f) == Verdict::Allow);
+            w.Get(kHero).moving = true;
+            for (int ms = 0; ms < 11000; ms += 16)
+            {
+                if (ms % 2000 == 0)
+                {
+                    w.Get(kHero).position.x += 0.06f;
+                }
+                w.Frame();
+            }
+            w.Get(kHero).moving = false;
+            w.Finish(kHero);
+            w.RunFor(600);
+            REQUIRE(w.Current() == kHero);
+        }
+        CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+        CHECK(turns.ends[kHero].empty());
+        CHECK_FALSE(Logged(w, "turn is still going after"));
+    }
+    SECTION("a companion's, played by its tactics: an AI's turn, and ended like one")
+    {
+        Settings s = Timed();
+        s.partyControl = PartyControl::Tactics;
+        World w(s);
+        Turns turns(w);
+        w.onPoke = [&w](ObjectId id) {
+            if (id != kCompanion)
+            {
+                (void)w.Order(id, CommandType::Wait, Source::Script);
+                return;
+            }
+            CHECK(w.Order(id, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow);
+            w.Finish(id);
+        };
+        w.StartFight();
+        UntilTurnOf(w, kCompanion);
+        std::uint32_t ran = 0;
+        for (; ran < 60000 && w.Current() == kCompanion; ran += 16)
+        {
+            w.Frame();
+        }
+        CHECK(ran > 29000);
+        CHECK(ran <= 30000 + 16);
+        CHECK(turns.ends[kCompanion] == std::vector<std::string>{"took too long"});
+        CHECK(Logged(w, "Alistair's turn is still going after 30000 ms, "));
+    }
+}
+
 TEST_CASE("with time, an AI chooses again while it has time, and its turn ends when its bar is spent", "[time]")
 {
     World w(Timed());
@@ -2202,6 +2696,28 @@ TEST_CASE("a hold is not stopped as an action that takes too long: its bound is 
     CHECK(w.machine.View().timeLeftMs >= 950);
 }
 
+TEST_CASE("a turn ended at max_turn_ms while an effect holds its creature leaves the effect's command be",
+          "[time][holds][limit]")
+{
+    // The limit ends the turn whatever its creature is at, and stops what it
+    // is at; not a hold, which is the engine's to end. (A limit shorter than
+    // a bar, for the case: at thirty seconds the bar ends a hold first.)
+    Settings s = Timed();
+    s.maxTurnMs = 2000;
+    World w(s);
+    Turns turns(w);
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    HeldAsItsTurnComes(w);
+    w.applied.clear();
+    w.RunFor(3000);
+    CHECK(w.Current() != kGenlock);
+    CHECK(turns.ends[kGenlock] == std::vector<std::string>{"took too long"});
+    CHECK(Logged(w, "Genlock's turn is still going after 2000 ms, 0 of its commands let through: ended"));
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock));
+    CHECK(w.Get(kGenlock).busy);
+}
+
 TEST_CASE("a second hold in a turn is charged from when it began, not from the first one's end", "[time][holds]")
 {
     World w(Timed());
@@ -2632,7 +3148,6 @@ TEST_CASE("each command of a turn has max_action_ms of its own", "[machine]")
 {
     Settings s = Fixed();
     s.maxActionMs = 2000;
-    s.maxCommandsPerTurn = 3;
     World w(s);
     int pokes = 0;
     w.onPoke = [&](ObjectId id) {
@@ -3350,6 +3865,22 @@ TEST_CASE("an action's own effect stopped as too long leaves its target owing no
     REQUIRE(w.Current() == kHero);
     CHECK(std::ranges::any_of(
         w.log, [](const std::string &line) { return line.find("still at a execute effect") != std::string::npos; }));
+    CHECK(w.machine.View().timeLeftMs == 4000);
+}
+
+TEST_CASE("an action's own effect ended with its turn at max_turn_ms leaves its target owing nothing of it",
+          "[time][limit]")
+{
+    // The same stall, where the turn's limit comes before the action's (at
+    // the defaults it does: thirty seconds, and three times twelve).
+    Settings s = Timed();
+    s.maxTurnMs = 5000; // and max_action_ms 12 s, its patience 36
+    World w(s, GenlockFirst());
+    Grab(w, 60000); // never lets go
+    UntilTurnOf(w, kHero);
+    REQUIRE(w.Current() == kHero);
+    CHECK(Logged(w, "Genlock's turn is still going after 5000 ms, "));
+    CHECK_FALSE(Logged(w, "still at a execute effect"));
     CHECK(w.machine.View().timeLeftMs == 4000);
 }
 

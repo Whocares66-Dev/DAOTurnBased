@@ -75,7 +75,7 @@ struct Settings
     int aiThinkMs = 1500;              // an AI creature that has chosen nothing by then passes
     int aiFollowUpMs = 500;            // after its action, how long an AI creature has to choose a move
     int maxActionMs = 12000;           // an action still running then is stopped
-    int maxCommandsPerTurn = 6;        // commands an AI creature may start in one turn
+    int maxTurnMs = 30000;             // a turn its AI plays still going then is ended (issue 38)
     int orderRunMs = 0;                // an order that queued nothing while paused: run the world this long (0: off)
     int conditionTurns = 1;            // turns a stun costs, a pin's turns without movement (0: the game's timers)
     // An ability's cooldown in turns: its seconds over this (0: the game's timers).
