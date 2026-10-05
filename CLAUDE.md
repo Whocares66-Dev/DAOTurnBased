@@ -33,6 +33,8 @@ tests/        Catch2 over src/core: scripted cases in a stand-in for the game (W
 tools/        build.ps1 (DAOLib's, for this tree), deploy.ps1, mutants.py (break the core on purpose),
               movie.py (build ui/ into build\ui\turnorder.swf), snapshot.ps1 (look at it in Ruffle),
               sweep.py (who is in a fight, swept through an area by Eluvian: it launches the game),
+              portraits.py (every appearance's portrait on contact sheets, each a real creature in the
+              running game: how a row of src/core/PortraitTable.h is found and checked by eye),
               test_*.py, console.ps1, check-powershell.ps1
 dev/          design, UI, DAOLib's needs, testing; images/ for the docs
 extern/DAOLib the submodule
@@ -67,7 +69,7 @@ The machine is not thread-safe by itself: `src/plugin/Plugin.cpp` holds a mutex 
 
 A change to `src/core`'s logic also runs `build\core\tests\tb_tests.exe "[fights-long]"` (three thousand random fights: a thousand as built, a thousand with a turn a bar of time, and five hundred a clock with hostiles unaware and fighters out of reach; a minute or two) and `python tools\mutants.py` (each mutant must be caught; a new promise gets a mutant). The mutants run side by side, each worker breaking its own copy of the core under `build\mutants\wN` at below normal priority: the working tree is only read, so it can be edited while they run and a stopped run leaves nothing broken (`-j N` sets how many at a time). Each mutant is tried on the scripted cases first and on the random fights only if those let it pass (since 2026-10-04: the fights were 22 s of a mutant's 30, run to their end whatever had failed; a mutant is now about 9 s), and the run says how many only the fights caught. `-Preset core-cov -Coverage` shows what the tests never run. `dev/TESTING.md` has what each found.
 
-Last green 2026-10-04, all of it, against DAOLib `151e624` (whether an attack will find room on its target's melee ring, by the engine's own code, issue 27 and DAOLib's 19; and a command's sub-actions left and how long it still holds its creature, issue 30 and DAOLib's 18, its `5e0108a`; since `387d2ab`): 478 tests (the Python tools' among them), 3,000 fights (a thousand as built, a thousand with a turn a bar of time, and five hundred a clock with strays), 501 of 501 mutants caught, ASan clean, clang-tidy clean, /analyze clean; the movie built and its samples seen in Ruffle and in the game (2026-10-03). Run the mutants after a change to the random fights' arena too: a change to its draws can stop the default seeds reaching a rare case (`dev/TESTING.md`).
+Last green 2026-10-04, all of it, against DAOLib `668cd90` (the camera's close distance and a model's head, issues 33 and 32 and DAOLib's 17; an attack's approach whole, with its line of sight and the place it goes to, DAOLib's 19; since `151e624`): 491 tests (the Python tools' among them), 3,000 fights (a thousand as built, a thousand with a turn a bar of time, and five hundred a clock with strays), 549 of 549 mutants caught, ASan clean, clang-tidy clean, /analyze clean; the movie built and its samples seen in Ruffle and in the game (2026-10-03). Run the mutants after a change to the random fights' arena too: a change to its draws can stop the default seeds reaching a rare case (`dev/TESTING.md`).
 
 ## Writing files from the shell
 
