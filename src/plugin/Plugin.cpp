@@ -17,6 +17,7 @@
 #include "game/Bar.h"
 #include "game/Bridge.h"
 #include "game/Camera.h"
+#include "game/CoSave.h"
 #include "game/Gate.h"
 #include "game/Preview.h"
 #include "game/SettingsFile.h"
@@ -754,6 +755,49 @@ void SettingsTool(void * /*context*/, const char *args, EluvianReply *reply)
     reply->ok(reply, out.c_str());
 }
 
+// Whose turns their tactics play (core/PartyTactics.h; issue 46), for a test:
+// the choice the game's tactics page is to have a box for ("Use when
+// turn-based"), made here until it has one (dev/DAOLIB_NEEDS.md has what the
+// box needs). One of the party by id or by name; with `on` the choice is
+// made, as the box's click will make it, and without it the tool only
+// answers. Who is of the party, and which of them the hero is, is the game's
+// to say (Bridge.h, PartyNow), as this handler is on its thread; whom the
+// caller means and whether there is anything to choose is core's.
+void AutoTool(void * /*context*/, const char *args, EluvianReply *reply)
+{
+    const tb::AutoAskRead read = tb::ReadAutoAsk(args != nullptr ? args : "{}");
+    if (!read.ask)
+    {
+        reply->error(reply, read.error.c_str());
+        return;
+    }
+    // The engine is asked for the party: whatever that throws is the
+    // caller's to read, and the frame's to survive.
+    try
+    {
+        const std::vector<tb::Follower> party = tb::game::PartyNow();
+        const tb::FollowerFound found = tb::FindFollower(*read.ask, party);
+        if (found.who == nullptr)
+        {
+            reply->error(reply, found.error.c_str());
+            return;
+        }
+        tb::TacticsAnswer answer;
+        {
+            const std::lock_guard lock(g.mutex);
+            answer = read.ask->on ? g.machine->ChooseTactics(*found.who, *read.ask->on, "the turnbased_auto tool")
+                                  : g.machine->TacticsOf(*found.who);
+        }
+        reply->ok(reply, tb::ToJson(*found.who, answer).c_str());
+    }
+    catch (const std::exception &e)
+    {
+        spdlog::error("turnbased_auto: {}", e.what());
+        reply->error(reply,
+                     std::format("The party could not be asked: {}. turnbased.log has the line.", e.what()).c_str());
+    }
+}
+
 // A tester's instrument for the cards' portraits (issue 32): the one who
 // writes the framing cannot see it, and the one who sees it finds the numbers
 // with this. One creature's portrait rendered now, by the rule as built or
@@ -833,7 +877,8 @@ void LookForEluvian()
             R"(of whose turn it is (null between turns; yours when the player plays it); actions_left, )"
             R"(movement_left, movement_max; speed (the game's, as the mod set it) and speed_took; held_by_effect; )"
             R"(last_refusal. order: the turns to come, current first, each {id, name, side, rank, health, energy, )"
-            R"(mana, down, current, yours, round}. held: conditions holding creatures {id, name, condition, )"
+            R"(mana, down, current, yours, round, and for a party member auto: its tactics play its turns, from its )"
+            R"(next one (turnbased_auto chooses)}. held: conditions holding creatures {id, name, condition, )"
             R"(turns_owed, on_clock}. cooldowns: abilities held for turns {id, ability, turns}. Ids are 0x... )"
             R"(strings."})",
             &InspectState, nullptr, ELUVIAN_READ_ONLY),
@@ -872,6 +917,23 @@ void LookForEluvian()
             R"("string"}, "value": {"type": "string"}}}})",
             &SettingsTool, nullptr, 0),
         "turnbased_settings");
+    check(
+        e.RegisterTool(
+            "turnbased_auto",
+            R"({"description": "Whose turns their tactics play in a turn-based fight: ask of one of the party, or )"
+            R"(choose for a companion. id (a creature's id, as inspect gives them) or name (its name, in any case) )"
+            R"(says who. on chooses: true, its tactics play its turns as an AI plays its own, bound by the turn; )"
+            R"(false, its turns wait for the player. With no on the tool only answers. A choice applies from that )"
+            R"(companion's next turn: a turn under way is played out as it began. It is kept with the playthrough )"
+            R"((the mod's file in each save), and wins over turnbased.ini's [turns] party, which a companion nothing )"
+            R"(was chosen for goes by. Never the hero: its turns are the player's, and choosing for it is an error. )"
+            R"(Answers id, name, tag, hero, on (the state now), by (chosen, or setting where nothing was), changed, )"
+            R"(applies (from when), turn_under_way (null, or yours or AI: how the turn it has now began). )"
+            R"(inspect turnbased.state has the same on as auto on each party member's card.", )"
+            R"("inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "name": {"type": )"
+            R"("string"}, "on": {"type": "boolean"}}}})",
+            &AutoTool, nullptr, 0),
+        "turnbased_auto");
     check(
         e.RegisterTool(
             "turnbased_portrait",
@@ -953,8 +1015,8 @@ void LookForEluvian()
         spdlog::warn("Eluvian refused {}: its reason is in eluvian.log", name);
     }
     spdlog::info("registered with Eluvian (build {}): inspect turnbased.state; turnbased_end_turn, turnbased_delay, "
-                 "turnbased_seed, turnbased_settings, turnbased_portrait; events turnbased.<kind>, {} described; "
-                 "{} refused",
+                 "turnbased_seed, turnbased_settings, turnbased_auto, turnbased_portrait; events turnbased.<kind>, "
+                 "{} described; {} refused",
                  e.build, described, refused.size());
 }
 
@@ -1000,6 +1062,13 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     g.machine->SetLogLevel(spdlog::default_logger()->should_log(spdlog::level::debug) ? tb::LogLevel::Debug
                                                                                       : tb::LogLevel::Info);
     OpenEvents();
+    // What belongs to the playthrough is kept in the game's saves, and read
+    // from the one loaded (game/CoSave.h): whose turns their tactics play.
+    // Whether or not the gate is placed below: a save made in a session
+    // without turns must not keep the file its slot had before.
+    tb::game::InstallCoSave(*g.machine, g.mutex);
+    spdlog::info("whose tactics play its turns is kept with each save (turnbased.daolib in the save's folder), and "
+                 "read from the one loaded");
     g.bridge = std::make_unique<tb::game::Bridge>(settings);
     g.toggleKey = settings.toggleKey;
     g.toggle = BindToggle(settings.toggleKey) ? ToggleKey::Asked : ToggleKey::Polled;

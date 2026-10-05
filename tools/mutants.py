@@ -83,6 +83,8 @@ JSON = "src/core/Json.cpp"
 KEYS = "src/core/Keys.h"
 PREVIEW = "src/core/Preview.cpp"
 TURNEND = "src/core/TurnEnd.cpp"
+PARTYTACTICS = "src/core/PartyTactics.cpp"
+TEXT = "src/core/Text.h"
 
 MUTANTS = [
     Mutant(
@@ -4209,17 +4211,355 @@ MUTANTS = [
         "    std::ranges::sort(owed);\n",
         "",
     ),
+    # Issue 46: whose turns their tactics play, chosen a companion; a choice
+    # applies from its next turn; never the hero; the setting is what a
+    # companion starts as; and the file a save keeps the choices in.
+    Mutant(
+        "a choice made in a companion's own turn changes who plays the turn under way",
+        MACHINE,
+        "    const bool underWay = budget_.begun && budget_.begun->who == c.id;",
+        "    const bool underWay = false;",
+    ),
+    Mutant(
+        "the turn under way is everyone's: the others' cards go by what was chosen for its creature",
+        MACHINE,
+        "    const bool underWay = budget_.begun && budget_.begun->who == c.id;",
+        "    const bool underWay = budget_.begun.has_value();",
+    ),
+    Mutant(
+        "a turn is played by the setting alone, whatever was chosen for its creature",
+        MACHINE,
+        "    budget_.begun = Budget::Begun{who.id, partyTactics_.Chosen(who.tag)};",
+        "    budget_.begun = Budget::Begun{who.id, std::nullopt};",
+    ),
+    Mutant(
+        "a companion nothing was chosen for does not go by the setting",
+        PARTYTACTICS,
+        "    return !hero && chosen.value_or(start == PartyControl::Tactics);",
+        "    return !hero && chosen.value_or(start != PartyControl::Tactics && start != PartyControl::Manual);",
+    ),
+    Mutant(
+        "a choice of off does not win over party = tactics",
+        PARTYTACTICS,
+        "    return !hero && chosen.value_or(start == PartyControl::Tactics);",
+        "    return !hero && (chosen.value_or(false) || start == PartyControl::Tactics);",
+    ),
+    Mutant(
+        "a choice of on does not win over party = manual",
+        PARTYTACTICS,
+        "    return !hero && chosen.value_or(start == PartyControl::Tactics);",
+        "    return !hero && chosen.value_or(true) && start == PartyControl::Tactics;",
+    ),
+    Mutant(
+        "the hero's tactics play its turns where a choice is kept for its tag",
+        PARTYTACTICS,
+        "    return !hero && chosen.value_or(start == PartyControl::Tactics);",
+        "    return chosen.value_or(!hero && start == PartyControl::Tactics);",
+    ),
+    Mutant(
+        "under party = tactics the hero's tactics play its turns",
+        PARTYTACTICS,
+        "    return !hero && chosen.value_or(start == PartyControl::Tactics);",
+        "    return chosen ? !hero && *chosen : start == PartyControl::Tactics;",
+    ),
+    Mutant(
+        "a choice is kept for the hero",
+        MACHINE,
+        "    const bool changed = !who.hero && partyTactics_.Choose(who.tag, on);",
+        "    const bool changed = partyTactics_.Choose(who.tag, on);",
+    ),
+    Mutant(
+        "what a save holds for the hero's tag is answered as chosen for it",
+        MACHINE,
+        "    const std::optional<bool> chosen = who.hero ? std::nullopt : partyTactics_.Chosen(who.tag);",
+        "    const std::optional<bool> chosen = partyTactics_.Chosen(who.tag);",
+    ),
+    Mutant(
+        "a choice is said to be made in its creature's own turn while another's is under way",
+        MACHINE,
+        "        current != nullptr && current->id == who.id && budget_.begun && budget_.begun->who == who.id)",
+        "        current != nullptr && budget_.begun)",
+    ),
+    Mutant(
+        "a choice made in a turn under way is never said to be",
+        MACHINE,
+        "        current != nullptr && current->id == who.id && budget_.begun && budget_.begun->who == who.id)",
+        "        current != nullptr && current->id == who.id && budget_.begun && budget_.begun->who == who.id && false)",
+    ),
+    Mutant(
+        "the turn under way is said to be its tactics' when it is the player's",
+        MACHINE,
+        "        answer.turnIsTactics = !PlayerControls(*current);",
+        "        answer.turnIsTactics = answer.on;",
+    ),
+    Mutant(
+        "a choice that changed nothing is said in the log all the same",
+        MACHINE,
+        "    answer.changed = changed;\n    if (changed)",
+        "    answer.changed = changed;\n    if (changed || !who.hero)",
+    ),
+    Mutant(
+        "a choice is not said to have changed anything",
+        MACHINE,
+        "    answer.changed = changed;\n    if (changed)",
+        "    answer.changed = false;\n    if (changed)",
+    ),
+    Mutant(
+        "a choice taken back is said in the log as one made",
+        MACHINE,
+        '                        on ? "tactics play its turns" : "turns wait for the player", by,',
+        '                        "tactics play its turns", by,',
+    ),
+    Mutant(
+        "a save's choices are added to the session's, not put in their place",
+        MACHINE,
+        "    partyTactics_ = std::move(choices);",
+        "    for (const auto &[tag, on] : choices.All())\n    {\n        (void)partyTactics_.Choose(tag, on);\n    }",
+    ),
+    Mutant(
+        "a card's word of whose tactics play its next turn is of the turn under way",
+        MACHINE,
+        "    return c.side == Side::Party && tb::TacticsPlay(partyTactics_.Chosen(c.tag), c.hero, settings_.partyControl);",
+        "    return c.side == Side::Party && !PlayerControls(c);",
+    ),
+    Mutant(
+        "an enemy's card says its tactics play its turns",
+        MACHINE,
+        "    return c.side == Side::Party && tb::TacticsPlay(partyTactics_.Chosen(c.tag), c.hero, settings_.partyControl);",
+        "    return tb::TacticsPlay(partyTactics_.Chosen(c.tag), c.hero, PartyControl::Tactics);",
+    ),
+    Mutant(
+        "the cards do not say whose tactics play its turns",
+        MACHINE,
+        "                                 pending, std::wstring{}, std::wstring{}, OnTactics(c)});",
+        "                                 pending, std::wstring{}, std::wstring{}, false});",
+    ),
+    Mutant(
+        "the state says auto of every card, an enemy's too",
+        "src/core/State.cpp",
+        '        if (card.side == Side::Party)\n        {\n            out += std::format(R"(,"auto":{})", Bool(card.tacticsPlay));',
+        '        if (card.side != Side::Ally)\n        {\n            out += std::format(R"(,"auto":{})", Bool(card.tacticsPlay));',
+    ),
+    Mutant(
+        "the state's auto is the card's yours",
+        "src/core/State.cpp",
+        '            out += std::format(R"(,"auto":{})", Bool(card.tacticsPlay));',
+        '            out += std::format(R"(,"auto":{})", Bool(!card.yours));',
+    ),
+    Mutant(
+        "a first choice of what nothing chosen meant is no change",
+        PARTYTACTICS,
+        "        chosen_.emplace(found, std::wstring{tag}, on);\n        return true;",
+        "        chosen_.emplace(found, std::wstring{tag}, on);\n        return on;",
+    ),
+    Mutant(
+        "the choices are kept in the order they were made, and so written and said",
+        PARTYTACTICS,
+        "        chosen_.emplace(found, std::wstring{tag}, on);\n        return true;",
+        "        chosen_.emplace(chosen_.end(), std::wstring{tag}, on);\n        return true;",
+    ),
+    Mutant(
+        "a tag that begins another's is taken for it",
+        PARTYTACTICS,
+        "    if (found == chosen_.end() || found->first != tag)\n    {\n        return std::nullopt;",
+        "    if (found == chosen_.end() || !found->first.starts_with(tag))\n    {\n        return std::nullopt;",
+    ),
+    Mutant(
+        "the same choice again is a change",
+        PARTYTACTICS,
+        "    return std::exchange(found->second, on) != on;",
+        "    return std::exchange(found->second, on) == on;",
+    ),
+    Mutant(
+        "a choice is kept for a creature with no tag",
+        PARTYTACTICS,
+        "    return !tag.empty() && std::ranges::none_of(tag, [](wchar_t c) { return c < 0x20 || c == 0x7F; });",
+        "    return std::ranges::none_of(tag, [](wchar_t c) { return c < 0x20 || c == 0x7F; });",
+    ),
+    Mutant(
+        "a tag with a line's end in it is kept, and written as two lines",
+        PARTYTACTICS,
+        "    return !tag.empty() && std::ranges::none_of(tag, [](wchar_t c) { return c < 0x20 || c == 0x7F; });",
+        "    return !tag.empty() && std::ranges::none_of(tag, [](wchar_t c) { return c == 0x7F; });",
+    ),
+    Mutant(
+        "the log's word of the choices leaves out whether each is on or off",
+        PARTYTACTICS,
+        '        whom += std::format("{}{} {}", whom.empty() ? "" : ", ", Utf8(tag), on ? "on" : "off");',
+        '        whom += std::format("{}{} {}", whom.empty() ? "" : ", ", Utf8(tag), "on");',
+    ),
+    Mutant(
+        "a choice of off is written into the save as on",
+        PARTYTACTICS,
+        "        out += on ? kOn : kOff;",
+        "        out += kOn;",
+    ),
+    Mutant(
+        "the save's file is written with no end, and reads as cut short",
+        PARTYTACTICS,
+        "    out += kEnd;\n    out += '\\n';\n    return out;",
+        "    return out;",
+    ),
+    Mutant(
+        "a file of another version is read as this build's",
+        PARTYTACTICS,
+        "    if (*version != static_cast<std::uint64_t>(kPartyTacticsVersion))",
+        "    if (*version == 0)",
+    ),
+    Mutant(
+        "a file that is not the mod's is read as one, by its second word",
+        PARTYTACTICS,
+        "    if (!head.starts_with(kFileName) || head.size() <= kFileName.size() || head[kFileName.size()] != ' ')",
+        "    if (head.size() <= kFileName.size() || head[kFileName.size()] != ' ')",
+    ),
+    Mutant(
+        "a file cut short before its end is read as whole",
+        PARTYTACTICS,
+        "    if (!ended)\n    {",
+        "    if (!ended && false)\n    {",
+    ),
+    Mutant(
+        "what comes after a file's end is read with the rest",
+        PARTYTACTICS,
+        "        if (ended)\n        {",
+        "        if (ended && false)\n        {",
+    ),
+    Mutant(
+        "a line that is no choice is passed over, and the rest of a damaged file believed",
+        PARTYTACTICS,
+        '            return damaged(\n                std::format("line {} is not a choice (\\"{}<tag>\\" or \\"{}<tag>\\"): damaged", number, kOn, kOff));',
+        "            continue;",
+    ),
+    Mutant(
+        "a choice read from a save for off is taken as on",
+        PARTYTACTICS,
+        "        (void)read.choices.Choose(*tag, on);",
+        "        (void)read.choices.Choose(*tag, true);",
+    ),
+    Mutant(
+        "a follower chosen for twice in a file has the second line's word",
+        PARTYTACTICS,
+        "        if (read.choices.Chosen(*tag))\n        {",
+        "        if (read.choices.Chosen(*tag) && false)\n        {",
+    ),
+    Mutant(
+        "a line with no tag, or a tag that is no text, is passed over",
+        PARTYTACTICS,
+        '            return damaged(std::format("line {} names no follower\'s tag: damaged", number));',
+        "            continue;",
+    ),
+    Mutant(
+        "the tool's on is false for anything but true, with no word of it",
+        PARTYTACTICS,
+        '        if (*on != "true" && *on != "false")',
+        '        if (*on != "true" && *on != "false" && false)',
+    ),
+    Mutant(
+        "the tool takes a name where an id was given and is wrong",
+        PARTYTACTICS,
+        "        if (!ask.id || *ask.id == kNoObject)\n        {\n            return wrong(",
+        "        if ((!ask.id || *ask.id == kNoObject) && !name)\n        {\n            return wrong(",
+    ),
+    Mutant(
+        "the tool takes half an id for the whole of it",
+        PARTYTACTICS,
+        "    if (text.empty() || got.ec != std::errc{} || got.ptr != text.data() + text.size())",
+        "    if (text.empty() || got.ec != std::errc{})",
+    ),
+    Mutant(
+        "the tool finds a companion by its name only in the letters' own case",
+        PARTYTACTICS,
+        "    return std::ranges::equal(a, b, [&](char x, char y) { return lower(x) == lower(y); });",
+        "    return std::ranges::equal(a, b);",
+    ),
+    Mutant(
+        "of two of the party with one name the tool takes the first",
+        PARTYTACTICS,
+        "        if (named.size() > 1)",
+        "        if (named.size() > 2)",
+    ),
+    Mutant(
+        "the tool chooses for the hero",
+        PARTYTACTICS,
+        "    if (who->hero && ask.on)",
+        "    if (who->hero && ask.on && false)",
+    ),
+    Mutant(
+        "the tool does not answer about the hero either",
+        PARTYTACTICS,
+        "    if (who->hero && ask.on)",
+        "    if (who->hero)",
+    ),
+    Mutant(
+        "the tool chooses for one with no tag, and nothing is kept",
+        PARTYTACTICS,
+        "    if (ask.on && !Keepable(who->tag))",
+        "    if (ask.on && !Keepable(who->tag) && false)",
+    ),
+    Mutant(
+        "the tool's answer says a choice was the setting's, and the setting's a choice",
+        PARTYTACTICS,
+        '                       answer.chosen ? "chosen" : "setting", flag(answer.changed));',
+        '                       answer.chosen ? "setting" : "chosen", flag(answer.changed));',
+    ),
+    Mutant(
+        "the tool's answer says a turn its tactics play out is yours",
+        PARTYTACTICS,
+        '    const char *underWay = answer.turnIsTactics ? "AI" : "yours";',
+        '    const char *underWay = "yours";',
+    ),
+    Mutant(
+        "the tool's answer never says a turn is under way",
+        PARTYTACTICS,
+        '    out += R"(,"turn_under_way":)";\n    if (answer.turnUnderWay)',
+        '    out += R"(,"turn_under_way":)";\n    if (answer.turnUnderWay && false)',
+    ),
+    Mutant(
+        "text written longer than it need be is read from a file as text",
+        TEXT,
+        "        if (c < lead->least || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF))",
+        "        if (c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF))",
+    ),
+    Mutant(
+        "half a surrogate pair is read from a file as text",
+        TEXT,
+        "        if (c < lead->least || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF))",
+        "        if (c < lead->least || c > 0x10FFFF)",
+    ),
+    Mutant(
+        "what is past the last character there is is read from a file as text",
+        TEXT,
+        "        if (c < lead->least || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF))",
+        "        if (c < lead->least || (c >= 0xD800 && c <= 0xDFFF))",
+    ),
+    Mutant(
+        "a byte that continues nothing is read from a file as text",
+        TEXT,
+        "            if ((next & 0xC0) != 0x80)",
+        "            if ((next & 0xC0) == 0x40)",
+    ),
+    Mutant(
+        "a character above the first plane is read from a file as one unit",
+        TEXT,
+        "        if (c < 0x10000)\n        {\n            out += static_cast<wchar_t>(c);\n        }\n        else",
+        "        if (c < 0x110000)\n        {\n            out += static_cast<wchar_t>(c);\n        }\n        else",
+    ),
 ]
 
 
 def run(
     command: list[str], cwd: Path, timeout: int | None = None
 ) -> subprocess.CompletedProcess[str]:
+    # What a failing test prints may hold any bytes (a file's damaged text, in
+    # the cases of core/PartyTactics.h): read as UTF-8 with what is not
+    # replaced, where the console's code page would stop the reader on one.
     return subprocess.run(
         command,
         cwd=cwd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
         check=False,
         creationflags=LOW,

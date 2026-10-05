@@ -922,6 +922,9 @@ void TurnMachine::StepPadding(std::vector<Effect> &fx)
 void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
 {
     budget_ = Budget{};
+    // The turn begins: it is played to its end by what was chosen for its
+    // creature as of now (PlayerControls; issue 46).
+    budget_.begun = Budget::Begun{who.id, partyTactics_.Chosen(who.tag)};
     heldByEffect_ = false;
     unaware_ = false;
     budget_.spend = NewSpend(who);
@@ -3795,9 +3798,60 @@ void TurnMachine::EnforcePause(const Observation &obs, std::vector<Effect> &fx) 
     }
 }
 
+// A party member's turns are the player's unless its tactics play them
+// (core/PartyTactics.h: as chosen for it, else as `[turns] party` says; never
+// the hero's). Of the one whose turn is under way, by what was chosen for it
+// as that turn began: a choice made since is its next turn's (issue 46; the
+// user, 2026-10-05: "applies to character's next turn"). The setting is read
+// as it is now, in a turn under way too.
 bool TurnMachine::PlayerControls(const Combatant &c) const
 {
-    return c.side == Side::Party && (settings_.partyControl == PartyControl::Manual || c.hero);
+    const bool underWay = budget_.begun && budget_.begun->who == c.id;
+    const std::optional<bool> chosen = underWay ? budget_.begun->chosen : partyTactics_.Chosen(c.tag);
+    return c.side == Side::Party && !tb::TacticsPlay(chosen, c.hero, settings_.partyControl);
+}
+
+bool TurnMachine::OnTactics(const Combatant &c) const
+{
+    return c.side == Side::Party && tb::TacticsPlay(partyTactics_.Chosen(c.tag), c.hero, settings_.partyControl);
+}
+
+TacticsAnswer TurnMachine::TacticsOf(const Follower &who) const
+{
+    TacticsAnswer answer;
+    // Nothing kept for the hero's tag is asked: its turns are the player's.
+    const std::optional<bool> chosen = who.hero ? std::nullopt : partyTactics_.Chosen(who.tag);
+    answer.chosen = chosen.has_value();
+    answer.on = tb::TacticsPlay(chosen, who.hero, settings_.partyControl);
+    if (const Combatant *current = order_.Current();
+        current != nullptr && current->id == who.id && budget_.begun && budget_.begun->who == who.id)
+    {
+        answer.turnUnderWay = true;
+        answer.turnIsTactics = !PlayerControls(*current);
+    }
+    return answer;
+}
+
+TacticsAnswer TurnMachine::ChooseTactics(const Follower &who, bool on, std::string_view by)
+{
+    const bool changed = !who.hero && partyTactics_.Choose(who.tag, on);
+    TacticsAnswer answer = TacticsOf(who);
+    answer.changed = changed;
+    if (changed)
+    {
+        Log(LogLevel::Info,
+            std::format("{}'s {} from its next turn (set by {}){}", Utf8(who.name),
+                        on ? "tactics play its turns" : "turns wait for the player", by,
+                        answer.turnUnderWay ? std::format("; the turn under way is played out as it began, by {}",
+                                                          answer.turnIsTactics ? "its tactics" : "the player")
+                                            : std::string{}));
+    }
+    return answer;
+}
+
+void TurnMachine::SetPartyTactics(PartyTactics choices)
+{
+    partyTactics_ = std::move(choices);
 }
 
 ObjectId TurnMachine::PartysOwn(ObjectId except) const
@@ -4900,7 +4954,7 @@ TurnView TurnMachine::View() const
             owes != charges_.end() && owes->type == CommandType::UseAbility ? owes->ability : -1;
         view.upcoming.push_back({c.id, c.name, c.tag, c.side, c.rank, c.health, c.down, slot.current, PlayerControls(c),
                                  slot.round, c.energy, c.mana, owes != charges_.end() ? owes->owedMs : 0, waits,
-                                 pending, std::wstring{}, std::wstring{}});
+                                 pending, std::wstring{}, std::wstring{}, OnTactics(c)});
     }
     return view;
 }

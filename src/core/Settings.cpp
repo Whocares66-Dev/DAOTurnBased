@@ -518,6 +518,8 @@ path_check = true
 ; Who commands the party on its turns:
 ;   manual   you, every party member
 ;   tactics  you the hero; the companions run their tactics
+; This is what each companion starts as. Where a playthrough has its own
+; choice for a companion (kept with its saves), that choice wins over this.
 party = manual
 ; End a party member's turn as soon as its action is spent, movement left or
 ; not: the next combatant's turn comes at once. False keeps the turn open to

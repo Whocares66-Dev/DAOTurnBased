@@ -39,6 +39,7 @@ add_executable(
     test_keys.cpp
     test_machine.cpp
     test_noattack.cpp
+    test_partytactics.cpp
     test_perception.cpp
     test_portraits.cpp
     test_preview.cpp

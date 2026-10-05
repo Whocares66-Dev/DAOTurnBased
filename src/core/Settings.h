@@ -26,7 +26,10 @@ enum class MovementRule : std::uint8_t
     Speed,    // meters times the creature's movement speed (haste, slows, ...)
 };
 
-// Who commands the party on its turns.
+// Who commands the party on its turns: what every companion's turns start
+// as. A choice made for one companion in the playthrough wins over it, either
+// way, and the hero's turns are the player's whatever it says
+// (core/PartyTactics.h; issue 46).
 enum class PartyControl : std::uint8_t
 {
     Manual,  // the player, every party member

@@ -37,6 +37,7 @@ class Descriptors(unittest.TestCase):
             names,
             {
                 "turnbased.state",
+                "turnbased_auto",
                 "turnbased_delay",
                 "turnbased_end_turn",
                 "turnbased_portrait",

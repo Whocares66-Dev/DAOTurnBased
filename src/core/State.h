@@ -20,7 +20,9 @@ namespace tb
 //  "last_refusal":"...","notice":"" (the caption's line of an action given
 //  back, while it shows),"order":[{"id":"0x...","name":"...","side":"party",
 //  "rank":100,"health":0.85,"energy":1.0,"mana":false,"down":false,
-//  "current":true,"yours":true,"round":2},...],"held":[{"id":"0x...",
+//  "current":true,"yours":true,"round":2,"auto":false (a party member's
+//  only: its tactics play its turns, from its next one; core/PartyTactics.h)},
+//  ...],"held":[{"id":"0x...",
 //  "name":"...","condition":"disabled","turns_owed":1,"on_clock":false}],
 //  "cooldowns":[{"id":"0x...","ability":617,"turns":2}]}
 [[nodiscard]] std::string ToJson(const MachineState &state);

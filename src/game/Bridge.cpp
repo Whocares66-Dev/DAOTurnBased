@@ -1738,4 +1738,29 @@ void Bridge::LookAt(ObjectId id)
     camera_.TurnTo(id, PlayersOwn());
 }
 
+std::vector<Follower> PartyNow()
+{
+    std::vector<Follower> party;
+    auto *app = dao::CClientExoApp::Get();
+    if (app == nullptr || app->GameModes() == nullptr || !dao::script::CommandsReady() || OutOfWorld(ModeOf(*app)))
+    {
+        return party;
+    }
+    // The hero is the player's own character, the scripts' GetHero, as the
+    // scan has it (Combatant::hero): not the creature the player controls
+    // just now (GetMainControlled) nor the party's leader (GetPartyLeader),
+    // either of which may be a companion (ReadParty has what was read of the
+    // three).
+    const ObjectId hero = api::GetHero();
+    if (api::IsObjectValid(hero) == 0)
+    {
+        return party;
+    }
+    for (const PartyMember &member : ReadParty(hero))
+    {
+        party.push_back(Follower{member.id, api::GetName(member.id), api::GetTag(member.id), member.id == hero});
+    }
+    return party;
+}
+
 } // namespace tb::game

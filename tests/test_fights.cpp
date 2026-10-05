@@ -57,7 +57,13 @@
 //  17. a creature the game has made inactive has no turn, whoever it is: it
 //      is never told to choose and never waited on for an order, no turn is
 //      begun for it, the turn it is made so in is over with that frame's
-//      step, and only such a creature's turn ends "inactive" (issue 44).
+//      step, and only such a creature's turn ends "inactive" (issue 44);
+//  18. who plays a party member's turn is settled as the machine begins it,
+//      by what was chosen for its creature then (whose tactics play its
+//      turns; nothing chosen: the setting), and the turn is played out so,
+//      whatever is chosen meanwhile: one begun as the player's is never told
+//      to choose, one begun as its tactics' never waits on an order. Nothing
+//      is ever chosen for the hero, whose turns are the player's (issue 46).
 //
 // The arena is World.h's stand-in with the creatures made to act. An AI
 // chooses when told to and whenever its command ends, as COMMAND_COMPLETE
@@ -203,6 +209,10 @@ struct Coverage
     int inactiveTurns = 0;   // turns ended "inactive": passed over as they came, or ended as their creature went
     int inactiveMidTurn = 0; // of them, those of a creature made inactive in its own turn
     int inactiveQueued = 0;  // and those of one with something queued on it that the engine did not run
+    int choices = 0;         // whose tactics play its turns, chosen for a companion in a fight or before one (issue 46)
+    int chosenTurns = 0;     // turns of a companion begun by what was chosen for it, the setting saying otherwise
+    int chosenInTurn = 0;    // a choice made in its companion's own turn that would have changed who plays it
+    int choicesForHero = 0;  // and asked for the hero: refused each time
 };
 
 class Arena
@@ -217,10 +227,18 @@ class Arena
     // With them in three fights of ten of the default eighty, the fights
     // took other courses and one floor was no longer reached (an action over
     // at once, given back: 2 where 8 had been).
-    Arena(std::uint64_t seed, Coverage &coverage, TurnClock clock = TurnClock::Actions, bool strays = false)
+    //
+    // choices: the player chooses whose tactics play its turns (issue 46),
+    // for some of the party before the fight and for anyone of it now and
+    // then in it, in a turn or between two. A choice of the test's too, on a
+    // stream of its own: with none made, who plays a turn is the setting's
+    // word, as it was.
+    Arena(std::uint64_t seed, Coverage &coverage, TurnClock clock = TurnClock::Actions, bool strays = false,
+          bool choices = false)
         : rng_(seed), reach_(seed ^ 0x22EAC4ull), waits_(seed ^ 0x3A175ull), notice_(seed ^ 0x29A11ull),
-          asks_(seed ^ 0x45C5ull), burrows_(seed ^ 0x44B0ull), settings_(RandomSettings(rng_, clock)),
-          world_(settings_, RandomFight(rng_, clock), seed), coverage_(coverage), runners_(strays)
+          asks_(seed ^ 0x45C5ull), burrows_(seed ^ 0x44B0ull), chooses_(seed ^ 0x46C4ull),
+          settings_(RandomSettings(rng_, clock)), world_(settings_, RandomFight(rng_, clock), seed),
+          coverage_(coverage), runners_(strays), choices_(choices)
     {
         // The engine's perception says of these that they perceive nobody
         // to fight; the party perceives them.
@@ -233,6 +251,26 @@ class Arena
         }
         world_.record = false;
         world_.machine.SetLogLevel(LogLevel::Info); // the turns, for a failure's message
+        // What a playthrough comes into a fight with: a choice made for
+        // about half of the party, the hero asked for among them.
+        if (choices_)
+        {
+            std::vector<ObjectId> party;
+            for (const Creature &c : world_.creatures)
+            {
+                if (c.side == Side::Party)
+                {
+                    party.push_back(c.id);
+                }
+            }
+            for (const ObjectId id : party)
+            {
+                if (Chance(chooses_, 0.5))
+                {
+                    Choose(id, Chance(chooses_, 0.5));
+                }
+            }
+        }
         world_.onPoke = [this](ObjectId id) {
             // One the gate turned away, told as the fight lets the world go
             // (15): the command it then asks for is its own again. The fallen
@@ -559,6 +597,7 @@ class Arena
         std::vector<Creature> fight;
         const auto add = [&](ObjectId id, Side side, bool hero) {
             Creature c = Make(id, side, hero, L"c" + std::to_wstring(id), Between(rng, 8.0f, 40.0f));
+            c.tag = L"tag" + std::to_wstring(id); // what a choice for it is kept by (18)
             c.speed = Chance(rng, 0.6) ? 1.0f : Between(rng, 0.6f, 1.4f);
             c.position = {Between(rng, -20.0f, 20.0f), Between(rng, -20.0f, 20.0f), 0.0f};
             fight.push_back(std::move(c));
@@ -604,10 +643,77 @@ class Arena
         }
     }
 
+    // Who plays a creature's turns, by the arena's own record of what was
+    // chosen (18): the player a party member's, unless its tactics do; the
+    // hero's always. Of the one whose turn is under way, by what was chosen
+    // as the machine began that turn (begunOf_).
     bool PlayerControls(ObjectId id) const
     {
         const Creature &c = world_.Get(id);
-        return c.side == Side::Party && (settings_.partyControl == PartyControl::Manual || c.hero);
+        const std::optional<bool> chosen = id == begunOf_ ? begunChosen_ : Chosen(id);
+        return c.side == Side::Party && (c.hero || !chosen.value_or(settings_.partyControl == PartyControl::Tactics));
+    }
+
+    std::optional<bool> Chosen(ObjectId id) const
+    {
+        const auto found = chosen_.find(id);
+        return found != chosen_.end() ? std::optional{found->second} : std::nullopt;
+    }
+
+    // The player chooses whose tactics play a party member's turns, as the
+    // tactics page's box will (18): kept for a companion, and the machine's
+    // answer the arena's own; refused for the hero, on or off.
+    void Choose(ObjectId id, bool on)
+    {
+        const Creature &c = world_.Get(id);
+        const std::optional<bool> before = Chosen(id);
+        const bool underWay = id == begunOf_;
+        const bool players = PlayerControls(id);
+        const TacticsAnswer answer =
+            world_.machine.ChooseTactics(Follower{c.id, c.name, c.tag, c.hero}, on, "the arena");
+        if (c.hero)
+        {
+            Must(!answer.on && !answer.chosen && !answer.changed, "something was chosen for the hero");
+            Must(!world_.machine.GetPartyTactics().Chosen(c.tag), "a choice was kept for the hero");
+            ++coverage_.choicesForHero;
+            return;
+        }
+        chosen_[id] = on;
+        ++coverage_.choices;
+        Must(answer.chosen && answer.on == on, "a choice was not kept as it was made");
+        Must(answer.changed == (before != std::optional{on}), "a choice said to change what is kept, or not, wrongly");
+        Must(answer.turnUnderWay == underWay, "a choice said to be made in its creature's own turn, or not, wrongly");
+        // Made in its own turn, that turn is played out the way it began.
+        if (underWay)
+        {
+            Must(answer.turnIsTactics == !players, "the turn under way said to be played otherwise than it began");
+            Must(world_.machine.View().playerTurn == players, "the turn under way changed hands with the choice");
+            coverage_.chosenInTurn += on == players ? 1 : 0;
+        }
+    }
+
+    // Now and then, in a turn or between two, under a menu (where the
+    // tactics page is) or in a conversation: for anyone of the party, and
+    // half the time for the one whose turn it is, if it is of the party,
+    // since that is the choice a turn under way must not follow. On a stream
+    // of its own.
+    void Choosing()
+    {
+        if (!choices_ || !Chance(chooses_, 0.006))
+        {
+            return;
+        }
+        std::vector<ObjectId> party;
+        for (const Creature &c : world_.creatures)
+        {
+            if (c.side == Side::Party)
+            {
+                party.push_back(c.id);
+            }
+        }
+        const ObjectId current = world_.Current();
+        const bool own = current != kNoObject && world_.Get(current).side == Side::Party && Chance(chooses_, 0.5);
+        Choose(own ? current : Pick(chooses_, party), Chance(chooses_, 0.5));
     }
 
     std::vector<ObjectId> Living(bool (*which)(const Creature &)) const
@@ -1171,6 +1277,7 @@ class Arena
     void Tick()
     {
         FollowTurn();
+        Choosing();
         if (interlude_ > 0 && --interlude_ == 0)
         {
             world_.mode = Mode::Combat;
@@ -1932,6 +2039,7 @@ class Arena
                 asked->second.awaited = true;
             }
             turnOpen_ = false;
+            begunOf_ = kNoObject; // put off: it begins again when it comes (18)
             ++coverage_.delays;
             break;
         case EventKind::TurnStarted:
@@ -1945,6 +2053,22 @@ class Arena
             Must(e.kind == EventKind::TurnLost || !world_.Get(e.who).inactive,
                  "a turn begun for one the game has made inactive");
             turnOpen_ = true;
+            // Who plays the turn is settled as the machine begins it, by what
+            // is chosen for its creature now (18): the machine's word for it
+            // is the arena's, by its own record of the choices.
+            if (e.kind == EventKind::TurnStarted)
+            {
+                begunOf_ = e.who;
+                begunChosen_ = Chosen(e.who);
+                Must((e.detail == "yours") == PlayerControls(e.who),
+                     "a turn begun as the player's, or as its AI's, against what was chosen for its creature");
+                const Creature &c = world_.Get(e.who);
+                if (c.side == Side::Party && !c.hero && begunChosen_ &&
+                    *begunChosen_ != (settings_.partyControl == PartyControl::Tactics))
+                {
+                    ++coverage_.chosenTurns;
+                }
+            }
             // Time rolled over into this turn only from one its actor ended
             // (10). The arena's own word for which those are: the three ends
             // that can leave time unspent by the actor's choice.
@@ -1985,10 +2109,13 @@ class Arena
             Must(e.who == world_.Current(), "a turn waits on an order for someone not current");
             Must(world_.machine.GetPhase() == Phase::AwaitingOrder, "a turn said to wait on an order that does not");
             Must(!world_.Get(e.who).inactive, "a turn waits on an order for one the game has made inactive");
+            // And only a turn the player plays, as it began (18).
+            Must(PlayerControls(e.who), "a turn waits on an order for a creature whose AI plays it");
             break;
         case EventKind::TurnEnded: {
             turnsThisFrame_.insert(e.who);
             const bool wasOpen = std::exchange(turnOpen_, false);
+            begunOf_ = kNoObject; // no turn is under way: the next begins by what is chosen then (18)
             Must(EndedByItsActor(e.detail).has_value(), "a turn ended for a reason core/TurnEnd.h does not class");
             endedWhy_[e.who] = e.detail;
             // An unaware hostile's turn (11): skipped only while it has
@@ -2056,6 +2183,7 @@ class Arena
         }
         case EventKind::FightOver:
             turnOpen_ = false;
+            begunOf_ = kNoObject;
             delayed_.clear();
             break;
         case EventKind::Gone:
@@ -2122,6 +2250,10 @@ class Arena
             // Dropped with the world, or a conversation's: a turn may be
             // left open (to resume), never one that starts meanwhile.
             turnOpen_ = phase == Phase::Suspended && turnOpen_;
+            if (phase == Phase::Idle)
+            {
+                begunOf_ = kNoObject;
+            }
         }
         // Effects' time is held exactly while a fight is on (and the setting
         // asks for it): never left held once the fight is over or dropped.
@@ -2313,6 +2445,7 @@ class Arena
     Rng notice_;  // who has not noticed the party, and when it does (issue 29): its own stream
     Rng asks_;    // when one gone from the fight asks for a command (Asks; issue 43): its own stream
     Rng burrows_; // whom the game makes inactive, and for how long (Burrowing; issue 44): its own stream
+    Rng chooses_; // whose tactics the player chooses to play its turns, and when (Choosing; issue 46): its own stream
     Settings settings_;
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
     std::set<ObjectId> secondsKnown_;             // held with seconds the machine could read, and not yet ended by it
@@ -2360,6 +2493,10 @@ class Arena
     ObjectId noTurnOf_ = kNoObject;   // the creature whose turn it is, found with no turn to have (16)
     int noTurnFrames_ = 0;            // and for how many frames running
     bool runners_ = false;            // this fight has combatants that go out of the scan's reach (Wandering)
+    bool choices_ = false;            // the player chooses whose tactics play its turns in this fight (Choosing)
+    std::map<ObjectId, bool> chosen_; // what was chosen, and for whom (18): the arena's own record
+    ObjectId begunOf_ = kNoObject;    // whose turn the machine has begun and not ended, and what was chosen for
+    std::optional<bool> begunChosen_; // it as it began: the turn is played out by that
     std::map<ObjectId, int> away_;    // those gone so, and the frames until each is back or lost for good
     std::uint32_t turnBeganAtMs_ = 0; // turnRunMs_ as the machine began the turn
     // The same, for the turn's time limit (14): not moved as one that had
@@ -2380,14 +2517,16 @@ namespace
 {
 
 // Plays fights from seed 1 up, and says what they reached.
-Coverage PlayFights(std::uint64_t count, TurnClock clock = TurnClock::Actions, bool strays = false)
+Coverage PlayFights(std::uint64_t count, TurnClock clock = TurnClock::Actions, bool strays = false,
+                    bool choices = false)
 {
     Coverage coverage;
     for (std::uint64_t seed = 1; seed <= count; ++seed)
     {
         CAPTURE(seed);
         CAPTURE(strays);
-        Arena arena{seed, coverage, clock, strays};
+        CAPTURE(choices);
+        Arena arena{seed, coverage, clock, strays, choices};
         arena.Play();
     }
     return coverage;
@@ -2608,10 +2747,39 @@ TEST_CASE("random fights with hostiles unaware and combatants out of reach keep 
     }
 }
 
+// The same fights with the player choosing whose tactics play its turns
+// (issue 46): for about half of the party before the fight, the hero asked
+// for among them, and for anyone of it every few seconds in it, in a turn or
+// between two, under a menu or in a conversation. Promise 18 is checked in
+// every fight; here it has something to hold against. Thirty fights a clock.
+TEST_CASE("random fights with the party's tactics chosen and changed in them keep the promises", "[fights]")
+{
+    for (const TurnClock clock : {TurnClock::Actions, TurnClock::Time})
+    {
+        CAPTURE(clock == TurnClock::Time);
+        const Coverage coverage = PlayFights(30, clock, false, true);
+        CHECK(coverage.fights == 30);
+        // Each floor about a third of what seeds 1-30 reach (2026-10-05, as
+        // built and with time: 536 and 545 choices made for companions, 148
+        // and 142 of their turns begun by a choice where the setting said
+        // otherwise, 65 and 60 choices made in a companion's own turn that
+        // would have changed who played it, 351 and 350 asked for the hero
+        // and refused; among 95 and 93 conversations and 26 and 15 turns put
+        // off and taken).
+        CHECK(coverage.choices > 180);
+        CHECK(coverage.chosenTurns > 45);
+        CHECK(coverage.chosenInTurn > 20);
+        CHECK(coverage.choicesForHero > 115);
+        CHECK(coverage.interludes > 30);
+        CHECK(coverage.delayedTurns > 5);
+    }
+}
+
 // One fight by its seed, every line the machine logs printed: a failure's
 // replay. `set TB_SEED=63& set TB_CLOCK=time& tb_tests "[fight-seed]"`; with
 // `set TB_STRAYS=1` too for one of the fights with hostiles unaware and
-// combatants out of reach.
+// combatants out of reach, and `set TB_CHOICES=1` for one in which the player
+// chooses whose tactics play its turns.
 TEST_CASE("one random fight, by the seed in TB_SEED", "[.][fight-seed]")
 {
     const auto env = [](const char *name) {
@@ -2623,7 +2791,8 @@ TEST_CASE("one random fight, by the seed in TB_SEED", "[.][fight-seed]")
     REQUIRE_FALSE(seed.empty());
     Coverage coverage;
     Arena arena{std::strtoull(seed.c_str(), nullptr, 10), coverage,
-                env("TB_CLOCK") == "time" ? TurnClock::Time : TurnClock::Actions, !env("TB_STRAYS").empty()};
+                env("TB_CLOCK") == "time" ? TurnClock::Time : TurnClock::Actions, !env("TB_STRAYS").empty(),
+                !env("TB_CHOICES").empty()};
     arena.echo = true;
     arena.Play();
 }
@@ -2640,4 +2809,11 @@ TEST_CASE("a thousand random fights keep them too", "[.][fights-long]")
     CHECK(strays.fights == 500);
     const Coverage timedStrays = PlayFights(500, TurnClock::Time, true);
     CHECK(timedStrays.fights == 500);
+    // And two hundred and fifty a clock with the party's tactics chosen and
+    // changed in them (18), the second lot among hostiles unaware and
+    // combatants out of reach as well.
+    const Coverage chosen = PlayFights(250, TurnClock::Actions, false, true);
+    CHECK(chosen.fights == 250);
+    const Coverage timedChosen = PlayFights(250, TurnClock::Time, true, true);
+    CHECK(timedChosen.fights == 250);
 }

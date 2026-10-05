@@ -18,6 +18,7 @@
 #pragma once
 
 #include "core/Events.h"
+#include "core/PartyTactics.h"
 #include "core/Rules.h"
 #include "core/Settings.h"
 #include "core/TurnBudget.h"
@@ -383,6 +384,11 @@ struct CardView
     std::int32_t pendingAbility = -1;
     std::wstring pendingIcon;
     std::wstring pendingName;
+    // A party member's: its tactics play its turns, as chosen for it or as
+    // `[turns] party` says (core/PartyTactics.h; issue 46). Of its next turn:
+    // `yours` on the current card is of the turn under way, which is played
+    // out the way it began, so the two may differ there until that turn ends.
+    bool tacticsPlay = false;
 };
 
 struct TurnView
@@ -512,6 +518,42 @@ class TurnMachine
     }
     // New rules apply from the next turn; `enabled` from the next fight.
     void SetSettings(const Settings &settings);
+
+    // Whose turns their tactics play (core/PartyTactics.h; issue 46): a
+    // choice a companion, by its tag, kept for the playthrough; where none
+    // was made, `[turns] party` says, as it always did.
+    //
+    // A choice applies from that companion's next turn (the user,
+    // 2026-10-05: "Should be changeable even during battle, applies to
+    // character's next turn"). A turn begins where the machine hands it out
+    // (BeginTurn: the log's "round N: X's turn (party, yours)" or "(party,
+    // AI)"), and from there to its end it is played by the choice as it
+    // stood then (Budget::begun), whatever is chosen meanwhile. A turn put off
+    // (Delay) is handed out again when it comes at the round's end, and
+    // begins then: nothing of it was spent. One a conversation interrupted
+    // goes on as it began.
+    //
+    // `[turns] party` itself is read as ever, in a turn under way too: a
+    // companion nothing was chosen for as its turn began has that turn handed
+    // over at once when the setting changes (SetSettings), as since the
+    // second play test.
+    //
+    // Never the hero (Follower::hero, Combatant::hero): nothing is kept for
+    // it, and nothing kept for its tag is asked.
+    //
+    // ChooseTactics says once in the log what was chosen and from when, with
+    // who asked (`by`: "the turnbased_auto tool"); TacticsOf only answers.
+    TacticsAnswer ChooseTactics(const Follower &who, bool on, std::string_view by);
+    [[nodiscard]] TacticsAnswer TacticsOf(const Follower &who) const;
+    // The choices of a playthrough that has come into the world (a save
+    // loaded: its own, or none for one from before this; a new game: none),
+    // in place of whatever was chosen before; and the choices now, for the
+    // save being written.
+    void SetPartyTactics(PartyTactics choices);
+    [[nodiscard]] const PartyTactics &GetPartyTactics() const
+    {
+        return partyTactics_;
+    }
 
     [[nodiscard]] Needs WhatToObserve(std::uint32_t nowMs);
     [[nodiscard]] std::vector<Effect> Step(const Observation &observation);
@@ -696,6 +738,18 @@ class TurnMachine
         // What the turn has to spend and has spent (core/TurnBudget.h): one
         // action and meters as built, or a bar of time.
         TurnBudget spend = TurnBudget::Actions(1, 0.0f);
+        // Whose turn was handed out (BeginTurn), and what was chosen for it
+        // then, of whose tactics play its turns (nothing chosen: it began by
+        // the setting, and goes by the setting). The turn is played out by
+        // that, whatever is chosen meanwhile (PlayerControls; issue 46).
+        // None in a turn passed over, and gone with the turn, as all of this
+        // is.
+        struct Begun
+        {
+            ObjectId who = kNoObject;
+            std::optional<bool> chosen;
+        };
+        std::optional<Begun> begun;
         std::uint32_t lastCostMs = 0;    // what the last action let through was charged
         std::uint32_t pendingPaidMs = 0; // what this turn paid, as it began, for an action kept for it
         std::uint32_t rolledMs = 0;      // what of its bar rolled over from the turn before
@@ -892,7 +946,13 @@ class TurnMachine
     void ApplyStatuses(const std::vector<CombatantStatus> &statuses, std::vector<Effect> &fx);
     void TrackMovement(const ActorObservation &actor, std::vector<Effect> &fx);
     void EnforcePause(const Observation &obs, std::vector<Effect> &fx) const;
+    // Whether the player plays this combatant's turns: a party member's,
+    // unless its tactics do (OnTactics, below). Of the one whose turn is
+    // under way, by the choice as that turn began (Budget::begun).
     bool PlayerControls(const Combatant &c) const;
+    // Whether its tactics play a combatant's turns from its next one: a
+    // companion's, as chosen for it, else as `[turns] party` says.
+    [[nodiscard]] bool OnTactics(const Combatant &c) const;
     // The party's own where the machine reaches for the hero and the hero
     // may have fallen (issue 42, whose fault was one creature standing for
     // the party though it was dead): the hero, while standing; else the
@@ -1107,6 +1167,10 @@ class TurnMachine
     TurnOrder order_;
     ObjectId hero_ = kNoObject;
     Budget budget_;
+    // Whose turns their tactics play, as chosen in this playthrough (issue
+    // 46). What the turn under way began by is the turn's own
+    // (Budget::begun).
+    PartyTactics partyTactics_;
 
     bool latch_ = false;     // a fight ended while the game still says combat: no new one until hostiles are seen
     bool stoodDown_ = false; // after an error (StandDown): no turns until the game has left combat

@@ -28,6 +28,10 @@ struct Creature
     Side side = Side::Enemy;
     bool hero = false;
     std::wstring name;
+    // Its tag, as the scan reads it (the scripts' GetTag): what a choice of
+    // whose tactics play its turns is kept by (core/PartyTactics.h). None
+    // unless a case gives one.
+    std::wstring tag;
     float dexterity = 10.0f;
     float speed = 1.0f;
     bool down = false;
@@ -233,6 +237,7 @@ class World
                 x.side = c.side;
                 x.hero = c.hero;
                 x.name = c.name;
+                x.tag = c.tag;
                 x.dexterity = c.dexterity;
                 x.speed = c.speed;
                 x.down = c.down;

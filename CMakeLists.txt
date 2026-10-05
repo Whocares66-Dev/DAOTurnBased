@@ -115,6 +115,7 @@ add_library(
     src/core/GivenBack.cpp
     src/core/Json.cpp
     src/core/Keys.cpp
+    src/core/PartyTactics.cpp
     src/core/Portraits.cpp
     src/core/Preview.cpp
     src/core/Rules.cpp
@@ -191,6 +192,7 @@ add_daolib_plugin(
         src/game/Bar.cpp
         src/game/Bridge.cpp
         src/game/Camera.cpp
+        src/game/CoSave.cpp
         src/game/Gate.cpp
         src/game/Preview.cpp
         src/game/SettingsFile.cpp

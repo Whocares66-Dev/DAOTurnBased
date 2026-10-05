@@ -106,4 +106,11 @@ class Bridge
     std::unordered_map<ObjectId, Known> known_;
 };
 
+// The party as the game has it now (the scripts' GetPartyList), each member
+// with its name and its tag, and which of them is the hero: for a tool that
+// names one of the party (core/PartyTactics.h, FindFollower), and what a
+// choice for a companion is kept by. Nobody where there is no world to ask
+// (the main menu, loading). On the scripts' thread.
+[[nodiscard]] std::vector<Follower> PartyNow();
+
 } // namespace tb::game
