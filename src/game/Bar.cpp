@@ -11,6 +11,7 @@
 #include "dao/Log.h"
 #include "dao/Objects.h"
 #include "dao/Portraits.h"
+#include "dao/Resources.h"
 #include "dao/core/GdaHash.h"
 #include "dao/generated/ScriptApi.h"
 
@@ -182,20 +183,36 @@ void BarLink::KeepScreen(bool fighting)
             return;
         }
         screenAdded_ = true;
-        // A plain SWF is looked for first, the game's own GFX after. Which
-        // one the resource system found says whether the override folder
-        // is searched for movies (its search order is not read yet).
+        // A plain SWF is looked for first, the game's own GFX after. The
+        // movie is the plugin's own, beside turnbased.dll, since issue 47
+        // (2026-10-05; DAOLib's issue 26, f442300): AddScreen has it served
+        // from the plugin's folder where the game's resource system has none
+        // by the name, and HasMovie answers for both places. The game's
+        // comes first, and the one it could have is a copy a deploy before
+        // then left in the override folder: an older movie shown with this
+        // plugin, when the two are a pair (TB_GetView's fields), so that is
+        // a warning. tools/deploy.ps1 takes the copy out.
         const bool swf = dao::gui::HasMovie(L"turnorder.swf");
         const bool gfx = !swf && dao::gui::HasMovie(L"turnorder.gfx");
         movieFound_ = swf || gfx;
-        if (movieFound_)
+        const bool gameSwf = dao::resources::Exists(L"turnorder.swf");
+        const bool gameGfx = !gameSwf && dao::resources::Exists(L"turnorder.gfx");
+        if (gameSwf || gameGfx)
         {
-            spdlog::info("the turn bar's screen is added, and its movie found as turnorder.{}", swf ? "swf" : "gfx");
+            spdlog::warn("the turn bar's screen is added, and its movie found as turnorder.{} by the game's own "
+                         "resource system, which comes before the plugin's folder: a copy in the override folder "
+                         "is the one shown, not the one beside turnbased.dll (tools/deploy.ps1 takes it out)",
+                         gameSwf ? "swf" : "gfx");
+        }
+        else if (movieFound_)
+        {
+            spdlog::info("the turn bar's screen is added, and its movie found as turnorder.{} beside the plugin",
+                         swf ? "swf" : "gfx");
         }
         else
         {
-            spdlog::warn("the turn bar's screen is added, but no turnorder.swf or .gfx is where the game looks "
-                         "(tools/deploy.ps1 puts it in the override folder): the bar stays hidden");
+            spdlog::warn("the turn bar's screen is added, but no turnorder.swf or .gfx is beside the plugin "
+                         "(tools/deploy.ps1 puts it there, in daolib\\plugins\\turnbased): the bar stays hidden");
         }
     }
     if (!movieFound_)

@@ -1,29 +1,49 @@
 <#
 .SYNOPSIS
-    Copy a build's turnbased.dll, and DAOLib's loader, into the game; or take the plugin out.
+    Copy a build's plugin, a folder of its own, and DAOLib's loader into the game; or take the plugin out.
 
 .DESCRIPTION
-    After `.\tools\build.ps1 -Preset <preset>`, puts build\<preset>\daolib\plugins\turnbased.dll
-    (and its .pdb, so a crash log names our frames) under bin_ship\daolib\plugins, and
+    After `.\tools\build.ps1 -Preset <preset>`, puts the plugin's folder,
+    build\<preset>\daolib\plugins\turnbased\ (turnbased.dll, its .pdb, so a crash log names
+    our frames, and the turn bar's movie), under bin_ship\daolib\plugins, and
     build\<preset>\version.dll -- DAOLib's loader, built from extern\DAOLib -- beside
-    DAOrigins.exe, where the game loads it. The game must not be running: it holds
+    DAOrigins.exe, where the game loads it, with the address library's files under
+    bin_ship\daolib\addresses. The game must not be running from that folder: it holds
     those files open.
 
-    Other plugins in bin_ship\daolib\plugins (DAOLib's probe, say) are left as they are.
+    A plugin is a folder since DAOLib's issue 26 (its d892f71; issue 47 here, 2026-10-05):
+    the loader loads plugins\turnbased\turnbased.dll, and a DLL loose in plugins\ is not
+    loaded. Other plugins in bin_ship\daolib\plugins (Eluvian, DAOLib's probe) are left as
+    they are.
 
-    With build\ui\turnorder.swf built (python tools\movie.py), the turn bar's movie goes
-    into Documents\BioWare\Dragon Age\packages\core\override\, the folder the game reads
-    loose resources from, where its resource system finds a screen's movie as it finds
-    its own (DAOLib's dev/GUI.md). The bar shows with `turn_bar = true` in turnbased.ini.
-    A movie older than its source (ui\turnorder, tools\movie.py) stops the deploy, since
-    the plugin and the movie are a pair; -StaleMovie deploys it all the same.
+    The turn bar's movie, build\ui\turnorder.swf (python tools\movie.py), goes beside the
+    dll: DAOLib serves a movie the game has none of by that name from the plugin's own
+    folder (its dao/Gui.h), so nothing of the mod's goes into the game's override folder.
+    The build copies the movie beside the built dll, on every build (CMakeLists.txt,
+    FILES), so the build's folder is the whole of the mod and the deploy copies it as it
+    is. The bar shows with `turn_bar = true` in turnbased.ini. The plugin and the movie
+    are a pair, so the deploy stops at a movie older than its source (ui\turnorder,
+    tools\movie.py), and at one built since the last build, which is not beside the dll
+    yet; -StaleMovie deploys the folder's all the same.
 
-    -Remove deletes turnbased.dll, its .pdb and the movie; the loader stays for other
-    plugins. DAOLib's own `deploy.ps1 -Remove` returns the game to stock. The settings
-    and logs are in Documents\BioWare\Dragon Age\daolib\ and stay.
+    What deploys before that left is taken out, by a deploy and by -Remove: turnbased.dll
+    and its .pdb loose in bin_ship\daolib\plugins, and in
+    Documents\BioWare\Dragon Age\packages\core\override\ the movie turnorder.swf, which
+    the game's resource system would find before the plugin's own, and the two material
+    objects a deploy of 2026-10-01 put there, where they are the mod's own.
+
+    -Remove deletes the plugin's folder and those; the loader and the address files stay
+    for other plugins. DAOLib's own `deploy.ps1 -Remove` returns the game to stock. The
+    settings and logs are in Documents\BioWare\Dragon Age\daolib\ and stay. A folder that
+    is a link, or has one anywhere in it (a junction, a symbolic link), is not deleted: a
+    recursive delete goes through one and empties what it points at.
 
     Neither is done while another agent's claim on the game stands (game.claim.json
     beside the logs, Eluvian's README.md, "The claim"); -Owner is who deploys.
+
+    -Game is another bin_ship folder, and -Documents the game's folder in Documents that
+    goes with it (its override folder, the settings, the logs and the claim): another
+    install's, or a test's throwaway pair (tools\test_deploy.py).
 
 .EXAMPLE
     .\tools\deploy.ps1                 # debug build into the GOG install
@@ -36,6 +56,7 @@ param(
     [string] $Preset = 'debug',
     [switch] $Remove,
     [string] $Game = 'C:\Program Files (x86)\GOG Galaxy\Games\Dragon Age Origins\bin_ship',
+    [string] $Documents = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'BioWare\Dragon Age'),
     [string] $Owner = 'turn-based-agent',
     [switch] $StaleMovie
 )
@@ -45,14 +66,26 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 
 if (-not (Test-Path (Join-Path $Game 'DAOrigins.exe'))) { throw "No DAOrigins.exe in $Game" }
-if (Get-Process -Name DAOrigins -ErrorAction SilentlyContinue) { throw 'DAOrigins.exe is running; close it first' }
+# The game holds its DLLs open, and only one running from this folder holds this folder's.
+# Another has the same process name (EA's install beside GOG's; the player's game while a
+# test deploys into a folder of its own), so the running one is asked where it runs from,
+# as DAOLib's own deploy.ps1 asks. One whose path cannot be read is taken for this folder's.
+$exe = (Resolve-Path (Join-Path $Game 'DAOrigins.exe')).Path
+foreach ($running in @(Get-Process -Name DAOrigins -ErrorAction SilentlyContinue)) {
+    $from = $running.Path
+    if (-not $from -or [string]::Equals($from, $exe, [StringComparison]::OrdinalIgnoreCase)) {
+        $where = if ($from) { $from } else { 'a path that cannot be read' }
+        throw "DAOrigins.exe is running from $where (process $($running.Id)); close it first"
+    }
+    Show-Info "a game is running from $from (process $($running.Id)); it does not hold this folder's files"
+}
 
 # Several agents share the game and its folder, and a test may leave a loader and plugins of
 # its own in place between two runs. game.claim.json says who holds them, the one claim every
 # agent's scripts honour (the user's decision, 2026-10-02; Eluvian's README.md, "The claim"):
 # while one stands that is not this caller's, nothing is copied or taken out. -Owner says who
 # is deploying. The old name too, which a bridge started before the shared name still writes.
-$claimFolder = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'BioWare\Dragon Age\daolib'
+$claimFolder = Join-Path $Documents 'daolib'
 foreach ($claimFile in @((Join-Path $claimFolder 'game.claim.json'), (Join-Path $claimFolder 'eluvian.claim.json'))) {
     if (Test-Path $claimFile) {
         try {
@@ -67,55 +100,146 @@ foreach ($claimFile in @((Join-Path $claimFolder 'game.claim.json'), (Join-Path 
 }
 
 $plugins = Join-Path $Game 'daolib\plugins'
-$plugin = Join-Path $plugins 'turnbased.dll'
-$pluginPdb = Join-Path $plugins 'turnbased.pdb'
-$override = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'BioWare\Dragon Age\packages\core\override'
-$movie = Join-Path $override 'turnorder.swf'
+$pluginFolder = Join-Path $plugins 'turnbased'
+# What a deploy before 2026-10-05 left: the dll and its pdb loose among the plugins, which
+# the loader no longer loads (its log says where one belongs), and the movie in the override
+# folder, which the game's resource system finds before DAOLib looks in the plugin's folder:
+# left there, an old movie would be the one shown with every plugin after it. The script
+# never wrote a turnorder.gfx.
+$override = Join-Path $Documents 'packages\core\override'
+$leftovers = @(
+    (Join-Path $plugins 'turnbased.dll'),
+    (Join-Path $plugins 'turnbased.pdb'),
+    (Join-Path $override 'turnorder.swf')
+)
+# And two material objects that a deploy of 2026-10-01 put in the override folder (dda42c9:
+# the game's move_indicator.mao and move_icon.mao given the semantic that takes a colour, for
+# a movement marker in red). They changed nothing seen and were taken back the same evening
+# (18f3961), which stopped deploying them and left the deployed ones where they were. The
+# names are the game's, so another mod may have its own there: one is taken out only where
+# it says it is this mod's, as both did in a comment at their head.
+$oldMaterials = @(
+    (Join-Path $override 'move_indicator.mao'),
+    (Join-Path $override 'move_icon.mao')
+)
+function Clear-Leftover {
+    foreach ($f in $leftovers) {
+        if (Test-Path -LiteralPath $f) {
+            Remove-Item -LiteralPath $f -Force
+            Show-Ok "removed $f (the layout before a plugin was a folder)"
+        }
+    }
+    foreach ($f in $oldMaterials) {
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        if (Select-String -LiteralPath $f -SimpleMatch -Quiet -Pattern '<!-- DAOTurnBased:') {
+            Remove-Item -LiteralPath $f -Force
+            Show-Ok "removed $f (the mod's own, of 2026-10-01)"
+        }
+        else { Show-Info "left $f, which does not say it is this mod's" }
+    }
+}
+
+# The first link at a path or anywhere under it: a junction, a symbolic link, anything with
+# a reparse point. Remove-Item -Recurse goes through one and deletes what it points at: the
+# game's install was emptied that way (2026-10-02), and the user's rule since is to look
+# before any recursive delete. The walk is by hand, a folder at a time, and stops at the
+# first, so it goes through none itself (Get-ChildItem -Recurse does, in Windows PowerShell 5).
+function Find-ReparsePoint([string] $Path) {
+    $pending = [System.Collections.Generic.Stack[string]]::new()
+    $pending.Push($Path)
+    while ($pending.Count -gt 0) {
+        $item = Get-Item -LiteralPath $pending.Pop() -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $item.FullName }
+        if ($item.PSIsContainer) {
+            foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force) { $pending.Push($child.FullName) }
+        }
+    }
+    return $null
+}
 
 if ($Remove) {
-    foreach ($f in @($plugin, $pluginPdb, $movie)) {
-        if (Test-Path $f) { Remove-Item -Force $f; Show-Ok "removed $f" }
+    if (Test-Path -LiteralPath $pluginFolder) {
+        $link = Find-ReparsePoint $pluginFolder
+        if ($link) {
+            throw "$link is a link (a junction or the like), and a recursive delete would go through it: nothing removed; take the link out by hand first"
+        }
+        Remove-Item -LiteralPath $pluginFolder -Recurse -Force
+        Show-Ok "removed $pluginFolder"
     }
-    Show-Info 'the loader (version.dll) stays; DAOLib''s deploy.ps1 -Remove takes it out'
+    Clear-Leftover
+    Show-Info 'the loader (version.dll) and the address files stay; DAOLib''s deploy.ps1 -Remove takes them out'
     return
 }
 
 $build = Join-Path $repo "build\$Preset"
-$builtPlugin = Join-Path $build 'daolib\plugins\turnbased.dll'
+$builtFolder = Join-Path $build 'daolib\plugins\turnbased'
+$builtPlugin = Join-Path $builtFolder 'turnbased.dll'
 $builtLoader = Join-Path $build 'version.dll'
 foreach ($f in @($builtPlugin, $builtLoader)) {
     if (-not (Test-Path $f)) { throw "No $f; run .\tools\build.ps1 -Preset $Preset first" }
 }
+# DAOLib's address library, one file per build of the game (DAOLib 8b027c6 on): the loader
+# and the plugin read the one for the game they are in, and the loader loads nothing
+# without it. Looked for before anything is copied, with the rest of what a build makes.
+$builtAddresses = Join-Path $build 'daolib\addresses'
+if (-not (Test-Path (Join-Path $builtAddresses '*.bin'))) { throw "No address files in $builtAddresses; the build makes them" }
 
 # The movie is built apart from the dll (tools\movie.py: Java and FFDec), so a tree with a
 # plugin just built can hold a movie of days before; deployed, it went over the newer one in
 # the game with a plain OK, the bar a day behind the plugin that feeds it (issue 5, the
 # playthrough, 2026-10-02). They are a pair (TB_GetView's fields, dev/UI.md): a movie older
 # than its own source stops the deploy before anything is copied.
+#
+# The movie that goes is the one beside the built dll: the build puts build\ui's there, on
+# every build whether the dll links or not, keeping its time (add_daolib_plugin's FILES,
+# DAOLib d892f71; seen 2026-10-05). So the folder is copied as it is, and what is left to
+# catch is a movie built with no build after it, python tools\movie.py and then this: the
+# folder's is the one before it, or none. That stops the deploy too, and a build mends it.
+# With no movie in build\ui the build warns and leaves the folder's as it was: that one, an
+# earlier build's, is held to the sources by its own time.
 $builtMovie = Join-Path $repo 'build\ui\turnorder.swf'
-if ((Test-Path $builtMovie) -and -not $StaleMovie) {
+$folderMovie = Join-Path $builtFolder 'turnorder.swf'
+$movie = @($builtMovie, $folderMovie) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($movie -and -not $StaleMovie) {
     $movieSources = @(Get-ChildItem -Path (Join-Path $repo 'ui\turnorder') -Recurse -File) +
     @(Get-Item (Join-Path $PSScriptRoot 'movie.py'))
     $newest = $movieSources | Sort-Object LastWriteTimeUtc | Select-Object -Last 1
-    if ($newest.LastWriteTimeUtc -gt (Get-Item $builtMovie).LastWriteTimeUtc) {
-        throw "build\ui\turnorder.swf is older than $($newest.FullName.Substring($repo.Length + 1)); run python tools\movie.py first (or -StaleMovie to deploy it as it is); nothing deployed"
+    if ($newest.LastWriteTimeUtc -gt (Get-Item $movie).LastWriteTimeUtc) {
+        throw "$($movie.Substring($repo.Length + 1)) is older than $($newest.FullName.Substring($repo.Length + 1)); run python tools\movie.py and then .\tools\build.ps1 -Preset $Preset first (or -StaleMovie to deploy the folder's as it is); nothing deployed"
+    }
+    # By their bytes, read through .NET. Get-FileHash is not found by a Windows PowerShell that
+    # another program starts with PowerShell 7's module path in its environment, as ctest's
+    # python does under build.ps1 (tools\test_deploy.py met it, 2026-10-05; with PSModulePath
+    # taken out of that environment it is found).
+    $same = $false
+    if (Test-Path $folderMovie) {
+        $same = [Convert]::ToBase64String([IO.File]::ReadAllBytes($folderMovie)) -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($movie))
+    }
+    if (-not $same) {
+        throw "$($folderMovie.Substring($repo.Length + 1)) is not build\ui\turnorder.swf, which was built after the last build; run .\tools\build.ps1 -Preset $Preset first, which copies it there (or -StaleMovie to deploy the folder's as it is); nothing deployed"
     }
 }
 
-New-Item -ItemType Directory -Force $plugins | Out-Null
+New-Item -ItemType Directory -Force $pluginFolder | Out-Null
 Copy-Item -Force $builtLoader (Join-Path $Game 'version.dll')
 $loaderPdb = Join-Path $build 'version.pdb'
 if (Test-Path $loaderPdb) { Copy-Item -Force $loaderPdb (Join-Path $Game 'version.pdb') }
 Show-Ok "loader  -> $(Join-Path $Game 'version.dll')"
-Copy-Item -Force $builtPlugin $plugin
-$builtPdb = [IO.Path]::ChangeExtension($builtPlugin, '.pdb')
-if (Test-Path $builtPdb) { Copy-Item -Force $builtPdb $pluginPdb }
-Show-Ok "plugin  -> $plugin"
-# DAOLib's address library, one file per build of the game (DAOLib 8b027c6 on): the loader
-# and the plugin read the one for the game they are in, and the loader loads nothing
-# without it. As DAOLib's own deploy.ps1 does.
-$builtAddresses = Join-Path $build 'daolib\addresses'
-if (-not (Test-Path (Join-Path $builtAddresses '*.bin'))) { throw "No address files in $builtAddresses; the build makes them" }
+# The plugin and its files, not the linker's leftovers (the incremental link's .ilk beside
+# a debug dll), as DAOLib's own deploy.ps1 copies a plugin's folder.
+Copy-Item -Force -Recurse (Join-Path $builtFolder '*') $pluginFolder -Exclude '*.ilk', '*.exp', '*.lib'
+Show-Ok "plugin  -> $pluginFolder"
+if (Test-Path $folderMovie) {
+    Show-Ok "movie   -> $(Join-Path $pluginFolder 'turnorder.swf')"
+}
+elseif (Test-Path (Join-Path $pluginFolder 'turnorder.swf')) {
+    Show-Warn "no turnorder.swf beside the built dll (python tools\movie.py, then a build): the movie an earlier deploy left in $pluginFolder stays, and may be older than the plugin"
+}
+else {
+    Show-Warn 'no turnorder.swf beside the built dll (python tools\movie.py, then a build): the turn bar has no movie to show'
+}
+Clear-Leftover
+# The address files beside the loader, as DAOLib's own deploy.ps1 puts them.
 $addresses = Join-Path $Game 'daolib\addresses'
 New-Item -ItemType Directory -Force $addresses | Out-Null
 $built = @(Get-ChildItem -Path $builtAddresses -Filter '*.bin' | ForEach-Object { $_.Name })
@@ -134,14 +258,6 @@ foreach ($file in Get-ChildItem -Path $addresses -Filter 'daoaddresses-*.bin') {
     }
 }
 Show-Ok "addresses -> $addresses"
-if (Test-Path $builtMovie) {
-    New-Item -ItemType Directory -Force $override | Out-Null
-    Copy-Item -Force $builtMovie $movie
-    Show-Ok "movie   -> $movie"
-}
-else {
-    Show-Warn 'no build\ui\turnorder.swf (python tools\movie.py): the turn bar has no movie to show'
-}
-$docs = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'BioWare\Dragon Age\daolib'
+$docs = Join-Path $Documents 'daolib'
 Show-Info "settings: $(Join-Path $docs 'turnbased.ini') (written on first run)"
 Show-Info "log:      $(Join-Path $docs 'turnbased.log')"

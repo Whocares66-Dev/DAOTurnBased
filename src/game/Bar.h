@@ -106,9 +106,10 @@ class BarLink
     [[nodiscard]] std::optional<ObjectId> TakeFocus();
 
     // The bar's screen: a GUI scene of ours, "TurnOrder", on the HUD's
-    // layer, its movie turnorder.swf (DAOLib's dao::gui::AddScreen, found by
-    // the game's resource system where it finds its own: tools/deploy.ps1
-    // puts it in the override folder). Added once the GUI system is up,
+    // layer, its movie turnorder.swf (DAOLib's dao::gui::AddScreen, which
+    // has it served from the plugin's own folder, beside turnbased.dll,
+    // where tools/deploy.ps1 puts it: issue 47, 2026-10-05; in the override
+    // folder until then). Added once the GUI system is up,
     // shown while a fight holds the world or a portrait is put up large
     // (TryPortrait), hidden otherwise. From the frame callback: the GUI
     // system's calls belong on the scripts' thread.

@@ -685,8 +685,9 @@ script_events = true
 ; Experimental: centre the camera on whoever's turn it is.
 camera_follow = false
 ; The turn order bar along the top of the screen: whose turn it is and who
-; comes next. Its movie, turnorder.swf, goes in the override folder
-; (tools/deploy.ps1). Off until it is seen in play (dev/UI.md).
+; comes next. Its movie, turnorder.swf, is in the plugin's own folder,
+; beside turnbased.dll (tools/deploy.ps1). Off until it is seen in play
+; (dev/UI.md).
 turn_bar = false
 ; With the bar: the engine renders a portrait for each combatant the game
 ; has none for (enemies, allies), once a fight, as it renders the party's.

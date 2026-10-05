@@ -185,6 +185,16 @@ include("${TB_DAOLIB}/cmake/Quality.cmake")
 # ---------------------------------------------------------------------------
 # turnbased.dll -- the plugin. src/game is every call into the engine,
 # through DAOLib; it is verified by playing (dev/TESTING.md).
+#
+# The plugin is a folder of its own, build\<preset>\daolib\plugins\turnbased\
+# (DAOLib's issue 26, d892f71; issue 47 here, 2026-10-05): the dll, its pdb
+# and, by FILES, the turn bar's movie beside them, where DAOLib serves it to
+# the game from, so nothing of the mod's goes into the override folder. The
+# movie is built outside CMake (python tools\movie.py, into build\ui), and
+# FILES follows it: a target of the plugin's own, turnbased_files, copies it
+# on every build, whether or not the dll links, and one not built yet warns
+# and is skipped. So after a build the folder is the whole of the mod, which
+# tools/deploy.ps1 copies as it is.
 # ---------------------------------------------------------------------------
 add_daolib_plugin(
     turnbased
@@ -198,6 +208,7 @@ add_daolib_plugin(
         src/game/SettingsFile.cpp
         src/game/Targeting.cpp
         src/plugin/Plugin.cpp
+    FILES build/ui/turnorder.swf
 )
 tb_apply_warnings(turnbased)
 target_link_libraries(turnbased PRIVATE tb_core)
@@ -211,5 +222,6 @@ target_compile_definitions(
 # daolib depends on them itself (DAOLib 8ecb9ac), so linking it makes them.
 
 # `cmake --build --preset debug` builds the loader too, so build\<preset>\
-# is a game folder's worth of files: version.dll, daolib\plugins\*.dll.
+# is a game folder's worth of files: version.dll, daolib\addresses and the
+# plugin's folder, daolib\plugins\turnbased.
 add_custom_target(game_folder ALL DEPENDS version turnbased)
