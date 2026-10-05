@@ -262,6 +262,25 @@ struct Sighting
 // fighting) is not unaware: it has someone to choose.
 [[nodiscard]] bool Unaware(Side side, const Perception &perception);
 
+// A creature that is not of the party, that the game does not have in combat
+// and that perceives nobody to fight has no turn (issue 43): it is the
+// game's, and what its script has it do is no choice of a turn's. An enemy
+// so is one that is unaware (above); an ally is so when it perceives nobody
+// hostile to it, which is when the game takes it out of combat
+// (combat_h.nss, Combat_HandleCreatureDisappear). As the turn machine looks
+// at the creature whose turn it is (TurnMachine::Step).
+//
+// The game's combat state alone is not asked here, as it is at the gate,
+// where a script's command for a creature out of combat says of itself that
+// it is not its combat AI's. A look can fall in a frame in which a creature
+// has perceived an enemy and its script has not yet set its combat state
+// (rules_core.nss sets it as it handles EVENT_TYPE_PERCEPTION_APPEAR, which
+// need not be in the frame its perception changed; read in the scripts, not
+// measured in play): that one is about to fight, and "acts from the moment
+// it notices" (issue 29). So, as for unaware, the engine must say on every
+// count that there is nobody for it to fight.
+[[nodiscard]] bool NothingToFight(Side side, const Perception &perception);
+
 // Whether a creature that is in the fight stays in it (issue 29).
 //
 // The game itself ends combat by perception, not by a distance. When a

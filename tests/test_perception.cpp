@@ -234,6 +234,10 @@ TEST_CASE("an unaware hostile that notices in its beat is told at once: it acts 
     int pokes = 0;
     w.onPoke = [&](ObjectId id) {
         ++pokes;
+        // Its script handles what it perceived: the game takes it into
+        // combat, and its AI attacks (rules_core.nss,
+        // EVENT_TYPE_PERCEPTION_APPEAR). In combat, the attack is its turn's.
+        w.Get(id).perception.inCombat = true;
         CHECK(w.Order(id, CommandType::Attack, Source::Script) == Verdict::Allow);
     };
     w.Get(kGenlock).perception = Unnoticing();
@@ -244,7 +248,10 @@ TEST_CASE("an unaware hostile that notices in its beat is told at once: it acts 
     REQUIRE(pokes == 0);
     REQUIRE(w.Current() == kGenlock);
     // The party comes into its perception as the world runs. The scan that
-    // began its turn said unaware; the frame's own look at it says not.
+    // began its turn said unaware; the frame's own look at it says not. The
+    // game does not have it in combat yet (its script has not handled the
+    // event): it perceives someone to fight all the same, has a turn, and is
+    // told (core/Rules.h, NothingToFight).
     w.Get(kGenlock).perception.ofParty = true;
     w.Get(kGenlock).perception.ofFoes = true;
     // (Within two frames: it is told on a look at everyone taken with that
@@ -337,24 +344,71 @@ TEST_CASE("an unaware hostile the game takes into combat in its beat is told at 
     CHECK(pokes == 1);
 }
 
-TEST_CASE("an ally that perceives nobody is told its turn has come all the same", "[perception]")
+TEST_CASE("an ally the game has in combat is told its turn has come, whoever it perceives; one out of combat with "
+          "nobody to fight has no turn",
+          "[perception]")
 {
-    // Unaware is a hostile's: nobody has asked for an ally's turn to be
-    // skipped, and its AI has its own answer to having nobody to fight.
-    auto fight = StandardFight();
-    Creature soldier = Make(0x300, Side::Ally, false, L"Soldier", 19.0f); // after the hero, before the genlock
-    soldier.perception = Unnoticing();
-    fight.push_back(soldier);
-    World w(Fixed(), fight);
-    int pokes = 0;
-    w.onPoke = [&](ObjectId id) { pokes += id == 0x300 ? 1 : 0; };
-    w.StartFight();
-    REQUIRE(w.Current() == kHero);
-    (void)w.machine.OnEndTurn();
-    w.RunFor(100);
-    REQUIRE(w.Current() == 0x300);
-    CHECK(pokes == 1);
-    CHECK_FALSE(w.Said(L"Unaware"));
+    // Unaware is a hostile's: no word stands over an ally, and no beat is
+    // waited for it. But a creature that is not of the party and that the
+    // game does not have in combat has no turn (issue 43), an ally as an
+    // enemy: until 2026-10-05 it was told all the same, its AI had nothing
+    // to choose out of combat, and its turn waited ai_think_ms and ended
+    // "chose nothing".
+    const auto with = [](const Perception &perception) {
+        auto fight = StandardFight();
+        Creature soldier = Make(0x300, Side::Ally, false, L"Soldier", 19.0f); // after the hero, before the genlock
+        soldier.perception = perception;
+        fight.push_back(soldier);
+        return fight;
+    };
+    SECTION("in combat, and perceiving nobody: told, as ever")
+    {
+        Perception alone = Unnoticing();
+        alone.inCombat = true;
+        World w(Fixed(), with(alone));
+        int pokes = 0;
+        w.onPoke = [&](ObjectId id) { pokes += id == 0x300 ? 1 : 0; };
+        w.StartFight();
+        REQUIRE(w.Current() == kHero);
+        (void)w.machine.OnEndTurn();
+        w.RunFor(100);
+        REQUIRE(w.Current() == 0x300);
+        CHECK(pokes == 1);
+        CHECK_FALSE(w.Said(L"Unaware"));
+    }
+    SECTION("out of combat but perceiving an enemy, its script not yet come to it: told")
+    {
+        Perception noticing = Unnoticing();
+        noticing.ofFoes = true;
+        World w(Fixed(), with(noticing));
+        int pokes = 0;
+        w.onPoke = [&](ObjectId id) { pokes += id == 0x300 ? 1 : 0; };
+        w.StartFight();
+        (void)w.machine.OnEndTurn();
+        w.RunFor(100);
+        REQUIRE(w.Current() == 0x300);
+        CHECK(pokes == 1);
+    }
+    SECTION("out of combat, nobody hostile in its perception: no turn, at once, and not told")
+    {
+        World w(Fixed(), with(Unnoticing()));
+        int pokes = 0;
+        w.onPoke = [&](ObjectId id) { pokes += id == 0x300 ? 1 : 0; };
+        Ends ends(w, 0x300);
+        w.StartFight();
+        REQUIRE(w.Current() == kHero);
+        (void)w.machine.OnEndTurn();
+        w.RunFor(100); // a few frames: no thinking time is waited out for it
+        CHECK(w.Current() == kGenlock);
+        CHECK(pokes == 0);
+        CHECK(ends.why == std::vector<std::string>{"out of combat"});
+        // Its turn came in its place in the round, and was said to: the
+        // scripts are told of it as of any.
+        CHECK(Logged(w, "Soldier's turn (ally, AI)"));
+        CHECK_FALSE(w.Said(L"Unaware"));
+        CHECK(Logged(w, "Soldier is out of combat by the game's own word, and perceives nobody to fight: it has no "
+                        "turn, and is the game's"));
+    }
 }
 
 TEST_CASE("with time, an unaware hostile's skipped turn rolls nothing over", "[perception][time]")
@@ -393,7 +447,25 @@ TEST_CASE("a wait of its script's in an unaware hostile's beat is no choice of i
     w.StartFight();
     ToTheGenlock(w);
     w.RunFor(300);
-    CHECK(w.Order(kGenlock, CommandType::Wait, Source::Script) == Verdict::Block);
+    SECTION("out of combat still: the game's, let through, and the beat goes on")
+    {
+        // One the game does not have in combat has no turn, and what its
+        // script has it do is the game's (issue 43): until 2026-10-05 this
+        // wait was refused, and one sent home by its script in its own beat
+        // lost the wait it was sent with.
+        CHECK(w.Order(kGenlock, CommandType::Wait, Source::Script) == Verdict::Allow);
+        CHECK(Logged(w, "Genlock: wait from script let through out of turn: the game does not have it in combat, and "
+                        "it is the game's"));
+        // Its turn is being skipped already: nothing more is said of it,
+        // and the beat is not cut short.
+        CHECK_FALSE(Logged(w, "is out of combat by the game's own word"));
+    }
+    SECTION("taken into combat since the machine last looked: its AI's, refused, and the beat goes on")
+    {
+        w.Get(kGenlock).perception.inCombat = true;
+        CHECK(w.Order(kGenlock, CommandType::Wait, Source::Script) == Verdict::Block);
+        w.Get(kGenlock).perception.inCombat = false; // (and out again, for the beat's end to be seen)
+    }
     w.RunFor(300);
     CHECK(w.Current() == kGenlock);
     CHECK(ends.why.empty());
@@ -416,7 +488,16 @@ TEST_CASE("a wait of a length in an unaware hostile's beat is not taken of its b
     ToTheGenlock(w);
     w.RunFor(300);
     const std::uint32_t before = w.machine.View().timeLeftMs;
-    CHECK(w.Wait(kGenlock, 2.0f) == Verdict::Block);
+    SECTION("out of combat still: the game's, let through, and nothing of the bar is its price")
+    {
+        CHECK(w.Wait(kGenlock, 2.0f) == Verdict::Allow);
+    }
+    SECTION("taken into combat since the machine last looked: its AI's, refused, and not paid for")
+    {
+        w.Get(kGenlock).perception.inCombat = true;
+        CHECK(w.Wait(kGenlock, 2.0f) == Verdict::Block);
+        w.Get(kGenlock).perception.inCombat = false; // (and out again, for the beat's end to be seen)
+    }
     CHECK(w.machine.View().timeLeftMs == before);
     CHECK_FALSE(Logged(w, "Genlock waits 2.00 s"));
     w.RunFor(300);
@@ -427,14 +508,17 @@ TEST_CASE("a wait of a length in an unaware hostile's beat is not taken of its b
     CHECK(pokes == 0);
 }
 
-TEST_CASE("a command of its own in an unaware hostile's beat runs, and unaware still it is not told to choose again",
+TEST_CASE("a command of its script's in an unaware hostile's beat is the game's: it runs, and the turn is skipped all "
+          "the same",
           "[perception][time]")
 {
-    // A script's order (a patrol's next step) comes through the gate as on
-    // any turn of its own, and the turn is not skipped under it. With time
-    // an AI with time left is told to choose again as its command settles:
-    // not one that perceives nobody to fight, which would be waited on for
-    // ai_think_ms with nothing to choose.
+    // A script's order (an ally that has noticed calling it over, its walk
+    // home) for one the game does not have in combat is the game's, in its
+    // own beat as out of its turn (issue 43): let through, nothing of the
+    // turn charged for it, and the beat ends as it would have. Until
+    // 2026-10-05 it was taken for the turn's own: the turn waited the walk
+    // out, measured it against its creature's movement and ended "done", its
+    // time rolled over.
     World w(Timed());
     int pokes = 0;
     w.onPoke = [&](ObjectId) { ++pokes; };
@@ -443,15 +527,24 @@ TEST_CASE("a command of its own in an unaware hostile's beat runs, and unaware s
     w.StartFight();
     ToTheGenlock(w);
     w.RunFor(300);
+    const TurnView before = w.machine.View();
+    w.applied.clear();
     CHECK(w.Order(kGenlock, CommandType::MoveToLocation, Source::Script) == Verdict::Allow);
-    w.RunFor(1500); // past the beat: its walk goes on
-    CHECK(w.Current() == kGenlock);
-    CHECK(ends.why.empty());
-    w.Finish(kGenlock);
-    w.RunFor(700);
-    CHECK(pokes == 0);
+    w.Get(kGenlock).moving = true;
+    for (int i = 0; i < 20; ++i) // and it walks, further than a turn's movement would let it
+    {
+        w.Get(kGenlock).position.x += 1.0f;
+        w.Frame();
+    }
+    CHECK(w.machine.View().timeLeftMs == before.timeLeftMs);
+    CHECK(w.machine.View().movementLeft == before.movementLeft);
+    w.RunFor(1000); // past the beat: its turn is skipped, and its walk goes on
     CHECK(w.Current() == kCompanion);
-    CHECK(ends.why == std::vector<std::string>{"done"});
+    CHECK(ends.why == std::vector<std::string>{"unaware"});
+    CHECK(pokes == 0);
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock));
+    CHECK(w.Get(kGenlock).busy);
+    CHECK_FALSE(w.Said(L"Out of movement"));
 }
 
 TEST_CASE("one that notices under a command of its own is told to choose again once, as anyone", "[perception][time]")
@@ -467,8 +560,13 @@ TEST_CASE("one that notices under a command of its own is told to choose again o
     w.StartFight();
     ToTheGenlock(w);
     w.RunFor(300);
-    CHECK(w.Order(kGenlock, CommandType::MoveToLocation, Source::Script) == Verdict::Allow);
+    // It notices, the game takes it into combat, and its script's command
+    // comes in the same instant, before the machine has looked at it again:
+    // in combat, that command is its turn's own, and the turn is not skipped
+    // under it. (One whose command comes while it is still out of combat is
+    // the case above: the game's, and the beat goes on.)
     w.Get(kGenlock).perception = Perception{};
+    CHECK(w.Order(kGenlock, CommandType::MoveToLocation, Source::Script) == Verdict::Allow);
     w.RunFor(200);
     w.Finish(kGenlock);
     w.RunFor(1200);
@@ -611,7 +709,9 @@ TEST_CASE("running from a fight: an enemy stays in it while either side perceive
     CHECK_FALSE(w.machine.Active());
     CHECK(heard.Left(kHurlock) == 1);
     CHECK(Said(w, "the turn-based fight is over after ") == 1);
-    CHECK(Logged(w, ": no enemy left standing"));
+    // Said as it was: they left it, nobody felled them.
+    CHECK(Logged(w, ": no enemy left in the fight, 2 having left it alive"));
+    CHECK_FALSE(Logged(w, ": no enemy left standing"));
     // And it does not begin again for their being about.
     PlayOn(w, 200);
     CHECK_FALSE(w.machine.Active());
@@ -641,7 +741,7 @@ TEST_CASE("a fight run from is over with its enemies alive, and getting close to
     // perceives the other: the fight is over, and they are alive.
     runFrom();
     REQUIRE_FALSE(w.machine.Active());
-    CHECK(Logged(w, ": no enemy left standing"));
+    CHECK(Logged(w, ": no enemy left in the fight, 2 having left it alive"));
     CHECK(heard.Count(EventKind::FightOver, kNoObject) == 1);
     CHECK_FALSE(w.Get(kGenlock).down);
     CHECK_FALSE(w.Get(kHurlock).down);

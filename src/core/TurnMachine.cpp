@@ -325,6 +325,7 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
             holds_.clear();
             phase_ = Phase::Idle;
         }
+        turnedAway_.clear(); // gone with the world, as everyone is: nobody to tell
         playerPaused_ = false;
         latch_ = false;
         wantScan_ = false;
@@ -445,6 +446,39 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         EndTurn(fx, "its action pending");
         EnforcePause(obs, fx);
         return fx;
+    }
+    // A creature that is not of the party and that the game does not have in
+    // combat has no turn (outOfCombat_; issue 43). Found so while its turn is
+    // being played, that turn ends here: asked for by the gate, where a
+    // script's command came for it with its combat state off (Judge); or by
+    // this frame's look at it, where the engine says on every count that it
+    // has nobody to fight (NothingToFight), whether or not its script has
+    // anything to tell it. Whatever of its own is still running is the
+    // engine's to finish, and nothing is cleared. Not in the beat that skips
+    // an unaware hostile's turn, which goes on to its own end (issue 29).
+    //
+    // Until 2026-10-05 such a turn went on by the turn's own rules: its
+    // script's wait home read as its AI's wait, its walk home held behind a
+    // turn that had ended (issue 38) or measured as the turn's move, and one
+    // that only perceived nobody any more was waited on at its settling and
+    // its turn ended "done", its time rolled over.
+    if (const Combatant *current = order_.Current(); current != nullptr && InTurn() && !unaware_)
+    {
+        const bool asked = std::exchange(outOfCombat_, false);
+        const bool looked = obs.actor && obs.actor->id == current->id && obs.actor->exists && !obs.actor->down;
+        const bool seen = looked && NothingToFight(current->side, obs.actor->perception);
+        if (asked || seen)
+        {
+            if (!asked)
+            {
+                Log(LogLevel::Info, std::format("{} is out of combat by the game's own word, and perceives nobody to "
+                                                "fight: it has no turn, and is the game's",
+                                                Utf8(current->name)));
+            }
+            EndTurn(fx, "out of combat");
+            EnforcePause(obs, fx);
+            return fx;
+        }
     }
     for (const ObjectId id : obs.keptVoid)
     {
@@ -632,6 +666,9 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
         phase_ = Phase::Idle;
         latch_ = true;
         fx.push_back(Effect::Of(EffectKind::Unpause));
+        // No fight after all, and the gate was shut while the look was taken:
+        // whoever it turned away then, of the party or not, is told.
+        LetGo(fx);
         return;
     }
     for (Combatant &c : roster)
@@ -643,6 +680,9 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
         }
     }
     order_.Begin(std::move(roster));
+    // Whoever the gate turned away as combat began and is of the fight has
+    // its turns to come, and is told at each (turnedAway_).
+    std::erase_if(turnedAway_, [&](ObjectId id) { return order_.Find(id) != nullptr; });
     // Said here, where there is a fight: when the game said combat and no
     // enemy was fighting the party, "began" came with no fight and no
     // "over" after it (eluvian-agent's staged wolf, 2026-10-01), and a fight
@@ -702,7 +742,7 @@ void TurnMachine::StartNextTurn(std::vector<Effect> &fx)
 {
     if (!order_.AnyStanding(Side::Enemy))
     {
-        End(fx, "no enemy left standing");
+        End(fx, NoEnemyLeft());
         return;
     }
     if (roundPending_)
@@ -820,6 +860,9 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     lastPosition_.reset();
     endTurnRequested_ = false;
     passRequested_ = false;
+    // (Whatever the gate said of this creature before its turn began, in the
+    // frames the order already named it: the turn is judged as it begins.)
+    outOfCombat_ = false;
     orderPending_ = false;
     turnSince_ = clock_;
 
@@ -2193,6 +2236,22 @@ void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
         return;
     }
     unaware_ = false;
+    // Nor is anyone else told that has no turn (outOfCombat_; issue 43): an
+    // ally the game has out of combat, nobody hostile in its perception. Its
+    // turn ends with the next step, with no beat: nothing is to be read over
+    // an ally that stands by. Until 2026-10-05 it was told, its AI had
+    // nothing to choose out of combat, and its turn waited ai_think_ms and
+    // ended "chose nothing".
+    if (NothingToFightNow(who))
+    {
+        Log(LogLevel::Info, std::format("{} is out of combat by the game's own word, and perceives nobody to fight: "
+                                        "it has no turn, and is the game's",
+                                        Utf8(who.name)));
+        outOfCombat_ = true;
+        deadline_ = clock_;
+        phase_ = Phase::AiThinking;
+        return;
+    }
     fx.push_back(Effect::Of(EffectKind::PokeAi, who.id));
     deadline_ = clock_ + static_cast<std::uint32_t>(settings_.aiThinkMs);
     phase_ = Phase::AiThinking;
@@ -2206,6 +2265,36 @@ bool TurnMachine::UnawareNow(const Combatant &who) const
 {
     const bool looked = seenActor_ && seenActor_->id == who.id && seenActor_->exists;
     return Unaware(who.side, looked ? seenActor_->perception : who.perception);
+}
+
+// Whether this frame's look at the creature whose turn it is finds one that
+// has no turn: not of the party, out of the game's combat and perceiving
+// nobody to fight (core/Rules.h, NothingToFight). By the look alone: a turn
+// is not taken from a creature on a scan's older word, and the frame a turn
+// begins in has looked at it.
+bool TurnMachine::NothingToFightNow(const Combatant &who) const
+{
+    return seenActor_ && seenActor_->id == who.id && seenActor_->exists &&
+           NothingToFight(who.side, seenActor_->perception);
+}
+
+bool TurnMachine::InTurn() const
+{
+    return phase_ == Phase::AwaitingOrder || phase_ == Phase::Dispatching || phase_ == Phase::AiThinking ||
+           phase_ == Phase::Executing || phase_ == Phase::Settling;
+}
+
+// Why a fight with no enemy standing is over: they fell; or the party ran
+// from them, or was lost to them, and they left the fight alive (issue 29's
+// leaving), those that did not having fallen.
+std::string TurnMachine::NoEnemyLeft() const
+{
+    const auto left = std::ranges::count_if(left_, [](const auto &gone) { return gone.second == Side::Enemy; });
+    if (left == 0)
+    {
+        return "no enemy left standing";
+    }
+    return std::format("no enemy left in the fight, {} having left it alive", left);
 }
 
 void TurnMachine::StepAwaiting(const Observation &obs, std::vector<Effect> &fx)
@@ -2225,7 +2314,7 @@ void TurnMachine::StepAwaiting(const Observation &obs, std::vector<Effect> &fx)
         Merge(*obs.scan, fx);
         if (!order_.AnyStanding(Side::Enemy))
         {
-            End(fx, "no enemy left standing");
+            End(fx, NoEnemyLeft());
             return;
         }
     }
@@ -2763,18 +2852,10 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
         EndTurn(fx, "nothing it can get to");
         return;
     }
-    // A hostile that perceives nobody to fight is not told to choose again
-    // (issue 29): it has nothing to choose, and would be waited on for
-    // ai_think_ms. What ran was a script's order, or its last foe has
-    // fallen or gone from its perception; its turn ends as that settles.
-    if (!player && UnawareNow(*current))
-    {
-        if (clock_ >= deadline_)
-        {
-            EndTurn(fx, "done");
-        }
-        return;
-    }
+    // (A hostile that perceives nobody to fight any more is not told to
+    // choose again, issue 29: until 2026-10-05 that was said here, and its
+    // turn ended "done" as it settled. It has no turn now, and that turn has
+    // ended before this step is reached: Step, outOfCombat_.)
     if (!player && budget_.spend.ActionsLeft() > 0 && budget_.refunded && !budget_.retried && !budget_.outOfMovement)
     {
         budget_.retried = true;
@@ -3124,6 +3205,17 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
     resume_ = false;
     Signal(fx, events::kCombatEnd, kNoObject, order_.Round(), 0);
     fx.push_back(Effect::Of(EffectKind::Unpause));
+    // Whoever the fight held is given back to the game, so that it goes on
+    // as it would have with no mod there. The user, 2026-10-04, of a fight
+    // the party runs from: "If you run far enough away from the enemies, the
+    // fight should end. That's what rtwp does. In that case the enemies
+    // should go back to normal. Getting close to them should retrigger a
+    // fight." (issues 42 and 43). One the game has taken out of combat was
+    // the game's again there and then, its script's commands let through
+    // (Judge), so it has stood down already, by the game's own rules. What
+    // is left to give back is the AI of those the game still has in combat,
+    // which a held command leaves waiting for good: they are told to choose.
+    //
     // Those that waited outside are the game's again, and are told so: the
     // one command each tried was held, and an AI whose command was held
     // tries no other by itself. In the Korcari Wilds a hurlock, an archer
@@ -3146,6 +3238,19 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
     // waits on the first's dead, never began (issue 12, 2026-10-03).
     // Not one a condition holds: it cannot choose, and its own effect's
     // end runs its AI.
+    // Not the party's (issue 12 left them out and gave no reason; read
+    // 2026-10-04 with issue 43): the game's own scripts run a party member's
+    // AI again where they never run another creature's. Attacked in combat
+    // with nothing to do, it chooses at once; and each time one of the party
+    // is attacked, or the one the player controls attacks, every party
+    // member doing nothing is given a wait of a second, whose end runs its
+    // AI (rules_core.nss, EVENT_TYPE_ATTACKED; ai_main_h_2.nss,
+    // AI_SetPartyAllowedToAttack: "giving a wait command if the follower is
+    // doing nothing (to enable combat commands again)"). So with its enemies
+    // told, the party is woken by the first blow, and until one comes it
+    // waits on the player, as it has through the fight. Told here, every
+    // companion would run its tactics in the seconds after each fight,
+    // before the game has left combat: the user's to choose.
     for (const Combatant &c : order_.All())
     {
         const auto hold = held_.find(c.id);
@@ -3155,6 +3260,9 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
             fx.push_back(Effect::Of(EffectKind::PokeAi, c.id));
         }
     }
+    // And whoever else the fight held, with no turn of its own to mend it:
+    // those that left it alive, and one in combat that no scan found.
+    LetGo(fx);
     outside_.clear();
     order_.Clear();
     held_.clear();
@@ -3162,6 +3270,69 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
     phase_ = Phase::Idle;
     latch_ = true;
     wantScan_ = false;
+}
+
+// The gate is where the fight breaks a creature's AI: a command turned away
+// never ends, and a command's end is what runs the AI again (turnedAway_ has
+// what was read of the game's scripts). A combatant is told at its turn.
+// Those with no turn to come are told here, as the fight lets the world go,
+// the machine idle by the time the game layer tells them: the same telling,
+// once each.
+// - Those that left the fight alive (left_), in the order as gone or dropped
+//   from it: all of them, in a fight the party ran from. Each was held like
+//   any combatant while the game had it in combat, and no turn has told it
+//   since. Core cannot say which of them the game still has in combat (they
+//   are no longer read), so each is told, and for one that is not the
+//   telling is nothing much (below).
+// - Those in combat that the gate turned away outside the order
+//   (turnedAway_).
+//
+// What one told then does is the game's: in combat its AI chooses, and it
+// fights on; out of combat its ambient behaviour goes on, unless it is busy,
+// as one walking home is (rules_core.nss, EVENT_TYPE_COMMAND_COMPLETE;
+// sys_ambient_h.nss, Ambient_CommandComplete: "Busy - command(s) in queue");
+// disabled, the game's script discards the telling; and dead or gone it is
+// passed over by the game layer, which alone can ask (Bridge.cpp, PokeAi:
+// outside the order nobody reads whether a creature still stands). A telling
+// to one that is busy does nothing either way (ai_main_h_2.nss,
+// AI_DetermineCombatRound: "Do not run any AI if the creature is doing
+// something right now").
+//
+// Not one told with this step already: a combatant still standing, one that
+// waited outside (End). In order of their ids, so that a fight is told the
+// same way each time it is played.
+//
+// Whoever was turned away is told, wherever it stands: the gate is asked
+// about every creature of the area, so a battle that is nobody's 200 m off
+// was stopped by this fight too, a command each, and is started again.
+void TurnMachine::LetGo(std::vector<Effect> &fx)
+{
+    std::vector<ObjectId> owed(turnedAway_.begin(), turnedAway_.end());
+    for (const auto &[id, side] : left_)
+    {
+        owed.push_back(id);
+    }
+    std::ranges::sort(owed);
+    owed.erase(std::ranges::unique(owed).begin(), owed.end());
+    turnedAway_.clear();
+    std::string said;
+    int told = 0;
+    for (const ObjectId id : owed)
+    {
+        if (std::ranges::any_of(fx, [&](const Effect &e) { return e.kind == EffectKind::PokeAi && e.target == id; }))
+        {
+            continue;
+        }
+        fx.push_back(Effect::Of(EffectKind::PokeAi, id));
+        said += std::format("{}{:#x}", told++ == 0 ? "" : ", ", id);
+    }
+    if (told > 0)
+    {
+        Log(LogLevel::Info,
+            std::format("{} that left the fight alive, or that the gate turned away outside it, {} told to choose, "
+                        "the world theirs again: {}",
+                        told, told == 1 ? "is" : "are", said));
+    }
 }
 
 // A frame threw between the machine's step and the engine's taking its
@@ -3282,7 +3453,8 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
         else if (!seen.down)
         {
             outside_.erase(seen.id);
-            left_.erase(seen.id); // dropped from the order since it left: back as one that joins
+            left_.erase(seen.id);       // dropped from the order since it left: back as one that joins
+            turnedAway_.erase(seen.id); // its turns are to come: told at each, and not as one with none
             Combatant joining = seen;
             joining.initiative = RollInitiative(rng_, seen.dexterity, settings_, seen.survival);
             Log(LogLevel::Info, std::format("{} joins the fight ({}, initiative {})", Utf8(joining.name),
@@ -3326,7 +3498,7 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
         c->down = true;
         absentSince_.erase(id);
         afar_.erase(id);
-        left_.insert(id);
+        left_.emplace(id, c->side);
         // Why, where the scan read it: alive, and out of perception.
         const bool read = std::ranges::any_of(scan, [&](const Combatant &s) { return s.id == id; });
         Log(LogLevel::Info,
@@ -3929,6 +4101,10 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
                 outsiderScanNow_ = lastNow_;
                 wantScan_ = true;
             }
+            // Whether or not that scan finds it: turned away, it is owed the
+            // telling that a combatant has at its turn, and one that joins
+            // is forgotten there (turnedAway_; issue 43).
+            turnedAway_.insert(request.object);
             if (Logs(LogLevel::Debug))
             {
                 Log(LogLevel::Debug, std::format("{:#010x}, fighting but not yet in the order: its {} waits",
@@ -3939,6 +4115,71 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         return Verdict::Allow;
     }
     const Combatant *current = order_.Current();
+    const bool itsTurn = current != nullptr && current->id == request.object;
+    // The cast its creature charged, or with time the action it kept, given
+    // again by the game layer as its turn began (LandCast): not an order of
+    // this turn's.
+    const bool landing = landing_ && landing_->caster == who->id && request.type == landing_->type &&
+                         request.ability == landing_->ability;
+    // The walk to its kept attack's target, given by the game layer
+    // (EffectKind::Approach): the mod's own doing, as a kept action given
+    // again is (landing), and no choice of its creature's.
+    const bool approaching = approach_ && kind == CommandKind::Move && request.source == Source::Script;
+    // The fight holds what the game has in combat. One the game has taken
+    // out of combat, or has not taken into it, is the game's, there and
+    // then: what its script has it do goes through, as it does for every
+    // such creature outside the order (above). The user, 2026-10-04: "If you
+    // run far enough away from the enemies, the fight should end. That's
+    // what rtwp does. In that case the enemies should go back to normal."
+    // Going back to normal is the game's own doing, two commands: an enemy
+    // that perceives no hostile any more is taken out of combat and sent
+    // home by its script, a wait of one to three seconds and a walk to where
+    // it was placed (combat_h.nss, Combat_HandleCreatureDisappear;
+    // creature_core.nss, EVENT_TYPE_COMBAT_END; sys_rubberband_h.nss,
+    // Rubber_GoHome). Held as out of turn, they were lost: in Ortan Thaig,
+    // 2026-10-04, `Stone Golem: wait from script held, not its turn` and
+    // `Stone Golem: move to location from script held, not its turn` as the
+    // last party member its fight's enemies perceived fell, the fight over
+    // seven seconds on with seven alive, standing where they had lost the
+    // party (issue 43).
+    //
+    // Whoever's turn it is, its own included: this is asked before the
+    // turn's own rules, since such a creature has no turn (outOfCombat_). If
+    // its turn is being played, that turn ends with the next step, and
+    // nothing of it is charged for what is let through here; in the beat
+    // that skips an unaware hostile's turn the beat goes on. The first build
+    // (2026-10-05) asked it only of a creature out of its turn, and one the
+    // game took out of combat in its own turn stood where it was (the Dead
+    // Trenches' shriek: outOfCombat_, in the header), its walk home refused
+    // by "a turn that has ended accepts nothing more of its creature's own"
+    // (issue 38), which is asked of one that has a turn.
+    //
+    // Not its combat AI's choices, which the scripts make only for one in
+    // combat (rules_core.nss, EVENT_TYPE_COMMAND_COMPLETE), and as it is
+    // taken into combat its script clears what it was at (the same,
+    // EVENT_TYPE_PERCEPTION_APPEAR: SetCombatState, WR_ClearAllCommands):
+    // from then it is held like anyone, and told at its turn. Not the
+    // party's own, the party being the player's; nor the player's order or
+    // the engine's own command, which are not its script's; nor what the mod
+    // itself gives the creature whose turn it is (landing, approaching).
+    if (request.source == Source::Script && !request.inCombat && who->side != Side::Party &&
+        !(itsTurn && (landing || approaching)))
+    {
+        if (itsTurn && !unaware_ && !outOfCombat_)
+        {
+            outOfCombat_ = true;
+            Log(LogLevel::Info, std::format("{} is out of combat by the game's own word, its script's {} coming for "
+                                            "it: it has no turn, and is the game's",
+                                            Utf8(who->name), Name(request.type)));
+        }
+        if (Logs(LogLevel::Debug))
+        {
+            Log(LogLevel::Debug, std::format("{}: {} from script let through out of turn: the game does not have it "
+                                             "in combat, and it is the game's",
+                                             Utf8(who->name), Name(request.type)));
+        }
+        return Verdict::Allow;
+    }
     if (current == nullptr || current->id != request.object)
     {
         if (request.source == Source::Player)
@@ -3964,15 +4205,6 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     }
     const bool player = PlayerControls(*current);
     const bool asked = request.source == Source::Player; // the player's own order
-    // The cast its creature charged, or with time the action it kept, given
-    // again by the game layer as its turn began (LandCast): not an order of
-    // this turn's.
-    const bool landing = landing_ && landing_->caster == who->id && request.type == landing_->type &&
-                         request.ability == landing_->ability;
-    // The walk to its kept attack's target, given by the game layer
-    // (EffectKind::Approach): the mod's own doing, as a kept action given
-    // again is (landing), and no choice of its creature's.
-    const bool approaching = approach_ && kind == CommandKind::Move && request.source == Source::Script;
     // When a turn has ended, nothing more of its creature's own is accepted:
     // not its script's, not the engine's, not an order. It stays the current
     // turn only until what its creature already has in hand is over and the

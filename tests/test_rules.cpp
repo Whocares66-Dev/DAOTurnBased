@@ -405,6 +405,46 @@ TEST_CASE("a hostile that has not noticed is left out of a fight that has an ene
     CHECK_FALSE(tb::FightsUnawares(false, false, true, near, settings));
 }
 
+TEST_CASE("one not of the party, out of the game's combat and perceiving nobody to fight, has nothing to fight",
+          "[rules]")
+{
+    // Issue 43: such a creature has no turn. The engine says so on every
+    // count, as for unaware, which is an enemy's case of it.
+    tb::Perception nobody;
+    nobody.ofParty = false;
+    nobody.ofFoes = false;
+    nobody.inCombat = false;
+    CHECK(tb::NothingToFight(tb::Side::Enemy, nobody));
+    CHECK(tb::NothingToFight(tb::Side::Ally, nobody));
+    // Never one of the party: its turns are the player's.
+    CHECK_FALSE(tb::NothingToFight(tb::Side::Party, nobody));
+    // In combat by the game's word: it has its turn, whoever it perceives.
+    tb::Perception fighting = nobody;
+    fighting.inCombat = true;
+    CHECK_FALSE(tb::NothingToFight(tb::Side::Enemy, fighting));
+    CHECK_FALSE(tb::NothingToFight(tb::Side::Ally, fighting));
+    // Out of combat with someone hostile in its perception: about to fight,
+    // its script not yet come to what it perceived.
+    tb::Perception foe = nobody;
+    foe.ofFoes = true;
+    CHECK_FALSE(tb::NothingToFight(tb::Side::Enemy, foe));
+    CHECK_FALSE(tb::NothingToFight(tb::Side::Ally, foe));
+    // A party member in its perception is someone to fight for an enemy, and
+    // nobody to fight for an ally of the party's.
+    tb::Perception party = nobody;
+    party.ofParty = true;
+    CHECK_FALSE(tb::NothingToFight(tb::Side::Enemy, party));
+    CHECK(tb::NothingToFight(tb::Side::Ally, party));
+    // Whether the party perceives it is not the question.
+    nobody.byParty = false;
+    CHECK(tb::NothingToFight(tb::Side::Enemy, nobody));
+    // An enemy with nothing to fight is unaware, and the other way round.
+    for (const tb::Perception &p : {nobody, fighting, foe, party, tb::Perception{}})
+    {
+        CHECK(tb::NothingToFight(tb::Side::Enemy, p) == tb::Unaware(tb::Side::Enemy, p));
+    }
+}
+
 TEST_CASE("a hostile not in combat that perceives no party member and nobody else hostile to it is unaware", "[rules]")
 {
     // Issue 29: unaware is the engine's word, read of its perception and of

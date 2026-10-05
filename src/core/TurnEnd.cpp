@@ -39,6 +39,10 @@ constexpr std::array kTurnEnds{
     // A hostile that has noticed nobody to fight: its turn is skipped
     // (core/Rules.h, Unaware).
     TurnEnd{"unaware", false},
+    // One that is not of the party, taken out of combat by the game in its
+    // own turn, or found so as its turn came: it has no turn, and what is
+    // left of this one is nobody's to save (issue 43).
+    TurnEnd{"out of combat", false},
     // Told its turn had come, its AI queued nothing within ai_think_ms.
     TurnEnd{"chose nothing", false},
     // Its command ran past max_action_ms and was stopped; or, a turn its AI

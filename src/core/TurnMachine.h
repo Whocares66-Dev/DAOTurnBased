@@ -847,6 +847,10 @@ class TurnMachine
     void AwaitOrder(std::string_view why);
     void EndTurn(std::vector<Effect> &fx, std::string_view why);
     void End(std::vector<Effect> &fx, std::string_view why);
+    // The fight lets the world go: those that left it alive (left_) and
+    // whoever the gate turned away outside it (turnedAway_) are told to
+    // choose, once each, unless told with this step already.
+    void LetGo(std::vector<Effect> &fx);
     void Merge(const std::vector<Combatant> &scan, std::vector<Effect> &fx);
     void ApplyStatuses(const std::vector<CombatantStatus> &statuses, std::vector<Effect> &fx);
     void TrackMovement(const ActorObservation &actor, std::vector<Effect> &fx);
@@ -914,6 +918,34 @@ class TurnMachine
     // script's order), or as the beat ends and its turn with it.
     bool unaware_ = false;
     [[nodiscard]] bool UnawareNow(const Combatant &who) const;
+    // A creature that is not of the party and that the game does not have in
+    // combat has no turn (issue 43; the user, 2026-10-04, of a fight the
+    // party runs from: "the enemies should go back to normal"). At a turn's
+    // start that was so already for a hostile that has noticed nobody, whose
+    // turn is skipped after its beat (unaware_). It is so through the turn:
+    // found out of combat while its turn is being played, by a script's
+    // command for it at the gate (Judge) or by the frame's look at it (Step;
+    // core/Rules.h, NothingToFight), its turn ends there and then, "out of
+    // combat", nothing rolled over; and what its script has it do is the
+    // game's, let through and charged to nothing. An action of its own still
+    // running is the engine's to finish. Back in combat by its next turn, it
+    // has that turn like anyone.
+    //
+    // In the Dead Trenches (2026-10-05) the game took a shriek out of combat
+    // while the turn was the shriek's own: "Shriek's wait of 3.00 s is longer
+    // than the 0.19 s it has left: its turn ends", "Shriek: move to location
+    // from script held, its turn is over: it has passed". The wait and the
+    // walk were the game's sending it home (sys_rubberband_h.nss,
+    // Rubber_GoHome), read as its AI's pass and as a command after it;
+    // fifteen seconds after the fight it stood 17.5 m from where it began. A
+    // genlock had the same line in the same fight.
+    //
+    // Asked for by the gate, taken up with the next step.
+    bool outOfCombat_ = false;
+    [[nodiscard]] bool NothingToFightNow(const Combatant &who) const;
+    // A turn is being played: handed to its player or its AI, at its command,
+    // or settling after it. Not between two turns.
+    [[nodiscard]] bool InTurn() const;
     // The current creature as the frame saw it: at a turn's start, the one
     // whose turn begins (the turn-start frame observes it). An AI held by
     // an effect is not told its turn has come, since it would choose at
@@ -1058,7 +1090,14 @@ class TurnMachine
     // kAbsentMs): down in the order, and only a scan that finds one again
     // brings it back. Its status, read every frame, said "alive", which
     // brought it up again until the next scan put it down: the flapping.
-    std::unordered_set<ObjectId> left_;
+    // Each with the side it left as: a fight that ends with no enemy
+    // standing says whether they fell or left it (NoEnemyLeft). In the Dead
+    // Trenches (2026-10-05) "the turn-based fight is over after 11 rounds: no
+    // enemy left standing" was said of six that the party had run from, all
+    // alive. One dropped from the order as the round turns has no side there
+    // any more.
+    std::unordered_map<ObjectId, Side> left_;
+    [[nodiscard]] std::string NoEnemyLeft() const;
     // The last refusal an event was emitted for, and when: the same one
     // again within a second is not another event. In the user's eight
     // fights 1,097 came, up to 64 in a second (a follower's move asked for
@@ -1075,6 +1114,25 @@ class TurnMachine
     static constexpr std::uint32_t kRefusedEventMs = 1000;
     // Fighting near, but not the party (Combatant::engaged): said once each.
     std::unordered_set<ObjectId> outside_;
+    // Those in combat whose command the gate turned away while they were not
+    // in the order: one no scan has found, or found yet; one dropped from it
+    // since it left. A command turned away never ends, and for a creature
+    // that is not of the party a command's end is the one thing that runs
+    // its AI again (rules_core.nss: on first perceiving a hostile "Initial
+    // call - all others should be when commands are completed";
+    // EVENT_TYPE_COMMAND_COMPLETE runs AI_DetermineCombatRound; struck in
+    // combat, EVENT_TYPE_ATTACKED and EVENT_TYPE_DAMAGED move its threat and
+    // run no AI). A combatant has that mended at its turn, when it is told to
+    // choose; these have no turn, so the fight owes each the same telling as
+    // it lets the world go (LetGo; issue 43). In Ortan Thaig (2026-10-04)
+    // two spirits and a golem came into combat beside a party member 70 m
+    // from the party's leader, where the scan did not look (issue 42): two
+    // commands each were turned away, the scans asked for found none of
+    // them, and with the fight over they stood in combat with nothing queued
+    // for more than eight minutes, one of them cut from 230 health to 97
+    // with no answer. One that joins the order is forgotten here: its turns
+    // are to come.
+    std::unordered_set<ObjectId> turnedAway_;
     // In the fight by the engine's perception alone, the scan's rules for
     // who is fighting no longer finding them (Combatant::fighting false,
     // StaysInTheFight): said once each, and again if it happens again.

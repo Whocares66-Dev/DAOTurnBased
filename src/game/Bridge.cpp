@@ -1152,6 +1152,17 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             api::SetPrimaryControlled(e.target);
             break;
         case EffectKind::PokeAi:
+            // One told as a fight ends may never have been in its order, or
+            // may have left it alive (core: TurnMachine::LetGo;
+            // issue 43): nobody has read whether it still stands, so it is
+            // asked here. A dead creature's own script would hear the event
+            // before rules_core discards it, and one gone from the area is no
+            // object to signal.
+            if (Gone(e.target))
+            {
+                spdlog::debug("{:#010x} is dead or gone: not told to choose", e.target);
+                break;
+            }
             Poke(e.target);
             break;
         case EffectKind::ReleaseCast:

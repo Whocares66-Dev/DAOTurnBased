@@ -395,6 +395,17 @@ bool Unaware(Side side, const Perception &perception)
     return side == Side::Enemy && !perception.inCombat && !perception.ofParty && !perception.ofFoes;
 }
 
+bool NothingToFight(Side side, const Perception &perception)
+{
+    if (side == Side::Party || perception.inCombat || perception.ofFoes)
+    {
+        return false;
+    }
+    // An enemy's foes are the party's first: neither a party member nor
+    // anyone else hostile to it (Unaware).
+    return side != Side::Enemy || !perception.ofParty;
+}
+
 bool StaysInTheFight(Side side, bool fighting, const Perception &perception)
 {
     if (side == Side::Party || fighting)

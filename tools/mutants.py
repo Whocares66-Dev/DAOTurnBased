@@ -232,8 +232,8 @@ MUTANTS = [
     Mutant(
         "the fight never ends when its enemies fall",
         MACHINE,
-        '    if (!order_.AnyStanding(Side::Enemy))\n    {\n        End(fx, "no enemy left standing");',
-        '    if (false)\n    {\n        End(fx, "no enemy left standing");',
+        "    if (!order_.AnyStanding(Side::Enemy))\n    {\n        End(fx, NoEnemyLeft());",
+        "    if (false)\n    {\n        End(fx, NoEnemyLeft());",
     ),
     Mutant(
         "the fight's start leaves everyone's commands running",
@@ -734,8 +734,8 @@ MUTANTS = [
     Mutant(
         "the last enemy fallen outside an attack leaves the fight waiting",
         MACHINE,
-        '        if (!order_.AnyStanding(Side::Enemy))\n        {\n            End(fx, "no enemy left standing");',
-        '        if (false)\n        {\n            End(fx, "no enemy left standing");',
+        "        if (!order_.AnyStanding(Side::Enemy))\n        {\n            End(fx, NoEnemyLeft());",
+        "        if (false)\n        {\n            End(fx, NoEnemyLeft());",
     ),
     Mutant(
         "a talent that never ran is held on cooldown",
@@ -1744,10 +1744,10 @@ MUTANTS = [
         "    return Unaware(who.side, looked ? who.perception : who.perception);",
     ),
     Mutant(
-        "a hostile that perceives nobody is told to choose again after a command of its own",
+        "one that perceives nobody any more goes on with its turn until its script says so, or its thinking runs out",
         MACHINE,
-        "    if (!player && UnawareNow(*current))",
-        "    if (!player && UnawareNow(*current) && current == nullptr)",
+        "        const bool seen = looked && NothingToFight(current->side, obs.actor->perception);",
+        "        const bool seen = looked && NothingToFight(current->side, obs.actor->perception) && false;",
     ),
     Mutant(
         "a command of its own in an unaware hostile's beat leaves its turn to be skipped under it",
@@ -3622,6 +3622,208 @@ MUTANTS = [
         MACHINE,
         "lastNow_ - *landFromNow_ < kLandMs",
         "lastNow_ - *landFromNow_ < kLandMs * 1000",
+    ),
+    # Issue 43: the fight holds what the game has in combat, and as it lets
+    # the world go, whoever it held with no turn to come is told to choose.
+    Mutant(
+        "one in combat that the gate turns away outside the order is forgotten: nobody tells it the fight is over",
+        MACHINE,
+        "            turnedAway_.insert(request.object);\n",
+        "",
+    ),
+    Mutant(
+        "those that left the fight alive are not told when it is over",
+        MACHINE,
+        "    for (const auto &[id, side] : left_)\n    {\n        owed.push_back(id);\n    }\n",
+        "",
+    ),
+    Mutant(
+        "those that left the fight, and those the gate turned away outside it, are not told as it ends",
+        MACHINE,
+        "    LetGo(fx);\n    outside_.clear();",
+        "    outside_.clear();",
+    ),
+    Mutant(
+        "those the gate turned away while the look was taken are not told when no fight follows",
+        MACHINE,
+        "        LetGo(fx);\n        return;\n",
+        "        return;\n",
+    ),
+    Mutant(
+        "one the game has taken out of combat is still held at the gate: its walk home is lost",
+        MACHINE,
+        "    if (request.source == Source::Script && !request.inCombat && who->side != Side::Party &&\n        !(itsTurn && (landing || approaching)))",
+        "    if (request.source == Source::Script && !request.inCombat && who->side != Side::Party &&\n        !(itsTurn && (landing || approaching)) && false)",
+    ),
+    Mutant(
+        "one the game has in combat has its script's commands let through as the game's as well",
+        MACHINE,
+        "    if (request.source == Source::Script && !request.inCombat && who->side != Side::Party &&",
+        "    if (request.source == Source::Script && who->side != Side::Party &&",
+    ),
+    Mutant(
+        "a party member out of combat has its own AI's commands let through as the game's",
+        MACHINE,
+        "    if (request.source == Source::Script && !request.inCombat && who->side != Side::Party &&",
+        "    if (request.source == Source::Script && !request.inCombat &&",
+    ),
+    Mutant(
+        "the player's order, and the engine's own command, for one out of combat are let through as the game's",
+        MACHINE,
+        "    if (request.source == Source::Script && !request.inCombat && who->side != Side::Party &&",
+        "    if (!request.inCombat && who->side != Side::Party &&",
+    ),
+    # A creature that is not of the party and that the game does not have in
+    # combat has no turn: found so in its own turn, that turn ends.
+    Mutant(
+        "the walk to a kept attack's target is taken for the game's sending its creature somewhere",
+        MACHINE,
+        "        !(itsTurn && (landing || approaching)))",
+        "        !(itsTurn && landing))",
+    ),
+    Mutant(
+        "a kept attack given to its creature is taken for the game's sending it something",
+        MACHINE,
+        "        !(itsTurn && (landing || approaching)))",
+        "        !(itsTurn && approaching))",
+    ),
+    Mutant(
+        "a script's command for one out of combat in its own turn does not end that turn",
+        MACHINE,
+        "        if (itsTurn && !unaware_ && !outOfCombat_)\n        {\n            outOfCombat_ = true;",
+        "        if (itsTurn && !unaware_ && !outOfCombat_)\n        {",
+    ),
+    Mutant(
+        "a script's command for one out of combat ends the turn of whoever's turn it is",
+        MACHINE,
+        "        if (itsTurn && !unaware_ && !outOfCombat_)",
+        "        if (!unaware_ && !outOfCombat_)",
+    ),
+    Mutant(
+        "a script's command in an unaware hostile's beat is said to end its turn, which is being skipped",
+        MACHINE,
+        "        if (itsTurn && !unaware_ && !outOfCombat_)",
+        "        if (itsTurn && !outOfCombat_)",
+    ),
+    Mutant(
+        "the gate says that a creature is out of combat once for each of its script's commands",
+        MACHINE,
+        "        if (itsTurn && !unaware_ && !outOfCombat_)",
+        "        if (itsTurn && !unaware_)",
+    ),
+    Mutant(
+        "what the gate said of a creature before its turn began takes the turn that then begins",
+        MACHINE,
+        "    outOfCombat_ = false;\n    orderPending_ = false;",
+        "    orderPending_ = false;",
+    ),
+    Mutant(
+        "one fallen as it lost the party has its turn ended as out of combat, not as fallen",
+        MACHINE,
+        "        const bool looked = obs.actor && obs.actor->id == current->id && obs.actor->exists && !obs.actor->down;",
+        "        const bool looked = obs.actor && obs.actor->id == current->id && obs.actor->exists;",
+    ),
+    Mutant(
+        "the gate's word that a creature is out of combat is not taken up: its turn goes on",
+        MACHINE,
+        "        const bool asked = std::exchange(outOfCombat_, false);",
+        "        const bool asked = std::exchange(outOfCombat_, false) && false;",
+    ),
+    Mutant(
+        "an unaware hostile's beat is cut short: its turn ends out of combat at once",
+        MACHINE,
+        "current != nullptr && InTurn() && !unaware_)",
+        "current != nullptr && InTurn())",
+    ),
+    Mutant(
+        "one with nothing to fight has its turn ended before it has begun",
+        MACHINE,
+        "current != nullptr && InTurn() && !unaware_)",
+        "current != nullptr && !unaware_)",
+    ),
+    Mutant(
+        "an ally out of combat with nobody to fight is told its turn has come",
+        MACHINE,
+        "    if (NothingToFightNow(who))\n    {",
+        "    if (NothingToFightNow(who) && false)\n    {",
+    ),
+    Mutant(
+        "a party member out of combat has nothing to fight, and no turn",
+        RULES,
+        "    if (side == Side::Party || perception.inCombat || perception.ofFoes)",
+        "    if (perception.inCombat || perception.ofFoes)",
+    ),
+    Mutant(
+        "one the game has in combat that perceives nobody has nothing to fight, and no turn",
+        RULES,
+        "    if (side == Side::Party || perception.inCombat || perception.ofFoes)",
+        "    if (side == Side::Party || perception.ofFoes)",
+    ),
+    Mutant(
+        "one out of combat that perceives someone hostile to it has nothing to fight, and no turn",
+        RULES,
+        "    if (side == Side::Party || perception.inCombat || perception.ofFoes)",
+        "    if (side == Side::Party || perception.inCombat)",
+    ),
+    Mutant(
+        "an enemy out of combat that perceives a party member has nothing to fight, and no turn",
+        RULES,
+        "    return side != Side::Enemy || !perception.ofParty;",
+        "    return true;",
+    ),
+    Mutant(
+        "a turn ended out of combat rolls its time over, as if its actor had saved it",
+        TURNEND,
+        '    TurnEnd{"out of combat", false},',
+        '    TurnEnd{"out of combat", true},',
+    ),
+    Mutant(
+        "a fight its enemies left alive is said to have ended with none standing",
+        MACHINE,
+        "[](const auto &gone) { return gone.second == Side::Enemy; }",
+        "[](const auto &gone) { return gone.second == Side::Enemy && false; }",
+    ),
+    Mutant(
+        "an ally that left a fight alive is counted among the enemies that left it",
+        MACHINE,
+        "[](const auto &gone) { return gone.second == Side::Enemy; }",
+        "[](const auto &gone) { return gone.second != Side::Party; }",
+    ),
+    Mutant(
+        "one that waited outside and was turned away is told twice as the fight ends",
+        MACHINE,
+        "        if (std::ranges::any_of(fx, [&](const Effect &e) { return e.kind == EffectKind::PokeAi && e.target == id; }))\n        {\n            continue;\n        }\n",
+        "",
+    ),
+    Mutant(
+        "one turned away as combat began is owed a telling though the fight has it: fallen, it is told",
+        MACHINE,
+        "    std::erase_if(turnedAway_, [&](ObjectId id) { return order_.Find(id) != nullptr; });\n",
+        "",
+    ),
+    Mutant(
+        "one turned away that joins the fight is owed a telling still: fallen, it is told",
+        MACHINE,
+        "            turnedAway_.erase(seen.id); // its turns are to come: told at each, and not as one with none\n",
+        "",
+    ),
+    Mutant(
+        "a fight dropped with the world owes its tellings in the next",
+        MACHINE,
+        "        turnedAway_.clear(); // gone with the world, as everyone is: nobody to tell\n",
+        "",
+    ),
+    Mutant(
+        "those told as a fight ends are owed the telling again at the next fight's end",
+        MACHINE,
+        "    owed.erase(std::ranges::unique(owed).begin(), owed.end());\n    turnedAway_.clear();\n",
+        "    owed.erase(std::ranges::unique(owed).begin(), owed.end());\n",
+    ),
+    Mutant(
+        "those the fight lets go are told in whatever order they are kept in",
+        MACHINE,
+        "    std::ranges::sort(owed);\n",
+        "",
     ),
 ]
 

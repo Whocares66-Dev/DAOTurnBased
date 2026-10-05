@@ -33,7 +33,13 @@ struct Creature
     bool down = false;
     bool exists = true;   // gone from the world: destroyed, or vanished by a script
     bool fighting = true; // in combat: the game's scan finds it (party members always)
-    bool engaged = true;  // fighting the party: in its sight, or attacking or attacked by it
+    // In combat where the game's scan does not look: further than
+    // combat_radius from where it measures, or past the nearest it asks for
+    // (src/game/Bridge.cpp, Scan). The gate hears its commands all the same,
+    // and holds them; no scan brings it into the order or names it as waiting
+    // outside (issue 43).
+    bool unfound = false;
+    bool engaged = true; // fighting the party: in its sight, or attacking or attacked by it
     bool busy = false;
     Condition condition = Condition::None; // stunned or pinned, as the game side reads it
     float conditionSeconds = 0.0f;         // what the engine has left of it (0: not read)
@@ -172,6 +178,16 @@ class World
         return *std::ranges::find(creatures, id, &Creature::id);
     }
 
+    // The game's own word for whether it has a creature in combat, as the gate
+    // reads it of the creature with each command (its combat state): in
+    // combat where the scan would look for it or not, and not one that has
+    // noticed nobody (Unnoticing) or that the game has stood down. The fight
+    // holds what the game has in combat (issue 43).
+    bool InCombat(ObjectId id) const
+    {
+        return Get(id).perception.inCombat;
+    }
+
     // One frame: the machine asks, the world answers, the machine steps, the
     // world does what it said.
     void Frame(std::uint32_t ms = 16)
@@ -193,7 +209,7 @@ class World
                 // (Needs::inFight), the living ones that are not found so:
                 // read all the same, with their perception, which is what
                 // keeps them in it or does not (issue 29).
-                const bool found = c.side == Side::Party || (!c.down && c.fighting && inCombat);
+                const bool found = c.side == Side::Party || (!c.down && c.fighting && !c.unfound && inCombat);
                 const bool named = !c.down && std::ranges::find(needs.inFight, c.id) != needs.inFight.end();
                 if (!c.exists || (!found && !named))
                 {
@@ -258,7 +274,7 @@ class World
         request.object = id;
         request.type = type;
         request.source = source;
-        request.inCombat = Get(id).fighting;
+        request.inCombat = InCombat(id);
         request.walk = walk;
         request.actionSeconds = seconds;
         return Queue(request);
@@ -272,7 +288,7 @@ class World
         request.object = id;
         request.type = CommandType::Wait;
         request.source = source;
-        request.inCombat = Get(id).fighting;
+        request.inCombat = InCombat(id);
         request.waitSeconds = seconds;
         return Queue(request);
     }
@@ -286,7 +302,7 @@ class World
         request.object = id;
         request.type = CommandType::UseAbility;
         request.source = source;
-        request.inCombat = Get(id).fighting;
+        request.inCombat = InCombat(id);
         request.ability = ability;
         request.cooldownSeconds = cooldownSeconds;
         request.conjureSeconds = conjureSeconds;
@@ -300,7 +316,7 @@ class World
         request.object = id;
         request.type = CommandType::UseAbility;
         request.source = source;
-        request.inCombat = Get(id).fighting;
+        request.inCombat = InCombat(id);
         request.ability = ability;
         request.cooldownSeconds = cooldownSeconds;
         request.sustained = sustained;
@@ -348,7 +364,7 @@ class World
         request.object = id;
         request.type = CommandType::Attack;
         request.source = source;
-        request.inCombat = Get(id).fighting;
+        request.inCombat = InCombat(id);
         request.walk = none == NoAttack::None ? walk : std::nullopt;
         request.actionSeconds = seconds;
         request.target = target;
@@ -588,6 +604,7 @@ class World
                         CommandRequest again = kept->second;
                         heldCasts.erase(kept);
                         again.source = Source::Script;
+                        again.inCombat = InCombat(e.target); // as the gate reads it now, not as it was kept
                         again.target = next;
                         again.walk = 0.0f; // in reach: nothing to walk
                         turned.emplace_back(e.target, next);
@@ -608,6 +625,7 @@ class World
                     CommandRequest again = kept->second;
                     heldCasts.erase(kept);
                     again.source = Source::Script;
+                    again.inCombat = InCombat(e.target); // as the gate reads it now, not as it was kept
                     released.push_back(Queue(again));
                     if (onReleased)
                     {

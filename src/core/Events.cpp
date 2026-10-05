@@ -90,7 +90,8 @@ EventDescription Describe(EventKind kind)
     case EventKind::FightOver:
         return {"The turn-based fight is over; real time runs again.",
                 false,
-                "why: no enemy left standing, the game ended combat, the game went to the main menu...",
+                "why: no enemy left standing (they fell), no enemy left in the fight, N having left it alive (the "
+                "party ran from them, or was lost to them), the game ended combat, the game went to the main menu...",
                 nullptr,
                 nullptr,
                 nullptr};
@@ -120,7 +121,8 @@ EventDescription Describe(EventKind kind)
                 true,
                 "why: ended by the player, nothing left to spend, done, out of movement, chose nothing, waits, fell, "
                 "took too long, held by its condition, held by an effect, stunned, unaware (a hostile that has "
-                "noticed nobody to fight: its turn is skipped)",
+                "noticed nobody to fight: its turn is skipped), out of combat (one not of the party that the game "
+                "took out of combat in its turn, or has out of combat as its turn comes: it has no turn)",
                 nullptr,
                 nullptr,
                 nullptr};

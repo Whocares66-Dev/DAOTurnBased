@@ -511,8 +511,8 @@ TEST_CASE("its script answers each failure with a wait: the wait costs its time,
 // fight is not told its turn has come, and time rolls over only from a turn
 // its actor ended.
 
-TEST_CASE("an unaware hostile is never told, so it has no attack to refuse; its script's in its beat is refused and "
-          "no more",
+TEST_CASE("an unaware hostile is never told, so it has no attack to refuse; its script's in its beat is the game's, "
+          "and no more",
           "[noattack][perception]")
 {
     World w(Timed());
@@ -532,12 +532,16 @@ TEST_CASE("an unaware hostile is never told, so it has no attack to refuse; its 
     CHECK(pokes == 0);
     CHECK(Lines(w, "before a step") == 0);
     // An attack its own script queues in the beat, at a target the engine
-    // has no room at: refused by the engine's answer, and nothing more. Not
-    // given back (its AI chose nothing this turn), and its AI not told
-    // again, which would wake it.
-    CHECK(Swing(w, kHero, NoAttack::NoPlace) == Verdict::Block);
-    CHECK(Logged(w, "Genlock's attack on Hero is refused before a step (the engine has no place at its target for "
-                    "it): it is unaware, and its AI has not been told its turn has come"));
+    // has no room at. The game does not have it in combat: it has no turn,
+    // and what its script has it do is the game's (issue 43), let through
+    // and left to the engine's own answer. Not refused by the mod, not
+    // given back (its AI chose nothing this turn), and its AI not told,
+    // which would wake it. (Until 2026-10-05 the mod refused it by the
+    // engine's answer, "it is unaware, and its AI has not been told its turn
+    // has come": that is still so of one the game has taken into combat
+    // since the machine last looked, the next case.)
+    CHECK(Swing(w, kHero, NoAttack::NoPlace) == Verdict::Allow);
+    CHECK(Lines(w, "is refused before a step") == 0);
     CHECK(Lines(w, "is given back before a step") == 0);
     CHECK(std::ranges::none_of(events, [](const TurnEvent &e) { return e.kind == EventKind::ActionGivenBack; }));
     w.RunFor(100);
@@ -578,6 +582,8 @@ TEST_CASE("an unaware hostile that notices in its beat and attacks at once is as
     // has no room. Refused; not yet counted, its AI not yet told.
     w.Get(kGenlock).perception = Perception{};
     CHECK(Swing(w, kHero, NoAttack::NoPlace) == Verdict::Block);
+    CHECK(Logged(w, "Genlock's attack on Hero is refused before a step (the engine has no place at its target for "
+                    "it): it is unaware, and its AI has not been told its turn has come"));
     CHECK(Lines(w, "is given back before a step") == 0);
     // The next look sees it has noticed, and its AI is told. From there its
     // choice is asked of the engine like anyone's: no room, given back
