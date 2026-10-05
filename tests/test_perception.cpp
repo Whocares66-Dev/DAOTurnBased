@@ -144,7 +144,7 @@ void Scanned(World &w, const std::vector<Combatant> &scan)
 std::string Afar(std::string_view name, std::string_view why)
 {
     return std::format("{} is not found fighting near the party any more (out of combat, or further than 50 m from "
-                       "its leader), and stays in the fight: {}",
+                       "its nearest living member), and stays in the fight: {}",
                        name, why);
 }
 
@@ -498,7 +498,7 @@ TEST_CASE("an unaware hostile's beat is of the fight's clock: at twice the speed
 // for fight exit, for consistency." The game has no distance: it ends combat
 // when the party perceives no hostile. In the stand-in, `fighting` false is
 // what the scan's own rules say of a creature out of combat or further than
-// combat_radius from the party's leader.
+// combat_radius from every living party member.
 
 TEST_CASE("a hostile the scan no longer finds fighting stays in the fight while the party perceives it or it the party",
           "[perception]")
@@ -581,9 +581,9 @@ TEST_CASE("running from a fight: an enemy stays in it while either side perceive
     w.onPoke = [&](ObjectId id) { (void)w.Order(id, CommandType::Wait, Source::Script); };
     Heard heard(w);
     w.StartFight();
-    // The party runs, the enemies after it: soon they are further from its
-    // leader than combat_radius, where until now they were out of the fight
-    // and stood frozen.
+    // The party runs, the enemies after it: soon they are further from it
+    // than combat_radius, where until now they were out of the fight and
+    // stood frozen.
     w.Get(kGenlock).fighting = false;
     w.Get(kHurlock).fighting = false;
     PlayOn(w, 600);
@@ -615,6 +615,73 @@ TEST_CASE("running from a fight: an enemy stays in it while either side perceive
     // And it does not begin again for their being about.
     PlayOn(w, 200);
     CHECK_FALSE(w.machine.Active());
+}
+
+TEST_CASE("a fight run from is over with its enemies alive, and getting close to them begins a new one", "[perception]")
+{
+    // The user, 2026-10-04, of issues 42 and 43: "If you run far enough away
+    // from the enemies, the fight should end. That's what rtwp does. In that
+    // case the enemies should go back to normal. Getting close to them
+    // should retrigger a fight." In the stand-in, `fighting` is what the
+    // scan's own rules say: in combat within combat_radius of a living party
+    // member, whoever leads (issue 42).
+    World w;
+    w.onPoke = [&](ObjectId id) { (void)w.Order(id, CommandType::Wait, Source::Script); };
+    Heard heard(w);
+    w.StartFight();
+    const auto runFrom = [&] {
+        for (const ObjectId id : {kGenlock, kHurlock})
+        {
+            w.Get(id).fighting = false;
+            w.Get(id).perception = Unperceived();
+        }
+        PlayOn(w, 600);
+    };
+    // The whole party runs until no rule finds either enemy and neither side
+    // perceives the other: the fight is over, and they are alive.
+    runFrom();
+    REQUIRE_FALSE(w.machine.Active());
+    CHECK(Logged(w, ": no enemy left standing"));
+    CHECK(heard.Count(EventKind::FightOver, kNoObject) == 1);
+    CHECK_FALSE(w.Get(kGenlock).down);
+    CHECK_FALSE(w.Get(kHurlock).down);
+    // Their commands are their own again, in real time.
+    CHECK(w.Order(kGenlock, CommandType::MoveToLocation, Source::Script) == Verdict::Allow);
+    w.Finish(kGenlock);
+    // While the party stays away nothing begins, the game still saying
+    // combat.
+    PlayOn(w, 200);
+    CHECK_FALSE(w.machine.Active());
+    // One of the party comes back within reach and the genlock is in combat
+    // again: a new fight, with turns, and the hurlock that has not been met
+    // again is not in it.
+    w.Get(kGenlock).fighting = true;
+    w.Get(kGenlock).perception = Perception{};
+    const int turnsBefore = heard.Count(EventKind::TurnEnded, kGenlock);
+    PlayOn(w, 400);
+    REQUIRE(w.machine.Active());
+    CHECK(Logged(w, "hostiles are fighting again: turn-based"));
+    CHECK(heard.Count(EventKind::FightBegan, kNoObject) == 2);
+    CHECK(InTheFight(w, kGenlock));
+    CHECK_FALSE(InTheFight(w, kHurlock));
+    CHECK(heard.Count(EventKind::TurnEnded, kGenlock) > turnsBefore);
+    // Run from again, and this time the game itself ends combat before
+    // anyone comes back: the next fight begins as any does, when the game
+    // says combat and a hostile is found fighting near a living member.
+    runFrom();
+    REQUIRE_FALSE(w.machine.Active());
+    w.mode = Mode::Explore;
+    PlayOn(w, 100);
+    w.log.clear();
+    w.mode = Mode::Combat;
+    w.Get(kHurlock).fighting = true;
+    w.Get(kHurlock).perception = Perception{};
+    PlayOn(w, 100);
+    REQUIRE(w.machine.Active());
+    CHECK(Logged(w, "combat began: turn-based"));
+    CHECK(heard.Count(EventKind::FightBegan, kNoObject) == 3);
+    CHECK(InTheFight(w, kHurlock));
+    CHECK_FALSE(InTheFight(w, kGenlock));
 }
 
 TEST_CASE("an ally the scan no longer finds stays while it perceives an enemy, and has left when it perceives none",

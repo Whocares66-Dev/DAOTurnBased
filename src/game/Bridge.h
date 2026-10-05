@@ -42,12 +42,14 @@ class Bridge
     // creature's AI), which comes back through the gate.
     void Apply(const std::vector<Effect> &effects);
 
-    // Whether the party is fighting, by the game's own word (the hero's
-    // combat state), menus open or not.
+    // Whether the party is fighting, by the game's own word (any living
+    // member's combat state: a fallen hero's is 0, issue 42), menus open or
+    // not.
     bool PartyInCombat();
 
     // Floating text outside the machine's effects (the toggle key's answer),
-    // over the hero if there is one.
+    // over the one the player acts as (core/Rules.h, ActsForThePlayer): the
+    // creature controlled while it lives, where the player is looking.
     void Say(const std::wstring &text, std::uint32_t colour);
 
     // Each frame, after Apply: whether the camera got where it was sent.
@@ -73,6 +75,7 @@ class Bridge
     CameraDirector camera_;
     std::optional<bool> speedTook_;
     std::optional<bool> byRooms_; // whether the last scan went by the rooms seen (Scan)
+    bool leaderStands_ = true;    // whether the party's leader stood for it at the last scan (SayWhoStands)
     std::unordered_set<ObjectId>
         unawares_; // hostiles in the fight though they have not noticed, as of the last scan (Scan)
     // The party as the last scan found it: whose perception of the acting
@@ -93,6 +96,7 @@ class Bridge
     };
 
     std::vector<Combatant> Scan(const std::vector<ObjectId> &inFight);
+    void SayWhoStands(ObjectId stands, ObjectId leader, ObjectId controlled);
     Combatant Describe(ObjectId id, Side side, bool hero);
     ActorObservation Actor(ObjectId id);
     CombatantStatus Status(ObjectId id);

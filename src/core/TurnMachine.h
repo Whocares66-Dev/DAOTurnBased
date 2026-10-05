@@ -845,6 +845,12 @@ class TurnMachine
     void TrackMovement(const ActorObservation &actor, std::vector<Effect> &fx);
     void EnforcePause(const Observation &obs, std::vector<Effect> &fx) const;
     bool PlayerControls(const Combatant &c) const;
+    // The party's own where the machine reaches for the hero and the hero
+    // may have fallen (issue 42, whose fault was one creature standing for
+    // the party though it was dead): the hero, while standing; else the
+    // first of the party standing, in the order's order. `except` is passed
+    // over; kNoObject with nobody.
+    [[nodiscard]] ObjectId PartysOwn(ObjectId except = kNoObject) const;
     bool TurnSpent() const;
     bool ActorGone(const Observation &obs) const;
     void Floaty(std::vector<Effect> &fx, ObjectId target, std::wstring text, std::uint32_t colour) const;

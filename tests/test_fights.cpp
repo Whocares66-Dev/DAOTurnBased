@@ -1095,10 +1095,11 @@ class Arena
     }
 
     // Now and then one of the fight that is not the party's goes where the
-    // scan's own rules no longer find it fighting (past combat_radius of the
-    // party's leader, or out of combat), the engine's perception between it
-    // and the party as it may be (issue 29). After a while it is found
-    // fighting again, or it is lost for good, neither perceiving the other.
+    // scan's own rules no longer find it fighting (past combat_radius of
+    // every living party member, or out of combat), the engine's perception
+    // between it and the party as it may be (issue 29). After a while it is
+    // found fighting again, or it is lost for good, neither perceiving the
+    // other.
     // On the stream of what is noticed, not the fight's own.
     void Wandering()
     {

@@ -1495,6 +1495,124 @@ MUTANTS = [
         "    if (!settings.joinBySight || sighting.fightsParty)",
         "    if (!settings.joinBySight)",
     ),
+    # Issue 42: the party is where its living members are. Who stands for it
+    # where one creature must, who a scan measures from, whether it is in
+    # combat, and how far a creature is from it.
+    Mutant(
+        "a fallen leader stands for the party",
+        RULES,
+        "return member.id == id && member.alive; });",
+        "return member.id == id; });",
+    ),
+    Mutant(
+        "a living leader gives way to the one the player controls",
+        RULES,
+        "    if (living(leader))\n    {\n        return leader;",
+        "    if (living(leader) && !living(controlled))\n    {\n        return leader;",
+    ),
+    Mutant(
+        "with the leader down the first of the party living stands for it, whoever the player controls",
+        RULES,
+        "    if (living(controlled))\n    {\n        return controlled;",
+        "    if (living(controlled) && false)\n    {\n        return controlled;",
+    ),
+    Mutant(
+        "with the leader and the one controlled down a fallen member stands for the party",
+        RULES,
+        "std::ranges::find_if(party, [](const PartyMember &member) { return member.alive; });",
+        "std::ranges::find_if(party, [](const PartyMember &member) { return member.id != kNoObject; });",
+    ),
+    Mutant(
+        "a word to the player is over the leader, whoever the player controls",
+        RULES,
+        "    return StandsForTheParty(party, controlled, leader);",
+        "    return StandsForTheParty(party, leader, controlled);",
+    ),
+    Mutant(
+        "the party is measured from its fallen too",
+        RULES,
+        "        if (member.alive && std::ranges::find(living, member.id) == living.end())",
+        "        if (std::ranges::find(living, member.id) == living.end())",
+    ),
+    Mutant(
+        "the party is measured from the one who stands for it alone",
+        RULES,
+        "            living.push_back(member.id);",
+        "            (void)member;",
+    ),
+    Mutant(
+        "the one who stands for the party is not the first a scan asks",
+        RULES,
+        "        living.push_back(stands);",
+        "        (void)stands;",
+    ),
+    Mutant(
+        "a fallen member's combat state is the party's",
+        RULES,
+        "return member.alive && member.inCombat; });",
+        "return member.inCombat; });",
+    ),
+    Mutant(
+        "the party is in combat only when every member of it is",
+        RULES,
+        "    return std::ranges::any_of(party, [](const PartyMember &member) { return member.alive && member.inCombat; });",
+        "    return std::ranges::all_of(party, [](const PartyMember &member) { return member.alive && member.inCombat; });",
+    ),
+    Mutant(
+        "a creature is as far from the party as from the first of its living",
+        RULES,
+        "        if (meters < nearest)\n        {\n            nearest = meters;",
+        "        if (meters < nearest && !std::isfinite(nearest))\n        {\n            nearest = meters;",
+    ),
+    Mutant(
+        "a fight's reach is the join radius",
+        RULES,
+        "    return metersFromTheParty <= settings.combatRadius;",
+        "    return metersFromTheParty <= settings.joinRadius;",
+    ),
+    Mutant(
+        "a creature beyond combat_radius of every living member is within the fight's reach",
+        RULES,
+        "    return metersFromTheParty <= settings.combatRadius;",
+        "    return metersFromTheParty <= settings.combatRadius || metersFromTheParty > 0.0f;",
+    ),
+    # And where the machine reaches for the hero, who may have fallen.
+    Mutant(
+        "a fallen hero is the one selected while a companion's tactics play its turn",
+        MACHINE,
+        "hero != nullptr && standing(*hero))\n    {\n        return hero_;",
+        "hero != nullptr && hero->id != except)\n    {\n        return hero_;",
+    ),
+    Mutant(
+        "with the hero down nobody is selected in a companion's place, and a fight's banner is over nobody",
+        MACHINE,
+        "    return other != all.end() ? other->id : kNoObject;",
+        "    return kNoObject;",
+    ),
+    Mutant(
+        "with the hero down the companion whose tactics play it stays the one selected",
+        MACHINE,
+        "return c.side == Side::Party && !c.down && c.id != except; };",
+        "return c.side == Side::Party && !c.down && (c.id != except || true); };",
+    ),
+    Mutant(
+        "with the hero down an enemy is selected in her place",
+        MACHINE,
+        "return c.side == Side::Party && !c.down && c.id != except; };",
+        "return !c.down && c.id != except; };",
+    ),
+    Mutant(
+        "a fight's banner floats over the hero's body",
+        MACHINE,
+        '    Floaty(fx, PartysOwn(), L"Turn-based combat", kGold);',
+        '    Floaty(fx, hero_, L"Turn-based combat", kGold);',
+    ),
+    Mutant(
+        "the hero is selected for a companion's tactics whether she stands or not",
+        MACHINE,
+        "    if (const ObjectId other = who.side == Side::Party ? PartysOwn(who.id) : kNoObject; other != kNoObject)",
+        "    if (const ObjectId other = who.side == Side::Party && hero_ != who.id ? hero_ : kNoObject; other != kNoObject)",
+    ),
     # Issue 29: a hostile that has noticed nobody to fight (the engine's
     # perception) is not told its turn has come: "Unaware", a beat, the next
     # turn.

@@ -25,7 +25,6 @@
 
 #include <algorithm>
 #include <array>
-#include <limits>
 #include <unordered_set>
 #include <utility>
 
@@ -268,6 +267,7 @@ Observation Bridge::Observe(const Needs &needs, std::uint32_t nowMs)
         known_.clear();
         keptVoid_.clear();
         party_.clear();
+        leaderStands_ = true;
         return obs;
     }
     obs.keptVoid = std::exchange(keptVoid_, {});
@@ -288,6 +288,57 @@ Observation Bridge::Observe(const Needs &needs, std::uint32_t nowMs)
 
 namespace
 {
+// The party as the game has it (the scripts' GetPartyList), each member once
+// and in the list's order, with whether it lives and whether the game has it
+// in combat: what core says where the party is from (core/Rules.h,
+// PartyMember; issue 42). Asked afresh wherever the party is asked about:
+// who lives changes inside a fight.
+std::vector<PartyMember> ReadParty(ObjectId hero)
+{
+    std::vector<PartyMember> party;
+    const dao::script::Array list = api::GetPartyList(hero);
+    for (std::size_t i = 0; i < list.Size(); ++i)
+    {
+        const ObjectId id = list.Object(i);
+        if (api::IsObjectValid(id) != 0 && std::ranges::find(party, id, &PartyMember::id) == party.end())
+        {
+            party.push_back(PartyMember{id, api::IsDead(id) == 0, api::GetCombatState(id) != 0});
+        }
+    }
+    return party;
+}
+
+// The party's leader as the game names it; the hero if it names none.
+// GetPartyLeader answers the party's leader field, the one conversations take
+// for PLAYER, and only SetPartyLeader changes that: death does not, and
+// neither does the player selecting someone else (DAOLib's session, which
+// read the engine for it, 2026-10-04). GetMainControlled is the creature the
+// player controls. Both answer as designed, and neither says where the party
+// is: in the Ortan Thaig fight of issue 42, asked by script with the hero
+// dead and the last of the party standing 83 m from her body, GetPartyLeader
+// answered the hero (IsDead 1) and GetMainControlled the survivor. So the
+// leader is not asked anything here: who stands for the party is core's to
+// say, of the leader, the one controlled and who lives (StandsForTheParty).
+ObjectId Leader(ObjectId hero)
+{
+    const ObjectId leader = api::GetPartyLeader();
+    return api::IsObjectValid(leader) != 0 ? leader : hero;
+}
+
+// How far a creature is from the party: its distance to each living member,
+// the nearest of them core's to say (MetersFromTheParty). Infinity with
+// nobody living.
+float FromTheParty(ObjectId id, const std::vector<ObjectId> &living)
+{
+    std::vector<float> meters;
+    meters.reserve(living.size());
+    for (const ObjectId member : living)
+    {
+        meters.push_back(api::GetDistanceBetween(member, id));
+    }
+    return MetersFromTheParty(meters);
+}
+
 // Whether a creature in combat near the party is one the player can see
 // fighting (core: Combatant::engaged), by the game's own answers. Not by
 // distance: Howe's men fighting guards rooms away were in the turn order,
@@ -309,20 +360,22 @@ namespace
 // of doors, where every room in the radius is shown and a battle of wolves
 // and darkspawn 45 m off joined the party's (issue 6). What these make of
 // it is core's (InThePartysFight).
-Sighting Sight(ObjectId id, const std::vector<ObjectId> &party, const std::optional<dao::world::Room> &room)
+// A party member is a living one in all of this (issue 42): a fallen one's
+// attack target is the one it had, its line of sight is from where it lies,
+// and nobody is near the party for being near its body.
+Sighting Sight(ObjectId id, const std::vector<ObjectId> &living, const std::optional<dao::world::Room> &room)
 {
     Sighting sighting;
     const ObjectId target = api::GetAttackTarget(id);
-    sighting.meters = std::numeric_limits<float>::infinity();
-    for (const ObjectId member : party)
+    for (const ObjectId member : living)
     {
         if (target == member || api::GetAttackTarget(member) == id)
         {
             sighting.fightsParty = true;
         }
-        sighting.meters = std::min(sighting.meters, api::GetDistanceBetween(member, id));
     }
-    sighting.seen = room ? room->Shown() : std::ranges::any_of(party, [&](ObjectId member) {
+    sighting.meters = FromTheParty(id, living);
+    sighting.seen = room ? room->Shown() : std::ranges::any_of(living, [&](ObjectId member) {
         return static_cast<bool>(dao::world::LineOfSight(member, id));
     });
     return sighting;
@@ -338,6 +391,10 @@ Sighting Sight(ObjectId id, const std::vector<ObjectId> &party, const std::optio
 // out of combat by (combat_h.nss, Combat_HandleCreatureDisappear). What a
 // creature has noticed is the engine's to say; the mod keeps no distance or
 // line of sight of its own for it. Not yet seen in play.
+// Asked of every member, fallen or not, where distances are the living's
+// alone (issue 42): these are the engine's own lists, and it drops the fallen
+// from them (in that issue's fight the golem in whose turn the third member
+// fell, 3.5 m from her, read as perceiving no party member as she did).
 Perception Perceived(ObjectId id, const std::vector<ObjectId> &party)
 {
     Perception perception;
@@ -359,6 +416,25 @@ Perception Perceived(ObjectId id, const std::vector<ObjectId> &party)
 // living ones those rules no longer find, each with what the engine's
 // perception says of it, which is what keeps it in the fight or does not
 // (core: StaysInTheFight; issue 29).
+//
+// The user, 2026-10-04, of issues 42 and 43: "If you run far enough away
+// from the enemies, the fight should end. That's what rtwp does. In that
+// case the enemies should go back to normal. Getting close to them should
+// retrigger a fight." Both ends of that are here.
+// - Leaving is the engine's perception and no distance of the mod's (issue
+//   29). With the whole party run off, an enemy of the fight is found by
+//   none of the rules below (it is out of combat, or beyond combat_radius of
+//   every living member), is read all the same with its perception, and has
+//   left once neither it nor the party perceives the other; when the last
+//   has, the fight is over with them alive. One member still within reach of
+//   them is a party that has not run off, and the fight goes on.
+// - Coming back begins one. The rules that bring a creature in ask where
+//   the party is of every living member (issue 42), so any one of them back
+//   within combat_radius of hostiles in combat, or in sight of ones that
+//   have not noticed with nobody else to fight, is a fight again, whoever
+//   leads and wherever the leader stands. Asked of the leader alone, as it
+//   was, a companion sent back by itself found nobody.
+// What the enemies left behind do meanwhile is not the scan's (issue 43).
 std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
 {
     std::vector<Combatant> out;
@@ -367,39 +443,65 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
     {
         return out;
     }
-    // Distances are the party leader's, whom the party follows; the hero if
-    // there is none.
-    ObjectId leader = api::GetPartyLeader();
-    if (api::IsObjectValid(leader) == 0)
-    {
-        leader = hero;
-    }
     std::unordered_set<ObjectId> seen;
 
-    const dao::script::Array party = api::GetPartyList(hero);
-    for (std::size_t i = 0; i < party.Size(); ++i)
+    const std::vector<PartyMember> party = ReadParty(hero);
+    std::vector<ObjectId> members;
+    members.reserve(party.size());
+    for (const PartyMember &member : party)
     {
-        const ObjectId id = party.Object(i);
-        if (api::IsObjectValid(id) != 0 && seen.insert(id).second)
-        {
-            out.push_back(Describe(id, Side::Party, id == hero));
-        }
+        seen.insert(member.id);
+        members.push_back(member.id);
+        out.push_back(Describe(member.id, Side::Party, member.id == hero));
     }
-    const std::vector<ObjectId> members(seen.begin(), seen.end());
     party_ = members; // for the acting creature's perception, read every frame (Actor)
+    // Where the party is: where its living members are (core/Rules.h, "Where
+    // the party is"; issue 42). Everything below that is a distance, a line
+    // of sight or a list of who is near is asked of each of them, and what
+    // must be asked of one creature is asked of the one who stands for the
+    // party, which is the leader only while the leader lives. Until
+    // 2026-10-04 all of it was the leader's: the nearest hostiles were the
+    // nearest to the leader, combat_radius was measured from the leader and
+    // the party's combat was the leader's combat state. Twice that evening
+    // in Ortan Thaig no enemy beside a party member was found: with the
+    // leader fallen 83 m from the last one standing, and, from the same save
+    // with nobody dead, with the leader standing 70 m from the three others.
+    //
+    // Who the two are, read in the engine by DAOLib's session, 2026-10-04:
+    // GetPartyLeader answers the party's leader field (the one conversations
+    // take for PLAYER), which only SetPartyLeader changes, not death and not
+    // the player selecting someone else; GetMainControlled answers the
+    // creature the player controls. Both answer as designed. So the leader
+    // is a fixed one of the party, in most of the game the hero wherever the
+    // player has gone, and who stands for the party is chosen among the
+    // living (the leader first, so that a scan with the leader alive begins
+    // as it did); who the player acts as is the one controlled (Say).
+    const ObjectId leader = Leader(hero);
+    const ObjectId controlled = api::GetMainControlled();
+    const std::vector<ObjectId> living = LivingMembers(party, leader, controlled);
+    // With nobody living there is nobody to measure from and nobody is found
+    // near (the game's mode goes to Dead, and the machine ends the fight by
+    // that): the hero then, for what death does not change, whose side a
+    // creature is on.
+    const ObjectId stands = living.empty() ? hero : living.front();
+    if (!living.empty())
+    {
+        SayWhoStands(stands, leader, controlled);
+    }
     std::size_t outside = 0;
     // Those the player cannot see fighting, each with its room as the game
     // has it (seen: 0 never, 1 in view, 2 before; load: 0 loading, 1
     // loaded, 2 not), for a play test to set beside what the screen shows.
     std::string rooms;
-    // The rooms are gone by only where they can be: the leader's own room,
+    // The rooms are gone by only where they can be: the party's own room,
     // which the game shows if it shows any, must read as shown. An area
     // with rooms where the game never marks one seen would read every
     // creature as hidden, and no fight there would ever be in turns
     // (lib-agent's caution, 2026-10-01: not seen, and this would say). A
     // party member's line of sight is the rule there, as where an area has
-    // no rooms.
-    const std::optional<dao::world::Room> ours = settings_.joinBySight ? dao::world::RoomOf(leader) : std::nullopt;
+    // no rooms. The party's own room is the room of the one who stands for
+    // it: a living member's, which the game shows for its standing there.
+    const std::optional<dao::world::Room> ours = settings_.joinBySight ? dao::world::RoomOf(stands) : std::nullopt;
     const bool byRooms = ours && ours->Shown();
     // Said when it changes, at info: which rule an area goes by is read
     // out of a player's own log. Outdoors (the Dalish forest, 2026-10-01,
@@ -414,9 +516,9 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
         }
         else if (ours)
         {
-            spdlog::info("who is in a fight here goes by sight: the leader's own room {} reads seen {} load {}, not "
-                         "shown",
-                         ours->number, ours->seen, ours->load);
+            spdlog::info("who is in a fight here goes by sight: the party's own room {} (where {:#x} stands for it) "
+                         "reads seen {} load {}, not shown",
+                         ours->number, stands, ours->seen, ours->load);
         }
         else
         {
@@ -443,7 +545,7 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
         if (settings_.joinBySight && !unaware)
         {
             const std::optional<dao::world::Room> room = byRooms ? dao::world::RoomOf(id) : std::nullopt;
-            const Sighting sighting = Sight(id, members, room);
+            const Sighting sighting = Sight(id, living, room);
             c.engaged = InThePartysFight(sighting, settings_);
             if (!c.engaged)
             {
@@ -463,20 +565,47 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
         out.push_back(std::move(c));
     };
     // The game's own question for who is fighting the party (UT_Surrender,
-    // utility_h.nss): the nearest living hostiles, those in combat.
-    // combat_radius is how far from the leader a fight takes a creature in
-    // from. It takes nobody out any more: one in the fight that this no
-    // longer finds is read further down, and stays by the engine's
-    // perception (issue 29).
+    // utility_h.nss): the nearest living hostiles, those in combat. Asked
+    // round each living member, the one who stands for the party first, and
+    // each creature taken once: the engine answers with the nearest
+    // kMaxCreaturesInCombat to the creature it is asked of, so asked of one
+    // alone it names nobody beside another who stands far from that one, or
+    // behind a crowd of two dozen nearer to it. Asked of each, more than that
+    // many can be near the party; none is turned away for the count, since
+    // each is among the nearest to someone. Whose side a creature is on stays
+    // one creature's word, as it was the leader's: one named by another
+    // member alone is taken as the one who stands for the party has it (a
+    // member turned against the party would name its friends).
+    const auto nearTheLiving = [&](std::int32_t hostile) {
+        std::vector<ObjectId> found;
+        for (const ObjectId member : living)
+        {
+            const dao::script::Array nearest = api::GetNearestObjectByHostility(
+                member, hostile, k::OBJECT_TYPE_CREATURE, kMaxCreaturesInCombat, 1, 0, 0);
+            for (std::size_t i = 0; i < nearest.Size(); ++i)
+            {
+                const ObjectId id = nearest.Object(i);
+                if (std::ranges::find(found, id) != found.end() ||
+                    (member != stands && (api::IsObjectHostile(stands, id) != 0) != (hostile != 0)))
+                {
+                    continue;
+                }
+                found.push_back(id);
+            }
+        }
+        return found;
+    };
+    // combat_radius is how far from the party a fight takes a creature in
+    // from: from the nearest of its living members (core: WithinReach). It
+    // takes nobody out any more: one in the fight that this no longer finds
+    // is read further down, and stays by the engine's perception (issue 29).
     const auto fighting = [&](ObjectId id) {
         return api::IsObjectValid(id) != 0 && !seen.contains(id) && api::GetCombatState(id) != 0 &&
-               api::GetDistanceBetween(leader, id) <= settings_.combatRadius;
+               WithinReach(FromTheParty(id, living), settings_);
     };
-    const dao::script::Array hostiles =
-        api::GetNearestObjectByHostility(leader, 1, k::OBJECT_TYPE_CREATURE, kMaxCreaturesInCombat, 1, 0, 0);
-    for (std::size_t i = 0; i < hostiles.Size(); ++i)
+    const std::vector<ObjectId> hostiles = nearTheLiving(1);
+    for (const ObjectId id : hostiles)
     {
-        const ObjectId id = hostiles.Object(i);
         if (fighting(id))
         {
             seen.insert(id);
@@ -489,12 +618,14 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
     // it once drawn in. Sight is a party member's line here whatever the
     // rooms say: a room the game shows may hold a hostile behind a pillar,
     // and this one is not fighting anyone to be seen by.
-    const bool partyInCombat = api::GetCombatState(leader) != 0 || api::GetCombatState(hero) != 0;
+    // The party's combat is any living member's (core: PartyIsInCombat): a
+    // fallen leader's combat state is 0 with the rest of the party fighting.
+    const bool partyInCombat = PartyIsInCombat(party);
     const bool someoneToFight =
         std::ranges::any_of(out, [](const Combatant &c) { return c.side == Side::Enemy && c.engaged; });
     const auto unawares = [&](ObjectId id) {
         if (!partyInCombat || api::IsObjectValid(id) == 0 || seen.contains(id) || api::GetCombatState(id) != 0 ||
-            api::IsDead(id) != 0 || api::GetDistanceBetween(leader, id) > settings_.combatRadius)
+            api::IsDead(id) != 0 || !WithinReach(FromTheParty(id, living), settings_))
         {
             return false;
         }
@@ -503,14 +634,13 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
         Sighting sighting;
         if (!drawnIn && !someoneToFight)
         {
-            sighting = Sight(id, members, std::nullopt);
+            sighting = Sight(id, living, std::nullopt);
         }
         return FightsUnawares(partyInCombat, someoneToFight, drawnIn, sighting, settings_);
     };
     std::unordered_set<ObjectId> drawn;
-    for (std::size_t i = 0; i < hostiles.Size(); ++i)
+    for (const ObjectId id : hostiles)
     {
-        const ObjectId id = hostiles.Object(i);
         if (!unawares(id))
         {
             continue;
@@ -527,11 +657,9 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
     }
     unawares_ = std::move(drawn); // who is in the fight unawares now: each said once, and kept in while it is
     // Creatures in combat that are not hostile to the party fight beside it.
-    const dao::script::Array others =
-        api::GetNearestObjectByHostility(leader, 0, k::OBJECT_TYPE_CREATURE, kMaxCreaturesInCombat, 1, 0, 0);
-    for (std::size_t i = 0; i < others.Size(); ++i)
+    const std::vector<ObjectId> others = nearTheLiving(0);
+    for (const ObjectId id : others)
     {
-        const ObjectId id = others.Object(i);
         if (fighting(id))
         {
             seen.insert(id);
@@ -539,7 +667,8 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
         }
     }
     // Those the machine has in the fight that nothing above found (issue
-    // 29): out of combat, or further than combat_radius from the leader.
+    // 29): out of combat, or further than combat_radius from every living
+    // member of the party.
     // Until 2026-10-04 that was the end of them: left out of the scan, they
     // were out of the fight four seconds later, and stood where they were as
     // any creature outside the order does, whoever they were chasing. The
@@ -556,23 +685,53 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
             continue;
         }
         seen.insert(id);
-        Combatant c = Describe(id, api::IsObjectHostile(leader, id) != 0 ? Side::Enemy : Side::Ally, false);
+        Combatant c = Describe(id, api::IsObjectHostile(stands, id) != 0 ? Side::Enemy : Side::Ally, false);
         c.fighting = false;
         c.perception = Perceived(id, members);
         ++afar;
-        spdlog::debug("{:#x} is in the fight and not found fighting (combat state {}, {:.0f} m from the leader): "
-                      "the party {} it; it perceives {}, {}",
-                      id, api::GetCombatState(id), api::GetDistanceBetween(leader, id),
+        spdlog::debug("{:#x} is in the fight and not found fighting (combat state {}, {:.0f} m from the nearest "
+                      "living party member): the party {} it; it perceives {}, {}",
+                      id, api::GetCombatState(id), FromTheParty(id, living),
                       c.perception.byParty ? "perceives" : "does not perceive",
                       c.perception.ofParty ? "a party member" : "no party member",
                       c.perception.ofFoes ? "someone hostile to it" : "nobody hostile to it");
         out.push_back(std::move(c));
     }
-    spdlog::debug("scan: {} in the party, {} hostiles near, {} others near; {} fighting, {} of them not the "
-                  "party{}{}; {} of the fight not found fighting",
-                  party.Size(), hostiles.Size(), others.Size(), out.size() - afar, outside, rooms.empty() ? "" : ":",
-                  rooms, afar);
+    // What was measured from, with the counts: how many of the party live,
+    // who stands for it, and how many living creatures the engine named round
+    // its living members, each once (not, as until 2026-10-04, round its
+    // leader).
+    spdlog::debug("scan: {} in the party, {} living ({}); {} hostiles and {} others near the living; {} fighting, {} "
+                  "of them not the party{}{}; {} of the fight not found fighting",
+                  party.size(), living.size(),
+                  living.empty() ? std::string{"nobody stands for it"} : std::format("{:#x} stands for it", stands),
+                  hostiles.size(), others.size(), out.size() - afar, outside, rooms.empty() ? "" : ":", rooms, afar);
     return out;
+}
+
+// Whether the leader stands for the party, said at info as it changes: a
+// play test's log is read for whom a scan measured from, and with the leader
+// down that is someone else (issue 42). Who it then is moves with the
+// player's control, which the mod itself moves with each party member's turn,
+// so each scan's own line says who (at debug), and this one only that the
+// leader no longer does, and does again.
+void Bridge::SayWhoStands(ObjectId stands, ObjectId leader, ObjectId controlled)
+{
+    const bool leaderStands = stands == leader;
+    if (leaderStands == leaderStands_)
+    {
+        return;
+    }
+    leaderStands_ = leaderStands;
+    if (leaderStands)
+    {
+        spdlog::info("the party's leader {} ({:#x}) stands for the party again", Utf8(Remember(leader).name), leader);
+        return;
+    }
+    spdlog::info("the party's leader {} ({:#x}) is {}: {} ({:#x}) stands for the party, {}",
+                 Utf8(Remember(leader).name), leader, api::IsDead(leader) != 0 ? "down" : "not of the party here",
+                 Utf8(Remember(stands).name), stands,
+                 stands == controlled ? "the one the player controls" : "the first of it living");
 }
 
 namespace
@@ -1376,8 +1535,12 @@ bool Bridge::PartyInCombat()
     }
     // module_core.nss sets the party's combat state on every change of mode
     // but a menu's (SetCombatStateParty), so it still says combat under one.
+    // Any living member's (core: PartyIsInCombat), not the hero's: hers is 0
+    // once she has fallen, with the rest still fighting (issue 42: asked by
+    // script of the fallen hero in a fight that went on, GetCombatState 0),
+    // and a menu opened then read as no fight, the toggle free to change.
     const ObjectId hero = api::GetHero();
-    return api::IsObjectValid(hero) != 0 && api::GetCombatState(hero) != 0;
+    return api::IsObjectValid(hero) != 0 && PartyIsInCombat(ReadParty(hero));
 }
 
 void Bridge::Say(const std::wstring &text, std::uint32_t colour)
@@ -1388,10 +1551,19 @@ void Bridge::Say(const std::wstring &text, std::uint32_t colour)
         return;
     }
     const ObjectId hero = api::GetHero();
-    if (api::IsObjectValid(hero) != 0)
+    if (api::IsObjectValid(hero) == 0)
     {
-        api::DisplayFloatyMessage(hero, text, k::FLOATY_MESSAGE, static_cast<std::int32_t>(colour), 2.0f);
+        return;
     }
+    // Over the one the player acts as, where the player is looking: the
+    // creature controlled (GetMainControlled) while it lives, else who
+    // stands for the party (core: ActsForThePlayer). Until 2026-10-04 it was
+    // said over the hero: over her body when she had fallen, and wherever
+    // she stood while the player had gone on with another (issue 42). With
+    // nobody living, over her all the same.
+    const ObjectId over = ActsForThePlayer(ReadParty(hero), Leader(hero), api::GetMainControlled());
+    api::DisplayFloatyMessage(over != kNoObject ? over : hero, text, k::FLOATY_MESSAGE,
+                              static_cast<std::int32_t>(colour), 2.0f);
 }
 
 } // namespace tb::game

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace tb
 {
@@ -295,6 +296,73 @@ float MovementRate(std::span<const float> potencies)
         }
     }
     return rate;
+}
+
+ObjectId StandsForTheParty(std::span<const PartyMember> party, ObjectId leader, ObjectId controlled)
+{
+    const auto living = [&](ObjectId id) {
+        return std::ranges::any_of(party, [&](const PartyMember &member) { return member.id == id && member.alive; });
+    };
+    if (living(leader))
+    {
+        return leader;
+    }
+    if (living(controlled))
+    {
+        return controlled;
+    }
+    const auto first = std::ranges::find_if(party, [](const PartyMember &member) { return member.alive; });
+    return first != party.end() ? first->id : kNoObject;
+}
+
+ObjectId ActsForThePlayer(std::span<const PartyMember> party, ObjectId leader, ObjectId controlled)
+{
+    // The same choice among the living, the one controlled put first.
+    return StandsForTheParty(party, controlled, leader);
+}
+
+std::vector<ObjectId> LivingMembers(std::span<const PartyMember> party, ObjectId leader, ObjectId controlled)
+{
+    std::vector<ObjectId> living;
+    if (const ObjectId stands = StandsForTheParty(party, leader, controlled); stands != kNoObject)
+    {
+        living.push_back(stands);
+    }
+    for (const PartyMember &member : party)
+    {
+        if (member.alive && std::ranges::find(living, member.id) == living.end())
+        {
+            living.push_back(member.id);
+        }
+    }
+    return living;
+}
+
+bool PartyIsInCombat(std::span<const PartyMember> party)
+{
+    return std::ranges::any_of(party, [](const PartyMember &member) { return member.alive && member.inCombat; });
+}
+
+float MetersFromTheParty(std::span<const float> toLiving)
+{
+    float nearest = std::numeric_limits<float>::infinity();
+    for (const float meters : toLiving)
+    {
+        // A distance that is none (not a number) is never the nearer: the
+        // comparison fails, and it is passed over.
+        if (meters < nearest)
+        {
+            nearest = meters;
+        }
+    }
+    return nearest;
+}
+
+bool WithinReach(float metersFromTheParty, const Settings &settings)
+{
+    // Infinity (nobody living to be near) and a distance that is none are
+    // within no radius: the comparison says so of both.
+    return metersFromTheParty <= settings.combatRadius;
 }
 
 bool InThePartysFight(const Sighting &sighting, const Settings &settings)

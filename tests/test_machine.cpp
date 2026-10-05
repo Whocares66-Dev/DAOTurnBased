@@ -1963,6 +1963,83 @@ TEST_CASE("a companion's AI turn let go by an effect selects the hero before its
     CHECK(w.Did(EffectKind::PokeAi, kCompanion));
 }
 
+TEST_CASE("with the hero down the machine reaches for another of the party standing, not for her body",
+          "[machine][party]")
+{
+    // Issue 42's fault, one creature standing for the party though it is
+    // dead, where the machine reaches for the hero: whom it selects while a
+    // companion's tactics play its turn, and over whom a fight's banner
+    // floats. Read in the code, not seen in play.
+    Settings s = Fixed();
+    s.partyControl = PartyControl::Tactics;
+    constexpr ObjectId kMage = 0x102;
+    std::vector<Creature> fight = StandardFight();
+    fight.push_back(Make(kMage, Side::Party, false, L"Morrigan", 12.0f)); // initiative 3: after Alistair
+    const auto banner = [](const World &w) {
+        const auto said = std::ranges::find_if(
+            w.applied, [](const Effect &e) { return e.kind == EffectKind::Floaty && e.text == L"Turn-based combat"; });
+        return said != w.applied.end() ? said->target : kNoObject;
+    };
+    // Who was selected as a companion's AI was told its turn had come: the
+    // last one selected before it, or nobody.
+    const auto selectedFor = [](const World &w, ObjectId told) {
+        ObjectId selected = kNoObject;
+        for (const Effect &e : w.applied)
+        {
+            if (e.kind == EffectKind::Select)
+            {
+                selected = e.target;
+            }
+            if (e.kind == EffectKind::PokeAi && e.target == told)
+            {
+                return selected;
+            }
+        }
+        return kNoObject;
+    };
+    {
+        // The hero standing: hers, as it always was.
+        World w{s, fight};
+        w.onPoke = [&](ObjectId id) { (void)w.Order(id, CommandType::Wait, Source::Script); };
+        w.StartFight();
+        CHECK(banner(w) == kHero);
+        for (int i = 0; i < 80 && !w.Did(EffectKind::PokeAi, kCompanion); ++i)
+        {
+            (void)w.machine.OnEndTurn();
+            w.RunFor(100);
+        }
+        CHECK(selectedFor(w, kCompanion) == kHero);
+    }
+    World w{s, fight};
+    w.onPoke = [&](ObjectId id) { (void)w.Order(id, CommandType::Wait, Source::Script); };
+    w.Get(kHero).down = true;
+    w.StartFight();
+    // The banner is over the first of the party standing in the order.
+    CHECK(banner(w) == kCompanion);
+    // Alistair's turn is his tactics', and Morrigan the one selected
+    // meanwhile; on hers, Alistair. Never the fallen hero.
+    for (int i = 0; i < 80 && !w.Did(EffectKind::PokeAi, kMage); ++i)
+    {
+        w.RunFor(100);
+    }
+    REQUIRE(w.Did(EffectKind::PokeAi, kCompanion));
+    REQUIRE(w.Did(EffectKind::PokeAi, kMage));
+    CHECK(selectedFor(w, kCompanion) == kMage);
+    CHECK(selectedFor(w, kMage) == kCompanion);
+    CHECK_FALSE(w.Did(EffectKind::Select, kHero));
+    // The last of the party standing has nobody to be selected in its place:
+    // it stays the one controlled, and nothing is selected.
+    w.Get(kMage).down = true;
+    w.RunFor(1500); // the statuses read it, wherever the round is
+    w.applied.clear();
+    for (int i = 0; i < 80 && !w.Did(EffectKind::PokeAi, kCompanion); ++i)
+    {
+        w.RunFor(100);
+    }
+    REQUIRE(w.Did(EffectKind::PokeAi, kCompanion));
+    CHECK_FALSE(w.Did(EffectKind::Select));
+}
+
 TEST_CASE("party control changed mid-command is said, and taken as the command ends", "[machine][events]")
 {
     World w;

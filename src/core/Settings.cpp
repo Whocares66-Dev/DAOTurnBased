@@ -606,12 +606,12 @@ script_timers_from = 1
 ; Every script event the game delays said in the log, as it is sent and as
 ; it comes: for finding what times something.
 script_timers_trace = false
-; A creature fighting within this many meters of the party leader is taken
-; into the turns. It takes nobody out of them: once in a fight a creature
-; stays in it, however far it goes, for as long as the game's own perception
-; keeps it there (an enemy while the party perceives it or it perceives the
-; party, an ally while it perceives an enemy). That is the test the game
-; itself ends a fight by when you run from one.
+; A creature fighting within this many meters of a living party member is
+; taken into the turns. It takes nobody out of them: once in a fight a
+; creature stays in it, however far it goes, for as long as the game's own
+; perception keeps it there (an enemy while the party perceives it or it
+; perceives the party, an ally while it perceives an enemy). That is the test
+; the game itself ends a fight by when you run from one.
 combat_radius = 50
 ; Of those, only the ones you can see fighting: an enemy or ally joins the
 ; turns once it stands in a room the party has seen (the game draws the

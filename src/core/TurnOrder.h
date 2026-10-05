@@ -50,7 +50,7 @@ struct Combatant
     // (core/Rules.h, Unaware).
     Perception perception;
     // Found by the scan's own rules for who is fighting: in combat within
-    // combat_radius of the party's leader, or drawn in unawares
+    // combat_radius of a living party member, or drawn in unawares
     // (src/game/Bridge.cpp, Scan). False only for one of the fight that
     // those rules no longer find, read all the same because the machine
     // named it (Needs::inFight): whether it stays is then the engine's

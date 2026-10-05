@@ -11,6 +11,7 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace tb
 {
@@ -101,13 +102,93 @@ inline constexpr float kPersonCombatSpeed = 4.66f;
 // out. 1 with none.
 [[nodiscard]] float MovementRate(std::span<const float> potencies);
 
+// Where the party is: where its living members are (issue 42).
+//
+// Until 2026-10-04 everything about who is fighting was asked of one
+// creature, the party's leader: who is near (the nearest hostiles, round
+// it), how far each is (combat_radius, from it), whether the party is in
+// combat (its combat state), which rule an area goes by (its room). A party
+// is not where one of it is. Twice in one evening in Ortan Thaig a fight
+// drifted and three hostiles stood 2 to 9 m from a party member, in combat
+// and perceiving him, and none was found: the fight the mod did have ended
+// "no enemy left standing", and the game stayed in combat with no turns.
+// - The first time the leader had fallen, 83 m from the last of the party
+//   standing, and all of it was asked of a body, whose combat state is 0.
+// - The second, from the same save, nobody was dead: the leader, alive and
+//   the one controlled, stood 70 m from the three others.
+// The game's own measure is the party's: it is in combat while any member
+// perceives a hostile (combat_h.nss, IsPartyPerceivingHostiles), whoever
+// leads.
+//
+// Who the leader is, as the engine has it (read by DAOLib's session,
+// 2026-10-04): the scripts' GetPartyLeader answers the party's leader field,
+// the one conversations take for PLAYER, which only SetPartyLeader changes.
+// Death does not change it, and neither does the player selecting someone
+// else; the creature the player controls is GetMainControlled's. Both answer
+// as designed, and neither is where the party is.
+//
+// So a distance is from the nearest living member, who is near is asked
+// round each of them, and nothing is asked of one creature that may be dead.
+// One of the party, as the game layer reads it for that (src/game/
+// Bridge.cpp):
+struct PartyMember
+{
+    ObjectId id = kNoObject;
+    bool alive = false;    // there, and not dead
+    bool inCombat = false; // the game has it in combat (its combat state)
+};
+
+// Who stands for the party where one creature must (whose room is the
+// party's own, by whose word a creature is hostile): one of its living. Its
+// leader, if alive; else the one the player controls, if alive and of the
+// party; else the first of it living, in the party's own order. kNoObject
+// with nobody living.
+[[nodiscard]] ObjectId StandsForTheParty(std::span<const PartyMember> party, ObjectId leader, ObjectId controlled);
+
+// Whom the player acts as, for a word said to the player (the toggle's
+// answer floats over it): the one controlled, if alive and of the party,
+// wherever the leader is; else who stands for the party, above.
+[[nodiscard]] ObjectId ActsForThePlayer(std::span<const PartyMember> party, ObjectId leader, ObjectId controlled);
+
+// The party's living members, each once: who a scan measures from, and whom
+// it asks the engine round. The one who stands for the party first, then the
+// rest in the party's own order: with the leader alive a scan begins with
+// the leader's own answers, as it always did.
+[[nodiscard]] std::vector<ObjectId> LivingMembers(std::span<const PartyMember> party, ObjectId leader,
+                                                  ObjectId controlled);
+
+// Whether the party is in combat, by the game's own word: any living
+// member's combat state. A fallen one's is 0 whatever the rest are at, and
+// was the whole answer while the leader's was asked.
+[[nodiscard]] bool PartyIsInCombat(std::span<const PartyMember> party);
+
+// How far a creature is from the party: from the nearest of its living
+// members, given its distance to each. Infinity with nobody living, or with
+// no distance that is one (the engine's answer for an object it cannot
+// place).
+[[nodiscard]] float MetersFromTheParty(std::span<const float> toLiving);
+
+// Whether a creature that far from the party is within a fight's reach
+// (Settings::combatRadius): within the radius of any living member. What
+// takes a creature in combat into the turns, and nothing else (who stays is
+// StaysInTheFight's, below). The user, 2026-10-04, of issues 42 and 43: "If
+// you run far enough away from the enemies, the fight should end. That's
+// what rtwp does. In that case the enemies should go back to normal. Getting
+// close to them should retrigger a fight." The fight's end is the engine's
+// perception, below, with every living member out of this reach; and it is
+// any living member back within it, of hostiles in combat, that begins a
+// fight again, whoever leads and wherever the leader stands.
+[[nodiscard]] bool WithinReach(float metersFromTheParty, const Settings &settings);
+
 // What the game layer saw of a creature in combat within the radius, for
-// whether it is in the party's fight (Combatant::engaged).
+// whether it is in the party's fight (Combatant::engaged). The party here is
+// its living members (above): a fallen one sees nobody, and nobody is near
+// the party for being near its body.
 struct Sighting
 {
-    bool fightsParty = false; // it or a party member is the other's attack target
-    bool seen = false;        // in a room the game shows; where there are none, in a party member's line of sight
-    float meters = 0.0f;      // to the nearest party member
+    bool fightsParty = false; // it or a living party member is the other's attack target
+    bool seen = false;   // in a room the game shows; where there are none, in a living party member's line of sight
+    float meters = 0.0f; // to the nearest living party member
 };
 
 // Whether such a creature takes turns with the party (Settings::joinBySight

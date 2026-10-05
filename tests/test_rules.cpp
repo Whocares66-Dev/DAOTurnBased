@@ -148,6 +148,158 @@ TEST_CASE("a creature's pace is its appearance's combat speed against a person's
     CHECK(tb::MovementBudget(settings, 60.0f, 10.0f) == Approx(9.0f));
 }
 
+namespace
+{
+// Ortan Thaig, 2026-10-04 (issue 42), in the party's own order: the hero, the
+// party's leader by the game's word alive or dead, and three companions.
+constexpr tb::ObjectId kLyna = 0x82;
+constexpr tb::ObjectId kOghren = 0x2df9e;
+constexpr tb::ObjectId kMorrigan = 0x66c2;
+constexpr tb::ObjectId kZevran = 0x2511f;
+
+// Who of them lives; each living one in combat, as in a fight.
+std::vector<tb::PartyMember> Party(bool lyna, bool oghren, bool morrigan, bool zevran)
+{
+    return {tb::PartyMember{kLyna, lyna, lyna}, tb::PartyMember{kOghren, oghren, oghren},
+            tb::PartyMember{kMorrigan, morrigan, morrigan}, tb::PartyMember{kZevran, zevran, zevran}};
+}
+} // namespace
+
+TEST_CASE("the leader stands for the party while alive, then the one the player controls, then whoever lives",
+          "[rules][party]")
+{
+    // The leader, alive: whoever the player controls (with the party played
+    // by hand the mod itself moves control with each member's turn).
+    CHECK(tb::StandsForTheParty(Party(true, true, true, true), kLyna, kLyna) == kLyna);
+    CHECK(tb::StandsForTheParty(Party(true, true, true, true), kLyna, kZevran) == kLyna);
+    // A companion leads (a script's SetPartyLeader: the player selecting
+    // someone does not change who leads): it stands for the party.
+    CHECK(tb::StandsForTheParty(Party(true, true, true, true), kMorrigan, kLyna) == kMorrigan);
+    // Issue 42: the hero fell and the game went on naming her the leader,
+    // the player's control gone to the last one standing.
+    CHECK(tb::StandsForTheParty(Party(false, false, false, true), kLyna, kZevran) == kZevran);
+    // The one controlled, though another of the party comes first in its
+    // order: where the player is looking.
+    CHECK(tb::StandsForTheParty(Party(false, true, true, true), kLyna, kZevran) == kZevran);
+    // The one controlled has fallen too, or the game names nobody, or names
+    // one that is not of the party: the first of it living.
+    CHECK(tb::StandsForTheParty(Party(false, false, true, true), kLyna, kOghren) == kMorrigan);
+    CHECK(tb::StandsForTheParty(Party(false, true, true, true), kLyna, tb::kNoObject) == kOghren);
+    CHECK(tb::StandsForTheParty(Party(false, true, true, true), kLyna, 0x3220e) == kOghren);
+    // A leader that is not of the party stands for nothing.
+    CHECK(tb::StandsForTheParty(Party(true, true, true, true), 0x3220e, kZevran) == kZevran);
+    CHECK(tb::StandsForTheParty(Party(true, true, true, true), tb::kNoObject, tb::kNoObject) == kLyna);
+    // Nobody lives: nobody.
+    CHECK(tb::StandsForTheParty(Party(false, false, false, false), kLyna, kLyna) == tb::kNoObject);
+    CHECK(tb::StandsForTheParty({}, kLyna, kLyna) == tb::kNoObject);
+}
+
+TEST_CASE("the player acts as the one controlled while it lives, wherever the leader is", "[rules][party]")
+{
+    // The leader is a fixed one of the party (the engine's leader field,
+    // which the player selecting someone does not change), so a word to the
+    // player goes over the one controlled: the companion the player has gone
+    // on with, the leader alive elsewhere.
+    CHECK(tb::ActsForThePlayer(Party(true, true, true, true), kLyna, kZevran) == kZevran);
+    CHECK(tb::ActsForThePlayer(Party(true, true, true, true), kLyna, kLyna) == kLyna);
+    // The one controlled has fallen, or is nobody, or is not of the party:
+    // who stands for the party, the leader first.
+    CHECK(tb::ActsForThePlayer(Party(true, true, true, false), kLyna, kZevran) == kLyna);
+    CHECK(tb::ActsForThePlayer(Party(true, true, true, true), kLyna, tb::kNoObject) == kLyna);
+    CHECK(tb::ActsForThePlayer(Party(true, true, true, true), kMorrigan, 0x3220e) == kMorrigan);
+    CHECK(tb::ActsForThePlayer(Party(false, true, true, false), kLyna, kZevran) == kOghren);
+    CHECK(tb::ActsForThePlayer(Party(false, false, false, false), kLyna, kZevran) == tb::kNoObject);
+}
+
+TEST_CASE("the party is measured from its living members, the one who stands for it first", "[rules][party]")
+{
+    using Ids = std::vector<tb::ObjectId>;
+    // Everyone alive: the leader first, as a scan always began, then the
+    // rest in the party's own order, each once.
+    CHECK(tb::LivingMembers(Party(true, true, true, true), kLyna, kLyna) == Ids{kLyna, kOghren, kMorrigan, kZevran});
+    CHECK(tb::LivingMembers(Party(true, true, true, true), kMorrigan, kMorrigan) ==
+          Ids{kMorrigan, kLyna, kOghren, kZevran});
+    // The fallen are not measured from: nobody is near the party for being
+    // near a body (issue 42, the leader's 83 m from the last one standing).
+    CHECK(tb::LivingMembers(Party(false, false, false, true), kLyna, kZevran) == Ids{kZevran});
+    CHECK(tb::LivingMembers(Party(false, true, false, true), kLyna, kZevran) == Ids{kZevran, kOghren});
+    CHECK(tb::LivingMembers(Party(false, true, true, false), kLyna, kZevran) == Ids{kOghren, kMorrigan});
+    // Nobody lives: nobody to measure from.
+    CHECK(tb::LivingMembers(Party(false, false, false, false), kLyna, kLyna).empty());
+}
+
+TEST_CASE("the party is in combat while any living member is", "[rules][party]")
+{
+    // Issue 42: the fallen leader's combat state was 0 and was the party's
+    // whole answer, with the last one standing in combat beside three
+    // hostiles: the rule that draws in a hostile that has not noticed was off.
+    std::vector<tb::PartyMember> party = Party(false, false, false, true);
+    CHECK(tb::PartyIsInCombat(party));
+    // One of several is enough, whoever it is: the game takes each into
+    // combat as it perceives a hostile.
+    party = Party(true, true, true, true);
+    for (tb::PartyMember &member : party)
+    {
+        member.inCombat = member.id == kMorrigan;
+    }
+    CHECK(tb::PartyIsInCombat(party));
+    // Nobody living is in combat: at peace.
+    for (tb::PartyMember &member : party)
+    {
+        member.inCombat = false;
+    }
+    CHECK_FALSE(tb::PartyIsInCombat(party));
+    // A fallen member's combat state is nobody's: read as set, it is still
+    // not the party's.
+    party = Party(false, true, true, true);
+    for (tb::PartyMember &member : party)
+    {
+        member.inCombat = member.id == kLyna;
+    }
+    CHECK_FALSE(tb::PartyIsInCombat(party));
+    CHECK_FALSE(tb::PartyIsInCombat({}));
+}
+
+TEST_CASE("a creature is as far from the party as from the nearest of its living members", "[rules][party]")
+{
+    const float inf = std::numeric_limits<float>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const tb::Settings settings;
+    REQUIRE(settings.combatRadius == Approx(50.0f));
+    // Issue 42, the second time, nobody dead: a Forgotten Spirit 70 m from
+    // the leader and 1.9 m from a companion, the two others near him. It is
+    // 1.9 m from the party, wherever the leader comes in the list.
+    const std::vector<float> split{70.4f, 6.2f, 1.9f, 4.4f};
+    CHECK(tb::MetersFromTheParty(split) == Approx(1.9f));
+    CHECK(tb::WithinReach(tb::MetersFromTheParty(split), settings));
+    const std::vector<float> leaderLast{6.2f, 1.9f, 4.4f, 70.4f};
+    CHECK(tb::MetersFromTheParty(leaderLast) == Approx(1.9f));
+    // The first time, the leader fallen 83.3 m off: of the living there was
+    // one, 1.9 m from it. From her body alone it was out of every reach.
+    CHECK(tb::WithinReach(tb::MetersFromTheParty(std::vector<float>{1.9f}), settings));
+    CHECK_FALSE(tb::WithinReach(tb::MetersFromTheParty(std::vector<float>{83.3f}), settings));
+    // The radius is from the nearest, to the meter, and the setting's.
+    CHECK(tb::WithinReach(tb::MetersFromTheParty(std::vector<float>{83.3f, 50.0f}), settings));
+    CHECK_FALSE(tb::WithinReach(tb::MetersFromTheParty(std::vector<float>{83.3f, 50.5f}), settings));
+    tb::Settings wide;
+    wide.combatRadius = 90.0f;
+    CHECK(tb::WithinReach(tb::MetersFromTheParty(std::vector<float>{83.3f, 95.0f}), wide));
+    // Past the join radius and within this one: it is the fight's reach
+    // that is asked, not how near a bystander must be.
+    REQUIRE(settings.joinRadius < 45.0f);
+    CHECK(tb::WithinReach(45.0f, settings));
+    // Nobody living to be near, or no distance that is one: infinitely far,
+    // and within no reach. A distance that is none beside one that is one
+    // is passed over.
+    CHECK(tb::MetersFromTheParty({}) == inf);
+    CHECK_FALSE(tb::WithinReach(tb::MetersFromTheParty({}), settings));
+    CHECK(tb::MetersFromTheParty(std::vector<float>{nan}) == inf);
+    CHECK(tb::MetersFromTheParty(std::vector<float>{nan, 12.0f, inf}) == Approx(12.0f));
+    CHECK(tb::MetersFromTheParty(std::vector<float>{12.0f, nan}) == Approx(12.0f));
+    CHECK_FALSE(tb::WithinReach(nan, settings));
+    CHECK_FALSE(tb::WithinReach(inf, settings));
+}
+
 TEST_CASE("a battle near the party that is not the party's waits outside its fight", "[rules]")
 {
     // The Korcari Wilds, issue 6: a hurlock and four wolves fighting each

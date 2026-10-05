@@ -373,7 +373,7 @@ def main() -> int:
     lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
     print("RULE LINES:")
     for line in lines:
-        if "who is in a fight" in line or "leader's own room" in line:
+        if "who is in a fight" in line or "party's own room" in line:
             print("  ", line[:230])
     troubles = [line for line in lines if "[warn" in line or "[error" in line]
     print("WARNINGS AND ERRORS:")

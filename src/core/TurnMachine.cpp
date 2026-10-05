@@ -664,7 +664,10 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     Signal(fx, events::kRoundStart, kNoObject, 1, 0);
     Emit(EventKind::RoundStarted, kNoObject, {}, 1);
     HoldTime(EffectRoundSeconds() > 0.0f, fx);
-    Floaty(fx, hero_, L"Turn-based combat", kGold);
+    // Over the hero, while standing; over another of the party where a fight
+    // begins with the hero down (hostiles fighting again in a combat the
+    // game has not ended), and not over a body the fight has left behind.
+    Floaty(fx, PartysOwn(), L"Turn-based combat", kGold);
     roundRunMs_ = 0;
     roundPending_ = false;
     // The first turn begins with the next frame, which reads everyone's
@@ -2137,10 +2140,16 @@ void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
     }
     // A companion whose tactics play it must not be the one the player
     // controls: a controlled creature's AI only carries on attacking
-    // (AI_DetermineCombatRound_Partial, ai_main_h_2.nss).
-    if (who.side == Side::Party && hero_ != kNoObject && hero_ != who.id)
+    // (AI_DetermineCombatRound_Partial, ai_main_h_2.nss). The hero is the
+    // one selected then, while standing: a fallen hero was selected all the
+    // same until 2026-10-04 (issue 42's fault, read in the code and not seen
+    // in play), where the game itself hands the player's control to another
+    // when its creature falls. With the hero down it is another of the party
+    // standing; a companion standing alone stays the one controlled, with
+    // what its AI then does.
+    if (const ObjectId other = who.side == Side::Party ? PartysOwn(who.id) : kNoObject; other != kNoObject)
     {
-        fx.push_back(Effect::Of(EffectKind::Select, hero_));
+        fx.push_back(Effect::Of(EffectKind::Select, other));
     }
     // (Not one that has noticed nobody to fight, below: its turn is skipped
     // after its beat whatever holds it, and a hold is not stood out for a
@@ -3192,11 +3201,11 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
 {
     // Leaving the fight is the engine's perception (core/Rules.h,
     // StaysInTheFight; issue 29): one of the fight that the scan's own rules
-    // no longer find fighting (out of combat, or beyond combat_radius of the
-    // party's leader) was read all the same (Needs::inFight), and stays
-    // while a party member perceives it or it perceives one (an ally, while
-    // it perceives an enemy). Until 2026-10-04 the radius took it out, and it
-    // stood frozen outside the order, whoever it was chasing.
+    // no longer find fighting (out of combat, or beyond combat_radius of
+    // every living party member) was read all the same (Needs::inFight), and
+    // stays while a party member perceives it or it perceives one (an ally,
+    // while it perceives an enemy). Until 2026-10-04 the radius took it out,
+    // and it stood frozen outside the order, whoever it was chasing.
     const auto stays = [](const Combatant &c) { return StaysInTheFight(c.side, c.fighting, c.perception); };
     for (const Combatant &seen : scan)
     {
@@ -3226,7 +3235,7 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
                                                                         : "it and the party perceive each other";
                 Log(LogLevel::Info,
                     std::format("{} is not found fighting near the party any more (out of combat, or further than "
-                                "{:.0f} m from its leader), and stays in the fight: {}",
+                                "{:.0f} m from its nearest living member), and stays in the fight: {}",
                                 Utf8(seen.name), settings_.combatRadius, why));
             }
         }
@@ -3507,6 +3516,18 @@ void TurnMachine::EnforcePause(const Observation &obs, std::vector<Effect> &fx) 
 bool TurnMachine::PlayerControls(const Combatant &c) const
 {
     return c.side == Side::Party && (settings_.partyControl == PartyControl::Manual || c.hero);
+}
+
+ObjectId TurnMachine::PartysOwn(ObjectId except) const
+{
+    const auto standing = [&](const Combatant &c) { return c.side == Side::Party && !c.down && c.id != except; };
+    if (const Combatant *hero = hero_ != kNoObject ? order_.Find(hero_) : nullptr; hero != nullptr && standing(*hero))
+    {
+        return hero_;
+    }
+    const auto &all = order_.All();
+    const auto other = std::ranges::find_if(all, standing);
+    return other != all.end() ? other->id : kNoObject;
 }
 
 float TurnMachine::TurnSpeed() const
