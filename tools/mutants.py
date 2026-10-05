@@ -4648,6 +4648,109 @@ MUTANTS = [
         "        if (c < 0x10000)\n        {\n            out += static_cast<wchar_t>(c);\n        }\n        else",
         "        if (c < 0x110000)\n        {\n            out += static_cast<wchar_t>(c);\n        }\n        else",
     ),
+    # Haste and slows in a turn's meters (issue 49).
+    Mutant(
+        "a creature's slows are left out of its pace",
+        RULES,
+        "    return MovementRate(effects.rates) * MovementRate(effects.debuffs);",
+        "    return MovementRate(effects.rates);",
+    ),
+    Mutant(
+        "a creature's Haste is left out of its pace",
+        RULES,
+        "    return MovementRate(effects.rates) * MovementRate(effects.debuffs);",
+        "    return MovementRate(effects.debuffs);",
+    ),
+    Mutant(
+        "movement rate effects add up, where the engine multiplies them",
+        RULES,
+        "            rate *= potency;",
+        "            rate += potency - 1.0f;",
+    ),
+    Mutant(
+        "a potency that is no rate is taken for one",
+        RULES,
+        "    return std::isfinite(potency) && potency > 0.0f;",
+        "    return std::isfinite(potency);",
+    ),
+    Mutant(
+        "a turn's pace forgets its creature's Haste and slows",
+        RULES,
+        "    return build * MovementRate(effects);",
+        "    return build + 0.0f * MovementRate(effects);",
+    ),
+    Mutant(
+        "a turn's pace forgets its creature's build",
+        RULES,
+        "    return build * MovementRate(effects);",
+        "    return MovementRate(effects) + 0.0f * build;",
+    ),
+    Mutant(
+        "as built, a turn's meters are a person's whatever its creature's pace",
+        MACHINE,
+        "        return TurnBudget::Actions(1, MovementBudget(settings_, pace, who.dexterity));",
+        "        return TurnBudget::Actions(1, MovementBudget(settings_, 1.0f, who.dexterity));",
+    ),
+    Mutant(
+        "with time, a turn's bar walks at a person's pace whatever its creature's",
+        MACHINE,
+        "    const float speed = std::isfinite(pace) && pace > 0.0f ? pace : 1.0f;",
+        "    const float speed = 1.0f;",
+    ),
+    Mutant(
+        "one on its way out of the fight keeps the pace it had when last found fighting",
+        MACHINE,
+        "                    in->movement = seen.movement;",
+        "                    (void)seen;",
+    ),
+    Mutant(
+        "a turn's pace is never said",
+        MACHINE,
+        "    SayPace(who);\n",
+        "",
+    ),
+    Mutant(
+        "a turn's pace is said every turn, with Haste or with nothing",
+        MACHINE,
+        "    if (rate == 1.0f && before == 1.0f)",
+        "    if (rate == 1.0f && before == 1.0f && Timed() != Timed())",
+    ),
+    Mutant(
+        "a pace back at its creature's own is not said",
+        MACHINE,
+        "    if (rate == 1.0f && before == 1.0f)",
+        "    if (rate == 1.0f)",
+    ),
+    Mutant(
+        "what a creature's Haste came to at its last turn is forgotten",
+        MACHINE,
+        "        paceRates_[who.id] = rate;",
+        "        (void)rate;",
+    ),
+    Mutant(
+        "a pace is said as changed turn after turn, though it is as it was",
+        MACHINE,
+        'rate != before ? std::format(" ({:.2f} at its last turn)", before) : std::string{}));',
+        'rate != 1.0f ? std::format(" ({:.2f} at its last turn)", before) : std::string{}));',
+    ),
+    Mutant(
+        "a fight says a creature's pace against what the last fight said of it",
+        MACHINE,
+        "    paceRates_.clear(); // what was said of a creature's Haste in the last fight is not this one's\n",
+        "",
+    ),
+    Mutant(
+        "an effect whose potency is no rate is not said to be left out",
+        MACHINE,
+        'IsMovementRate(potencies[i]) ? "" : " is no rate: left out");',
+        'IsMovementRate(potencies[i]) ? "" : "");',
+    ),
+    Mutant(
+        "nothing read of a creature's movement rate effects is not said as none",
+        MACHINE,
+        '    if (potencies.empty())\n    {\n        return "none";\n    }\n',
+        "",
+    ),
 ]
 
 

@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <unordered_set>
 #include <utility>
 
@@ -887,24 +888,61 @@ void Bridge::SayWhoStands(ObjectId stands, ObjectId leader, ObjectId controlled)
 namespace
 {
 
-// Haste and slows, taken together (core/Rules.h, MovementRate): each
-// effect's rate is its potency (EffectModifyMovementSpeed, effects_h.nss).
-// From the scripts' thread; DAOLib's probe has checked GetEffects in play.
-float EffectsRate(ObjectId id)
+// An effect's engine parameters: the second list of parameters by index an
+// effect carries, 0x54 into it, beside the scripts' own at its start.
+//
+// Read in the executable 2026-10-05 (issue 49). The scripts write a movement
+// rate effect's potency with SetEffectEngineFloat (EffectModifyMovementSpeed,
+// effects_h.nss), not SetEffectFloat, and the four SetEffectEngine* commands
+// (one body, 0x00660650) call the same setters as SetEffectFloat and its kin
+// on the effect plus 0x54, where those call them on the effect itself. An
+// effect's copy constructor (0x00A65130) copies both lists, so a copy out of
+// GetEffects has the engine's. No script command reads the engine's list:
+// GetEffectFloat (0x00651270) reads the scripts' own, which a movement rate
+// effect leaves empty. So `api::GetEffectFloat(effect, EFFECT_FLOAT_POTENCY)`,
+// which this file asked until then, answered 0.0 for every Haste, salve and
+// slow, a potency that is no rate and is left out (core/Rules.h,
+// MovementRate): no creature's pace ever followed its effects, and the line
+// that would have said one did was never written (a Swift Salve, Haste and a
+// caltrop trap in two staged fights, the trap's effect seen on its creature
+// by Eluvian). The engine's own reads of the potency are the same getter on
+// the effect plus 0x54 (0x0079F9F3, 0x007A062A).
+//
+// The layout is DAOLib's to keep (dao/Structures.h, CGameEffect, whose other
+// fields it reads the same in every build): asked for in
+// dev/DAOLIB_NEEDS.md, and this goes when DAOLib has it. Not yet seen in
+// play.
+const dao::CDataArrays &EngineParameters(const dao::CGameEffect &effect)
 {
-    std::vector<float> potencies;
-    for (const std::int32_t type : {k::EFFECT_TYPE_MOVEMENT_RATE, k::EFFECT_TYPE_MOVEMENT_RATE_DEBUFF})
-    {
+    constexpr std::size_t kEngineParameters = 0x54;
+    return *reinterpret_cast<const dao::CDataArrays *>(reinterpret_cast<const std::byte *>(&effect) +
+                                                       kEngineParameters);
+}
+
+// Haste and slows, as they stand on a creature now: each movement rate
+// effect's potency, by the effects' two types (core/Types.h,
+// MovementEffects). What they come to is core's to say (core/Rules.h,
+// MovementRate, Pace), and the machine says what was read as each turn begins
+// (TurnMachine::SayPace). From the scripts' thread; DAOLib's probe has
+// checked GetEffects in play.
+MovementEffects MovementEffectsOn(ObjectId id)
+{
+    const auto potencies = [id](std::int32_t type) {
+        std::vector<float> found;
         const dao::script::Array effects = api::GetEffects(id, type);
         for (std::size_t i = 0; i < effects.Size(); ++i)
         {
             if (const dao::CGameEffect *effect = effects.Effect(i))
             {
-                potencies.push_back(api::GetEffectFloat(*effect, k::EFFECT_FLOAT_POTENCY));
+                found.push_back(EngineParameters(*effect).Float(k::EFFECT_FLOAT_POTENCY));
             }
         }
-    }
-    return MovementRate(potencies);
+        return found;
+    };
+    MovementEffects on;
+    on.rates = potencies(k::EFFECT_TYPE_MOVEMENT_RATE);
+    on.debuffs = potencies(k::EFFECT_TYPE_MOVEMENT_RATE_DEBUFF);
+    return on;
 }
 
 // A skill's rank, 0 to 4: the highest of its four abilities the creature
@@ -940,7 +978,7 @@ const Bridge::Known &Bridge::Remember(ObjectId id)
     // speed in the appearance table. Not the scripts' movement speed
     // property, which is the flanking angle in the shipped table (60 for
     // everyone in the first session, 2026-09-30). Haste and slows are
-    // effects, not read yet (dev/DAOLIB_NEEDS.md).
+    // effects, which come and go: read with every scan (Describe).
     const float combatSpeed =
         dao::gda::GetFloat(dao::script::Table::Appearance, api::GetAppearanceType(id), "Game_CbtSpeed").value_or(0.0f);
     // Its skills' ranks (with a turn a bar of time, Combat Tactics' time
@@ -974,13 +1012,13 @@ Combatant Bridge::Describe(ObjectId id, Side side, bool hero)
     c.tactics = known.tactics;
     c.survival = known.survival;
     c.dexterity = api::GetCreatureProperty(id, k::PROPERTY_ATTRIBUTE_DEXTERITY, k::PROPERTY_VALUE_TOTAL);
-    const float rate = EffectsRate(id);
-    c.speed = known.speed * rate;
-    if (rate != 1.0f)
-    {
-        spdlog::info("{} moves at {:.2f} a person's pace: {:.2f} from its build, {:.2f} from haste or slows",
-                     Utf8(known.name), c.speed, known.speed, rate);
-    }
+    // Its build's pace, remembered, and its Haste and slows as they stand
+    // now: every scan reads them again, and every turn begins on a scan, so
+    // the pace a turn's meters are made from is the one its creature has as
+    // the turn begins (core: TurnMachine::NewSpend; issue 49). Nothing is
+    // said here: the machine says a turn's pace once, as it begins.
+    c.speed = known.speed;
+    c.movement = MovementEffectsOn(id);
     c.health = Health(id);
     c.down = api::IsDead(id) != 0;
     return c;

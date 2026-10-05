@@ -78,8 +78,8 @@ class Rng
 [[nodiscard]] int RollInitiative(Rng &rng, float dexterity, const Settings &settings, int survival = 0);
 
 // Meters a combatant may move in one turn. speedModifier is how fast it
-// moves against a person (SpeedFactor below; Haste and slows would multiply
-// it); anything not a sensible multiplier counts as 1.
+// moves against a person (Pace below: its build's pace times its Haste and
+// slows); anything not a sensible multiplier counts as 1.
 [[nodiscard]] float MovementBudget(const Settings &settings, float speedModifier, float dexterity);
 
 // A person's combat move speed, meters a second: the appearance table's
@@ -95,12 +95,40 @@ inline constexpr float kPersonCombatSpeed = 4.66f;
 // table, 60 for everyone in play (2026-09-30), so it is not used.
 [[nodiscard]] float SpeedFactor(float combatSpeed);
 
-// A creature's movement rate effects taken together: Haste's 1.5, a
-// slow's 0.5 (EFFECT_TYPE_MOVEMENT_RATE and _DEBUFF, their potency;
-// EffectModifyMovementSpeed, effects_h.nss). Multiplied, as the engine is
-// taken to; a potency that is no rate (0, negative, not a number) is left
+// A creature's movement rate effects taken together: Haste's 1.3, a Swift
+// Salve's 1.2, a caltrop trap's 0.6 (EFFECT_TYPE_MOVEMENT_RATE and _DEBUFF,
+// their potency; EffectModifyMovementSpeed, effects_h.nss). Multiplied, every
+// one of both kinds, which is the engine's own sum: as one is put on or taken
+// off it sets the creature's rate to the product of the potencies of all of
+// the two types on it (read in the executable 2026-10-05, issue 49: the two
+// types share one handler for an effect put on, 0x007A0610, and one for an
+// effect taken off, 0x007A0690, registered at 0x007A1820, and each
+// multiplies over the object's effects of type 9 and then of type 11,
+// 0x0079F910). So Haste with a Swift Salve is 1.56, and Haste in a caltrop
+// trap 0.78. A potency that is no rate (0, negative, not a number) is left
 // out. 1 with none.
 [[nodiscard]] float MovementRate(std::span<const float> potencies);
+[[nodiscard]] float MovementRate(const MovementEffects &effects);
+// Whether a potency is a rate at all, and so counted.
+[[nodiscard]] bool IsMovementRate(float potency);
+
+// The pace a turn's meters are made from, against a person's: the creature's
+// build (SpeedFactor) times its movement rate effects (MovementRate) as they
+// are when its turn begins. The plain rule (issue 49; the user's standing
+// principle, a simple rule first and an exception only where it earns its
+// keep): one pace a turn, read as the turn begins, whichever the clock. With
+// a turn a bar of time it is the meters a second of the bar walks
+// (Settings::paceMps times it); as built, the turn's meters (MovementBudget).
+//
+// It is not read again within the turn. An effect put on in the middle of a
+// turn (a salve drunk, a trap walked onto) or ended in it counts from its
+// creature's next turn: the bar's caption, the path's preview and how far a
+// walk is let go are all of one pace, and a change within the turn would
+// want a second rule as built, for the meters already walked. The engine
+// itself moves the creature at the new rate at once: for the rest of that
+// one turn it covers its meters faster or slower on the screen than the bar
+// charges for them.
+[[nodiscard]] float Pace(float build, const MovementEffects &effects);
 
 // Where the party is: where its living members are (issue 42).
 //

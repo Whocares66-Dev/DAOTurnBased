@@ -26,7 +26,13 @@ struct Combatant
     std::wstring tag;  // the object's tag: a portrait is found by it (the portraits table)
     int rank = 0;      // CREATURE_RANK_*: 1 critter, 2 normal, 3 lieutenant, 4 boss, 5 elite boss, 100 player
     float dexterity = 10.0f;
-    float speed = 1.0f;  // the engine's movement speed multiplier
+    // How fast its build moves against a person (core/Rules.h, SpeedFactor):
+    // its appearance's, which nothing in a fight changes.
+    float speed = 1.0f;
+    // Its movement rate effects as the scan found them: Haste, a salve, a
+    // slow. With its build they are the pace its turn's meters are made
+    // from, as they are when the turn begins (core/Rules.h, Pace).
+    MovementEffects movement;
     float health = 1.0f; // current over maximum
     float energy = 1.0f; // mana or stamina, the same
     bool mana = false;   // a mage's

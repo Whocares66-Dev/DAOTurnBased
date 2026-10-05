@@ -528,7 +528,7 @@ TEST_CASE("one in the fight stays in it while the engine's perception keeps it t
 
 TEST_CASE("haste and slows multiply a creature's pace", "[rules]")
 {
-    CHECK(tb::MovementRate({}) == Approx(1.0f));
+    CHECK(tb::MovementRate(std::span<const float>{}) == Approx(1.0f));
     const std::vector<float> haste{1.5f};
     CHECK(tb::MovementRate(haste) == Approx(1.5f));
     const std::vector<float> hasteAndGrease{1.5f, 0.5f};
@@ -536,12 +536,53 @@ TEST_CASE("haste and slows multiply a creature's pace", "[rules]")
     // What no rate is: left out.
     const std::vector<float> junk{0.0f, -1.0f, std::numeric_limits<float>::quiet_NaN(), 0.5f};
     CHECK(tb::MovementRate(junk) == Approx(0.5f));
+    CHECK(tb::IsMovementRate(0.6f));
+    CHECK_FALSE(tb::IsMovementRate(0.0f));
+    CHECK_FALSE(tb::IsMovementRate(-1.0f));
+    CHECK_FALSE(tb::IsMovementRate(std::numeric_limits<float>::infinity()));
 
     tb::Settings settings;
     settings.movementRule = tb::MovementRule::Speed;
     // A hasted person: 13.5 m; a hasted shriek is held at the maximum.
     CHECK(tb::MovementBudget(settings, tb::SpeedFactor(4.66f) * tb::MovementRate(haste), 10.0f) == Approx(13.5f));
     CHECK(tb::MovementBudget(settings, tb::SpeedFactor(7.35f) * tb::MovementRate(haste), 10.0f) == Approx(20.0f));
+}
+
+TEST_CASE("a creature's pace is its build's times every movement rate effect on it, of both kinds", "[rules][pace]")
+{
+    // The game's own figures (the scripts' constants, read 2026-10-05, issue
+    // 49): a Swift Salve 1.2 and Haste 1.3, each an EFFECT_TYPE_MOVEMENT_RATE;
+    // a caltrop trap 0.6 and grease 0.5, each a _DEBUFF. The engine multiplies
+    // all of both.
+    tb::MovementEffects none;
+    CHECK(tb::MovementRate(none) == 1.0f);
+    CHECK(tb::Pace(1.0f, none) == 1.0f);
+    CHECK(tb::Pace(1.5f, none) == 1.5f); // the party's dog: its build alone
+
+    tb::MovementEffects salve;
+    salve.rates = {1.2f};
+    CHECK(tb::MovementRate(salve) == Approx(1.2f));
+
+    tb::MovementEffects both = salve;
+    both.rates.push_back(1.3f);
+    CHECK(tb::MovementRate(both) == Approx(1.56f));
+    CHECK(tb::Pace(1.5f, both) == Approx(2.34f));
+
+    tb::MovementEffects trap;
+    trap.debuffs = {0.6f};
+    CHECK(tb::MovementRate(trap) == Approx(0.6f));
+    CHECK(tb::Pace(0.84f, trap) == Approx(0.504f)); // an ogre in caltrops
+
+    // Haste in a caltrop trap: 1.3 times 0.6.
+    tb::MovementEffects hasteInATrap = trap;
+    hasteInATrap.rates = {1.3f};
+    CHECK(tb::MovementRate(hasteInATrap) == Approx(0.78f));
+
+    // One that is no rate, of either kind, is left out of the product.
+    tb::MovementEffects unread;
+    unread.rates = {0.0f, 1.3f};
+    unread.debuffs = {std::numeric_limits<float>::quiet_NaN()};
+    CHECK(tb::MovementRate(unread) == Approx(1.3f));
 }
 
 TEST_CASE("a talent in a fight asks for its target unless it is for its user alone, or a mode", "[rules]")

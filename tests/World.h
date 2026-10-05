@@ -33,7 +33,11 @@ struct Creature
     // unless a case gives one.
     std::wstring tag;
     float dexterity = 10.0f;
-    float speed = 1.0f;
+    float speed = 1.0f; // its build's pace against a person's
+    // The movement rate effects standing on it, each one's potency, as the
+    // game layer reads them with every scan (Haste, a salve, a slow: issue
+    // 49). A case puts them on and takes them off.
+    MovementEffects movement;
     bool down = false;
     bool exists = true;   // gone from the world: destroyed, or vanished by a script
     bool fighting = true; // in combat: the game's scan finds it (party members always)
@@ -240,6 +244,7 @@ class World
                 x.tag = c.tag;
                 x.dexterity = c.dexterity;
                 x.speed = c.speed;
+                x.movement = c.movement;
                 x.down = c.down;
                 x.engaged = c.engaged;
                 x.rank = c.rank;

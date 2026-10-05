@@ -654,6 +654,7 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     charges_.clear();
     rollover_.clear();
     grabbedMs_.clear();
+    paceRates_.clear(); // what was said of a creature's Haste in the last fight is not this one's
     landing_.reset();
     chargeBegan_ = false;
     approach_ = false;
@@ -987,6 +988,7 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
             std::format("round {}: {}'s turn ({}, {}), {:.1f} m to move", order_.Round(), Utf8(who.name),
                         Name(who.side), PlayerControls(who) ? "yours" : "AI", budget_.MovementLeft()));
     }
+    SayPace(who);
     Emit(EventKind::TurnStarted, who.id, PlayerControls(who) ? "yours" : "AI",
          static_cast<std::int32_t>(std::lround(budget_.MovementLeft() * 10.0f)));
     TellTurnStart(who, fx);
@@ -1108,20 +1110,99 @@ int TurnMachine::TacticsOf(const Combatant &who) const
 
 // A turn's budget: one action and meters as built; with time, a bar of
 // seconds_per_turn and Combat Tactics' time and what the last turn rolled
-// over, walked at the creature's pace (a person's times its speed) after a
+// over, walked at the creature's pace (a person's times its own) after a
 // free meter.
+//
+// Its own pace is its build's times its Haste and slows as the scan this
+// turn begins on found them (core/Rules.h, Pace; issue 49): every turn
+// begins on a frame that has scanned (StepTurnStart), so an effect put on or
+// ended since its creature's last turn is in the meters of this one, and one
+// that changes within the turn is in the next.
 TurnBudget TurnMachine::NewSpend(const Combatant &who) const
 {
+    const float pace = Pace(who.speed, who.movement);
     if (!Timed())
     {
-        return TurnBudget::Actions(1, MovementBudget(settings_, who.speed, who.dexterity));
+        return TurnBudget::Actions(1, MovementBudget(settings_, pace, who.dexterity));
     }
     const TacticsTime tactics = TimeFromTactics(TacticsOf(who));
     const auto rolled = rollover_.find(who.id);
     const std::uint32_t rollover = rolled != rollover_.end() ? rolled->second : 0;
-    const float speed = std::isfinite(who.speed) && who.speed > 0.0f ? who.speed : 1.0f;
+    const float speed = std::isfinite(pace) && pace > 0.0f ? pace : 1.0f;
     return TurnBudget::Time(TurnTime(TurnMs(), tactics.bonusMs, rollover), settings_.paceMps * speed,
                             settings_.freeStepMeters);
+}
+
+namespace
+{
+
+// What a scan read of one kind of movement rate effect, for the log: how
+// many, and each one's potency; one that is no rate said so.
+std::string Potencies(std::span<const float> potencies)
+{
+    if (potencies.empty())
+    {
+        return "none";
+    }
+    std::string out = std::format("{} (", potencies.size());
+    for (std::size_t i = 0; i < potencies.size(); ++i)
+    {
+        out += std::format("{}{:.2f}{}", i > 0 ? ", " : "", potencies[i],
+                           IsMovementRate(potencies[i]) ? "" : " is no rate: left out");
+    }
+    return out + ")";
+}
+
+} // namespace
+
+// The pace a turn's meters were made from, said as the turn begins (issue
+// 49: a play test's log is read for it, and until 2026-10-05 no line said
+// what a creature's Haste had come to, or that nothing had been read of it).
+//
+// At debug, every turn: what the scan found on the creature, by the effects'
+// two types, each one's potency. "None" is the game giving nothing: no
+// effect of that type stands on it, or the game layer's read found none.
+//
+// At info, once a turn, only while its effects change its pace, and once
+// more as they stop: what it moves at and what that is made of, and what its
+// effects came to at its last turn if that was something else. A creature
+// nothing hastes or slows has no such line.
+void TurnMachine::SayPace(const Combatant &who)
+{
+    const float rate = MovementRate(who.movement);
+    const auto last = paceRates_.find(who.id);
+    const float before = last != paceRates_.end() ? last->second : 1.0f;
+    if (rate == 1.0f)
+    {
+        paceRates_.erase(who.id);
+    }
+    else
+    {
+        paceRates_[who.id] = rate;
+    }
+    if (Logs(LogLevel::Debug))
+    {
+        Log(LogLevel::Debug,
+            std::format("{}'s movement rate effects as its turn begins: {} of type 9 (EFFECT_TYPE_MOVEMENT_RATE), {} "
+                        "of type 11 (its _DEBUFF): {:.2f} of its build's pace",
+                        Utf8(who.name), Potencies(who.movement.rates), Potencies(who.movement.debuffs), rate));
+    }
+    if (rate == 1.0f && before == 1.0f)
+    {
+        return;
+    }
+    // What it comes to in this turn's own terms. As built the meters are
+    // clamped, and under [movement] rule = constant no pace counts at all.
+    const std::string meters =
+        Timed() ? std::format("{:.2f} m a second of its bar", budget_.spend.PaceMps())
+        : settings_.movementRule == MovementRule::Speed
+            ? std::format("{:.1f} m to move", budget_.spend.MovementMax())
+            : std::format("{:.1f} m to move all the same: [movement] rule = constant", budget_.spend.MovementMax());
+    Log(LogLevel::Info,
+        std::format("{} moves at {:.2f} a person's pace this turn ({}): {:.2f} from its build, {:.2f} from haste or "
+                    "slows{}",
+                    Utf8(who.name), Pace(who.speed, who.movement), meters, who.speed, rate,
+                    rate != before ? std::format(" ({:.2f} at its last turn)", before) : std::string{}));
 }
 
 // With time, an action pays as it is let through: its walk to its target
@@ -3506,9 +3587,18 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
             // As one the scan did not find: where neither perceives the
             // other; and where it is not in the fight, or has left it, since
             // being perceived brings nobody in (who joins is as it was).
-            const Combatant *in = order_.Find(seen.id);
+            Combatant *in = order_.Find(seen.id);
             if (in == nullptr || in->down || !stays(seen))
             {
+                // (Its Haste and slows are taken all the same, as the scan
+                // read them: a turn of its that comes before it is out of
+                // the fight, kAbsentMs on, is made at the pace it has then,
+                // as anyone's is. Found by the random fights with strays,
+                // seed 16, as issue 49 gave them effects that come and go.)
+                if (in != nullptr)
+                {
+                    in->movement = seen.movement;
+                }
                 continue;
             }
             if (afar_.insert(seen.id).second)

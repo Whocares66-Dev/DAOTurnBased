@@ -859,6 +859,9 @@ class TurnMachine
     [[nodiscard]] std::uint32_t TurnMs() const;
     [[nodiscard]] int TacticsOf(const Combatant &who) const;
     [[nodiscard]] TurnBudget NewSpend(const Combatant &who) const;
+    // As a turn begins: the pace its meters were made from, and what the
+    // scan read of its creature's Haste and slows.
+    void SayPace(const Combatant &who);
     [[nodiscard]] std::optional<Verdict> PayAction(const Combatant &who, const CommandRequest &request);
     // With time, an AI's wait takes its own length of its creature's bar:
     // whether it was paid for (then its AI chooses again), or is the pass a
@@ -1192,6 +1195,10 @@ class TurnMachine
     // while that action ran (a grab, Overwhelm), owed of its own turns
     // (GrabAtTurnStart, LoseTurn).
     std::unordered_map<ObjectId, std::uint32_t> grabbedMs_;
+    // What each creature's movement rate effects came to as its last turn
+    // began, where that was not 1: its pace is said as it changes, and once
+    // more as its effects end (SayPace; issue 49). This fight's.
+    std::unordered_map<ObjectId, float> paceRates_;
     static constexpr std::uint32_t kAbsentMs = 4000;
     // Those that left the fight alive (missing from the scans for
     // kAbsentMs): down in the order, and only a scan that finds one again

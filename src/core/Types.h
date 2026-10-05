@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 namespace tb
 {
@@ -67,6 +68,22 @@ struct Perception
     // (rules_core.nss, EVENT_TYPE_PERCEPTION_APPEAR and
     // EVENT_TYPE_COMMAND_COMPLETE, read 2026-10-04).
     bool inCombat = true;
+};
+
+// A creature's movement rate effects as the game layer found them standing on
+// it (src/game/Bridge.cpp, MovementEffectsOn): each one's potency, the rate
+// it moves at against its own pace. Haste 1.3, a Swift Salve 1.2; a caltrop
+// trap 0.6, grease 0.5, Winter's Grasp 0.8 (the scripts' constants, read
+// 2026-10-05, issue 49). The scripts make two kinds (EffectModifyMovementSpeed,
+// effects_h.nss: one its script calls hostile is a "debuff"; a Rock Salve's
+// own 0.6 is not), and the engine multiplies every one of both together
+// (core/Rules.h, MovementRate). They are kept apart here for the log, which
+// says what was read of each. None where nothing stands on it, and where
+// nothing was read: its build's pace.
+struct MovementEffects
+{
+    std::vector<float> rates;   // EFFECT_TYPE_MOVEMENT_RATE's (9)
+    std::vector<float> debuffs; // EFFECT_TYPE_MOVEMENT_RATE_DEBUFF's (11)
 };
 
 // The game's modes, the scripts' GM_* (dao::GameMode).

@@ -275,9 +275,9 @@ float MovementBudget(const Settings &settings, float speedModifier, float dexter
     if (settings.movementRule == MovementRule::Speed)
     {
         // A multiplier on a person's pace: an appearance's speed against a
-        // person's, and a haste's 1.5 or a slow's 0.5 when those are read
-        // (EffectModifyMovementSpeed, effects_h.nss). A value no multiplier
-        // would be (0, a negative, something huge) is read as "normal".
+        // person's, times Haste's 1.3 or a slow's 0.5 (Pace). A value no
+        // multiplier would be (0, a negative, something huge) is read as
+        // "normal".
         const bool sensible = std::isfinite(speedModifier) && speedModifier >= 0.1f && speedModifier <= 5.0f;
         meters *= sensible ? speedModifier : 1.0f;
     }
@@ -285,17 +285,32 @@ float MovementBudget(const Settings &settings, float speedModifier, float dexter
     return std::clamp(meters, settings.movementMin, settings.movementMax);
 }
 
+bool IsMovementRate(float potency)
+{
+    return std::isfinite(potency) && potency > 0.0f;
+}
+
 float MovementRate(std::span<const float> potencies)
 {
     float rate = 1.0f;
     for (const float potency : potencies)
     {
-        if (std::isfinite(potency) && potency > 0.0f)
+        if (IsMovementRate(potency))
         {
             rate *= potency;
         }
     }
     return rate;
+}
+
+float MovementRate(const MovementEffects &effects)
+{
+    return MovementRate(effects.rates) * MovementRate(effects.debuffs);
+}
+
+float Pace(float build, const MovementEffects &effects)
+{
+    return build * MovementRate(effects);
 }
 
 ObjectId StandsForTheParty(std::span<const PartyMember> party, ObjectId leader, ObjectId controlled)
