@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -542,9 +543,14 @@ class TurnMachine
     // it, and nothing kept for its tag is asked.
     //
     // ChooseTactics says once in the log what was chosen and from when, with
-    // who asked (`by`: "the turnbased_auto tool"); TacticsOf only answers.
+    // who asked (`by`: "the turnbased_auto tool", "the tactics page's box");
+    // TacticsOf only answers.
     TacticsAnswer ChooseTactics(const Follower &who, bool on, std::string_view by);
     [[nodiscard]] TacticsAnswer TacticsOf(const Follower &who) const;
+    // What the tactics page's box shows for each of these (BoxFor): for
+    // everyone the page can be of, asked in one go by the frame while the
+    // page is open.
+    [[nodiscard]] TacticsBoxes BoxesOf(std::span<const Follower> party) const;
     // The choices of a playthrough that has come into the world (a save
     // loaded: its own, or none for one from before this; a new game: none),
     // in place of whatever was chosen before; and the choices now, for the

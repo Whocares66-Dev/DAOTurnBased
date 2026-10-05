@@ -328,4 +328,88 @@ std::string ToJson(const Follower &who, const TacticsAnswer &answer)
     return out;
 }
 
+BoxState BoxFor(const Follower &who, const TacticsAnswer &answer)
+{
+    if (who.hero || !Keepable(who.tag))
+    {
+        return BoxState::None;
+    }
+    return answer.on ? BoxState::On : BoxState::Off;
+}
+
+void TacticsBoxes::Set(ObjectId id, BoxState state)
+{
+    const auto found = std::ranges::find(states_, id, &std::pair<ObjectId, BoxState>::first);
+    if (state == BoxState::None)
+    {
+        if (found != states_.end())
+        {
+            states_.erase(found);
+        }
+        return;
+    }
+    if (found != states_.end())
+    {
+        found->second = state;
+        return;
+    }
+    // By id, so that two are equal whatever order the party was read in.
+    states_.emplace(std::ranges::lower_bound(states_, id, {}, &std::pair<ObjectId, BoxState>::first), id, state);
+}
+
+BoxState TacticsBoxes::Of(ObjectId id) const
+{
+    const auto found = std::ranges::find(states_, id, &std::pair<ObjectId, BoxState>::first);
+    return found != states_.end() ? found->second : BoxState::None;
+}
+
+std::string Describe(std::span<const Follower> party, const TacticsBoxes &boxes)
+{
+    std::string with;
+    std::string without;
+    for (const Follower &member : party)
+    {
+        const BoxState state = boxes.Of(member.id);
+        if (state == BoxState::None)
+        {
+            without +=
+                std::format("{}{}{}", without.empty() ? "" : ", ", Utf8(member.name), member.hero ? " (the hero)" : "");
+            continue;
+        }
+        with +=
+            std::format("{}{} {}", with.empty() ? "" : ", ", Utf8(member.name), state == BoxState::On ? "on" : "off");
+    }
+    if (with.empty() && without.empty())
+    {
+        return "nobody";
+    }
+    if (without.empty())
+    {
+        return with;
+    }
+    return std::format("{}{}none for {}", with, with.empty() ? "" : "; ", without);
+}
+
+std::optional<ObjectId> ReadBoxAsk(std::string_view text)
+{
+    const std::optional<ObjectId> id = IdOf(text);
+    return id && *id != kNoObject ? id : std::nullopt;
+}
+
+std::optional<BoxClick> ReadBoxClick(std::string_view args)
+{
+    const std::size_t space = args.find(' ');
+    if (space == std::string_view::npos)
+    {
+        return std::nullopt;
+    }
+    const std::optional<ObjectId> id = ReadBoxAsk(args.substr(0, space));
+    const std::string_view state = args.substr(space + 1);
+    if (!id || (state != "0" && state != "1"))
+    {
+        return std::nullopt;
+    }
+    return BoxClick{*id, state == "1"};
+}
+
 } // namespace tb

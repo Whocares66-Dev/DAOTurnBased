@@ -5,7 +5,9 @@ serves the turn bar's movie from beside it; a dll loose among the plugins is
 not loaded, and a movie left in the override folder would be found before the
 plugin's own (issue 47). A deploy that leaves any of that as it was shows in
 the game as a mod that is not there, or as a bar a version behind, so what the
-script copies, what it takes out and what it leaves is checked here.
+script copies, what it takes out and what it leaves is checked here. And since
+issue 46 there are two movies beside the dll, the second the tactics page's
+box's, which goes and is held to its own sources as the first is.
 
 Nothing of the real game is touched: the script takes its repository from
 where it stands, so a copy of it runs in a made-up one (a built plugin's
@@ -15,7 +17,7 @@ naming a made-up game beside it, in the layout a deploy before 2026-10-05
 left.
 
 Each run starts a PowerShell, so a case has as few as tell what it is for,
-thirteen in all, and they are Windows PowerShell's where it is there: it
+eighteen in all, and they are Windows PowerShell's where it is there: it
 starts in half the time of PowerShell 7 (0.18 s against 0.30 here), and is the
 stricter of the two to write for. The script ran the same under both,
 2026-10-05.
@@ -35,6 +37,11 @@ from pathlib import Path
 TOOLS = Path(__file__).resolve().parent
 SHELL = shutil.which("powershell") or shutil.which("pwsh")
 ADDRESSES = "daoaddresses-4eb19d53-00a49000-009ed2ee-00400000.bin"
+# The mod's movies, as build/ui and the plugin's folder name them, each with
+# the folder of its script under ui/.
+BAR = "turnorder.swf"
+BOX = "turnbased_tactics.swf"
+SOURCES = {BAR: "turnorder", BOX: "tactics"}
 # What is not the mod's and stays, whatever is deployed or removed: the game,
 # another plugin in each layout, the settings and another mod's override.
 LEFT = [
@@ -83,12 +90,13 @@ class Deploy(unittest.TestCase):
         self.elsewhere = root / "elsewhere"
 
         # The repository as the script reads it: itself, what it prints
-        # with, the movie's sources, the movie, and a debug build.
+        # with, the movies' sources, the movies, and a debug build.
         (self.repo / "tools").mkdir(parents=True)
         for name in ("deploy.ps1", "console.ps1"):
             shutil.copy(TOOLS / name, self.repo / "tools" / name)
         write(self.repo / "tools" / "movie.py", "")
-        write(self.repo / "ui" / "turnorder" / "frame_1" / "DoAction.as", "")
+        for folder in SOURCES.values():
+            write(self.repo / "ui" / folder / "frame_1" / "DoAction.as", "")
         build = self.repo / "build" / "debug"
         self.built = build / "daolib" / "plugins" / "turnbased"
         write(build / "version.dll", "the loader")
@@ -97,9 +105,10 @@ class Deploy(unittest.TestCase):
         write(self.built / "turnbased.dll", "the plugin")
         write(self.built / "turnbased.pdb", "the plugin's symbols")
         write(self.built / "turnbased.ilk", "the incremental link's")
-        self.movie = self.repo / "build" / "ui" / "turnorder.swf"
-        self.beside = self.built / "turnorder.swf"
+        self.movie = self.repo / "build" / "ui" / BAR
+        self.beside = self.built / BAR
         self.make("the movie")
+        self.make("the box's movie", name=BOX)
         self.build()
 
         # The game as a deploy before 2026-10-05 left it, with another
@@ -119,23 +128,27 @@ class Deploy(unittest.TestCase):
         write(self.documents / "daolib" / "turnbased.ini", "settings")
         write(self.elsewhere / "precious.txt", "not the mod's")
 
-    def make(self, text: str, older: float = -60) -> None:
-        """The movie built: that many seconds older than its newest source.
+    def make(self, text: str, older: float = -60, name: str = BAR) -> None:
+        """A movie built: that many seconds older than its newest source.
 
         Newer by default; never of the same time, which a file time's
         rounding would make either.
         """
-        write(self.movie, text)
+        movie = self.repo / "build" / "ui" / name
+        write(movie, text)
         sources = [
             self.repo / "tools" / "movie.py",
-            self.repo / "ui" / "turnorder" / "frame_1" / "DoAction.as",
+            self.repo / "ui" / SOURCES[name] / "frame_1" / "DoAction.as",
         ]
         at = max(source.stat().st_mtime for source in sources) - older
-        os.utime(self.movie, (at, at))
+        os.utime(movie, (at, at))
 
     def build(self) -> None:
-        """What a build does with the movie: beside the dll, its time kept."""
-        shutil.copy2(self.movie, self.beside)
+        """What a build does with the movies: beside the dll, their times kept."""
+        for name in SOURCES:
+            movie = self.repo / "build" / "ui" / name
+            if movie.exists():
+                shutil.copy2(movie, self.built / name)
 
     def everything(self) -> list[str]:
         return files(self.game) + files(self.documents) + files(self.elsewhere)
@@ -204,13 +217,15 @@ class Deploy(unittest.TestCase):
                 "daolib/plugins/probe.dll",
                 "daolib/plugins/turnbased/turnbased.dll",
                 "daolib/plugins/turnbased/turnbased.pdb",
+                "daolib/plugins/turnbased/turnbased_tactics.swf",
                 "daolib/plugins/turnbased/turnorder.swf",
                 "version.dll",
                 "version.pdb",
             ],
         )
         self.assertEqual((self.there / "turnbased.dll").read_text(), "the plugin")
-        self.assertEqual((self.there / "turnorder.swf").read_text(), "the movie")
+        self.assertEqual((self.there / BAR).read_text(), "the movie")
+        self.assertEqual((self.there / BOX).read_text(), "the box's movie")
         # The override's old movie and the mod's two material objects gone.
         self.assertEqual(files(self.documents), KEPT)
 
@@ -243,8 +258,47 @@ class Deploy(unittest.TestCase):
         self.movie.unlink()
         self.beside.unlink()
         self.assertIn("no movie to show", self.done())
-        self.assertEqual(files(self.there), ["turnbased.dll", "turnbased.pdb"])
+        self.assertEqual(files(self.there), ["turnbased.dll", "turnbased.pdb", BOX])
         self.assertFalse((self.override / "turnorder.swf").exists())
+
+    def test_the_tactics_boxs_movie_is_held_to_its_own_source_as_the_bars_is(
+        self,
+    ) -> None:
+        # Older than its script, with the turn bar's as fresh as ever.
+        self.make("the box's movie", older=60, name=BOX)
+        self.build()
+        told = self.refused()
+        self.assertIn(f"{BOX} is older than", told)
+        self.assertIn("nothing deployed", told)
+        # Built again, and no build after it: the one beside the dll is the
+        # one before.
+        self.make("the box's movie built since", name=BOX)
+        told = self.refused()
+        self.assertIn(f"{BOX}, which was built after the last build", told)
+        self.assertEqual((self.built / BOX).read_text(), "the box's movie")
+        # A build, and both go.
+        self.build()
+        self.done()
+        self.assertEqual((self.there / BOX).read_text(), "the box's movie built since")
+        self.assertEqual((self.there / BAR).read_text(), "the movie")
+
+    def test_a_stale_tactics_movie_goes_when_asked_for_as_the_folder_has_it(
+        self,
+    ) -> None:
+        self.make("the box's movie", older=60, name=BOX)
+        self.build()
+        self.done("-StaleMovie")
+        self.assertEqual((self.there / BOX).read_text(), "the box's movie")
+
+    def test_with_no_tactics_movie_the_plugin_and_the_bars_movie_go(self) -> None:
+        # The page then has no box, which the deploy says; the plugin says
+        # it too, each time the tactics screen opens.
+        (self.repo / "build" / "ui" / BOX).unlink()
+        (self.built / BOX).unlink()
+        told = self.done()
+        self.assertIn("the tactics page has no box", told)
+        self.assertNotIn("no movie to show", told)
+        self.assertEqual(files(self.there), ["turnbased.dll", "turnbased.pdb", BAR])
 
     def test_with_no_plugin_built_nothing_is_taken_out(self) -> None:
         (self.built / "turnbased.dll").unlink()

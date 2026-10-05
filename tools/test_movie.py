@@ -1,7 +1,12 @@
-"""tools/movie.py's SWF shell, read back: what the game's GFx and FFDec will parse."""
+"""tools/movie.py's SWF shell, read back: what the game's GFx and FFDec will parse.
+
+And the two movies it builds: each from its own folder, and the tactics
+page's box's script against the plugin's side of it.
+"""
 
 from __future__ import annotations
 
+import re
 import struct
 import sys
 import unittest
@@ -81,6 +86,30 @@ class Shell(unittest.TestCase):
         scripts = [body for code, body in read_tags(self.data, at + 4) if code == 12]
         self.assertEqual(scripts, [b"\0"])
 
+    def test_each_movie_has_the_shell_with_its_own_stage(self) -> None:
+        # The tactics page's box lives on the tactics screen's stage, 1024 by
+        # 768 (tactics.gfx), and its shell is otherwise the turn bar's.
+        self.assertEqual(self.data, movie.shell(movie.TURNORDER.stage))
+        data = movie.shell(movie.TACTICS.stage)
+        self.assertEqual(struct.unpack_from("<I", data, 4)[0], len(data))
+        rect, at = read_rect(data, 8)
+        self.assertEqual(rect, [0, 1024 * 20, 0, 768 * 20])
+        _, ours = read_rect(self.data, 8)
+        self.assertEqual(data[at:], self.data[ours:])
+
+
+class Movies(unittest.TestCase):
+    def test_two_movies_each_built_by_its_name_from_its_own_folder(self) -> None:
+        self.assertEqual(
+            [m.name for m in movie.MOVIES], ["turnorder", "turnbased_tactics"]
+        )
+        for m in movie.MOVIES:
+            with self.subTest(m.name):
+                self.assertEqual(m.out, movie.OUT_DIR / f"{m.name}.swf")
+                self.assertEqual(m.script, m.source / "frame_1" / "DoAction.as")
+                self.assertTrue(m.script.exists(), m.script)
+        self.assertNotEqual(movie.TURNORDER.source, movie.TACTICS.source)
+
 
 class EmptyMovie(unittest.TestCase):
     def test_a_one_frame_swf_with_nothing_in_it(self) -> None:
@@ -111,17 +140,109 @@ function draw(view)
         )
 
     def test_the_source_itself_is_whole(self) -> None:
-        source = (movie.SOURCE / "frame_1" / "DoAction.as").read_text(encoding="utf-8")
+        source = movie.TURNORDER.script.read_text(encoding="utf-8")
         self.assertEqual(movie.missing(source, source), [])
         self.assertIn("TB_GetView", source)
 
     def test_the_script_knows_the_stage_the_shell_is_made_with(self) -> None:
         # The movement preview takes the view's pixels to stage points by the
         # stage's size, which in the game Stage.height does not give.
-        source = (movie.SOURCE / "frame_1" / "DoAction.as").read_text(encoding="utf-8")
-        self.assertIn(f"var STAGE_W = {movie.STAGE_W};", source)
-        self.assertIn(f"var STAGE_H = {movie.STAGE_H};", source)
+        source = movie.TURNORDER.script.read_text(encoding="utf-8")
+        width, height = movie.TURNORDER.stage
+        self.assertIn(f"var STAGE_W = {width};", source)
+        self.assertIn(f"var STAGE_H = {height};", source)
         self.assertIn("viewH / STAGE_H", source)
+
+    def test_the_tactics_boxs_names_are_held_to_the_compiled_movie(self) -> None:
+        # Its calls to the plugin and the clips it makes are TurnBased_...,
+        # not TB_...: a compiled movie without one of them is not shipped.
+        source = """function Refresh()
+{
+    ExternalInterface.call("TurnBased_TacticsBox", id);
+    fscommand("TurnBased_UseWhenTurnBased", id + " 1");
+}
+var BOX = "TurnBased_mc";
+"""
+        self.assertEqual(
+            movie.missing(source, "function Refresh(){}"),
+            ["TurnBased_TacticsBox", "TurnBased_UseWhenTurnBased", "TurnBased_mc"],
+        )
+        self.assertEqual(movie.missing(source, source), [])
+
+
+class TacticsScript(unittest.TestCase):
+    """ui/tactics against what the plugin answers (src/game/TacticsBox.cpp):
+    the two are a pair, and nothing but the game runs them together."""
+
+    def setUp(self) -> None:
+        self.source = movie.TACTICS.script.read_text(encoding="utf-8")
+        plugin = movie.REPO / "src" / "game" / "TacticsBox.cpp"
+        self.plugin = plugin.read_text(encoding="utf-8")
+
+    def test_the_source_itself_is_whole(self) -> None:
+        self.assertEqual(movie.missing(self.source, self.source), [])
+
+    def test_every_call_of_the_movies_is_one_the_plugin_answers(self) -> None:
+        calls = set(re.findall(r'(?:call|fscommand)\("(TurnBased_\w+)"', self.source))
+        self.assertEqual(
+            calls,
+            {
+                "TurnBased_TacticsBox",
+                "TurnBased_UseWhenTurnBased",
+                "TurnBased_TacticsSays",
+            },
+        )
+        answered = set(
+            re.findall(
+                r'On(?:ExternalInterface|FSCommand)\("(TurnBased_\w+)"', self.plugin
+            )
+        )
+        self.assertEqual(calls, answered)
+
+    def test_the_plugin_calls_the_function_the_movie_has_in_the_clip_it_loads(
+        self,
+    ) -> None:
+        clip = re.search(r'kClip = "(\w+)"', self.plugin)
+        self.assertIsNotNone(clip)
+        self.assertIn(f'kRefresh = "_root.{clip.group(1)}.Refresh"', self.plugin)
+        self.assertIn("\nfunction Refresh()\n", self.source)
+        # And loads the movie by the name it is built as.
+        self.assertIn(f'kMovie = L"{movie.TACTICS.name}"', self.plugin)
+
+    def test_the_box_and_its_caption_are_not_the_clip_the_movie_is_loaded_into(
+        self,
+    ) -> None:
+        # The movie's own clip is the plugin's to name, and the box is made
+        # at the screen's root beside it: one name for both would have the
+        # box attached over the script that attaches it.
+        clip = re.search(r'kClip = "(\w+)"', self.plugin).group(1)
+        box = re.search(r'var BOX = "(\w+)"', self.source).group(1)
+        caption = re.search(r'var CAPTION = "(\w+)"', self.source).group(1)
+        self.assertEqual(len({clip, box, caption}), 3)
+
+    def test_the_layouts_numbers_are_in_one_place(self) -> None:
+        # Each once, at the top: the place is to be found by eye in the game,
+        # and whoever moves the box changes a number there and nothing else.
+        for name in (
+            "ROW_END",
+            "ROW_DY",
+            "CAPTION_GAP",
+            "CAPTION_DY",
+            "CAPTION_SIZE",
+            "CAPTION_COLOUR",
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    len(re.findall(rf"^var {name} = ", self.source, re.MULTILINE)), 1
+                )
+        head = self.source[: self.source.index("\nfunction ")]
+        self.assertIn("var ROW_END = ", head)
+
+    def test_the_screens_root_keeps_its_own_handlers(self) -> None:
+        # The movie's _root is the tactics screen's: a handler set on it
+        # would take the place of the game's.
+        self.assertNotRegex(self.source, r"_root\.on[A-Z]\w* *=")
+        self.assertIn("this.onEnterFrame = function()", self.source)
 
 
 class Rect(unittest.TestCase):

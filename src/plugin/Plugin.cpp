@@ -21,6 +21,7 @@
 #include "game/Gate.h"
 #include "game/Preview.h"
 #include "game/SettingsFile.h"
+#include "game/TacticsBox.h"
 #include "game/Targeting.h"
 #include "plugin/EluvianAPI.h"
 
@@ -74,6 +75,7 @@ struct State
     bool movePreview = true;
     bool movePreviewGround = false;
     tb::game::Targeting targeting;
+    tb::game::TacticsBox tacticsBox; // the tactics page's box, "Use when turn-based" (game/TacticsBox.h)
     bool turnBar = false;
     bool portraits = true;
     std::uint32_t lastBarPublish = 0;
@@ -614,6 +616,9 @@ void Tick()
     g.bridge->Apply(effects);
     g.bridge->WatchCamera();
     ServeBar(now);
+    // The tactics page's box, while that screen is up: its clicks made and
+    // what it shows kept true. It lets nothing out into the frame.
+    g.tacticsBox.Serve();
 }
 
 // The machine's typed events (core/Events.h) as JSON lines beside
@@ -756,13 +761,13 @@ void SettingsTool(void * /*context*/, const char *args, EluvianReply *reply)
 }
 
 // Whose turns their tactics play (core/PartyTactics.h; issue 46), for a test:
-// the choice the game's tactics page is to have a box for ("Use when
-// turn-based"), made here until it has one (dev/DAOLIB_NEEDS.md has what the
-// box needs). One of the party by id or by name; with `on` the choice is
-// made, as the box's click will make it, and without it the tool only
-// answers. Who is of the party, and which of them the hero is, is the game's
-// to say (Bridge.h, PartyNow), as this handler is on its thread; whom the
-// caller means and whether there is anything to choose is core's.
+// the choice the game's tactics page has a box for ("Use when turn-based",
+// game/TacticsBox.h), made here without the screen. One of the party by id or
+// by name; with `on` the choice is made, as the box's click makes it, and
+// without it the tool only answers. A page that is open shows the change at
+// the next frame. Who is of the party, and which of them the hero is, is the
+// game's to say (Bridge.h, PartyNow), as this handler is on its thread; whom
+// the caller means and whether there is anything to choose is core's.
 void AutoTool(void * /*context*/, const char *args, EluvianReply *reply)
 {
     const tb::AutoAskRead read = tb::ReadAutoAsk(args != nullptr ? args : "{}");
@@ -1129,6 +1134,10 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         spdlog::error("the gate is not whole: turn-based combat is off for this session");
         return true;
     }
+    // The player's way to whose tactics play its turns: a box on the game's
+    // tactics page. After the gate, since without turns it would choose
+    // nothing that happens; served by the frame callback below.
+    g.tacticsBox.Install(*g.machine, g.mutex);
     dao::OnFrame([] {
         // Inside the game's frame: nothing may escape into the engine.
         try

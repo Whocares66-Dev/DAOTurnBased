@@ -3849,6 +3849,16 @@ TacticsAnswer TurnMachine::ChooseTactics(const Follower &who, bool on, std::stri
     return answer;
 }
 
+TacticsBoxes TurnMachine::BoxesOf(std::span<const Follower> party) const
+{
+    TacticsBoxes boxes;
+    for (const Follower &who : party)
+    {
+        boxes.Set(who.id, BoxFor(who, TacticsOf(who)));
+    }
+    return boxes;
+}
+
 void TurnMachine::SetPartyTactics(PartyTactics choices)
 {
     partyTactics_ = std::move(choices);

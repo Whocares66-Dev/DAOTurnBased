@@ -1,6 +1,7 @@
 // Whose turns their tactics play (core/PartyTactics.h; issue 46): the rule,
-// the file a save keeps the choices in, the test tool's asking, and the
-// machine playing fights by them in the stand-in for the game (World.h).
+// the file a save keeps the choices in, the test tool's asking, the tactics
+// page's box (what it shows, what its movie asks and says), and the machine
+// playing fights by them in the stand-in for the game (World.h).
 //
 // What is promised: off unless chosen or set; chosen, a companion's turn is
 // an AI's; a choice applies from that companion's next turn, the one under
@@ -17,7 +18,9 @@
 
 #include <algorithm>
 #include <array>
+#include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -968,4 +971,206 @@ TEST_CASE("as built, the player's order in a turn a companion's tactics play is 
     CHECK(w.machine.GetPhase() == Phase::AiThinking);
     CHECK(Lines(w, "Alistair chooses again") == 1);
     CHECK_FALSE(w.machine.View().playerTurn);
+}
+
+// The tactics page's box, "Use when turn-based" (issue 46's second step): the
+// player's way to the same choice. What it shows of whom, what its movie asks
+// and says, and that a click is the choice the tool makes.
+
+TEST_CASE("the tactics page's box shows whether a companion's tactics play its turns, and there is none for the hero",
+          "[partytactics][box]")
+{
+    const Follower alistair{0x7d9, L"Alistair", L"gen00fl_alistair", false};
+    TacticsAnswer on;
+    on.on = true;
+    const TacticsAnswer off;
+    CHECK(BoxFor(alistair, on) == BoxState::On);
+    CHECK(BoxFor(alistair, off) == BoxState::Off);
+    // Chosen or by the setting, in a turn or between two: what will apply
+    // at its next turn is all the box shows.
+    on.chosen = true;
+    on.turnUnderWay = true;
+    CHECK(BoxFor(alistair, on) == BoxState::On);
+    // The hero has none, whatever is answered of it (the user, 2026-10-05:
+    // "We can skip the hero for now").
+    const Follower hero{0x82, L"Lyna", L"gen00pl_hero", true};
+    CHECK(BoxFor(hero, off) == BoxState::None);
+    CHECK(BoxFor(hero, on) == BoxState::None);
+    // Nor has one a click could keep nothing for: no tag, or one that is
+    // no line of the save's file.
+    CHECK(BoxFor(Follower{0x7dc, L"Wolf", L"", false}, on) == BoxState::None);
+    CHECK(BoxFor(Follower{0x7dd, L"Wolf", L"two\nlines", false}, off) == BoxState::None);
+    // The numbers are the movie's: its question is answered with them.
+    CHECK(static_cast<int>(BoxState::None) == -1);
+    CHECK(static_cast<int>(BoxState::Off) == 0);
+    CHECK(static_cast<int>(BoxState::On) == 1);
+}
+
+TEST_CASE("the boxes are kept for those that have one, and anyone else has none", "[partytactics][box]")
+{
+    TacticsBoxes boxes;
+    CHECK(boxes.Of(0x7d9) == BoxState::None);
+    boxes.Set(0x7d9, BoxState::On);
+    boxes.Set(0x7da, BoxState::Off);
+    boxes.Set(0x82, BoxState::None);
+    CHECK(boxes.Of(0x7d9) == BoxState::On);
+    CHECK(boxes.Of(0x7da) == BoxState::Off);
+    CHECK(boxes.Of(0x82) == BoxState::None);
+    CHECK(boxes.Of(0x999) == BoxState::None); // nobody's id
+    CHECK(boxes.Of(kNoObject) == BoxState::None);
+    // The same for everyone is the same, in whatever order they were read
+    // and with or without those that have none.
+    TacticsBoxes other;
+    other.Set(0x7da, BoxState::Off);
+    other.Set(0x7d9, BoxState::On);
+    CHECK(other == boxes);
+    // One changed is another: that is what the open page is told of.
+    other.Set(0x7da, BoxState::On);
+    CHECK_FALSE(other == boxes);
+    CHECK(other.Of(0x7da) == BoxState::On);
+    other.Set(0x7da, BoxState::Off);
+    CHECK(other == boxes);
+    // And one whose box is gone has none, and is not kept.
+    other.Set(0x7d9, BoxState::None);
+    CHECK(other.Of(0x7d9) == BoxState::None);
+    CHECK_FALSE(other == boxes);
+    TacticsBoxes one;
+    one.Set(0x7da, BoxState::Off);
+    CHECK(other == one);
+}
+
+TEST_CASE("the boxes are said for the log: whose is on, whose is off, and who has none", "[partytactics][box]")
+{
+    const std::vector<Follower> party{
+        {0x82, L"Lyna", L"gen00pl_hero", true},
+        {0x7d9, L"Alistair", L"gen00fl_alistair", false},
+        {0x7da, L"Wynne", L"gen00fl_wynne", false},
+        {0x7dc, L"Wolf", L"", false},
+    };
+    TacticsBoxes boxes;
+    CHECK(Describe(std::span<const Follower>{}, boxes) == "nobody");
+    CHECK(Describe(party, boxes) == "none for Lyna (the hero), Alistair, Wynne, Wolf");
+    boxes.Set(0x7d9, BoxState::On);
+    boxes.Set(0x7da, BoxState::Off);
+    CHECK(Describe(party, boxes) == "Alistair on, Wynne off; none for Lyna (the hero), Wolf");
+    CHECK(Describe(std::span{party}.subspan(1, 2), boxes) == "Alistair on, Wynne off");
+}
+
+TEST_CASE("the box's movie asks by a creature's id, all of the text", "[partytactics][box]")
+{
+    // As the tactics screen's data tree gives it (GUI.SelectedChar.ID: 130
+    // for a hero, 238717 for Shale, read in the game 2026-10-05).
+    CHECK(ReadBoxAsk("238717") == std::optional<ObjectId>{238717});
+    CHECK(ReadBoxAsk("130") == std::optional<ObjectId>{130});
+    CHECK(ReadBoxAsk("0") == std::optional<ObjectId>{0});
+    CHECK(ReadBoxAsk("4294967294") == std::optional<ObjectId>{0xFFFFFFFE});
+    CHECK(ReadBoxAsk("0x7d9") == std::optional<ObjectId>{0x7d9}); // as Eluvian writes ids
+    for (const std::string_view wrong :
+         {"", " ", "undefined", "null", "NaN", "238717 ", " 238717", "238717.5", "2.38717e5", "-1", "+5", "12 or so",
+          "0x", "0xzz", "4294967295", "0xFFFFFFFF", "4294967296", "99999999999"})
+    {
+        CAPTURE(wrong);
+        CHECK_FALSE(ReadBoxAsk(wrong));
+    }
+}
+
+TEST_CASE("a click of the box says for whom and what the box shows after it, or it is no click", "[partytactics][box]")
+{
+    CHECK(ReadBoxClick("238717 1") == std::optional{BoxClick{238717, true}});
+    CHECK(ReadBoxClick("238717 0") == std::optional{BoxClick{238717, false}});
+    CHECK(ReadBoxClick("0x7d9 1") == std::optional{BoxClick{0x7d9, true}});
+    for (const std::string_view wrong :
+         {"", " ", "1", "238717", "238717 ", " 1", "238717  1", "238717 1 ", "238717 2", "238717 true", "238717 on",
+          "238717 10", "238717 01", "238717,1", "238717\t1", "undefined 1", "4294967295 1", "1 238717 1", "238717 -1"})
+    {
+        CAPTURE(wrong);
+        CHECK_FALSE(ReadBoxClick(wrong));
+    }
+}
+
+TEST_CASE("the machine's boxes are the setting's start, a choice over it, and none for the hero",
+          "[partytactics][box][machine]")
+{
+    Settings tactics = Fixed();
+    tactics.partyControl = PartyControl::Tactics;
+    {
+        // As shipped: off by default, and none on the hero's page.
+        World w;
+        Tag(w);
+        const std::array party{Of(w, kHero), Of(w, kCompanion)};
+        const TacticsBoxes boxes = w.machine.BoxesOf(party);
+        CHECK(boxes.Of(kHero) == BoxState::None);
+        CHECK(boxes.Of(kCompanion) == BoxState::Off);
+        CHECK(boxes.Of(kGenlock) == BoxState::None); // not asked about: not of the party
+        CHECK(Describe(party, boxes) == "Alistair off; none for Hero (the hero)");
+        CHECK(w.machine.BoxesOf(std::span<const Follower>{}) == TacticsBoxes{});
+    }
+    {
+        // party = tactics is what a companion's box starts as, and a choice
+        // wins over it; the hero's page has none under it either.
+        World w{tactics};
+        Tag(w);
+        const std::array party{Of(w, kHero), Of(w, kCompanion)};
+        CHECK(w.machine.BoxesOf(party).Of(kCompanion) == BoxState::On);
+        CHECK(w.machine.BoxesOf(party).Of(kHero) == BoxState::None);
+        (void)w.machine.ChooseTactics(Of(w, kCompanion), false, "the tactics page's box");
+        CHECK(w.machine.BoxesOf(party).Of(kCompanion) == BoxState::Off);
+    }
+    {
+        // A companion with no tag goes by the setting and has no box to
+        // change that with: a click could keep nothing for it.
+        World w{tactics};
+        const std::array party{Of(w, kHero), Of(w, kCompanion)};
+        CHECK(w.machine.TacticsOf(Of(w, kCompanion)).on);
+        CHECK(w.machine.BoxesOf(party).Of(kCompanion) == BoxState::None);
+    }
+}
+
+TEST_CASE("a click of the box is the choice: said once with who asked, kept, and its companion's next turn's",
+          "[partytactics][box][machine]")
+{
+    // The user, 2026-10-05: "Should be changeable even during battle,
+    // applies to character's next turn." The page opens paused in a fight
+    // too, so a click can come in the companion's own turn.
+    World w;
+    Tag(w);
+    OthersPass(w, kCompanion);
+    w.StartFight();
+    UntilTurnOf(w, kCompanion);
+    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+    const std::array party{Of(w, kHero), Of(w, kCompanion)};
+    const std::optional<BoxClick> click = ReadBoxClick(std::format("{} 1", kCompanion));
+    REQUIRE(click);
+    const TacticsAnswer chosen = w.machine.ChooseTactics(Of(w, click->id), click->on, "the tactics page's box");
+    CHECK(chosen.changed);
+    CHECK(w.log.back() == "Alistair's tactics play its turns from its next turn (set by the tactics page's box); the "
+                          "turn under way is played out as it began, by the player");
+    // The box shows the choice at once, though the turn under way is the
+    // player's still: it is of the next turn, as the card's `auto` is.
+    CHECK(w.machine.BoxesOf(party).Of(kCompanion) == BoxState::On);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(Card(w, kCompanion).yours);
+    CHECK(w.machine.GetPartyTactics().Chosen(kAlistairTag) == std::optional{true});
+    // The same click again changes nothing and says nothing.
+    const std::size_t lines = w.log.size();
+    CHECK_FALSE(w.machine.ChooseTactics(Of(w, click->id), click->on, "the tactics page's box").changed);
+    CHECK(w.log.size() == lines);
+    NextTurnOf(w, kCompanion);
+    CHECK(w.machine.GetPhase() == Phase::AiThinking);
+    // Unticked while its tactics play the turn: they play it out, and the
+    // box is off from the click.
+    const std::optional<BoxClick> off = ReadBoxClick(std::format("{} 0", kCompanion));
+    REQUIRE(off);
+    (void)w.machine.ChooseTactics(Of(w, off->id), off->on, "the tactics page's box");
+    CHECK(w.log.back() == "Alistair's turns wait for the player from its next turn (set by the tactics page's box); "
+                          "the turn under way is played out as it began, by its tactics");
+    CHECK(w.machine.BoxesOf(party).Of(kCompanion) == BoxState::Off);
+    CHECK(w.machine.GetPhase() == Phase::AiThinking);
+    // A save's choices loaded are the boxes' from then.
+    PartyTactics loaded;
+    REQUIRE(loaded.Choose(kAlistairTag, true));
+    w.machine.SetPartyTactics(loaded);
+    CHECK(w.machine.BoxesOf(party).Of(kCompanion) == BoxState::On);
+    w.machine.SetPartyTactics(PartyTactics{});
+    CHECK(w.machine.BoxesOf(party).Of(kCompanion) == BoxState::Off);
 }

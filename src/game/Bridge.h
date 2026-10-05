@@ -113,4 +113,14 @@ class Bridge
 // (the main menu, loading). On the scripts' thread.
 [[nodiscard]] std::vector<Follower> PartyNow();
 
+// Everyone the game's tactics page can be of: the party as above, then the
+// rest of the party's pool (the scripts' GetPartyPoolList: the companions
+// left at the camp). For the page's box (game/TacticsBox.h), which is a
+// companion's whether or not it is one of the four out: the page's own
+// arrows are on in the camp with a party of one (tactics.gfx's
+// SharedLibrary.CharSelect asks Party.InCamp, read 2026-10-05), which is
+// taken to mean that it goes through the pool there; not seen. Nobody where
+// there is no world. On the scripts' thread.
+[[nodiscard]] std::vector<Follower> FollowersNow();
+
 } // namespace tb::game

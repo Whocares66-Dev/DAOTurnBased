@@ -5,7 +5,7 @@
 .DESCRIPTION
     After `.\tools\build.ps1 -Preset <preset>`, puts the plugin's folder,
     build\<preset>\daolib\plugins\turnbased\ (turnbased.dll, its .pdb, so a crash log names
-    our frames, and the turn bar's movie), under bin_ship\daolib\plugins, and
+    our frames, and the mod's two movies), under bin_ship\daolib\plugins, and
     build\<preset>\version.dll -- DAOLib's loader, built from extern\DAOLib -- beside
     DAOrigins.exe, where the game loads it, with the address library's files under
     bin_ship\daolib\addresses. The game must not be running from that folder: it holds
@@ -25,6 +25,10 @@
     are a pair, so the deploy stops at a movie older than its source (ui\turnorder,
     tools\movie.py), and at one built since the last build, which is not beside the dll
     yet; -StaleMovie deploys the folder's all the same.
+
+    The tactics page's box's movie, build\ui\turnbased_tactics.swf (ui\tactics; issue 46),
+    goes the same way and is held the same way: the plugin loads it from its own folder
+    into the game's tactics screen as that opens, and without it the page has no box.
 
     What deploys before that left is taken out, by a deploy and by -Remove: turnbased.dll
     and its .pdb loose in bin_ship\daolib\plugins, and in
@@ -197,11 +201,20 @@ if (-not (Test-Path (Join-Path $builtAddresses '*.bin'))) { throw "No address fi
 # folder's is the one before it, or none. That stops the deploy too, and a build mends it.
 # With no movie in build\ui the build warns and leaves the folder's as it was: that one, an
 # earlier build's, is held to the sources by its own time.
-$builtMovie = Join-Path $repo 'build\ui\turnorder.swf'
-$folderMovie = Join-Path $builtFolder 'turnorder.swf'
-$movie = @($builtMovie, $folderMovie) | Where-Object { Test-Path $_ } | Select-Object -First 1
-if ($movie -and -not $StaleMovie) {
-    $movieSources = @(Get-ChildItem -Path (Join-Path $repo 'ui\turnorder') -Recurse -File) +
+#
+# Two movies since issue 46 (2026-10-05), each held the same way to its own sources: the
+# turn bar's, and the tactics page's box's, which the plugin loads into the game's tactics
+# screen and whose calls it answers (TurnBased_TacticsBox and the rest, dev/UI.md).
+$movies = @(
+    @{ Name = 'turnorder.swf'; Source = 'ui\turnorder'; Without = 'the turn bar has no movie to show' },
+    @{ Name = 'turnbased_tactics.swf'; Source = 'ui\tactics'; Without = 'the tactics page has no box' }
+)
+foreach ($m in $movies) {
+    $builtMovie = Join-Path $repo "build\ui\$($m.Name)"
+    $folderMovie = Join-Path $builtFolder $m.Name
+    $movie = @($builtMovie, $folderMovie) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $movie -or $StaleMovie) { continue }
+    $movieSources = @(Get-ChildItem -Path (Join-Path $repo $m.Source) -Recurse -File) +
     @(Get-Item (Join-Path $PSScriptRoot 'movie.py'))
     $newest = $movieSources | Sort-Object LastWriteTimeUtc | Select-Object -Last 1
     if ($newest.LastWriteTimeUtc -gt (Get-Item $movie).LastWriteTimeUtc) {
@@ -216,7 +229,7 @@ if ($movie -and -not $StaleMovie) {
         $same = [Convert]::ToBase64String([IO.File]::ReadAllBytes($folderMovie)) -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($movie))
     }
     if (-not $same) {
-        throw "$($folderMovie.Substring($repo.Length + 1)) is not build\ui\turnorder.swf, which was built after the last build; run .\tools\build.ps1 -Preset $Preset first, which copies it there (or -StaleMovie to deploy the folder's as it is); nothing deployed"
+        throw "$($folderMovie.Substring($repo.Length + 1)) is not build\ui\$($m.Name), which was built after the last build; run .\tools\build.ps1 -Preset $Preset first, which copies it there (or -StaleMovie to deploy the folder's as it is); nothing deployed"
     }
 }
 
@@ -229,14 +242,16 @@ Show-Ok "loader  -> $(Join-Path $Game 'version.dll')"
 # a debug dll), as DAOLib's own deploy.ps1 copies a plugin's folder.
 Copy-Item -Force -Recurse (Join-Path $builtFolder '*') $pluginFolder -Exclude '*.ilk', '*.exp', '*.lib'
 Show-Ok "plugin  -> $pluginFolder"
-if (Test-Path $folderMovie) {
-    Show-Ok "movie   -> $(Join-Path $pluginFolder 'turnorder.swf')"
-}
-elseif (Test-Path (Join-Path $pluginFolder 'turnorder.swf')) {
-    Show-Warn "no turnorder.swf beside the built dll (python tools\movie.py, then a build): the movie an earlier deploy left in $pluginFolder stays, and may be older than the plugin"
-}
-else {
-    Show-Warn 'no turnorder.swf beside the built dll (python tools\movie.py, then a build): the turn bar has no movie to show'
+foreach ($m in $movies) {
+    if (Test-Path (Join-Path $builtFolder $m.Name)) {
+        Show-Ok "movie   -> $(Join-Path $pluginFolder $m.Name)"
+    }
+    elseif (Test-Path (Join-Path $pluginFolder $m.Name)) {
+        Show-Warn "no $($m.Name) beside the built dll (python tools\movie.py, then a build): the movie an earlier deploy left in $pluginFolder stays, and may be older than the plugin"
+    }
+    else {
+        Show-Warn "no $($m.Name) beside the built dll (python tools\movie.py, then a build): $($m.Without)"
+    }
 }
 Clear-Leftover
 # The address files beside the loader, as DAOLib's own deploy.ps1 puts them.

@@ -1763,4 +1763,29 @@ std::vector<Follower> PartyNow()
     return party;
 }
 
+std::vector<Follower> FollowersNow()
+{
+    std::vector<Follower> all = PartyNow();
+    if (all.empty())
+    {
+        return all;
+    }
+    // The party's pool, the scripts' GetPartyPoolList: everyone recruited,
+    // in the party or left at the camp, as the game's own scripts walk them
+    // (the climax's area scripts, cli300ar_redcliffe_castle and
+    // cli400ar_city_gates, read in the toolset's sources, 2026-10-05). The
+    // command had not been called from here before issue 46's box, and what
+    // it answers in play is still to see.
+    const dao::script::Array pool = api::GetPartyPoolList();
+    for (std::size_t i = 0; i < pool.Size(); ++i)
+    {
+        const ObjectId id = pool.Object(i);
+        if (api::IsObjectValid(id) != 0 && std::ranges::find(all, id, &Follower::id) == all.end())
+        {
+            all.push_back(Follower{id, api::GetName(id), api::GetTag(id), false});
+        }
+    }
+    return all;
+}
+
 } // namespace tb::game

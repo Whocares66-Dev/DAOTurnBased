@@ -1,6 +1,6 @@
 // Whose turns their tactics play: the player's choice for each companion
-// (issue 46), the mod's file in a save that keeps it, and the test tool that
-// makes the choice until the game's tactics page has a box for it.
+// (issue 46), the mod's file in a save that keeps it, the box on the game's
+// tactics page that makes the choice, and the test tool that makes it too.
 //
 // The user, 2026-10-05: "what if there was an auto option for a party member
 // so that instead of the player having to pick they just let the tactics do
@@ -168,5 +168,68 @@ struct FollowerFound
 // "turn_under_way":null} (or "yours" or "AI": how the turn it has now began,
 // and is played out; `applies` then says so too).
 [[nodiscard]] std::string ToJson(const Follower &who, const TacticsAnswer &answer);
+
+// The box on the game's tactics page, "Use when turn-based" (issue 46's
+// second step; the user, 2026-10-05: "Should probably add a checkbox to the
+// tactics page, 'use when turn-based', off by default, per character. Should
+// be changeable even during battle, applies to character's next turn."). It
+// is the player's way to the same choice: the mod's own movie on that screen
+// (ui/tactics, src/game/TacticsBox.cpp) shows a box of the screen's own art
+// for the character the page is of, and says a click.
+//
+// What the box shows of one the page can be of: nothing for the hero (the
+// user: "We can skip the hero for now"), nor for one whose tag a choice could
+// not be kept by, since a click there would be refused; else whether its
+// tactics play its turns from its next one, chosen or as `[turns] party`
+// starts it, which is what a click then changes. The numbers are the movie's:
+// its question is answered with one of them.
+enum class BoxState : int
+{
+    None = -1, // no box on this one's page
+    Off = 0,   // a box, not ticked: its turns wait for the player
+    On = 1,    // a box, ticked: its tactics play its turns
+};
+[[nodiscard]] BoxState BoxFor(const Follower &who, const TacticsAnswer &answer);
+
+// The boxes of everyone the page can be of, as the frame last found them
+// (TurnMachine::BoxesOf): what the movie's question is answered from, between
+// two frames. Only those with a box are kept, so two are equal when the page
+// would show the same for everyone.
+class TacticsBoxes
+{
+  public:
+    void Set(ObjectId id, BoxState state);
+    // None for anyone not here: a creature that is not of the party, or an
+    // id that is nobody's.
+    [[nodiscard]] BoxState Of(ObjectId id) const;
+    [[nodiscard]] bool operator==(const TacticsBoxes &) const = default;
+
+  private:
+    std::vector<std::pair<ObjectId, BoxState>> states_;
+};
+
+// "Alistair on, Wynne off; none for Lyna (the hero)": the boxes, for the
+// log's line as the page opens and as one of them changes. "nobody" with no
+// party.
+[[nodiscard]] std::string Describe(std::span<const Follower> party, const TacticsBoxes &boxes);
+
+// What the movie says, as text (ActionScript 2 passes strings best). Whom it
+// asks about, ExternalInterface.call("TurnBased_TacticsBox", "<id>"): a
+// creature's id as the screen's data tree gives it (GUI.SelectedChar.ID, a
+// whole number; as Eluvian writes ids, "0x7d9", is read too). All of the
+// text, or nothing.
+[[nodiscard]] std::optional<ObjectId> ReadBoxAsk(std::string_view text);
+
+// A click, fscommand("TurnBased_UseWhenTurnBased", "<id> <0|1>"): for whom,
+// and what the box shows after it. The id goes with the click so that whom
+// it was for is never guessed from what the page shows a frame later. One
+// space between the two and nothing else, or it is no click.
+struct BoxClick
+{
+    ObjectId id = kNoObject;
+    bool on = false;
+    [[nodiscard]] bool operator==(const BoxClick &) const = default;
+};
+[[nodiscard]] std::optional<BoxClick> ReadBoxClick(std::string_view args);
 
 } // namespace tb
