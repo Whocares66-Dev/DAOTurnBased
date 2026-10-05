@@ -1,7 +1,10 @@
 // The camera through the turns: in the tactical view it glides to whoever
 // acts and never turns (only the player turns it); close in, it follows
 // whoever acts and comes round behind them, enemies too, seeing what they
-// see (the user's asks, 2026-09-30).
+// see (the user's asks, 2026-09-30). An enemy is looked at from a place
+// where the camera has ground to stand over and a clear line, behind it or
+// else in front; with no such place it is not gone to, and the camera stays
+// with the party and turns to it (issue 33; core/Portraits.h, ChooseStand).
 //
 // Through DAOLib's camera moves (dao/CameraMoves.h, f046605): PanTo follows
 // a creature and eases the tactical focus onto it; EaseYaw turns the camera
@@ -33,8 +36,9 @@ namespace tb::game
 // head node is (DAOLib's dao::portraits::HeadPosition, the point the game's
 // own portrait camera aims at; nothing for a model with no node of that name,
 // or one not set up yet), and from the one to the other (core's ExtentOf,
-// with its reasons). The turn camera's distance and a portrait's framing are
-// both by this one measure (issues 33 and 32). On the game's thread.
+// with its reasons). A portrait's framing is by this measure (issue 32), and
+// the turn camera's distance where the creature's model gives no box (issue
+// 33; SizeAsks). On the game's thread.
 struct BodyMeasure
 {
     Vec3 feet;
@@ -47,8 +51,10 @@ class CameraDirector
 {
   public:
     // The turn is now `id`'s (or the player asked to look at it, clicking
-    // its card).
-    void TurnTo(ObjectId id);
+    // its card). `own` is the one of the party the player acts as, with whom
+    // the camera stays where there is no place round an enemy for it to
+    // stand (core: ChooseStand); kNoObject for nobody.
+    void TurnTo(ObjectId id, ObjectId own);
 
     // Each frame: whether the last pan got there, and why it ended (DAOLib's
     // LastEnd). Twice, with an AI's turns at twice the speed, the pan to the hero's turn left
@@ -74,11 +80,16 @@ class CameraDirector
   private:
     void Pan(ObjectId id, std::uint64_t nowMs);
     [[nodiscard]] float MoveSeconds() const;
-    void StandBackFor(ObjectId id);
+    // How far its size asks the camera to stand on `id`'s turn, and the
+    // camera put at a distance: each nothing for the game's own.
+    [[nodiscard]] std::optional<float> SizeAsks(ObjectId id);
+    void Stand(std::optional<float> close);
 
-    // The distance the camera has been given for a big creature's turn;
-    // nothing while it is the game's own.
+    // The distance the camera has been given for a creature's turn, and the
+    // one its size last asked, which is further where a wall stood in the
+    // way; each nothing while it is the game's own.
     std::optional<float> standing_;
+    std::optional<float> asked_;
 
     int logged_ = 0;
     ObjectId panning_ = kNoObject;

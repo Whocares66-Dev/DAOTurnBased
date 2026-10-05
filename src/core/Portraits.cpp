@@ -8,6 +8,7 @@
 #include <charconv>
 #include <cmath>
 #include <format>
+#include <numbers>
 #include <system_error>
 #include <utility>
 
@@ -676,27 +677,192 @@ std::optional<float> CloseDistanceFor(float extent)
     return std::min(kCloseMost, kCloseGame * extent / kPersonExtent);
 }
 
-ViewSide ChooseViewSide(bool rightClear, bool leftClear)
+CloseDistance CloseDistanceOf(const std::optional<Vec3> &box, const std::optional<float> &feetToHead)
 {
-    if (rightClear)
+    if (box && std::isfinite(box->x) && std::isfinite(box->y) && std::isfinite(box->z))
     {
-        return ViewSide::Right;
+        // How many persons long it is, and how many high.
+        const float length = std::max(box->x, box->y) / kPersonAcross;
+        const float height = box->z / kPersonHeight;
+        const float size = std::max(length, height);
+        if (size > 0.0f)
+        {
+            const CloseBy by = length > height ? CloseBy::Length : CloseBy::Height;
+            if (size > 1.0f)
+            {
+                return CloseDistance{std::min(kCloseMost, kCloseGame * size), by};
+            }
+            return CloseDistance{std::nullopt, by}; // never under the game's own
+        }
     }
-    return leftClear ? ViewSide::Left : ViewSide::Behind;
+    if (feetToHead)
+    {
+        return CloseDistance{CloseDistanceFor(*feetToHead), CloseBy::Head};
+    }
+    return CloseDistance{std::nullopt, CloseBy::Nothing};
 }
 
 float ViewYaw(float behind, ViewSide side)
 {
+    constexpr float kHalfTurn = std::numbers::pi_v<float>;
     switch (side)
     {
     case ViewSide::Right:
         return behind + kViewOffset;
     case ViewSide::Left:
         return behind - kViewOffset;
+    case ViewSide::Front:
+        return behind + kHalfTurn;
+    case ViewSide::FrontRight:
+        return behind + kHalfTurn - kViewOffset;
+    case ViewSide::FrontLeft:
+        return behind + kHalfTurn + kViewOffset;
     case ViewSide::Behind:
         break;
     }
     return behind;
+}
+
+std::string_view ViewSideWords(ViewSide side)
+{
+    switch (side)
+    {
+    case ViewSide::Right:
+        return "behind it to its right";
+    case ViewSide::Left:
+        return "behind it to its left";
+    case ViewSide::Front:
+        return "in front of it";
+    case ViewSide::FrontRight:
+        return "in front of it to its right";
+    case ViewSide::FrontLeft:
+        return "in front of it to its left";
+    case ViewSide::Behind:
+        break;
+    }
+    return "behind it";
+}
+
+std::optional<float> YawToward(const Vec3 &from, const Vec3 &at)
+{
+    const float x = from.x - at.x;
+    const float y = from.y - at.y;
+    if (!std::isfinite(x) || !std::isfinite(y) || (x == 0.0f && y == 0.0f))
+    {
+        return std::nullopt;
+    }
+    return std::atan2(y, x);
+}
+
+float OrbitDistance(float zoom, float close)
+{
+    return zoom * close + (1.0f - zoom) * kFarGame;
+}
+
+namespace
+{
+
+// A clear distance that is none is nothing clear.
+float ClearOf(float meters)
+{
+    return std::isfinite(meters) && meters > 0.0f ? meters : 0.0f;
+}
+
+// The choice among a row's three places, named by `sides` in the order they
+// are liked; nothing where none of the three is a place to stand.
+std::optional<ViewStand> ChooseOf(float zoom, const std::optional<float> &asked, const ViewRow &row,
+                                  const std::array<ViewSide, 3> &sides)
+{
+    struct Place
+    {
+        ViewSide side;
+        float clear;
+        bool ground;
+    };
+    const std::array<Place, 3> places{Place{sides[0], ClearOf(row.right.clear), row.right.ground},
+                                      Place{sides[1], ClearOf(row.left.clear), row.left.ground},
+                                      Place{sides[2], ClearOf(row.straight.clear), row.straight.ground}};
+    const float whole = OrbitDistance(zoom, asked.value_or(kCloseGame));
+    for (const Place &place : places)
+    {
+        if (place.ground && place.clear >= whole)
+        {
+            return ViewStand{ViewAnswer::Stand, place.side, whole, asked};
+        }
+    }
+    // None the whole way: the one clear the furthest, the earlier of two
+    // alike.
+    const Place *best = nullptr;
+    for (const Place &place : places)
+    {
+        if (place.ground && (best == nullptr || place.clear > best->clear))
+        {
+            best = &place;
+        }
+    }
+    if (best == nullptr)
+    {
+        return std::nullopt;
+    }
+    const float meters = StandDistance(zoom, asked, best->clear);
+    if (!(meters > OrbitDistance(zoom, kCloseGame)))
+    {
+        return ViewStand{ViewAnswer::Stand, best->side, meters, std::nullopt}; // the game's own
+    }
+    // The close distance that puts the camera there: the orbit's blend
+    // undone. The zoom is not nothing here, since only then is the distance
+    // asked another than the game's own, and this one between the two.
+    return ViewStand{ViewAnswer::Stand, best->side, meters, (meters - (1.0f - zoom) * kFarGame) / zoom};
+}
+
+} // namespace
+
+float StandDistance(float zoom, const std::optional<float> &asked, float clear)
+{
+    const float wanted = OrbitDistance(zoom, asked.value_or(kCloseGame));
+    const float least = OrbitDistance(zoom, kCloseGame);
+    const float sane = ClearOf(clear);
+    if (sane >= wanted)
+    {
+        return wanted;
+    }
+    return std::max(least, sane - kViewMargin); // never nearer than the game's own
+}
+
+bool IsPlace(const GroundUnder &under)
+{
+    return under.ground && under.walkable && std::isfinite(under.below) && under.below <= kPlaceDrop;
+}
+
+ViewStand ChooseStand(float zoom, const std::optional<float> &asked, const ViewRow &back,
+                      const std::optional<ViewRow> &front)
+{
+    if (const std::optional<ViewStand> behind =
+            ChooseOf(zoom, asked, back, {ViewSide::Right, ViewSide::Left, ViewSide::Behind}))
+    {
+        return *behind;
+    }
+    if (!front)
+    {
+        return ViewStand{ViewAnswer::AskFront, ViewSide::Behind, 0.0f, std::nullopt};
+    }
+    if (const std::optional<ViewStand> before =
+            ChooseOf(zoom, asked, *front, {ViewSide::FrontRight, ViewSide::FrontLeft, ViewSide::Front}))
+    {
+        return *before;
+    }
+    return ViewStand{ViewAnswer::WithParty, ViewSide::Behind, 0.0f, std::nullopt};
+}
+
+float ClearDistance(const Vec3 &from, const Vec3 &to, const Vec3 &cut, float wanted)
+{
+    const float whole = Distance(from, to);
+    const float clear = Distance(from, cut);
+    if (!std::isfinite(whole) || !std::isfinite(clear) || !(whole > 0.0f))
+    {
+        return 0.0f;
+    }
+    return wanted * std::min(1.0f, clear / whole);
 }
 
 PortraitChoice ChoosePortrait(std::int32_t appearance, std::wstring_view appearanceLabel, bool person,

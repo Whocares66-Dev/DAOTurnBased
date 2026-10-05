@@ -1133,21 +1133,501 @@ TEST_CASE("the camera stands back on a big creature's turn, by its size, the zoo
     CHECK_FALSE(tb::CloseDistanceFor(-3.0f));
 }
 
-TEST_CASE(
-    "an enemy is looked at from its right, from its left if that is blocked, never from straight behind for choice",
-    "[portraits]")
+namespace
+{
+// The game's own distance, as the cases below read it: nothing set.
+constexpr float kGamesOwn = 0.0f;
+
+// How far the camera stands for a creature whose model's box is `across` by
+// `along` and `high`, with no head node to go by; `by` is which of the box's
+// two measures is to have decided it.
+float ByBox(tb::CloseBy by, float across, float along, float high)
+{
+    const tb::CloseDistance close = tb::CloseDistanceOf(tb::Vec3{across, along, high}, std::nullopt);
+    CHECK(close.by == by);
+    return close.meters.value_or(kGamesOwn);
+}
+float ByLength(float across, float along, float high)
+{
+    return ByBox(tb::CloseBy::Length, across, along, high);
+}
+float ByHeight(float across, float along, float high)
+{
+    return ByBox(tb::CloseBy::Height, across, along, high);
+}
+} // namespace
+
+TEST_CASE("the camera stands back by a box's length against a person's across, or its height against a person's",
+          "[portraits]")
 {
     using Catch::Approx;
+    // Issue 33. The boxes are the engine's as seen in play (DAOLib's
+    // dao/World.h: Ortan Thaig, 2026-10-04, and the high dragon on its
+    // mountain top, 2026-10-05), each across by along and high. By its feet
+    // to its head a giant spider was no bigger than a person; by the largest
+    // of its box's sides against a person's height it stood 3.8 m off, which
+    // in play did not clear it (the Dead Trenches, 2026-10-05).
+    //
+    // A person, the smallest and the largest seen there, arms out (how deep
+    // a person's box is was not written down: 0.3 m here, as the four below
+    // are): the game's own, or within 10 cm of it.
+    CHECK(ByHeight(1.05f, 0.30f, 1.60f) == kGamesOwn);
+    CHECK(ByLength(1.24f, 0.30f, 1.83f) == Approx(3.1f));
+    CHECK(ByLength(1.24f, 0.30f, 1.83f) > tb::kCloseGame); // further than the game's own, whenever it is given
+    // A person's own measures, either and both: the game's own.
+    CHECK(ByHeight(tb::kPersonAcross, 0.30f, tb::kPersonHeight) == kGamesOwn);
+    CHECK(ByHeight(1.00f, 0.30f, tb::kPersonHeight) == kGamesOwn);
+    CHECK(ByLength(tb::kPersonAcross, 0.30f, 1.50f) == kGamesOwn);
+    // The four of the party at the high dragon's fight (DAOLib's example's
+    // log, 2026-10-05: Lyna, Wynne, Alistair and one more), as they would be
+    // were they enemies: the party's own turns are the game's own whatever
+    // its boxes. The two bigger are past a person's measures, and by their
+    // arms more than by their height (which gives them 3.2 and 3.48 m).
+    CHECK(ByHeight(1.05f, 0.28f, 1.68f) == kGamesOwn);
+    CHECK(ByHeight(1.14f, 0.32f, 1.79f) == kGamesOwn);
+    CHECK(ByLength(1.30f, 0.38f, 1.92f) == Approx(3.25f));
+    CHECK(ByLength(1.45f, 0.43f, 2.09f) == Approx(3.625f));
+    // A giant spider, long and low: by its length, against what a person is
+    // across.
+    CHECK(ByLength(1.76f, 2.30f, 1.19f) == Approx(5.75f));
+    // Its length is the larger of its two sides across, whichever that is.
+    CHECK(ByLength(2.30f, 1.76f, 1.19f) == Approx(5.75f));
+    // A deepstalker, as low and longer.
+    CHECK(ByLength(0.82f, 2.54f, 0.90f) == Approx(6.35f));
+    // A bronto, taller than a person and longer than it is tall.
+    CHECK(ByLength(1.37f, 3.80f, 2.44f) == Approx(9.5f));
+    // An ogre, upright with its arms out: its arms are more of a person's
+    // across than its height is of a person's height (which gives it 7.67 m).
+    CHECK(ByLength(4.00f, 1.19f, 4.60f) == Approx(10.0f));
+    // A body more of a person's height than of a person's across goes by its
+    // height. No box seen that stands the camera back is like it: this one
+    // is made up, a tree's shape.
+    CHECK(ByHeight(1.20f, 0.80f, 3.60f) == Approx(6.0f));
+    // The high dragon, whose box is its spread wings: never past the most.
+    CHECK(ByLength(31.07f, 21.75f, 14.82f) == Approx(tb::kCloseMost));
+    // Something small (a rat's size): never under the game's own.
+    CHECK(ByLength(0.30f, 0.60f, 0.25f) == kGamesOwn);
+}
+
+TEST_CASE("with no box the camera stands back by the feet to the head, and with neither as the game has it",
+          "[portraits]")
+{
+    using Catch::Approx;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float infinity = std::numeric_limits<float>::infinity();
+    // The box comes first where there are both: a giant spider with a head
+    // node as high as an ogre's is still a giant spider.
+    const tb::CloseDistance both = tb::CloseDistanceOf(tb::Vec3{1.76f, 2.30f, 1.19f}, 3.4f);
+    CHECK(both.by == tb::CloseBy::Length);
+    CHECK(both.meters.value_or(kGamesOwn) == Approx(5.75f));
+    // No box at all (a model of a kind DAOLib does not read): by the feet to
+    // the head, as it was before the box.
+    const tb::CloseDistance head = tb::CloseDistanceOf(std::nullopt, 3.4f);
+    CHECK(head.by == tb::CloseBy::Head);
+    CHECK(head.meters.value_or(kGamesOwn) == Approx(6.0f));
+    const tb::CloseDistance person = tb::CloseDistanceOf(std::nullopt, 1.7f);
+    CHECK(person.by == tb::CloseBy::Head);
+    CHECK_FALSE(person.meters);
+    // Neither: the game's own.
+    const tb::CloseDistance neither = tb::CloseDistanceOf(std::nullopt, std::nullopt);
+    CHECK(neither.by == tb::CloseBy::Nothing);
+    CHECK_FALSE(neither.meters);
+    // A box that is no measure is as no box: a model with no mesh, a box
+    // turned inside out, a side that is not a number wherever it stands.
+    for (const tb::Vec3 &none :
+         {tb::Vec3{0.0f, 0.0f, 0.0f}, tb::Vec3{-1.0f, -2.0f, -3.0f}, tb::Vec3{nan, 2.30f, 1.19f},
+          tb::Vec3{1.76f, nan, 1.19f}, tb::Vec3{1.76f, 2.30f, nan}, tb::Vec3{infinity, 2.30f, 1.19f},
+          tb::Vec3{1.76f, infinity, 1.19f}, tb::Vec3{1.76f, 2.30f, infinity}})
+    {
+        const tb::CloseDistance byHead = tb::CloseDistanceOf(none, 3.4f);
+        CHECK(byHead.by == tb::CloseBy::Head);
+        CHECK(byHead.meters.value_or(kGamesOwn) == Approx(6.0f));
+        const tb::CloseDistance byNothing = tb::CloseDistanceOf(none, std::nullopt);
+        CHECK(byNothing.by == tb::CloseBy::Nothing);
+        CHECK_FALSE(byNothing.meters);
+    }
+    // A head that is no measure is the game's own, said to be by the head.
+    const tb::CloseDistance noHead = tb::CloseDistanceOf(std::nullopt, nan);
+    CHECK(noHead.by == tb::CloseBy::Head);
+    CHECK_FALSE(noHead.meters);
+}
+
+TEST_CASE("an enemy is looked at from 40 degrees round to its right or its left, behind it or in front of it",
+          "[portraits]")
+{
+    using Catch::Approx;
+    const float halfTurn = 3.14159265f;
     // The user: "maybe don't be directly behind enemies. Perhaps offset it by
     // 30 or 45 degrees to the right (or left if something is blocking the
     // right side)".
-    CHECK(tb::ChooseViewSide(true, true) == tb::ViewSide::Right);
-    CHECK(tb::ChooseViewSide(true, false) == tb::ViewSide::Right);
-    CHECK(tb::ChooseViewSide(false, true) == tb::ViewSide::Left);
-    CHECK(tb::ChooseViewSide(false, false) == tb::ViewSide::Behind); // both blocked: as it was
     CHECK(tb::ViewYaw(1.0f, tb::ViewSide::Right) == Approx(1.0f + tb::kViewOffset));
     CHECK(tb::ViewYaw(1.0f, tb::ViewSide::Left) == Approx(1.0f - tb::kViewOffset));
     CHECK(tb::ViewYaw(1.0f, tb::ViewSide::Behind) == Approx(1.0f));
     CHECK(tb::kViewOffset > 0.52f); // 30 degrees
     CHECK(tb::kViewOffset < 0.79f); // 45 degrees
+    // And of the Broodmother: "What if we just turn the camera front instead
+    // of back with an offset?" In front is half a turn from behind, and the
+    // creature's right is the same side of it from in front as from behind:
+    // the offset mirrored.
+    CHECK(tb::ViewYaw(1.0f, tb::ViewSide::Front) == Approx(1.0f + halfTurn));
+    CHECK(tb::ViewYaw(1.0f, tb::ViewSide::FrontRight) == Approx(1.0f + halfTurn - tb::kViewOffset));
+    CHECK(tb::ViewYaw(1.0f, tb::ViewSide::FrontLeft) == Approx(1.0f + halfTurn + tb::kViewOffset));
+    // A creature facing +y has +x on its right and the camera behind it at
+    // -y: each place to its right is on the +x side of it.
+    const float behind = -halfTurn / 2.0f;
+    CHECK(std::cos(tb::ViewYaw(behind, tb::ViewSide::Right)) > 0.5f);
+    CHECK(std::sin(tb::ViewYaw(behind, tb::ViewSide::Right)) < -0.5f);
+    CHECK(std::cos(tb::ViewYaw(behind, tb::ViewSide::FrontRight)) > 0.5f);
+    CHECK(std::sin(tb::ViewYaw(behind, tb::ViewSide::FrontRight)) > 0.5f);
+    CHECK(std::cos(tb::ViewYaw(behind, tb::ViewSide::Left)) < -0.5f);
+    CHECK(std::cos(tb::ViewYaw(behind, tb::ViewSide::FrontLeft)) < -0.5f);
+    CHECK(std::sin(tb::ViewYaw(behind, tb::ViewSide::Front)) > 0.99f);
+    // The log's words for each.
+    CHECK(tb::ViewSideWords(tb::ViewSide::Right) == "behind it to its right");
+    CHECK(tb::ViewSideWords(tb::ViewSide::Left) == "behind it to its left");
+    CHECK(tb::ViewSideWords(tb::ViewSide::Behind) == "behind it");
+    CHECK(tb::ViewSideWords(tb::ViewSide::FrontRight) == "in front of it to its right");
+    CHECK(tb::ViewSideWords(tb::ViewSide::FrontLeft) == "in front of it to its left");
+    CHECK(tb::ViewSideWords(tb::ViewSide::Front) == "in front of it");
+}
+
+namespace
+{
+// A row of three places with ground to stand over under each, their lines
+// clear to so many meters.
+tb::ViewRow Row(float right, float left, float straight)
+{
+    return tb::ViewRow{tb::ViewPlace{right, true}, tb::ViewPlace{left, true}, tb::ViewPlace{straight, true}};
+}
+// The same row with no ground under any of the three.
+tb::ViewRow NoGround(float right, float left, float straight)
+{
+    return tb::ViewRow{tb::ViewPlace{right, false}, tb::ViewPlace{left, false}, tb::ViewPlace{straight, false}};
+}
+// Where the camera stands on an ogre's turn, its size asking 10 m, with the
+// player's zoom close in (the game's own distance is 3 m then): the three
+// lines behind it are clear to so many meters, with ground under each place.
+tb::ViewStand OgreStand(float right, float left, float behind)
+{
+    const tb::ViewStand stand = tb::ChooseStand(1.0f, 10.0f, Row(right, left, behind), std::nullopt);
+    CHECK(stand.answer == tb::ViewAnswer::Stand);
+    return stand;
+}
+// A stand's close distance, with the game's own as the cases above read it.
+float CloseOf(const tb::ViewStand &stand)
+{
+    return stand.close.value_or(kGamesOwn);
+}
+} // namespace
+
+TEST_CASE("the camera stands on the first side whose line is clear the whole distance its size asks", "[portraits]")
+{
+    using Catch::Approx;
+    // All clear: its right, and the distance asked, to the last bit.
+    const tb::ViewStand all = OgreStand(10.0f, 10.0f, 10.0f);
+    CHECK(all.side == tb::ViewSide::Right);
+    CHECK(all.meters == Approx(10.0f));
+    CHECK(CloseOf(all) == 10.0f);
+    // Its right blocked whole, its left clear.
+    const tb::ViewStand left = OgreStand(0.0f, 10.0f, 10.0f);
+    CHECK(left.side == tb::ViewSide::Left);
+    CHECK(left.meters == Approx(10.0f));
+    CHECK(CloseOf(left) == 10.0f);
+    // A line cut a little short of the distance is not clear.
+    CHECK(OgreStand(9.9f, 10.0f, 10.0f).side == tb::ViewSide::Left);
+    // Neither side, and behind it clear: behind, now that its line is asked
+    // as the sides' are.
+    const tb::ViewStand behind = OgreStand(2.1f, 6.9f, 10.0f);
+    CHECK(behind.side == tb::ViewSide::Behind);
+    CHECK(behind.meters == Approx(10.0f));
+    CHECK(CloseOf(behind) == 10.0f);
+    // A line said to be clear past the distance is clear, and the camera no
+    // further off for it.
+    const tb::ViewStand past = OgreStand(12.0f, 0.0f, 0.0f);
+    CHECK(past.side == tb::ViewSide::Right);
+    CHECK(past.meters == Approx(10.0f));
+}
+
+TEST_CASE("with no line clear the whole distance the camera stands where one is clear the furthest, a margin short",
+          "[portraits]")
+{
+    using Catch::Approx;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float infinity = std::numeric_limits<float>::infinity();
+    // An ogre's turn in a hall (issue 33, 2026-10-05): both sides blocked at
+    // 10 m, and 10 m straight behind it the far side of a wall, where the
+    // camera went untested and the frame was of the wall. All three short,
+    // the longest taken.
+    const tb::ViewStand hall = OgreStand(2.1f, 6.9f, 3.0f);
+    CHECK(hall.side == tb::ViewSide::Left);
+    CHECK(hall.meters == Approx(6.4f));
+    CHECK(CloseOf(hall) == Approx(6.4f));
+    const tb::ViewStand right = OgreStand(7.0f, 6.9f, 3.0f);
+    CHECK(right.side == tb::ViewSide::Right);
+    CHECK(right.meters == Approx(6.5f));
+    const tb::ViewStand behind = OgreStand(2.1f, 3.0f, 8.0f);
+    CHECK(behind.side == tb::ViewSide::Behind);
+    CHECK(behind.meters == Approx(7.5f));
+    CHECK(tb::kViewMargin > 0.0f);
+    // Two alike: its right, then its left.
+    CHECK(OgreStand(5.0f, 5.0f, 5.0f).side == tb::ViewSide::Right);
+    CHECK(OgreStand(5.0f, 5.0f, 5.0f).meters == Approx(4.5f));
+    CHECK(OgreStand(4.0f, 5.0f, 5.0f).side == tb::ViewSide::Left);
+    CHECK(OgreStand(5.0f, 4.0f, 5.0f).side == tb::ViewSide::Right);
+    // Nothing clear past the game's own distance: never nearer than it, on
+    // the side clear the furthest all the same.
+    const tb::ViewStand tight = OgreStand(2.1f, 1.0f, 3.0f);
+    CHECK(tight.side == tb::ViewSide::Behind);
+    CHECK(tight.meters == Approx(3.0f));
+    CHECK_FALSE(tight.close);
+    const tb::ViewStand margin = OgreStand(3.4f, 1.0f, 0.5f); // 2.9 m with the margin off
+    CHECK(margin.side == tb::ViewSide::Right);
+    CHECK(margin.meters == Approx(3.0f));
+    CHECK_FALSE(margin.close);
+    const tb::ViewStand none = OgreStand(0.0f, 0.0f, 0.0f);
+    CHECK(none.side == tb::ViewSide::Right);
+    CHECK(none.meters == Approx(3.0f));
+    CHECK_FALSE(none.close);
+    // A distance that is none is nothing clear.
+    const tb::ViewStand noNumber = OgreStand(nan, 6.9f, -1.0f);
+    CHECK(noNumber.side == tb::ViewSide::Left);
+    CHECK(noNumber.meters == Approx(6.4f));
+    CHECK(OgreStand(infinity, 6.9f, 3.0f).side == tb::ViewSide::Left);
+}
+
+TEST_CASE("a person-sized enemy is looked at from the game's own distance, from the side clear the furthest",
+          "[portraits]")
+{
+    using Catch::Approx;
+    const auto stand = [](float right, float left, float behind) {
+        return tb::ChooseStand(1.0f, std::nullopt, Row(right, left, behind), std::nullopt);
+    };
+    const tb::ViewStand all = stand(3.0f, 3.0f, 3.0f);
+    CHECK(all.answer == tb::ViewAnswer::Stand);
+    CHECK(all.side == tb::ViewSide::Right);
+    CHECK(all.meters == Approx(3.0f));
+    CHECK_FALSE(all.close);
+    CHECK(stand(1.0f, 3.0f, 3.0f).side == tb::ViewSide::Left);
+    CHECK(stand(1.0f, 0.5f, 3.0f).side == tb::ViewSide::Behind);
+    // None clear that far: the camera is the player's and comes no nearer.
+    const tb::ViewStand hemmed = stand(1.0f, 2.0f, 1.5f);
+    CHECK(hemmed.side == tb::ViewSide::Left);
+    CHECK(hemmed.meters == Approx(3.0f));
+    CHECK_FALSE(hemmed.close);
+}
+
+TEST_CASE("the stand is by the camera's distance at the player's zoom, and its close distance puts the camera there",
+          "[portraits]")
+{
+    using Catch::Approx;
+    // The game's orbit: the zoom's blend of the close distance and 20 m.
+    CHECK(tb::OrbitDistance(1.0f, 3.0f) == Approx(3.0f));
+    CHECK(tb::OrbitDistance(1.0f, 10.0f) == Approx(10.0f));
+    CHECK(tb::OrbitDistance(0.8f, 10.0f) == Approx(12.0f));
+    CHECK(tb::OrbitDistance(0.8f, 3.0f) == Approx(6.4f));
+    CHECK(tb::OrbitDistance(0.0f, 10.0f) == Approx(tb::kFarGame)); // the tactical view
+    // An ogre with the player zoomed out a little: its size asks 12 m from
+    // it, and the game's own is 6.4.
+    const float whole = tb::OrbitDistance(0.8f, 10.0f);
+    const tb::ViewStand all = tb::ChooseStand(0.8f, 10.0f, Row(whole, whole, whole), std::nullopt);
+    CHECK(all.side == tb::ViewSide::Right);
+    CHECK(all.meters == Approx(12.0f));
+    CHECK(CloseOf(all) == 10.0f);
+    // 10 m clear is the whole distance close in, and not at this zoom.
+    CHECK(tb::ChooseStand(0.8f, 10.0f, Row(10.0f, whole, 0.0f), std::nullopt).side == tb::ViewSide::Left);
+    const tb::ViewStand cut = tb::ChooseStand(0.8f, 10.0f, Row(5.0f, 9.0f, 7.0f), std::nullopt);
+    CHECK(cut.side == tb::ViewSide::Left);
+    CHECK(cut.meters == Approx(8.5f));
+    CHECK(CloseOf(cut) == Approx(5.625f));
+    CHECK(tb::OrbitDistance(0.8f, CloseOf(cut)) == Approx(8.5f)); // where the game then puts it
+    // Nothing clear past the game's own at this zoom.
+    const tb::ViewStand tight = tb::ChooseStand(0.8f, 10.0f, Row(5.0f, 6.5f, 6.0f), std::nullopt);
+    CHECK(tight.side == tb::ViewSide::Left);
+    CHECK(tight.meters == Approx(6.4f));
+    CHECK_FALSE(tight.close);
+    // A person-sized enemy at this zoom: the game's own is the whole of it.
+    const float own = tb::OrbitDistance(0.8f, tb::kCloseGame);
+    const tb::ViewStand person = tb::ChooseStand(0.8f, std::nullopt, Row(own, own, own), std::nullopt);
+    CHECK(person.side == tb::ViewSide::Right);
+    CHECK(person.meters == Approx(6.4f));
+    CHECK_FALSE(person.close);
+    // Where the camera would stand at a place, which is where the ground
+    // under it is asked: the whole distance, a margin short of the cut, never
+    // nearer than the game's own.
+    CHECK(tb::StandDistance(1.0f, 10.0f, 10.0f) == Approx(10.0f));
+    CHECK(tb::StandDistance(1.0f, 10.0f, 12.0f) == Approx(10.0f));
+    CHECK(tb::StandDistance(1.0f, 10.0f, 6.9f) == Approx(6.4f));
+    CHECK(tb::StandDistance(1.0f, 10.0f, 9.9f) == Approx(9.4f));
+    CHECK(tb::StandDistance(1.0f, 10.0f, 1.0f) == Approx(3.0f));
+    CHECK(tb::StandDistance(1.0f, 10.0f, std::numeric_limits<float>::quiet_NaN()) == Approx(3.0f));
+    CHECK(tb::StandDistance(1.0f, std::nullopt, 3.0f) == Approx(3.0f));
+    CHECK(tb::StandDistance(1.0f, std::nullopt, 1.0f) == Approx(3.0f));
+    CHECK(tb::StandDistance(0.8f, 10.0f, 9.0f) == Approx(8.5f));
+    CHECK(tb::StandDistance(0.8f, 10.0f, 5.0f) == Approx(6.4f));
+    // And it is where the choice puts it.
+    CHECK(tb::StandDistance(1.0f, 10.0f, 6.9f) == OgreStand(2.1f, 6.9f, 3.0f).meters);
+}
+
+TEST_CASE("a place to stand has ground a creature could walk on beneath it, not far under the creature's feet",
+          "[portraits]")
+{
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    // The floor the fight is on, a step down, a rise.
+    CHECK(tb::IsPlace(tb::GroundUnder{true, true, 0.0f}));
+    CHECK(tb::IsPlace(tb::GroundUnder{true, true, 1.2f}));
+    CHECK(tb::IsPlace(tb::GroundUnder{true, true, -2.5f})); // above its feet
+    CHECK(tb::IsPlace(tb::GroundUnder{true, true, tb::kPlaceDrop}));
+    // No ground under it: a pit with no bottom, the inside of solid ground.
+    CHECK_FALSE(tb::IsPlace(tb::GroundUnder{false, false, 0.0f}));
+    CHECK_FALSE(tb::IsPlace(tb::GroundUnder{false, true, 0.0f}));
+    // Ground nobody could walk on.
+    CHECK_FALSE(tb::IsPlace(tb::GroundUnder{true, false, 0.0f}));
+    // Walkable, and further under the creature's feet than a storey: the
+    // floor of somewhere else.
+    CHECK_FALSE(tb::IsPlace(tb::GroundUnder{true, true, tb::kPlaceDrop + 0.1f}));
+    CHECK_FALSE(tb::IsPlace(tb::GroundUnder{true, true, 40.0f}));
+    CHECK_FALSE(tb::IsPlace(tb::GroundUnder{true, true, nan}));
+    CHECK(tb::kPlaceDrop > 2.0f);  // a flight of steps is no drop
+    CHECK(tb::kPlaceDrop < 10.0f); // two storeys are
+}
+
+TEST_CASE("a side with no place to stand is no place at all, whatever its line says", "[portraits]")
+{
+    using Catch::Approx;
+    const auto row = [](tb::ViewPlace right, tb::ViewPlace left, tb::ViewPlace straight) {
+        return tb::ViewRow{right, left, straight};
+    };
+    // Its right clear the whole way over no ground, its left clear the whole
+    // way over ground: its left.
+    const tb::ViewStand left =
+        tb::ChooseStand(1.0f, 10.0f, row({10.0f, false}, {10.0f, true}, {10.0f, true}), std::nullopt);
+    CHECK(left.answer == tb::ViewAnswer::Stand);
+    CHECK(left.side == tb::ViewSide::Left);
+    CHECK(left.meters == Approx(10.0f));
+    // The one clear the whole way has no ground, and the others are short:
+    // the furthest of those with ground, a margin short.
+    const tb::ViewStand shortOf =
+        tb::ChooseStand(1.0f, 10.0f, row({10.0f, false}, {4.0f, true}, {6.9f, true}), std::nullopt);
+    CHECK(shortOf.answer == tb::ViewAnswer::Stand);
+    CHECK(shortOf.side == tb::ViewSide::Behind);
+    CHECK(shortOf.meters == Approx(6.4f));
+    // The furthest clear of the short ones has no ground: the next.
+    const tb::ViewStand next =
+        tb::ChooseStand(1.0f, 10.0f, row({8.0f, false}, {4.0f, true}, {6.9f, false}), std::nullopt);
+    CHECK(next.answer == tb::ViewAnswer::Stand);
+    CHECK(next.side == tb::ViewSide::Left);
+    CHECK(next.meters == Approx(3.5f));
+    // One place with ground and nothing clear from it is a place still: the
+    // game's own distance.
+    const tb::ViewStand only =
+        tb::ChooseStand(1.0f, 10.0f, row({10.0f, false}, {10.0f, false}, {0.0f, true}), std::nullopt);
+    CHECK(only.answer == tb::ViewAnswer::Stand);
+    CHECK(only.side == tb::ViewSide::Behind);
+    CHECK(only.meters == Approx(3.0f));
+    CHECK_FALSE(only.close);
+}
+
+TEST_CASE("with no place behind a creature the camera looks at it from in front, and with none there stays with the "
+          "party",
+          "[portraits]")
+{
+    using Catch::Approx;
+    // The Broodmother, set into her cave's rock, which has no collision:
+    // every line clear to the whole 14 m, and no ground under the three
+    // places behind her (issue 33, 2026-10-05).
+    const tb::ViewRow rock = NoGround(14.0f, 14.0f, 14.0f);
+    // Behind her alone has been measured: the front is to be asked.
+    const tb::ViewStand ask = tb::ChooseStand(1.0f, 14.0f, rock, std::nullopt);
+    CHECK(ask.answer == tb::ViewAnswer::AskFront);
+    CHECK_FALSE(ask.close);
+    // In front of her to her right stands: there, the whole distance.
+    const tb::ViewStand front = tb::ChooseStand(1.0f, 14.0f, rock, Row(14.0f, 14.0f, 14.0f));
+    CHECK(front.answer == tb::ViewAnswer::Stand);
+    CHECK(front.side == tb::ViewSide::FrontRight);
+    CHECK(front.meters == Approx(14.0f));
+    CHECK(CloseOf(front) == 14.0f);
+    // In front the rule is the same one. Her front right short and her front
+    // left whole: her front left.
+    const tb::ViewStand frontLeft = tb::ChooseStand(1.0f, 14.0f, rock, Row(6.0f, 14.0f, 14.0f));
+    CHECK(frontLeft.answer == tb::ViewAnswer::Stand);
+    CHECK(frontLeft.side == tb::ViewSide::FrontLeft);
+    CHECK(frontLeft.meters == Approx(14.0f));
+    // Neither side in front, straight in front whole.
+    CHECK(tb::ChooseStand(1.0f, 14.0f, rock, Row(6.0f, 9.0f, 14.0f)).side == tb::ViewSide::Front);
+    // All three in front short: the furthest, a margin short; two alike, her
+    // right, then her left.
+    const tb::ViewStand shortOf = tb::ChooseStand(1.0f, 14.0f, rock, Row(6.0f, 9.0f, 7.0f));
+    CHECK(shortOf.answer == tb::ViewAnswer::Stand);
+    CHECK(shortOf.side == tb::ViewSide::FrontLeft);
+    CHECK(shortOf.meters == Approx(8.5f));
+    CHECK(CloseOf(shortOf) == Approx(8.5f));
+    CHECK(tb::ChooseStand(1.0f, 14.0f, rock, Row(9.0f, 9.0f, 9.0f)).side == tb::ViewSide::FrontRight);
+    CHECK(tb::ChooseStand(1.0f, 14.0f, rock, Row(7.0f, 9.0f, 9.0f)).side == tb::ViewSide::FrontLeft);
+    // A place in front with no ground is no place either.
+    const tb::ViewRow frontRightGone{tb::ViewPlace{14.0f, false}, tb::ViewPlace{14.0f, true},
+                                     tb::ViewPlace{14.0f, true}};
+    CHECK(tb::ChooseStand(1.0f, 14.0f, rock, frontRightGone).side == tb::ViewSide::FrontLeft);
+    // No ground in front either: the camera stays with the party.
+    const tb::ViewStand party = tb::ChooseStand(1.0f, 14.0f, rock, NoGround(14.0f, 14.0f, 14.0f));
+    CHECK(party.answer == tb::ViewAnswer::WithParty);
+    CHECK_FALSE(party.close);
+    // A place behind, however short, is taken before any in front: a view
+    // from behind that is shortened is still a view from behind.
+    const tb::ViewRow hemmed{tb::ViewPlace{14.0f, false}, tb::ViewPlace{1.0f, true}, tb::ViewPlace{14.0f, false}};
+    const tb::ViewStand back = tb::ChooseStand(1.0f, 14.0f, hemmed, Row(14.0f, 14.0f, 14.0f));
+    CHECK(back.answer == tb::ViewAnswer::Stand);
+    CHECK(back.side == tb::ViewSide::Left);
+    CHECK(back.meters == Approx(3.0f));
+    // And with a place behind the front is never asked for.
+    CHECK(tb::ChooseStand(1.0f, 14.0f, hemmed, std::nullopt).answer == tb::ViewAnswer::Stand);
+    // Behind as today whenever a place behind stands, whatever is in front.
+    const tb::ViewStand today = tb::ChooseStand(1.0f, 10.0f, Row(2.1f, 6.9f, 3.0f), Row(10.0f, 10.0f, 10.0f));
+    CHECK(today.side == tb::ViewSide::Left);
+    CHECK(today.meters == Approx(6.4f));
+}
+
+TEST_CASE("staying with the party, the camera turns to look from the player's own toward the creature", "[portraits]")
+{
+    using Catch::Approx;
+    const float halfTurn = 3.14159265f;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    // The camera's yaw is the direction from what it looks at to itself: to
+    // look from the player's own toward a creature it stands on the far side
+    // of the player's own.
+    const tb::Vec3 own{10.0f, 10.0f, 0.0f};
+    REQUIRE(tb::YawToward(own, tb::Vec3{20.0f, 10.0f, 3.0f})); // the creature at +x: the camera at -x
+    CHECK(std::cos(*tb::YawToward(own, tb::Vec3{20.0f, 10.0f, 3.0f})) == Approx(-1.0f));
+    REQUIRE(tb::YawToward(own, tb::Vec3{0.0f, 10.0f, 0.0f})); // at -x: the camera at +x
+    CHECK(*tb::YawToward(own, tb::Vec3{0.0f, 10.0f, 0.0f}) == Approx(0.0f).margin(1e-6));
+    REQUIRE(tb::YawToward(own, tb::Vec3{10.0f, 20.0f, 0.0f})); // at +y: the camera at -y
+    CHECK(*tb::YawToward(own, tb::Vec3{10.0f, 20.0f, 0.0f}) == Approx(-halfTurn / 2.0f));
+    REQUIRE(tb::YawToward(own, tb::Vec3{10.0f, 0.0f, 0.0f})); // at -y: the camera at +y
+    CHECK(*tb::YawToward(own, tb::Vec3{10.0f, 0.0f, 0.0f}) == Approx(halfTurn / 2.0f));
+    // The two in one place over the ground, or a point that is no number:
+    // the camera is left as it is turned.
+    CHECK_FALSE(tb::YawToward(own, tb::Vec3{10.0f, 10.0f, 5.0f}));
+    CHECK_FALSE(tb::YawToward(own, tb::Vec3{nan, 10.0f, 0.0f}));
+    CHECK_FALSE(tb::YawToward(tb::Vec3{10.0f, nan, 0.0f}, own));
+}
+
+TEST_CASE("how far a line is clear is the share of the camera's distance that the line runs before it is cut",
+          "[portraits]")
+{
+    using Catch::Approx;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float infinity = std::numeric_limits<float>::infinity();
+    // From a head 2 m up to where the camera would stand, 10 m from the
+    // feet as the orbit has it; the line itself is some 8.9 m.
+    const tb::Vec3 head{0.0f, 0.0f, 2.0f};
+    const tb::Vec3 eye{8.0f, 0.0f, 6.0f};
+    CHECK(tb::ClearDistance(head, eye, tb::Vec3{4.0f, 0.0f, 4.0f}, 10.0f) == Approx(5.0f)); // cut half way
+    CHECK(tb::ClearDistance(head, eye, tb::Vec3{2.0f, 0.0f, 3.0f}, 10.0f) == Approx(2.5f));
+    CHECK(tb::ClearDistance(head, eye, head, 10.0f) == 0.0f);         // at the creature
+    CHECK(tb::ClearDistance(head, eye, eye, 10.0f) == Approx(10.0f)); // at the camera
+    // Past the camera, which is not the engine's to answer: no more than all.
+    CHECK(tb::ClearDistance(head, eye, tb::Vec3{16.0f, 0.0f, 10.0f}, 10.0f) == Approx(10.0f));
+    // A line with no length, a point that is not a number: nothing clear.
+    CHECK(tb::ClearDistance(head, head, head, 10.0f) == 0.0f);
+    CHECK(tb::ClearDistance(head, eye, tb::Vec3{nan, 0.0f, 4.0f}, 10.0f) == 0.0f);
+    CHECK(tb::ClearDistance(head, tb::Vec3{infinity, 0.0f, 6.0f}, tb::Vec3{4.0f, 0.0f, 4.0f}, 10.0f) == 0.0f);
 }

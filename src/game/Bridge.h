@@ -59,10 +59,7 @@ class Bridge
     }
 
     // A look at a combatant the player asked for (a card clicked).
-    void LookAt(ObjectId id)
-    {
-        camera_.TurnTo(id);
-    }
+    void LookAt(ObjectId id);
 
     // Whether the game took the last speed set (DAOLib's SetSpeed says);
     // nothing before any was set. For a test server's turnbased.state.

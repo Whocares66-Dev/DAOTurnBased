@@ -452,6 +452,23 @@ ObjectId Leader(ObjectId hero)
     return api::IsObjectValid(leader) != 0 ? leader : hero;
 }
 
+// The one the player acts as, where the player is looking: the creature
+// controlled (GetMainControlled) while it lives, else who stands for the
+// party (core: ActsForThePlayer); with nobody living, the hero all the same;
+// kNoObject with no hero. A word to the player floats over it (Say), and the
+// camera stays with it on the turn of a creature it has no place to stand
+// round (CameraDirector::TurnTo).
+ObjectId PlayersOwn()
+{
+    const ObjectId hero = api::GetHero();
+    if (api::IsObjectValid(hero) == 0)
+    {
+        return kNoObject;
+    }
+    const ObjectId own = ActsForThePlayer(ReadParty(hero), Leader(hero), api::GetMainControlled());
+    return own != kNoObject ? own : hero;
+}
+
 // How far a creature is from the party: its distance to each living member,
 // the nearest of them core's to say (MetersFromTheParty). Infinity with
 // nobody living.
@@ -1577,7 +1594,7 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             Signal(e);
             break;
         case EffectKind::CenterCamera:
-            camera_.TurnTo(e.target);
+            camera_.TurnTo(e.target, PlayersOwn());
             break;
         }
     }
@@ -1703,20 +1720,22 @@ void Bridge::Say(const std::wstring &text, std::uint32_t colour)
     {
         return;
     }
-    const ObjectId hero = api::GetHero();
-    if (api::IsObjectValid(hero) == 0)
+    // Over the one the player acts as, where the player is looking
+    // (PlayersOwn). Until 2026-10-04 it was said over the hero: over her
+    // body when she had fallen, and wherever she stood while the player had
+    // gone on with another (issue 42). With nobody living, over her all the
+    // same.
+    const ObjectId over = PlayersOwn();
+    if (over == kNoObject)
     {
         return;
     }
-    // Over the one the player acts as, where the player is looking: the
-    // creature controlled (GetMainControlled) while it lives, else who
-    // stands for the party (core: ActsForThePlayer). Until 2026-10-04 it was
-    // said over the hero: over her body when she had fallen, and wherever
-    // she stood while the player had gone on with another (issue 42). With
-    // nobody living, over her all the same.
-    const ObjectId over = ActsForThePlayer(ReadParty(hero), Leader(hero), api::GetMainControlled());
-    api::DisplayFloatyMessage(over != kNoObject ? over : hero, text, k::FLOATY_MESSAGE,
-                              static_cast<std::int32_t>(colour), 2.0f);
+    api::DisplayFloatyMessage(over, text, k::FLOATY_MESSAGE, static_cast<std::int32_t>(colour), 2.0f);
+}
+
+void Bridge::LookAt(ObjectId id)
+{
+    camera_.TurnTo(id, PlayersOwn());
 }
 
 } // namespace tb::game

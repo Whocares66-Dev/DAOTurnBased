@@ -171,9 +171,9 @@ inline constexpr PortraitCamera kShippedPerson{kGamesDefaultRow.pitch, kGamesDef
 // origin, and which it was is said. It is the world's (seen in play,
 // 2026-10-04: the high dragon's head at (186.2, 165.4, -31.7), itself at
 // (189.6, 163.3, -51.8)); both readings are kept, the other costing nothing.
-// The turn camera and the portraits take the one measure. It is the measure
-// of a pose: the same dragon read 9.21 m asleep on its ledge and 20.5 m in
-// the air.
+// The portraits take this measure, and the turn camera where a creature's
+// model gives no box (CloseDistanceOf, below). It is the measure of a pose:
+// the same dragon read 9.21 m asleep on its ledge and 20.5 m in the air.
 struct HeadExtent
 {
     float meters = 0.0f;
@@ -182,7 +182,8 @@ struct HeadExtent
 [[nodiscard]] HeadExtent ExtentOf(const Vec3 &head, const Vec3 &feet);
 
 // A person's extent, and how much more than it is bigger than a person: the
-// turn camera's measure of the same (CloseDistanceFor, below).
+// turn camera's measure of the same where it goes by the feet to the head
+// (CloseDistanceFor, below).
 inline constexpr float kPersonExtent = 1.7f;
 inline constexpr float kBiggerThanPerson = 1.25f;
 
@@ -412,22 +413,16 @@ inline constexpr wchar_t kShowField = 0x1F;
 [[nodiscard]] std::wstring ShowTitle(const PortraitReport &report);
 [[nodiscard]] std::wstring ShowDetail(const PortraitReport &report);
 
-// The appearance table's personal space of a person: what the turn camera's
-// distance falls back on for a model with no head node (src/game/Camera.cpp).
-inline constexpr float kPortraitPersonSpace = 0.4f;
-
 // How far from its pivot the camera stands on a creature's turn, the camera
 // following (the user, 2026-10-02: "shouldn't camera pull back depend on
 // creature size? for ogre or dragon pull back more, for human sized enemies
 // same as player"; and 2026-10-05, of the high dragon, whose turns showed the
 // inside of the dragon: "Camera needs to be pulled back more for the dragon
 // ... Should do so automatically depending on enemy's size"). The game's own
-// distance at its closest zoom is kCloseGame; for a creature of `extent`
-// meters (its feet to its head, as the engine places them) it is that in
-// proportion to a person's, and never past kCloseMost: the game's camera
-// tests no wall and no ground at a distance it was not made for. Nothing for
-// a creature a person's size or smaller, or an extent that is none: the
-// game's own.
+// distance at its closest zoom is kCloseGame; for a bigger creature it is
+// that in proportion to the creature's size against a person's, never under
+// the game's own and never past kCloseMost: the game's camera tests no wall
+// and no ground at a distance it was not made for. Nothing is the game's own.
 //
 // Until 2026-10-05 this was the zoom drawn back by the creature's personal
 // space, and no further than 0.78: under 0.75 the game flips to the tactical
@@ -435,32 +430,251 @@ inline constexpr float kPortraitPersonSpace = 0.4f;
 // That was enough for an ogre and not for a dragon. The distance is apart
 // from the zoom (DAOLib's dao::camera::SetCloseDistance, its issue 17), so the
 // zoom, and the view, are the player's own throughout.
+//
+// The size is by the model's own box (DAOLib's dao::world::ModelBoxOf, its
+// issue 21: the box the renderer keeps for the model in its rest pose, in
+// the model's own axes, as drawn), each of its two measures against a
+// person's own: its length, the larger of its two sides across, against a
+// person's across, and its height against a person's height. The larger of
+// the two counts. One plain rule for every body, with no case for any
+// creature (the user's principle: a plain rule first, an exception only for
+// what it buys): a long, low body stands the camera back by its length, a
+// tall one by its height.
+//
+// What came before, each seen in play:
+// - the creature's feet to its head node alone, by which a giant spider,
+//   2.3 m long and 1.2 m high, is no bigger than a person: the camera stood
+//   as close as to a person and the spider's abdomen filled the frame,
+//   hiding whom it struck (issue 33, Ortan Thaig, 2026-10-04);
+// - the largest of the box's three sides against a person's height (commit
+//   3f0f0f0), played 2026-10-05 in the Dead Trenches with the creatures
+//   staged: a bronto at 6.3 m was good, all of it from behind and the party
+//   member beside it in view, and a giant spider's 3.8 m did not clear it:
+//   in one frame of its turn its abdomen was across half the picture, close
+//   and low. A length against a person's height undersells a long body,
+//   since a person is narrower than it is tall. Too far is the mild failure
+//   (a creature small in the picture with the fight round it in view), too
+//   close the bad one.
+//
+// kPersonAcross and kPersonHeight are a person's box as DAOLib saw it in
+// play (dao/World.h, Ortan Thaig, 2026-10-04): 1.05 to 1.24 m across with
+// its arms out, 1.60 to 1.83 m high, and a body's length is its "across".
+// By them a person of those comes out at the game's own, or 10 cm past it
+// at the widest. Bigger persons there are: of the four of the party at the
+// high dragon's fight (DAOLib's example's log, 2026-10-05), Lyna's box was
+// 1.05 m across and 1.68 high and Wynne's 1.14 and 1.79, both the game's
+// own; Alistair's, a man in armour, 1.30 and 1.92, which as an enemy's is
+// 3.25 m; and the fourth's 1.45 and 2.09, 3.6 m. A bigger person standing a
+// little further back is the rule doing its work, and the constants stay.
+// The boxes seen and what the rule makes of each are
+// tests/test_portraits.cpp's.
+//
+// Seen in play 2026-10-05 (commit d1ff8f4): a lone giant spider's turns at
+// 5.8 m showed all of it with its web and the two it faced in view, about a
+// third of the frame wide; an ogre's turn at 10 m in a hall, all of it, its
+// ram and the party member before it.
 inline constexpr float kCloseGame = 3.0f;
 inline constexpr float kCloseMost = 14.0f;
+inline constexpr float kPersonAcross = 1.2f;
+inline constexpr float kPersonHeight = 1.8f;
+
+// Which of a creature's measures the camera's distance was taken by.
+enum class CloseBy : std::uint8_t
+{
+    Nothing, // it has neither: the game's own
+    Length,  // its model's box: its length, against a person's across
+    Height,  // its model's box: its height, against a person's height
+    Head,    // from its feet to its head node, its model giving no box
+};
+struct CloseDistance
+{
+    std::optional<float> meters; // nothing: the game's own
+    CloseBy by = CloseBy::Nothing;
+};
+// `box` is the box's three sides in meters, x and y across and z up
+// (DAOLib's ModelBox::Size), and `feetToHead` the creature's extent
+// (ExtentOf, above), each nothing where the engine answered nothing. Which
+// of the box's two measures was the larger is said for a box no bigger than
+// a person too. A box that is no measure (a side that is not a number, or
+// neither its length nor its height over zero: a model with no mesh) is as
+// no box. Without a box it is by the feet to the head as it was before the
+// box (CloseDistanceFor), and with neither it is the game's own.
+[[nodiscard]] CloseDistance CloseDistanceOf(const std::optional<Vec3> &box, const std::optional<float> &feetToHead);
+// By the feet to the head alone: the game's own distance in proportion to
+// `extent` against a person's (kPersonExtent), for a creature bigger than a
+// person (kBiggerThanPerson); nothing for one that is not, or an extent that
+// is none.
 [[nodiscard]] std::optional<float> CloseDistanceFor(float extent);
 
-// From which side the camera looks at an enemy on its turn. Straight behind
-// it, its own body hides what it does and whom it strikes (the high dragon's
-// buffet seen from its tail; the user, 2026-10-05: "maybe don't be directly
-// behind enemies. Perhaps offset it by 30 or 45 degrees to the right (or left
-// if something is blocking the right side)"). So: round to its right by
-// kViewOffset; to its left if the view from the right is blocked and from
-// the left is not; and where both are blocked, behind as before. Whether a
-// view is blocked is the engine's to say (a line from where the camera
-// would stand to the creature), asked by the game layer. The party's own
-// turns keep the camera behind: the player looks where their character does.
+// From where the camera looks at an enemy on its turn, and from how far.
+// Straight behind it, its own body hides what it does and whom it strikes
+// (the high dragon's buffet seen from its tail; the user, 2026-10-05: "maybe
+// don't be directly behind enemies. Perhaps offset it by 30 or 45 degrees to
+// the right (or left if something is blocking the right side)"). The party's
+// own turns keep the camera behind: the player looks where their character
+// does.
+//
+// The camera may stand in six places about an enemy, liked in this order:
+// behind it and round to its right by kViewOffset, behind it and round to its
+// left, straight behind it; then in front of it to its right by the same
+// offset mirrored, in front of it to its left, and straight in front. The
+// three in front are asked only where none of the three behind is a place to
+// stand at all: a view from behind that is shortened is still a view from
+// behind. No creature has a case of its own: it is the order of the places,
+// whatever stands there. The user, 2026-10-05, of the Broodmother, who is set
+// into her cave's rock: "I think the broodmother is a special case. What if
+// we just turn the camera front instead of back with an offset? Nothing
+// blocking her from the front I think"; and "When is the creatures turn the
+// camera should try to keep the creature in frame."
+//
+// A place to stand is one with ground a creature could walk on beneath
+// where the camera would be (IsPlace, below). Among the three of a row the
+// rule is one: the camera stands back by the creature's size
+// (CloseDistanceOf), and no further than its line to the creature is clear.
+// It takes the first place whose line is clear the whole distance the size
+// asks; if none is, the one whose line is clear the furthest (the earlier of
+// two alike), at that distance less kViewMargin, and never nearer than the
+// game's own distance. How far each line is clear, and what lies under each
+// place, are the engine's to say (what a line from the creature's head to
+// where the camera would stand first meets, and what a ray straight down
+// from there does), asked by the game layer: src/game/Camera.cpp has what is
+// asked, and of which of the world's collision groups.
+//
+// Where no place is found at all, behind or in front, the camera does not
+// go to the creature: it stays with the party, on the one the player acts
+// as and at the game's own distance, as on a party member's turn, and turns
+// so that it looks from there toward the creature (YawToward). The user,
+// 2026-10-05: "Yeah don't move the camera stay with the party", and then the
+// second of the sentences above.
+//
+// What came before, each seen in play 2026-10-05:
+// - a side was either clear at the whole distance or not, and with neither
+//   side clear the camera went behind, untested. On one of an ogre's turns
+//   (commit d1ff8f4), 10 m asked, both sides were blocked, and 10 m straight
+//   behind it was the far side of a wall: the frame was of the wall, the
+//   ogre's name floating in the middle of it and the ogre not in the picture.
+//   The engine's orbit tests no wall and no ground (DAOLib's
+//   dao/CameraMoves.h);
+// - the three places behind, each as far as its line was clear (commits
+//   aa280db and 96d6445). In a built hall that works. The Broodmother's cave
+//   has no collision in any group: all three lines were clear to the whole
+//   14 m, and the frame was from inside the rock. No line sees that, which
+//   is what the ground under a place is asked for.
 inline constexpr float kViewOffset = 0.70f; // radians: 40 degrees
-enum class ViewSide
+enum class ViewSide : std::uint8_t
 {
     Behind,
     Right,
-    Left
+    Left,
+    Front,
+    FrontRight,
+    FrontLeft,
 };
-[[nodiscard]] ViewSide ChooseViewSide(bool rightClear, bool leftClear);
-// The camera's yaw for that side, from the yaw straight behind the creature
+// The camera's yaw for that place, from the yaw straight behind the creature
 // (the direction from the creature to the camera, from +x toward +y: more of
-// it is round to the creature's right).
+// it is round to the creature's right, and half a turn of it is in front).
 [[nodiscard]] float ViewYaw(float behind, ViewSide side);
+// The place in the log's words: "behind it to its right", "in front of it".
+[[nodiscard]] std::string_view ViewSideWords(ViewSide side);
+
+// The camera's yaw that looks from `from` toward `at`: the camera stands on
+// the far side of `from`, so it is the direction from `at` to `from`, in the
+// yaw's own measure (ViewYaw). Nothing where the two are one place over the
+// ground, or a point is not a number: the camera is then left as it is
+// turned.
+[[nodiscard]] std::optional<float> YawToward(const Vec3 &from, const Vec3 &at);
+
+// How far from its pivot the game's orbit puts the camera: the zoom's blend
+// of the close distance and a far one, 20 m (DAOLib's issue 17, read in the
+// exe: zoom x close + (1 - zoom) x far, each frame). The zoom is 1 close in
+// and 0 in the tactical view; the close view is above about 0.75.
+inline constexpr float kFarGame = 20.0f;
+[[nodiscard]] float OrbitDistance(float zoom, float close);
+
+// How far short of where its line is cut the camera stands. A line is not a
+// picture: the view is as wide as the screen, and a camera put where its one
+// line meets a wall has the wall across the side of the frame and its own
+// near plane in the stone. Half a meter keeps it off; not seen in play yet.
+inline constexpr float kViewMargin = 0.5f;
+
+// How far from the creature the camera would stand at a place whose line is
+// clear to `clear` meters: the whole distance the size asks at the player's
+// zoom (OrbitDistance of the zoom and the close distance asked, or of the
+// game's own where none is), or kViewMargin short of where the line is cut,
+// and never nearer than the game's own distance. A distance that is none
+// counts as nothing clear. The game layer asks what lies under that point.
+[[nodiscard]] float StandDistance(float zoom, const std::optional<float> &asked, float clear);
+
+// What lies under where the camera would stand at a place, as the engine's
+// ray straight down from there says of the first thing it meets among the
+// ground's collision groups.
+struct GroundUnder
+{
+    bool ground = false;   // the ray met ground at all
+    bool walkable = false; // and it is ground a creature could walk on
+    float below = 0.0f;    // how far under the creature's feet it lies, in meters; under zero, above them
+};
+// How far under the creature's own feet the ground beneath a place may lie.
+// The camera's height over the creature is the mod's own doing, by its size
+// and the player's tilt, so the ground is measured against the creature's
+// feet and not against the camera: ground further under them than a storey
+// is not the floor the fight is on, but a pit's bottom, a level below, or the
+// floor of somewhere else under scenery that has no collision. Not seen in
+// play yet.
+inline constexpr float kPlaceDrop = 5.0f;
+// A place to stand: walkable ground beneath it, no further under the
+// creature's feet than kPlaceDrop. A side without one is no place at all,
+// whatever its line says. Ground above the camera is not met by a ray down,
+// so a point under a hillside or inside solid ground reads as no ground, or
+// as what lies far below it.
+[[nodiscard]] bool IsPlace(const GroundUnder &under);
+
+// One place: how far its line is clear, in meters of the camera's distance
+// at the player's zoom and up to the whole distance, and whether where the
+// camera would then stand is a place to stand (IsPlace of what is under
+// StandDistance of it).
+struct ViewPlace
+{
+    float clear = 0.0f;
+    bool ground = false;
+};
+// The three places behind a creature, or the three in front of it.
+struct ViewRow
+{
+    ViewPlace right;
+    ViewPlace left;
+    ViewPlace straight;
+};
+enum class ViewAnswer : std::uint8_t
+{
+    Stand,     // at `side`, `meters` from the creature
+    AskFront,  // no place behind it: the three in front are to be measured, and the choice asked again with them
+    WithParty, // no place round it at all: the camera stays with the party and looks at the creature
+};
+// Where the camera stands: the place, how far from the creature at the
+// player's zoom, and the close distance that puts it there (nothing: the
+// game's own), which for the whole distance is the one asked. For an answer
+// that is no place, nothing of the three.
+struct ViewStand
+{
+    ViewAnswer answer = ViewAnswer::WithParty;
+    ViewSide side = ViewSide::Behind;
+    float meters = 0.0f;
+    std::optional<float> close;
+};
+// `front` is nothing until it has been measured, which it is only where the
+// answer for the three behind alone is AskFront: the lines and the rays down
+// of an ordinary turn are the three behind's.
+[[nodiscard]] ViewStand ChooseStand(float zoom, const std::optional<float> &asked, const ViewRow &back,
+                                    const std::optional<ViewRow> &front);
+
+// How far a line is clear, in the camera's distance: the line runs from
+// `from`, the creature's head, to `to`, where the camera would stand `wanted`
+// from its pivot at the creature's feet, and is cut at `cut`. The camera's
+// distance has the same share of `wanted` as the cut has of the line, since
+// a wall cuts both at the same distance over the ground. Nothing clear for a
+// line with no length or a point that is not a number.
+[[nodiscard]] float ClearDistance(const Vec3 &from, const Vec3 &to, const Vec3 &cut, float wanted);
 
 [[nodiscard]] PortraitChoice ChoosePortrait(std::int32_t appearance, std::wstring_view appearanceLabel, bool person,
                                             std::wstring_view tag, const std::vector<PortraitRow> &rows);
