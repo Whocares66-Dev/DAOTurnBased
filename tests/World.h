@@ -39,6 +39,18 @@ struct Creature
     // and holds them; no scan brings it into the order or names it as waiting
     // outside (issue 43).
     bool unfound = false;
+    // Made inactive by the game (the scripts' SetObjectActive(FALSE): a
+    // tentacle gone under): out of the world. The game layer reads it of
+    // the acting creature every frame (the engine's GetObjectActive,
+    // ActorObservation::inactive); the scan's own rules do not find it
+    // fighting, as in play (the Broodmother's fight, 2026-10-05: four
+    // tentacles in combat 14 to 16 m from the party, "not found fighting"),
+    // and its perception is what it was. SetActive() makes it so as the
+    // engine does (issue 44).
+    bool inactive = false;
+    // What is queued on it while it is inactive, which the engine does not
+    // begin: busy, with no current command, until it is made active again.
+    CommandType queued = CommandType::Invalid;
     bool engaged = true; // fighting the party: in its sight, or attacking or attacked by it
     bool busy = false;
     Condition condition = Condition::None; // stunned or pinned, as the game side reads it
@@ -209,7 +221,8 @@ class World
                 // (Needs::inFight), the living ones that are not found so:
                 // read all the same, with their perception, which is what
                 // keeps them in it or does not (issue 29).
-                const bool found = c.side == Side::Party || (!c.down && c.fighting && !c.unfound && inCombat);
+                const bool found =
+                    c.side == Side::Party || (!c.down && c.fighting && !c.unfound && !c.inactive && inCombat);
                 const bool named = !c.down && std::ranges::find(needs.inFight, c.id) != needs.inFight.end();
                 if (!c.exists || (!found && !named))
                 {
@@ -241,7 +254,7 @@ class World
             const Creature &c = Get(needs.actor);
             obs.actor = ActorObservation{c.id,         c.exists,   c.down,        c.busy,       c.moving,
                                          c.current,    c.position, c.conjureHeld, c.timersHeld, c.approaching,
-                                         c.perception, c.effects,  c.heldSeconds, c.heldKnown};
+                                         c.perception, c.effects,  c.heldSeconds, c.heldKnown,  c.inactive};
         }
         for (const ObjectId id : needs.statuses)
         {
@@ -346,10 +359,67 @@ class World
         {
             Creature &started = Get(id);
             started.busy = true;
-            started.current = type;
             running[id] = request;
+            if (started.inactive)
+            {
+                started.queued = type; // queued, and not begun (SetActive)
+            }
+            else
+            {
+                started.current = type;
+            }
         }
         return verdict;
+    }
+
+    // The scripts' SetObjectActive, as the engine carries it out (script.ldf):
+    // "all commands will be cleared upon disabling", and what is queued on an
+    // inactive object after that waits ("Messages will continue to queue up
+    // so you are able to assign actions before enabling the object"), with no
+    // current command, until the object is made active again.
+    void SetActive(ObjectId id, bool active)
+    {
+        Creature &c = Get(id);
+        if (c.inactive != active)
+        {
+            return; // as it is already
+        }
+        c.inactive = !active;
+        if (!active)
+        {
+            Finish(id);
+            running.erase(id);
+            c.conjureHeld = false;
+            heldConjures.erase(id);
+        }
+        else if (c.queued != CommandType::Invalid)
+        {
+            c.current = std::exchange(c.queued, CommandType::Invalid);
+        }
+    }
+
+    // Whether the action kept for a creature is aimed at one the game has
+    // made inactive since: not there for it to be given at, as one fallen is
+    // not (ReleaseCast).
+    bool KeptAtInactive(ObjectId id) const
+    {
+        const auto kept = heldCasts.find(id);
+        if (kept == heldCasts.end())
+        {
+            return false;
+        }
+        const auto target = std::ranges::find(creatures, kept->second.target, &Creature::id);
+        return target != creatures.end() && target->inactive;
+    }
+
+    // Something queued on a creature by the engine itself with no word to the
+    // gate's rules (an effect's command as the effect lands on it): on an
+    // inactive one it waits, busy with no current command.
+    void QueueOnInactive(ObjectId id, CommandType type)
+    {
+        Creature &c = Get(id);
+        c.busy = true;
+        c.queued = type;
     }
 
     // An attack at someone, as the gate's request names its target, with
@@ -378,6 +448,7 @@ class World
         c.busy = false;
         c.moving = false;
         c.current = CommandType::Invalid;
+        c.queued = CommandType::Invalid;
     }
 
     // The engine fails a creature's command without acting, by its own name
@@ -442,7 +513,7 @@ class World
         const Creature &to = Get(other);
         Foe foe;
         foe.id = other;
-        foe.standing = to.exists && !to.down;
+        foe.standing = to.exists && !to.down && !to.inactive; // nor one out of the world (Bridge.cpp, NotThere)
         foe.hostile = true;
         foe.seen = true;
         foe.meters = Distance(from.position, to.position);
@@ -508,6 +579,14 @@ class World
                 paused = false;
                 break;
             case EffectKind::ClearCommands:
+                // (Not what waits on an inactive creature: in play the
+                // machine's ClearAllCommands, eleven turns running, left what
+                // was queued on a tentacle under ground where it was. Issue
+                // 44; why is not read.)
+                if (Get(e.target).inactive && Get(e.target).queued != CommandType::Invalid)
+                {
+                    break;
+                }
                 Finish(e.target);
                 if (heldConjures.erase(e.target) > 0)
                 {
@@ -586,7 +665,10 @@ class World
                 // frame's observation. A plain attack is given all the same,
                 // at the nearest of those the machine named that its creature
                 // can strike from where it stands, if there is one.
-                if (targetGone.erase(e.target) > 0)
+                // Gone as a test says (targetGone), or made inactive by the
+                // game since the action was kept, which is the same to the
+                // game layer (Bridge.cpp, NotThere; issue 44).
+                if (const bool said = targetGone.erase(e.target) > 0; said || KeptAtInactive(e.target))
                 {
                     const auto kept = heldCasts.find(e.target);
                     ObjectId next = kNoObject;

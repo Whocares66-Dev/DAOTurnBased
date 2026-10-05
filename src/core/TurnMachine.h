@@ -88,7 +88,21 @@ struct ActorObservation
     ObjectId id = kNoObject;
     bool exists = false;
     bool down = false;
-    bool busy = false;   // it has a current command, or one queued
+    // It has a current command, or one queued. The queue's half is for a
+    // command the gate has let through and the engine has not yet begun: a
+    // command becomes the current one when its object's command step starts
+    // it (DAOLib's reading of the queue, dao/Addresses.h), and the machine
+    // takes two frames with nothing for "its command is over". Read by the
+    // current command alone, a command slow to begin would be over before it
+    // began, and with a turn a bar of time "over at once: it did nothing",
+    // its time given back (OverAtOnce). How many frames lie between is only
+    // roughly measured (dev/DESIGN.md: in one fight 227 of 234 attacks were
+    // at their command within a frame and a half, seven took up to 161 ms),
+    // and the game layer now says at debug when it was two or more. A queue
+    // the engine does not run at all is another matter, and the engine has a
+    // word for the one case seen: inactive, below (issue 44, where this was
+    // weighed).
+    bool busy = false;
     bool moving = false; // the engine's IsMoving
     CommandType current = CommandType::Invalid;
     Vec3 position;
@@ -138,6 +152,17 @@ struct ActorObservation
     // just ended stands a frame more at a command whose count means nothing.
     float heldSeconds = 0.0f;
     bool heldKnown = false;
+    // The game has made it inactive, as of this frame: its scripts'
+    // SetObjectActive(FALSE), and the engine's own word for it,
+    // GetObjectActive, which the game layer reads here as it reads a
+    // creature's combat state. Out of the world: not drawn, given no AI
+    // updates, its commands cleared as it went, and whatever is queued on it
+    // since not run until it is made active again ("Messages will continue
+    // to queue up so you are able to assign actions before enabling the
+    // object": script.ldf). It has no turn while it is so, and one made so in
+    // the middle of its turn has that turn end there (issue 44;
+    // TurnMachine::InactiveNow). Anyone's: a party member's is read the same.
+    bool inactive = false;
 };
 
 // What holds a creature, as far as turns go: disabled, it cannot act
@@ -756,6 +781,13 @@ class TurnMachine
     void StepPadding(std::vector<Effect> &fx);
     [[nodiscard]] Verdict Judge(const CommandRequest &request);
     [[nodiscard]] bool LoseTurn(const Combatant &who, std::vector<Effect> &fx);
+    // A creature the game has made inactive has no turn (issue 44): whether
+    // it is so now, and its turn passed over as it comes. True if it was.
+    [[nodiscard]] bool InactiveNow(const Combatant &who) const;
+    [[nodiscard]] bool InactiveTurn(const Combatant &who, std::vector<Effect> &fx);
+    // And a turn already begun ended there, its creature made inactive in the
+    // middle of it.
+    void EndInactive(const Combatant &who, std::vector<Effect> &fx);
     // A cast that charges (the user's rule, 2026-10-01): the turns an
     // ability charges before it is cast; a turn of its caster's spent on
     // one; the cast given again at the start of the turn it is cast on;
@@ -780,6 +812,11 @@ class TurnMachine
     void GiveActionBack();
     [[nodiscard]] std::string BudgetLeft() const;
     void KeptVoid(ObjectId who);
+    // Whether the target of the kept action being given stands in the fight
+    // by the machine's own word, though the game layer did not find it there
+    // to be struck: one the game has made inactive (issue 44). For the log's
+    // word of why the action was turned or dropped, and nothing else.
+    [[nodiscard]] bool KeptTargetStands() const;
     // With time: an action that has run owes `ms` more to its creature's
     // next turns.
     void Owe(ObjectId who, std::uint32_t ms, CommandType type, std::int32_t ability);

@@ -2103,6 +2103,29 @@ TEST_CASE("with time, an action over at once did not play: its time is given bac
         CHECK_FALSE(w.Said(L"Nothing happened"));
         CHECK_FALSE(w.machine.State().cooldowns.empty());
     }
+    SECTION("one the gate let through and the engine has not yet begun is not over")
+    {
+        // A command is in the engine's queue before it is the current one:
+        // its object's command step begins it. Busy means either
+        // (ActorObservation::busy), so the frames between the gate's yes and
+        // the engine's beginning are not taken for the command's end. Weighed
+        // with issue 44, where busy by a queue the engine never ran cost a
+        // turn twelve seconds: read by the current command alone, a spell
+        // slow to begin would be "over at once", its time given back, and
+        // then cast for nothing.
+        World w(on);
+        w.StartFight();
+        REQUIRE(cast(w, 3.9f) == Verdict::Allow);
+        w.Get(kHero).current = CommandType::Invalid; // queued, and not begun
+        w.RunFor(100);
+        CHECK(w.machine.GetPhase() == Phase::Executing);
+        w.Get(kHero).current = CommandType::UseAbility; // begun
+        w.RunFor(3300);
+        w.Finish(kHero);
+        w.RunFor(600);
+        CHECK(w.machine.View().timeLeftMs == 100);
+        CHECK_FALSE(w.Said(L"Nothing happened"));
+    }
     SECTION("one whose time was a stand-in's is charged whatever it took")
     {
         World w(on);

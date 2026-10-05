@@ -43,6 +43,9 @@ constexpr std::array kTurnEnds{
     // own turn, or found so as its turn came: it has no turn, and what is
     // left of this one is nobody's to save (issue 43).
     TurnEnd{"out of combat", false},
+    // One the game has made inactive, as its turn came or in the middle of
+    // it: out of the world, it has no turn (issue 44).
+    TurnEnd{"inactive", false},
     // Told its turn had come, its AI queued nothing within ai_think_ms.
     TurnEnd{"chose nothing", false},
     // Its command ran past max_action_ms and was stopped; or, a turn its AI

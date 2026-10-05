@@ -53,7 +53,11 @@
 //      nobody to fight, has no turn: it is never told to choose, the turn it
 //      is found so in ends "out of combat" within a frame or two (the beat
 //      that skips an unaware hostile's turn aside: 11), and only such a
-//      creature's turn ends so (issue 43).
+//      creature's turn ends so (issue 43);
+//  17. a creature the game has made inactive has no turn, whoever it is: it
+//      is never told to choose and never waited on for an order, no turn is
+//      begun for it, the turn it is made so in is over with that frame's
+//      step, and only such a creature's turn ends "inactive" (issue 44).
 //
 // The arena is World.h's stand-in with the creatures made to act. An AI
 // chooses when told to and whenever its command ends, as COMMAND_COMPLETE
@@ -194,6 +198,11 @@ struct Coverage
     int toldTurnedAway = 0;  // those turned away so, or gone from the fight alive, that lived as it let go: each told
     int gamesOwn = 0;        // commands let through out of turn: their creatures out of combat, the game's own
     int noTurns = 0;         // turns ended "out of combat": their creatures the game's, with no turn (issue 43)
+    int wentUnder = 0;       // creatures the game made inactive for a while (issue 44)
+    int cameUp = 0;          // and made active again
+    int inactiveTurns = 0;   // turns ended "inactive": passed over as they came, or ended as their creature went
+    int inactiveMidTurn = 0; // of them, those of a creature made inactive in its own turn
+    int inactiveQueued = 0;  // and those of one with something queued on it that the engine did not run
 };
 
 class Arena
@@ -210,7 +219,7 @@ class Arena
     // at once, given back: 2 where 8 had been).
     Arena(std::uint64_t seed, Coverage &coverage, TurnClock clock = TurnClock::Actions, bool strays = false)
         : rng_(seed), reach_(seed ^ 0x22EAC4ull), waits_(seed ^ 0x3A175ull), notice_(seed ^ 0x29A11ull),
-          asks_(seed ^ 0x45C5ull), settings_(RandomSettings(rng_, clock)),
+          asks_(seed ^ 0x45C5ull), burrows_(seed ^ 0x44B0ull), settings_(RandomSettings(rng_, clock)),
           world_(settings_, RandomFight(rng_, clock), seed), coverage_(coverage), runners_(strays)
     {
         // The engine's perception says of these that they perceive nobody
@@ -255,7 +264,7 @@ class Arena
             Must(attacker == world_.Current(), "a kept attack turned on another out of its creature's turn");
             Foe foe;
             foe.id = other;
-            foe.standing = to.exists && !to.down;
+            foe.standing = to.exists && !to.down && !to.inactive; // nor one out of the world (issue 44)
             foe.hostile = true;
             foe.seen = Chance(reach_, 0.8);
             foe.meters = Between(reach_, 0.0f, 5.0f);
@@ -385,7 +394,9 @@ class Arena
             {
                 ++coverage_.turned;
             }
-            if (line.find("is dropped: its target is gone") != std::string_view::npos)
+            // (Gone, or out of the world: one the game has made inactive
+            // since the action was kept, issue 44.)
+            if (line.find("is dropped: its target is ") != std::string_view::npos)
             {
                 ++coverage_.targetsGone;
                 // What it owed is back in the bar: the turn may walk that
@@ -641,6 +652,14 @@ class Arena
     // A command put to the gate, with the gate's promises checked (1, 5).
     void Try(ObjectId id, CommandType type, Source source)
     {
+        // One the game has made inactive is out of the world (17): its AI is
+        // given no updates, the player has nobody to order, and nothing lands
+        // on it but what Burrowing queues. With no draw: no fight had one
+        // before there were any.
+        if (world_.Get(id).inactive)
+        {
+            return;
+        }
         FollowTurn();
         const bool active = world_.machine.Active();
         const ObjectId current = world_.Current();
@@ -868,9 +887,11 @@ class Arena
     void Decide(ObjectId id, bool afterCommand)
     {
         const Creature &c = world_.Get(id);
-        if (c.down || c.condition == Condition::Disabled)
+        if (c.down || c.condition == Condition::Disabled || c.inactive)
         {
-            return; // a stunned creature's AI chooses nothing (_AI_IsCommandValid)
+            // A stunned creature's AI chooses nothing (_AI_IsCommandValid);
+            // an inactive one's is given no updates (script.ldf).
+            return;
         }
         if (Unaware(c.side, c.perception))
         {
@@ -995,6 +1016,7 @@ class Arena
                  "a hostile that has noticed nobody to fight told to choose");
             Must(!NothingToFight(world_.Get(e.target).side, world_.Get(e.target).perception),
                  "one the game does not have in combat, nobody for it to fight, told to choose: it has no turn");
+            Must(!world_.Get(e.target).inactive, "one the game has made inactive told to choose: it has no turn");
             FollowTurn();
             told_ = e.target;
             break;
@@ -1177,6 +1199,7 @@ class Arena
         {
             return;
         }
+        Surfacing();
         if (!world_.paused)
         {
             Run();
@@ -1184,6 +1207,7 @@ class Arena
             Conditions();
             Noticing();
             Wandering();
+            Burrowing();
         }
         Player();
         Happenings();
@@ -1210,7 +1234,7 @@ class Arena
         const Combatant *in = world_.machine.Order().Find(id);
         // (Not the creature whose turn it is while the game has it in combat:
         // what it asks for then is its AI's choice of that turn, Decide's.)
-        if (c.down || !c.exists || (id == world_.Current() && c.perception.inCombat))
+        if (c.down || !c.exists || c.inactive || (id == world_.Current() && c.perception.inCombat))
         {
             return;
         }
@@ -1325,6 +1349,95 @@ class Arena
         {
             Asks(c.id);
         }
+    }
+
+    // Now and then the game makes one of the fight inactive for a while (17;
+    // issue 44), anyone of it, a party member too: a tentacle gone under
+    // ground (orz550_broodmother_h.nss: WR_SetObjectActive(oTentacle,
+    // FALSE)). Out of the world: its commands are cleared as it goes, its AI
+    // is given no updates, nobody orders it, and it does nothing until it is
+    // made active again (Try, Decide, Player). Three times in ten something
+    // is queued on it after it has gone, which the engine does not run (a
+    // pin's command, from a shot the mod had kept for its archer and gave
+    // five seconds on, in the fight this is from): busy, with no current
+    // command, which is what a turn used to stand out max_action_ms for. Up
+    // again, what waited on it begins: an effect's command, in front of
+    // whatever its turn would have it do.
+    // On a stream of its own, and only in the fights that have combatants
+    // out of reach: a fight without it is draw for draw the fight it was.
+    //
+    // It comes up again whether or not the world runs meanwhile (Tick): what
+    // brings a creature back in the game is a timer of its scripts', which in
+    // a fight is on a clock the turns move. Counted only while the world ran,
+    // the last of the party and the last enemy, both under, were passed over
+    // from round 340 to past round 680 of one fight with nothing to end it
+    // (seed 3 of these, as built), and past the 2,480th of another (seed 21,
+    // with time): with nobody in the world nobody has a turn, no turn runs
+    // the world, and the rounds go by a frame or two each. That is the
+    // machine doing as it should, and the design says what it rests on.
+    void Surfacing()
+    {
+        for (auto it = under_.begin(); it != under_.end();)
+        {
+            Creature &c = world_.Get(it->first);
+            if (c.exists && !c.down && --it->second > 0)
+            {
+                ++it;
+                continue;
+            }
+            const bool waited = c.queued != CommandType::Invalid;
+            world_.SetActive(c.id, true);
+            world_.Finish(c.id);
+            if (waited && c.exists && !c.down)
+            {
+                Try(c.id, CommandType::ExecuteEffect, Source::Engine);
+            }
+            ++coverage_.cameUp;
+            it = under_.erase(it);
+        }
+    }
+    void Burrowing()
+    {
+        if (!runners_ || !world_.machine.Active() || !Chance(burrows_, 0.0015))
+        {
+            return;
+        }
+        // (Not the last of the party left in the world, so that the rounds
+        // with nobody in it, Surfacing, are few.)
+        const auto partyLeft = std::ranges::count_if(world_.creatures, [](const Creature &c) {
+            return c.side == Side::Party && c.exists && !c.down && !c.inactive;
+        });
+        std::vector<ObjectId> standing;
+        for (const Creature &c : world_.creatures)
+        {
+            const Combatant *in = world_.machine.Order().Find(c.id);
+            if (c.exists && !c.down && !c.inactive && in != nullptr && !in->down &&
+                (c.side != Side::Party || partyLeft > 1))
+            {
+                standing.push_back(c.id);
+            }
+        }
+        if (standing.empty())
+        {
+            return;
+        }
+        // Oftener the one whose turn it is, so that some go in the middle of
+        // their own turn, an action running.
+        const ObjectId current = world_.Current();
+        const bool own = std::ranges::find(standing, current) != standing.end() && Chance(burrows_, 0.4);
+        const ObjectId id = own ? current : Pick(burrows_, standing);
+        // "All commands will be cleared upon disabling" (script.ldf).
+        ConjureBroken(id);
+        tasks_.erase(id);
+        world_.SetActive(id, false);
+        if (Chance(burrows_, 0.3))
+        {
+            world_.QueueOnInactive(id, CommandType::ExecuteEffect);
+        }
+        // One to twelve seconds of running time: a turn or two of its own
+        // passed over, most times.
+        under_[id] = 60 + static_cast<int>(burrows_.Next() % 700);
+        ++coverage_.wentUnder;
     }
 
     // Whether the engine's perception keeps a creature in the fight, the
@@ -1487,9 +1600,15 @@ class Arena
             if (done.type == CommandType::Attack && done.target != kNoObject)
             {
                 Creature &victim = world_.Get(done.target);
-                Notices(victim);
+                // (Nor at one the game has made inactive since: nobody is
+                // there to strike. The draws as they were.)
+                const bool there = !victim.inactive;
+                if (there)
+                {
+                    Notices(victim);
+                }
                 const double kill = victim.side == Side::Party ? 0.05 : 0.35;
-                if (!victim.down && Chance(rng_, kill))
+                if (!victim.down && Chance(rng_, kill) && there)
                 {
                     victim.down = true;
                 }
@@ -1644,7 +1763,8 @@ class Arena
     {
         const ObjectId current = world_.Current();
         const Phase phase = world_.machine.GetPhase();
-        if (current == kNoObject || !PlayerControls(current) || !Chance(rng_, 0.1))
+        // (Nobody to order where the game has made the character inactive.)
+        if (current == kNoObject || !PlayerControls(current) || world_.Get(current).inactive || !Chance(rng_, 0.1))
         {
             return;
         }
@@ -1820,6 +1940,10 @@ class Arena
             Must(roundStarted_, "a turn before the fight's first round");
             Must(!turnOpen_, "a turn opened while another was open");
             Must(e.who == world_.Current(), "a turn opened for someone not current");
+            // No turn is begun for one the game has made inactive (17). One a
+            // condition holds loses its turn to that first, as anyone does.
+            Must(e.kind == EventKind::TurnLost || !world_.Get(e.who).inactive,
+                 "a turn begun for one the game has made inactive");
             turnOpen_ = true;
             // Time rolled over into this turn only from one its actor ended
             // (10). The arena's own word for which those are: the three ends
@@ -1860,10 +1984,11 @@ class Arena
             Must(turnOpen_, "a turn waits on an order that is not open");
             Must(e.who == world_.Current(), "a turn waits on an order for someone not current");
             Must(world_.machine.GetPhase() == Phase::AwaitingOrder, "a turn said to wait on an order that does not");
+            Must(!world_.Get(e.who).inactive, "a turn waits on an order for one the game has made inactive");
             break;
-        case EventKind::TurnEnded:
+        case EventKind::TurnEnded: {
             turnsThisFrame_.insert(e.who);
-            turnOpen_ = false;
+            const bool wasOpen = std::exchange(turnOpen_, false);
             Must(EndedByItsActor(e.detail).has_value(), "a turn ended for a reason core/TurnEnd.h does not class");
             endedWhy_[e.who] = e.detail;
             // An unaware hostile's turn (11): skipped only while it has
@@ -1885,6 +2010,22 @@ class Arena
             if (e.detail == "chose nothing")
             {
                 Must(told_ == e.who, "a turn waited out on an AI that was never told to choose");
+            }
+            // One the game has made inactive (17): only such a creature's
+            // turn ends so. Passed over as it came (no turn was open), or
+            // ended in the middle, its creature gone as it played. What it
+            // had put off this round (Delay) has come, and gone the same way.
+            if (e.detail == "inactive")
+            {
+                const Creature &c = world_.Get(e.who);
+                Must(c.inactive, "a turn ended as inactive for one the game has active");
+                ++coverage_.inactiveTurns;
+                coverage_.inactiveMidTurn += wasOpen ? 1 : 0;
+                coverage_.inactiveQueued += c.queued != CommandType::Invalid ? 1 : 0;
+                if (const auto asked = delayed_.find(e.who); asked != delayed_.end())
+                {
+                    asked->second.awaited = false;
+                }
             }
             // One with no turn (16): only one that is not of the party and
             // that the game does not have in combat.
@@ -1912,6 +2053,7 @@ class Arena
             }
             beatOf_ = kNoObject;
             break;
+        }
         case EventKind::FightOver:
             turnOpen_ = false;
             delayed_.clear();
@@ -2154,13 +2296,23 @@ class Arena
         noTurnFrames_ = noTurn && whose == noTurnOf_ ? noTurnFrames_ + 1 : (noTurn ? 1 : 0);
         noTurnOf_ = noTurn ? whose : kNoObject;
         Must(noTurnFrames_ <= 2, "a turn went on for one the game does not have in combat, nobody for it to fight");
+        // And one the game has made inactive has none (17): no turn of its
+        // is being played as a step ends, whoever it is and whatever it was
+        // at: the step that finds it so ends it. (One fallen with it ends as
+        // the fallen do, a frame on.)
+        if (played && world_.mode == Mode::Combat && whose != kNoObject)
+        {
+            const Creature &c = world_.Get(whose);
+            Must(!(c.inactive && c.exists && !c.down), "a turn went on for one the game has made inactive");
+        }
     }
 
     Rng rng_;
-    Rng reach_;  // what the game layer measures for a kept attack to be turned (onMeasure): its own stream
-    Rng waits_;  // how long an AI's wait is, as the game layer reads it of the command (Try): its own stream
-    Rng notice_; // who has not noticed the party, and when it does (issue 29): its own stream
-    Rng asks_;   // when one gone from the fight asks for a command (Asks; issue 43): its own stream
+    Rng reach_;   // what the game layer measures for a kept attack to be turned (onMeasure): its own stream
+    Rng waits_;   // how long an AI's wait is, as the game layer reads it of the command (Try): its own stream
+    Rng notice_;  // who has not noticed the party, and when it does (issue 29): its own stream
+    Rng asks_;    // when one gone from the fight asks for a command (Asks; issue 43): its own stream
+    Rng burrows_; // whom the game makes inactive, and for how long (Burrowing; issue 44): its own stream
     Settings settings_;
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
     std::set<ObjectId> secondsKnown_;             // held with seconds the machine could read, and not yet ended by it
@@ -2198,6 +2350,7 @@ class Arena
     };
     std::unordered_map<ObjectId, DelayAsked> delayed_;
     std::unordered_map<ObjectId, std::string> endedWhy_; // why each creature's last turn ended (its event's detail)
+    std::map<ObjectId, int> under_;   // those the game has made inactive, and the frames until it makes them active
     ObjectId beatOf_ = kNoObject;     // the unaware hostile whose beat was last said, its turn still open
     std::uint32_t beatFromMs_ = 0;    // turnRunMs_ as it was said
     ObjectId told_ = kNoObject;       // whose AI was told to choose this turn
@@ -2377,8 +2530,10 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
 // 29): about half the hostiles have not noticed the party, and notice when
 // struck or by themselves; and now and then a combatant goes where the scan's
 // own rules no longer find it fighting, perceived or not, and comes back or
-// is lost for good. Promises 10 to 12 are checked in every fight; here they
-// have something to hold against. Twenty-five fights a clock.
+// is lost for good; and now and then the game makes one of the fight inactive
+// for a while, anyone of it (issue 44). Promises 10 to 12, and 15 to 17, are
+// checked in every fight; here they have something to hold against.
+// Twenty-five fights a clock.
 TEST_CASE("random fights with hostiles unaware and combatants out of reach keep the promises", "[fights]")
 {
     for (const TurnClock clock : {TurnClock::Actions, TurnClock::Time})
@@ -2394,7 +2549,9 @@ TEST_CASE("random fights with hostiles unaware and combatants out of reach keep 
         // again. With issue 43, those gone asking for commands and those the
         // game does not have in combat let through out of turn, the fights
         // take other courses: 62 and 59, 61 and 54, 21 and 11; 140 and 120,
-        // 108 and 95, 58 and 48, 57 and 47).
+        // 108 and 95, 58 and 48, 57 and 47. And again with issue 44, those
+        // the game makes inactive for a while among them: 59 and 75, 48 and
+        // 61, 20 and 16; 116 and 162, 133 and 163, 55 and 69, 43 and 75).
         CHECK(coverage.unawareTurns > 15);
         CHECK(coverage.noticed > 19);
         CHECK(coverage.noticedInBeat > 4);
@@ -2404,16 +2561,18 @@ TEST_CASE("random fights with hostiles unaware and combatants out of reach keep 
         CHECK(coverage.cameBack > 15);
         // A turn an AI played ended at max_turn_ms, among hostiles whose
         // turns are skipped and combatants that come and go (issue 38: 19 as
-        // built, 32 with time; 23 and 29 since issue 43).
-        CHECK(coverage.turnLimits > (clock == TurnClock::Time ? 10 : 6));
+        // built, 32 with time; 23 and 29 since issue 43; 10 and 30 since
+        // issue 44, whose creatures out of the world shorten the others'
+        // rounds).
+        CHECK(coverage.turnLimits > (clock == TurnClock::Time ? 10 : 3));
         // What the fight holds and what it lets go (1, 15). The commands let
         // through out of turn as the game's own, their creatures not in
         // combat by the game's word: hostiles that have not noticed, and
-        // those the game has stood down (430 and 421). The commands the gate
+        // those the game has stood down (384 and 391). The commands the gate
         // turned away of creatures in combat with no turn to come, outside
-        // the order or gone from the fight (51 and 39). And those gone from
+        // the order or gone from the fight (35 and 60). And those gone from
         // the fight alive, or turned away outside it, that lived as a fight
-        // let the world go, each told then (42 and 35). The hundred and sixty
+        // let the world go, each told then (47 and 47). The hundred and sixty
         // default fights, where the game has everyone in combat, let nothing
         // through out of turn, turn 67 and 58 commands away of creatures
         // that then join or fall, and reach no end with one owed.
@@ -2421,15 +2580,26 @@ TEST_CASE("random fights with hostiles unaware and combatants out of reach keep 
         // And the turns of those with no turn (16), ended "out of combat":
         // one gone out of the scan's reach in its own turn, the game having
         // stood it down; an ally the party has lost for good, as its turn
-        // comes (13 and 22).
+        // comes (20 and 29).
         CHECK(coverage.noTurns > 4);
+        // And those the game makes inactive for a while (17; issue 44): 132
+        // and 152 went under and 122 and 142 were up again before their
+        // fight was over; 700 and 422 turns ended "inactive", 73 and 68 of
+        // them in the middle, their creatures gone as they played, and 72
+        // and 250 with something queued on their creatures that the engine
+        // did not run, which is what a turn stood out max_action_ms for.
+        CHECK(coverage.wentUnder > 40);
+        CHECK(coverage.cameUp > 40);
+        CHECK(coverage.inactiveTurns > 140);
+        CHECK(coverage.inactiveMidTurn > 23);
+        CHECK(coverage.inactiveQueued > 24);
         CHECK(coverage.turnedAway > 13);
         CHECK(coverage.toldTurnedAway > 8);
         // And with time, what rolls over where so many turns are not their
         // actors' to end (272 turns rolled time over, 162 left time that was
         // not saved; 233 and 182 with issue 30's holds and a limit on an AI's
         // turn where a cap on its commands was, issue 38; 155 and 165 since
-        // issue 43).
+        // issue 43; 230 and 279 since issue 44).
         if (clock == TurnClock::Time)
         {
             CHECK(coverage.rolledOver > 90);

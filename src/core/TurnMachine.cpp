@@ -447,6 +447,21 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         EnforcePause(obs, fx);
         return fx;
     }
+    // A creature the game has made inactive has no turn (InactiveTurn; issue
+    // 44). Made so while its turn is being played (a tentacle that goes under
+    // on its own turn), that turn ends here, as this frame's look finds it:
+    // nothing rolls over, and nothing is cleared, the engine having cleared
+    // its commands as it went ("all commands will be cleared upon disabling":
+    // script.ldf). Anyone's turn, a party member's and an unaware hostile's
+    // beat too: nobody is there to order, or to be read. One that fell in the
+    // same frame ends as the fallen do.
+    if (const Combatant *current = order_.Current();
+        current != nullptr && InTurn() && !ActorGone(obs) && InactiveNow(*current))
+    {
+        EndInactive(*current, fx);
+        EnforcePause(obs, fx);
+        return fx;
+    }
     // A creature that is not of the party and that the game does not have in
     // combat has no turn (outOfCombat_; issue 43). Found so while its turn is
     // being played, that turn ends here: asked for by the gate, where a
@@ -793,10 +808,22 @@ void TurnMachine::StartNextTurn(std::vector<Effect> &fx)
             EndTurn(fx, "stunned");
             return;
         }
+        // Made inactive while the conversation played: there is no turn to
+        // go on with, and nobody to tell that it does (issue 44; the long run
+        // of random fights with creatures out of the world, seed 455).
+        if (InactiveNow(*current))
+        {
+            EndInactive(*current, fx);
+            return;
+        }
         ResumeTurn(*current, fx);
         return;
     }
     if (LoseTurn(*current, fx))
+    {
+        return;
+    }
+    if (InactiveTurn(*current, fx))
     {
         return;
     }
@@ -805,6 +832,75 @@ void TurnMachine::StartNextTurn(std::vector<Effect> &fx)
         return;
     }
     BeginTurn(*current, fx);
+}
+
+// Whether the game has made the creature whose turn it is inactive
+// (ActorObservation::inactive), by this frame's look at it. The look is all
+// that is asked: every turn begins on a frame that has looked at its creature
+// (WhatToObserve names the order's current one, and the fight's first turn
+// begins a frame after the fight does), and it is looked at every frame of
+// its turn. A scan's word of everyone would have no reader.
+bool TurnMachine::InactiveNow(const Combatant &who) const
+{
+    return seenActor_ && seenActor_->id == who.id && seenActor_->exists && seenActor_->inactive;
+}
+
+// A creature the game has made inactive has no turn (issue 44). As its turn
+// comes it is passed over at once: no beat, since nobody is there to be seen;
+// no bar, nothing charged and nothing rolled over; not told to choose, not
+// waited on for an order, and nothing of its cleared or given (an action kept
+// for this turn stays kept for the next it has). It stays in the order, and
+// has its turns again when the game makes it active.
+//
+// The turn passes as a lost one does: the scripts are told of it, a cooldown
+// that counts its user's turns counts it, and its creature's own clock moves a
+// turn's seconds (EndTurn). That clock is what brings it back: the game's own
+// timers on a creature run on it through a fight, and the Broodmother's
+// tentacles come up by one (orz550_broodmother_h.nss,
+// ORZ_Broodmother_Tentacle_Burrow: a surface event delayed 2.5 s, then
+// WR_SetObjectActive(oTentacle, FALSE)). In the fight this was read from
+// (the Dead Trenches, 2026-10-05) a tentacle's attack as it surfaced came
+// five milliseconds after its turn's end had moved its clock.
+//
+// After LoseTurn: a hold on one that is out of the world takes its turns as
+// on anyone, and is paid down as they pass.
+//
+// Until 2026-10-05 it was told its turn had come like anyone. With nothing
+// queued it chose nothing, and the turn waited ai_think_ms (146 of the
+// tentacles' 205 turns in that fight). With something queued, which the
+// engine does not run for an inactive object, it read busy with no current
+// command, and its turn stood out max_action_ms: "still at a invalid after
+// 36000 ms: stopped", twelve seconds of the wall's time at three times the
+// speed, eleven turns running for one tentacle on which a pin had landed
+// after it went under.
+bool TurnMachine::InactiveTurn(const Combatant &who, std::vector<Effect> &fx)
+{
+    if (!InactiveNow(who))
+    {
+        return false;
+    }
+    budget_ = Budget{};
+    budget_.spend.SpendAllActions();
+    Log(LogLevel::Info, std::format("round {}: {} is inactive by the game's own word, out of the world: it has no turn",
+                                    order_.Round(), Utf8(who.name)));
+    TellTurnStart(who, fx);
+    clockSeenMs_ = 0;
+    clockRuns_ = true;
+    EndTurn(fx, "inactive");
+    return true;
+}
+
+// A turn already begun, its creature made inactive in the middle of it (a
+// tentacle that goes under on its own turn; one taken out of the world while
+// a conversation played in it): ended where it stands. What its bar had left
+// does not roll over, and nothing is cleared: the engine cleared its commands
+// as it went.
+void TurnMachine::EndInactive(const Combatant &who, std::vector<Effect> &fx)
+{
+    Log(LogLevel::Info, std::format("{} is inactive by the game's own word, out of the world: it has no turn, and what "
+                                    "is left of this one is nobody's",
+                                    Utf8(who.name)));
+    EndTurn(fx, "inactive");
 }
 
 void TurnMachine::StepPadding(std::vector<Effect> &fx)
@@ -1554,6 +1650,22 @@ void TurnMachine::Interrupt(ObjectId who, std::string_view why, std::vector<Effe
     }
 }
 
+// Why a kept action's target was not there for it, as far as the machine can
+// say: fallen, or gone from the fight; or still standing in the fight by the
+// machine's own word, which is one the game has made inactive, out of the
+// world (issue 44). The game layer is who finds a target not there (dead,
+// gone, or inactive: src/game/Bridge.cpp, NotThere) and turns or drops the
+// action by the same rule either way; this is only the word the log has for
+// it, so that the two can be told apart in play. In the Broodmother's fight
+// (2026-10-05) a Pinning Shot kept for an archer was given at a tentacle
+// that had gone under five seconds before, and what it put on the tentacle
+// sat in its queue for eleven turns.
+bool TurnMachine::KeptTargetStands() const
+{
+    const Combatant *target = landing_ ? order_.Find(landing_->target) : nullptr;
+    return target != nullptr && !target->down;
+}
+
 // The game layer did not give a kept cast or action when asked to: its
 // target was gone, and for a plain attack none of those it might have been
 // turned on was in its creature's reach (LandCast). What its creature's turn
@@ -1573,8 +1685,8 @@ void TurnMachine::KeptVoid(ObjectId who)
     }
     const Combatant *c = order_.Find(who);
     Log(LogLevel::Info,
-        std::format("{}'s pending {} is dropped: its target is gone{}{}",
-                    c != nullptr ? Utf8(c->name) : std::string{"?"}, Name(landing_->type),
+        std::format("{}'s pending {} is dropped: its target is {}{}{}", c != nullptr ? Utf8(c->name) : std::string{"?"},
+                    Name(landing_->type), KeptTargetStands() ? "out of the world" : "gone",
                     landing_->type == CommandType::Attack ? ", and no enemy is in its reach" : "",
                     paid > 0 ? std::format("; the {:.2f} s it owed given back", static_cast<float>(paid) / 1000.0f)
                              : std::string{}));
@@ -4347,8 +4459,8 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
             {
                 const Combatant *other = order_.Find(request.target);
                 onto = other != nullptr ? Utf8(other->name) : std::format("{:#x}", request.target);
-                Log(LogLevel::Info,
-                    std::format("{}'s pending attack is turned on {}: its target has fallen", Utf8(who->name), onto));
+                Log(LogLevel::Info, std::format("{}'s pending attack is turned on {}: its target {}", Utf8(who->name),
+                                                onto, KeptTargetStands() ? "is out of the world" : "has fallen"));
             }
             if (Timed())
             {

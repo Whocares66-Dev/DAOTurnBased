@@ -122,7 +122,9 @@ EventDescription Describe(EventKind kind)
                 "why: ended by the player, nothing left to spend, done, out of movement, chose nothing, waits, fell, "
                 "took too long, held by its condition, held by an effect, stunned, unaware (a hostile that has "
                 "noticed nobody to fight: its turn is skipped), out of combat (one not of the party that the game "
-                "took out of combat in its turn, or has out of combat as its turn comes: it has no turn)",
+                "took out of combat in its turn, or has out of combat as its turn comes: it has no turn), inactive "
+                "(one the game has made inactive, out of the world: it has no turn, and no turn_started comes "
+                "before it when it is passed over as its turn comes)",
                 nullptr,
                 nullptr,
                 nullptr};

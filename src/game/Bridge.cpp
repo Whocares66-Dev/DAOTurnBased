@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <unordered_set>
 #include <utility>
 
@@ -171,6 +172,132 @@ bool Gone(ObjectId id)
     return api::IsObjectValid(id) == 0 || api::IsDead(id) != 0;
 }
 
+// Whether the game has made a creature inactive (core:
+// ActorObservation::inactive; issue 44): the engine's own word, the scripts'
+// GetObjectActive, zero for an object their SetObjectActive has disabled.
+// script.ldf: "In a 'disabled' state, the object will not appear on the
+// client visually, and will receive no AI updates. GameEffects will remain on
+// the object but all commands will be cleared upon disabling", and of the
+// getter, "Messages will continue to queue up so you are able to assign
+// actions before enabling the object". The Broodmother's tentacles go under
+// so (orz550_broodmother_h.nss: WR_SetObjectActive(oTentacle, FALSE) as one
+// burrows, and as each leaves the fight in stasis, cut to two thirds and then
+// one third of its health: orz550cr_bmother_tentacle.nss), and the party's
+// own are made so as they leave the active party (module_core.nss,
+// EVENT_TYPE_PARTYMEMBER_DROPPED).
+bool Inactive(ObjectId id)
+{
+    return api::GetObjectActive(id) == 0;
+}
+
+// Not there for a kept action to be given at, or turned on: dead or gone
+// from the area, or made inactive by the game since the action was kept
+// (issue 44). The game's own scripts stop the party attacking a tentacle as
+// it goes under (orz550_broodmother_h.nss: WR_ClearAllCommands for every
+// party member whose attack target it is, before WR_SetObjectActive(...,
+// FALSE)), and what the mod keeps for a creature is outside the engine's
+// queue, where that does not reach it. In the Broodmother's fight
+// (2026-10-05) a Pinning Shot kept at 05:14:42 was given at 05:14:57 at a
+// tentacle under ground since 05:14:51: the pin landed on an object out of
+// the world, and its command sat in that object's queue, never begun, for
+// eleven turns. So an inactive target is as a fallen one: a plain attack is
+// turned on the nearest enemy in reach, anything else is not given and
+// nothing of it is spent (ReleaseCast). Not yet seen in play.
+bool NotThere(ObjectId id)
+{
+    return Gone(id) || Inactive(id);
+}
+
+// The same in words, for the lines that say why a kept action was turned or
+// not given: which of the two it was is what a play test's log is read for.
+const char *WhyNotThere(ObjectId id)
+{
+    return Gone(id) ? "is dead or gone" : "is inactive, out of the world";
+}
+
+// What is queued on the acting creature while it has no current command,
+// said at debug: two lines, for two things the logs do not yet tell.
+//
+// A queue the engine is not running, by its commands' types: at once for an
+// inactive creature, whose turn is over within the frame, and for any other
+// once it has stood so more than a second, which no log of play has shown
+// outside one fight (in the playthrough's logs to 2026-10-05 every "still at
+// a invalid" is of the Broodmother's: a tentacle under ground, issue 44).
+// Said again as what is queued changes. What sat on that tentacle is not read
+// yet, and this is to read it. By the log it came after the tentacle went
+// under (0 queued at 05:14:52, in stasis; then a party member's kept Pinning
+// Shot was given at 05:14:57 and "is held (stunned, pinned, knocked down)"
+// was read of the tentacle at 05:14:59), and neither the pin's end (the
+// machine's, 05:15:24) nor ClearAllCommands, eleven times, took it off.
+//
+// And how long a command the engine did begin had waited, where that was two
+// frames or more: the machine takes two frames with nothing for "its command
+// is over", and "busy" counts the queue so that these are not such frames
+// (core: ActorObservation::busy). Whether it needs to has not been measured;
+// a fight with none of these lines says it does not.
+void SayQueueNotRunning(ObjectId id, CommandType current, bool inactive)
+{
+    using Clock = std::chrono::steady_clock;
+    static ObjectId who = dao::kInvalidObject;
+    static Clock::time_point since;
+    static int frames = 0;
+    static bool active = false;
+    static std::string said;
+    const auto ms = [](Clock::duration d) { return std::chrono::duration_cast<std::chrono::milliseconds>(d).count(); };
+    const std::int32_t queued = current == CommandType::Invalid ? api::GetCommandQueueSize(id) : 0;
+    const Clock::time_point now = Clock::now();
+    if (who != dao::kInvalidObject && (id != who || queued <= 0))
+    {
+        // Over for the one it was counted of: at its command now, or what was
+        // queued is gone, or the turn is another's.
+        if (frames >= 2 && active && id == who && current != CommandType::Invalid)
+        {
+            spdlog::debug("{:#x} stood {} frames ({} ms) with no current command and something queued before the "
+                          "engine began its {}",
+                          who, frames, ms(now - since), Name(current));
+        }
+        who = dao::kInvalidObject;
+    }
+    if (queued <= 0)
+    {
+        return;
+    }
+    if (who == dao::kInvalidObject)
+    {
+        who = id;
+        since = now;
+        frames = 0;
+        said.clear();
+    }
+    ++frames;
+    active = !inactive;
+    if ((!inactive && now - since <= std::chrono::seconds{1}) || !spdlog::should_log(spdlog::level::debug))
+    {
+        return;
+    }
+    // (Index 0 is "the command at the top of the queue, but not being
+    // executed yet": script.ldf, GetCommandByIndex.)
+    constexpr std::int32_t kMost = 8;
+    std::string types;
+    for (std::int32_t i = 0; i < std::min(queued, kMost); ++i)
+    {
+        const dao::script::OwnedCommand command = api::GetCommandByIndex(id, i);
+        types += types.empty() ? "" : ", ";
+        types += command ? Name(static_cast<CommandType>(api::GetCommandType(*command.get()))) : "none read";
+    }
+    if (queued > kMost)
+    {
+        types += ", ...";
+    }
+    if (types == said)
+    {
+        return;
+    }
+    said = types;
+    spdlog::debug("{:#x} has no current command and {} queued that the engine is not running ({}): {}", id, queued,
+                  inactive ? "it is inactive" : std::format("{} ms so", ms(now - since)), types);
+}
+
 // One a kept attack might be turned on, its own target fallen, as the game
 // has it now (core/Rules.h, Foe; issue 22):
 // - there and alive;
@@ -198,7 +325,7 @@ Foe Measure(ObjectId attacker, ObjectId other)
 {
     Foe foe;
     foe.id = other;
-    foe.standing = !Gone(other);
+    foe.standing = !NotThere(other); // nor one the game has made inactive: nobody is there to strike
     if (!foe.standing)
     {
         return foe;
@@ -230,7 +357,7 @@ ObjectId TurnedOn(ObjectId attacker, const std::vector<ObjectId> &others)
     {
         const Foe &foe = foes.emplace_back(Measure(attacker, other));
         spdlog::debug("{:#010x}: its kept attack on {:#x}? {}{:.1f} m away, {} its reach, {}, {}", attacker, other,
-                      foe.standing ? "" : "fallen; ", foe.meters, foe.inReach ? "in" : "out of",
+                      foe.standing ? "" : "not there; ", foe.meters, foe.inReach ? "in" : "out of",
                       foe.hostile ? "hostile" : "not hostile", foe.seen ? "seen" : "not seen");
     }
     return NearestInReach(foes);
@@ -689,9 +816,15 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
         c.fighting = false;
         c.perception = Perceived(id, members);
         ++afar;
+        // (Inactive, said here: in the Broodmother's fight the four tentacles
+        // under ground, in combat 14 to 16 m from the party, each read "not
+        // found fighting", and nothing in the line said why. That the
+        // engine's own question for who is near does not answer with an
+        // object its scripts have disabled is the reading; this is to show
+        // it. Issue 44.)
         spdlog::debug("{:#x} is in the fight and not found fighting (combat state {}, {:.0f} m from the nearest "
-                      "living party member): the party {} it; it perceives {}, {}",
-                      id, api::GetCombatState(id), FromTheParty(id, living),
+                      "living party member{}): the party {} it; it perceives {}, {}",
+                      id, api::GetCombatState(id), FromTheParty(id, living), Inactive(id) ? ", inactive" : "",
                       c.perception.byParty ? "perceives" : "does not perceive",
                       c.perception.ofParty ? "a party member" : "no party member",
                       c.perception.ofFoes ? "someone hostile to it" : "nobody hostile to it");
@@ -1006,7 +1139,13 @@ ActorObservation Bridge::Actor(ObjectId id)
             }
         }
     }
+    // Busy with a command of its own, or with one queued and not yet begun
+    // (core: ActorObservation::busy says what the queue's half is for).
     actor.busy = actor.current != CommandType::Invalid || api::GetCommandQueueSize(id) > 0;
+    // Out of the world by the game's own word: it has no turn (issue 44).
+    // Anyone's, the party's own too.
+    actor.inactive = Inactive(id);
+    SayQueueNotRunning(id, actor.current, actor.inactive);
     actor.moving = api::IsMoving(id) != 0;
     const dao::Vector position = api::GetPosition(id);
     actor.position = {position.x, position.y, position.z};
@@ -1175,8 +1314,11 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             // through the gate, which lets it through for nothing. Its
             // conjuring is short now, the turns having been its time.
             if (const std::optional<HeldCast> kept = TakeHeldCast(e.target);
-                kept && kept->target != dao::kInvalidObject && Gone(kept->target))
+                kept && kept->target != dao::kInvalidObject && NotThere(kept->target))
             {
+                // (Dead, gone, or made inactive since it was kept: NotThere.
+                // Each line says which.)
+                const char *why = WhyNotThere(kept->target);
                 // A plain attack whose target fell is turned on the nearest
                 // enemy its creature can strike from where it stands, and
                 // given at that one: through the gate as the kept one would
@@ -1191,9 +1333,10 @@ void Bridge::Apply(const std::vector<Effect> &effects)
                     if (GiveAttack(e.target, next))
                     {
                         spdlog::info(
-                            "{:#010x}: the target of its kept attack ({:#x}) is gone: turned on {:#x}, the nearest of "
-                            "{} enemies standing that it can strike from where it is ({:.1f} m away)",
-                            e.target, kept->target, next, e.others.size(), api::GetDistanceBetween(e.target, next));
+                            "{:#010x}: the target of its kept attack ({:#x}) {}: turned on {:#x}, the nearest of {} "
+                            "enemies standing that it can strike from where it is ({:.1f} m away)",
+                            e.target, kept->target, why, next, e.others.size(),
+                            api::GetDistanceBetween(e.target, next));
                         break;
                     }
                     spdlog::warn("{:#010x}: could not make the command for its kept attack, turned on {:#x}", e.target,
@@ -1208,9 +1351,8 @@ void Bridge::Apply(const std::vector<Effect> &effects)
                 // attack, with no enemy in its reach: its creature's turn is
                 // handed over whole, and an AI chooses anew.
                 spdlog::info(
-                    "{:#010x}: the target of its charged cast of ability {} ({:#x}) is gone: not cast, nothing "
-                    "spent{}",
-                    e.target, kept->ability, kept->target,
+                    "{:#010x}: the target of its charged cast of ability {} ({:#x}) {}: not cast, nothing spent{}",
+                    e.target, kept->ability, kept->target, why,
                     kept->type == CommandType::Attack
                         ? std::format(" (an attack: none of {} enemies standing is in its reach and sight)",
                                       e.others.size())
