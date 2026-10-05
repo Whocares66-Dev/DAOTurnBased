@@ -29,9 +29,10 @@ struct Combatant
     // How fast its build moves against a person (core/Rules.h, SpeedFactor):
     // its appearance's, which nothing in a fight changes.
     float speed = 1.0f;
-    // Its movement rate effects as the scan found them: Haste, a salve, a
-    // slow. With its build they are the pace its turn's meters are made
-    // from, as they are when the turn begins (core/Rules.h, Pace).
+    // Its movement rate effects as the last look at everyone found them
+    // (CombatantStatus::movement; a scan reads none, and they are kept
+    // through one): Haste, a salve, a slow. With its build they are the pace
+    // its turn's meters are made from (core/Rules.h, Pace).
     MovementEffects movement;
     float health = 1.0f; // current over maximum
     float energy = 1.0f; // mana or stamina, the same

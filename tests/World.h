@@ -35,8 +35,9 @@ struct Creature
     float dexterity = 10.0f;
     float speed = 1.0f; // its build's pace against a person's
     // The movement rate effects standing on it, each one's potency, as the
-    // game layer reads them with every scan (Haste, a salve, a slow: issue
-    // 49). A case puts them on and takes them off.
+    // game layer reads them with every look at everyone, and not with a scan
+    // (Haste, a salve, a slow: issue 49). A case puts them on and takes them
+    // off.
     MovementEffects movement;
     bool down = false;
     bool exists = true;   // gone from the world: destroyed, or vanished by a script
@@ -244,7 +245,6 @@ class World
                 x.tag = c.tag;
                 x.dexterity = c.dexterity;
                 x.speed = c.speed;
-                x.movement = c.movement;
                 x.down = c.down;
                 x.engaged = c.engaged;
                 x.rank = c.rank;
@@ -270,7 +270,7 @@ class World
         {
             const Creature &c = Get(id);
             obs.statuses.push_back({id, c.exists, c.down, c.down ? 0.0f : c.health, c.condition, c.energy, c.mana,
-                                    c.condition != Condition::None ? c.conditionSeconds : 0.0f});
+                                    c.condition != Condition::None ? c.conditionSeconds : 0.0f, c.movement});
         }
         statusReads += needs.statuses.empty() ? 0 : 1;
         obs.keptVoid = std::exchange(keptVoid, {});

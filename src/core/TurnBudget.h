@@ -88,6 +88,13 @@ class TurnBudget
     {
         return timed_ ? pace_ : 0.0f;
     }
+    // With time: the pace from here on, its creature hasted or slowed in the
+    // middle of its turn (issue 49). What is left to walk is the time left
+    // at the new pace; the time already spent stays spent, and meters paid
+    // for and not yet walked stay paid for, whatever they would cost now.
+    // What is no pace (nothing, a negative, not a number) is not taken.
+    // Nothing as built.
+    void SetPace(float paceMps);
     [[nodiscard]] float PaidMeters() const;
 
     // With time: a hold takes `clockMs` of the creature's clock, and with

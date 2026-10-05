@@ -4688,20 +4688,87 @@ MUTANTS = [
     Mutant(
         "as built, a turn's meters are a person's whatever its creature's pace",
         MACHINE,
-        "        return TurnBudget::Actions(1, MovementBudget(settings_, pace, who.dexterity));",
+        "        return TurnBudget::Actions(1, MovementBudget(settings_, Pace(who.speed, who.movement), who.dexterity));",
         "        return TurnBudget::Actions(1, MovementBudget(settings_, 1.0f, who.dexterity));",
     ),
     Mutant(
         "with time, a turn's bar walks at a person's pace whatever its creature's",
         MACHINE,
-        "    const float speed = std::isfinite(pace) && pace > 0.0f ? pace : 1.0f;",
-        "    const float speed = 1.0f;",
+        "settings_.paceMps * BarPace(who),",
+        "settings_.paceMps,",
     ),
     Mutant(
-        "one on its way out of the fight keeps the pace it had when last found fighting",
+        "the look at everyone's word of a creature's Haste and slows is not taken",
         MACHINE,
-        "                    in->movement = seen.movement;",
-        "                    (void)seen;",
+        "        c->movement = status.movement;",
+        "        (void)status.movement;",
+    ),
+    Mutant(
+        "a scan wipes what the last look read of a creature's Haste and slows",
+        MACHINE,
+        "            known->movement = std::move(movement);",
+        "            (void)movement;",
+    ),
+    # The pace read again within a turn, with a turn a bar of time.
+    Mutant(
+        "with time, a pace that changes in a turn is the bar's only from the next turn",
+        MACHINE,
+        "    ApplyStatuses(obs.statuses, fx);\n    FollowPace();\n",
+        "    ApplyStatuses(obs.statuses, fx);\n",
+    ),
+    Mutant(
+        "a pace set within a turn is not the bar's",
+        "src/core/TurnBudget.cpp",
+        "    pace_ = paceMps;",
+        "    (void)paceMps;",
+    ),
+    Mutant(
+        "what is no pace is taken for one within a turn",
+        "src/core/TurnBudget.cpp",
+        "    if (!timed_ || !(paceMps > 0.0f) || !std::isfinite(paceMps))",
+        "    if (!timed_)",
+    ),
+    Mutant(
+        "a pace changed within a turn is said at every look",
+        MACHINE,
+        "    if (pace == budget_.pace)\n    {\n        return;\n    }\n",
+        "",
+    ),
+    Mutant(
+        "a pace changed within a turn is said again as a change when the next turn begins",
+        MACHINE,
+        "    (void)RememberRate(current->id, rate);\n",
+        "",
+    ),
+    Mutant(
+        "a pace changed within a turn is said as a turn's beginning is",
+        MACHINE,
+        "a person's pace from now in this turn (",
+        "a person's pace this turn (",
+    ),
+    Mutant(
+        "what was read as a pace changed within a turn is not said",
+        MACHINE,
+        '    SayMovementEffects(*current, "as its pace changes in its turn");\n',
+        "",
+    ),
+    Mutant(
+        "[turns] pace changed in a turn is that turn's as its creature's pace changes",
+        MACHINE,
+        "    budget_.spend.SetPace(budget_.personMps * pace);",
+        "    budget_.spend.SetPace(settings_.paceMps * pace);",
+    ),
+    Mutant(
+        "a turn begun hasted is said to change its pace at its first look",
+        MACHINE,
+        "    budget_.pace = BarPace(who);\n",
+        "",
+    ),
+    Mutant(
+        "a turn does not keep a person's pace as it began: nothing changes within it",
+        MACHINE,
+        "    budget_.personMps = settings_.paceMps;\n",
+        "",
     ),
     Mutant(
         "a turn's pace is never said",
@@ -4724,7 +4791,7 @@ MUTANTS = [
     Mutant(
         "what a creature's Haste came to at its last turn is forgotten",
         MACHINE,
-        "        paceRates_[who.id] = rate;",
+        "        paceRates_[who] = rate;",
         "        (void)rate;",
     ),
     Mutant(

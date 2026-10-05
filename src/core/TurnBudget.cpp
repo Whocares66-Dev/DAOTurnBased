@@ -198,6 +198,15 @@ void TurnBudget::Credit(float meters)
     }
 }
 
+void TurnBudget::SetPace(float paceMps)
+{
+    if (!timed_ || !(paceMps > 0.0f) || !std::isfinite(paceMps))
+    {
+        return;
+    }
+    pace_ = paceMps;
+}
+
 float TurnBudget::PaidMeters() const
 {
     return timed_ ? credit_ + std::max(0.0f, free_ - freeWalked_) : 0.0f;

@@ -113,21 +113,23 @@ inline constexpr float kPersonCombatSpeed = 4.66f;
 [[nodiscard]] bool IsMovementRate(float potency);
 
 // The pace a turn's meters are made from, against a person's: the creature's
-// build (SpeedFactor) times its movement rate effects (MovementRate) as they
-// are when its turn begins. The plain rule (issue 49; the user's standing
-// principle, a simple rule first and an exception only where it earns its
-// keep): one pace a turn, read as the turn begins, whichever the clock. With
-// a turn a bar of time it is the meters a second of the bar walks
-// (Settings::paceMps times it); as built, the turn's meters (MovementBudget).
+// build (SpeedFactor) times its movement rate effects (MovementRate).
 //
-// It is not read again within the turn. An effect put on in the middle of a
-// turn (a salve drunk, a trap walked onto) or ended in it counts from its
-// creature's next turn: the bar's caption, the path's preview and how far a
-// walk is let go are all of one pace, and a change within the turn would
-// want a second rule as built, for the meters already walked. The engine
-// itself moves the creature at the new rate at once: for the rest of that
-// one turn it covers its meters faster or slower on the screen than the bar
-// charges for them.
+// With a turn a bar of time it is what a second of the bar walks
+// (Settings::paceMps times it), and it is the creature's pace as it is now:
+// read as the turn begins and again with every look at everyone in it, so
+// that what is left to walk is the time left times the pace now
+// (TurnMachine::FollowPace; issue 49). It was one pace a turn at first, read
+// as the turn began; the user, 2026-10-05, of reading it again within the
+// turn: "I think that would be more accurate". The bar is the same length
+// hasted or not, and what is hasted is what a thing costs of it: the user,
+// the same day, "keeping the bar constant and reducing the cost makes
+// sense. I think that also fits better mechanically".
+//
+// As built (one action and meters of movement) it is one pace a turn, read
+// as the turn begins (MovementBudget): the meters are an allowance of their
+// own there, and a pace that changed within a turn would want a second rule
+// for the meters already walked.
 [[nodiscard]] float Pace(float build, const MovementEffects &effects);
 
 // Where the party is: where its living members are (issue 42).

@@ -922,9 +922,12 @@ const dao::CDataArrays &EngineParameters(const dao::CGameEffect &effect)
 // Haste and slows, as they stand on a creature now: each movement rate
 // effect's potency, by the effects' two types (core/Types.h,
 // MovementEffects). What they come to is core's to say (core/Rules.h,
-// MovementRate, Pace), and the machine says what was read as each turn begins
-// (TurnMachine::SayPace). From the scripts' thread; DAOLib's probe has
-// checked GetEffects in play.
+// MovementRate, Pace), and the machine says what was read as each turn
+// begins, and as a pace changes within one (TurnMachine::SayPace,
+// FollowPace). Read with the look at everyone (Status), not with the scan:
+// two script calls a creature each half second, as each action ends and as
+// each turn begins. From the scripts' thread; DAOLib's probe has checked
+// GetEffects in play.
 MovementEffects MovementEffectsOn(ObjectId id)
 {
     const auto potencies = [id](std::int32_t type) {
@@ -978,7 +981,7 @@ const Bridge::Known &Bridge::Remember(ObjectId id)
     // speed in the appearance table. Not the scripts' movement speed
     // property, which is the flanking angle in the shipped table (60 for
     // everyone in the first session, 2026-09-30). Haste and slows are
-    // effects, which come and go: read with every scan (Describe).
+    // effects, which come and go: read with every look at everyone (Status).
     const float combatSpeed =
         dao::gda::GetFloat(dao::script::Table::Appearance, api::GetAppearanceType(id), "Game_CbtSpeed").value_or(0.0f);
     // Its skills' ranks (with a turn a bar of time, Combat Tactics' time
@@ -1012,13 +1015,12 @@ Combatant Bridge::Describe(ObjectId id, Side side, bool hero)
     c.tactics = known.tactics;
     c.survival = known.survival;
     c.dexterity = api::GetCreatureProperty(id, k::PROPERTY_ATTRIBUTE_DEXTERITY, k::PROPERTY_VALUE_TOTAL);
-    // Its build's pace, remembered, and its Haste and slows as they stand
-    // now: every scan reads them again, and every turn begins on a scan, so
-    // the pace a turn's meters are made from is the one its creature has as
-    // the turn begins (core: TurnMachine::NewSpend; issue 49). Nothing is
-    // said here: the machine says a turn's pace once, as it begins.
+    // Its build's pace, remembered. Its Haste and slows are not a scan's to
+    // read (Status; core: CombatantStatus::movement, which the machine keeps
+    // through a scan as it keeps the creature's mana or stamina): a scan
+    // comes as a turn begins and now and then, and with a turn a bar of time
+    // the pace is the creature's as it is now (issue 49).
     c.speed = known.speed;
-    c.movement = MovementEffectsOn(id);
     c.health = Health(id);
     c.down = api::IsDead(id) != 0;
     return c;
@@ -1289,6 +1291,11 @@ CombatantStatus Bridge::Status(ObjectId id)
         status.health = Health(id);
         status.energy = Energy(id);
         status.mana = Mage(id);
+        // Its Haste and slows as they stand now (MovementEffectsOn): what
+        // its next turn's meters are made of, and with a turn a bar of time
+        // what its turn under way walks at from this look (core:
+        // TurnMachine::FollowPace; issue 49).
+        status.movement = MovementEffectsOn(id);
         // The conditions that hold a creature for turns: the effects whose
         // command the engine keeps at the front of its queue while they
         // last (EffectStun, effect_stun_h; Pinning Shot's EffectRoot,

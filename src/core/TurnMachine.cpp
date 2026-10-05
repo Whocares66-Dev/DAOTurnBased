@@ -405,6 +405,7 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         roundRunMs_ += worldDt;
     }
     ApplyStatuses(obs.statuses, fx);
+    FollowPace();
     if (currentStunned_ && (phase_ == Phase::AwaitingOrder || phase_ == Phase::Dispatching ||
                             phase_ == Phase::AiThinking || phase_ == Phase::Executing || phase_ == Phase::Settling))
     {
@@ -929,6 +930,8 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     heldByEffect_ = false;
     unaware_ = false;
     budget_.spend = NewSpend(who);
+    budget_.pace = BarPace(who);
+    budget_.personMps = settings_.paceMps;
     if (const auto rolled = rollover_.find(who.id); Timed() && rolled != rollover_.end())
     {
         budget_.rolledMs = rolled->second;
@@ -1108,36 +1111,44 @@ int TurnMachine::TacticsOf(const Combatant &who) const
     return who.tactics;
 }
 
+// A creature's pace as a bar walks at it, against a person's: its build's
+// times its Haste and slows (core/Rules.h, Pace); what is no pace (nothing, a
+// negative, not a number) is a person's.
+float TurnMachine::BarPace(const Combatant &who)
+{
+    const float pace = Pace(who.speed, who.movement);
+    return std::isfinite(pace) && pace > 0.0f ? pace : 1.0f;
+}
+
 // A turn's budget: one action and meters as built; with time, a bar of
 // seconds_per_turn and Combat Tactics' time and what the last turn rolled
 // over, walked at the creature's pace (a person's times its own) after a
 // free meter.
 //
-// Its own pace is its build's times its Haste and slows as the scan this
-// turn begins on found them (core/Rules.h, Pace; issue 49): every turn
-// begins on a frame that has scanned (StepTurnStart), so an effect put on or
-// ended since its creature's last turn is in the meters of this one, and one
-// that changes within the turn is in the next.
+// Its own pace is its build's times its Haste and slows as the look at
+// everyone this turn begins on found them (core/Rules.h, Pace; issue 49):
+// every turn begins on a frame that has looked (WhatToObserve), so an effect
+// put on or ended since its creature's last turn is in the meters of this
+// one. With time the bar's pace then follows its creature's through the turn
+// (FollowPace); as built the turn's meters are made here once.
 TurnBudget TurnMachine::NewSpend(const Combatant &who) const
 {
-    const float pace = Pace(who.speed, who.movement);
     if (!Timed())
     {
-        return TurnBudget::Actions(1, MovementBudget(settings_, pace, who.dexterity));
+        return TurnBudget::Actions(1, MovementBudget(settings_, Pace(who.speed, who.movement), who.dexterity));
     }
     const TacticsTime tactics = TimeFromTactics(TacticsOf(who));
     const auto rolled = rollover_.find(who.id);
     const std::uint32_t rollover = rolled != rollover_.end() ? rolled->second : 0;
-    const float speed = std::isfinite(pace) && pace > 0.0f ? pace : 1.0f;
-    return TurnBudget::Time(TurnTime(TurnMs(), tactics.bonusMs, rollover), settings_.paceMps * speed,
+    return TurnBudget::Time(TurnTime(TurnMs(), tactics.bonusMs, rollover), settings_.paceMps * BarPace(who),
                             settings_.freeStepMeters);
 }
 
 namespace
 {
 
-// What a scan read of one kind of movement rate effect, for the log: how
-// many, and each one's potency; one that is no rate said so.
+// What was read of one kind of movement rate effect, for the log: how many,
+// and each one's potency; one that is no rate said so.
 std::string Potencies(std::span<const float> potencies)
 {
     if (potencies.empty())
@@ -1155,38 +1166,57 @@ std::string Potencies(std::span<const float> potencies)
 
 } // namespace
 
+// What was read of a creature's Haste and slows, at debug: by the effects'
+// two types, each one's potency, and what they come to. "None" is the game
+// giving nothing: no effect of that type stands on it, or the game layer's
+// read found none.
+void TurnMachine::SayMovementEffects(const Combatant &who, std::string_view when) const
+{
+    if (!Logs(LogLevel::Debug))
+    {
+        return;
+    }
+    Log(LogLevel::Debug,
+        std::format("{}'s movement rate effects {}: {} of type 9 (EFFECT_TYPE_MOVEMENT_RATE), {} of type 11 (its "
+                    "_DEBUFF): {:.2f} of its build's pace",
+                    Utf8(who.name), when, Potencies(who.movement.rates), Potencies(who.movement.debuffs),
+                    MovementRate(who.movement)));
+}
+
+// What a creature's movement rate effects came to when its pace was last
+// said (1 where nothing was on it), with what they come to now kept in its
+// place.
+float TurnMachine::RememberRate(ObjectId who, float rate)
+{
+    const auto last = paceRates_.find(who);
+    const float before = last != paceRates_.end() ? last->second : 1.0f;
+    if (rate == 1.0f)
+    {
+        paceRates_.erase(who);
+    }
+    else
+    {
+        paceRates_[who] = rate;
+    }
+    return before;
+}
+
 // The pace a turn's meters were made from, said as the turn begins (issue
 // 49: a play test's log is read for it, and until 2026-10-05 no line said
 // what a creature's Haste had come to, or that nothing had been read of it).
 //
-// At debug, every turn: what the scan found on the creature, by the effects'
-// two types, each one's potency. "None" is the game giving nothing: no
-// effect of that type stands on it, or the game layer's read found none.
+// At debug, every turn: what was found on the creature (SayMovementEffects).
 //
 // At info, once a turn, only while its effects change its pace, and once
 // more as they stop: what it moves at and what that is made of, and what its
 // effects came to at its last turn if that was something else. A creature
-// nothing hastes or slows has no such line.
+// nothing hastes or slows has no such line. (A change within a turn, with
+// time, has been said as it came: FollowPace.)
 void TurnMachine::SayPace(const Combatant &who)
 {
     const float rate = MovementRate(who.movement);
-    const auto last = paceRates_.find(who.id);
-    const float before = last != paceRates_.end() ? last->second : 1.0f;
-    if (rate == 1.0f)
-    {
-        paceRates_.erase(who.id);
-    }
-    else
-    {
-        paceRates_[who.id] = rate;
-    }
-    if (Logs(LogLevel::Debug))
-    {
-        Log(LogLevel::Debug,
-            std::format("{}'s movement rate effects as its turn begins: {} of type 9 (EFFECT_TYPE_MOVEMENT_RATE), {} "
-                        "of type 11 (its _DEBUFF): {:.2f} of its build's pace",
-                        Utf8(who.name), Potencies(who.movement.rates), Potencies(who.movement.debuffs), rate));
-    }
+    const float before = RememberRate(who.id, rate);
+    SayMovementEffects(who, "as its turn begins");
     if (rate == 1.0f && before == 1.0f)
     {
         return;
@@ -1203,6 +1233,56 @@ void TurnMachine::SayPace(const Combatant &who)
                     "slows{}",
                     Utf8(who.name), Pace(who.speed, who.movement), meters, who.speed, rate,
                     rate != before ? std::format(" ({:.2f} at its last turn)", before) : std::string{}));
+}
+
+// With a turn a bar of time, the bar walks at its creature's pace as it is
+// now, not as it was when the turn began (issue 49; the user, 2026-10-05, of
+// reading it again within the turn: "I think that would be more accurate").
+// What is left to walk is the time left times the pace now. A Swift Salve
+// drunk in the middle of a turn lengthens what can still be walked in that
+// turn; Haste turned on by another takes in the hasted one's turn under way;
+// a creature that walks into caltrops pays the slow for the rest of its walk.
+//
+// "Now" is the last look at everyone (CombatantStatus::movement), which is
+// where a creature's Haste and slows are read: as each action ends and
+// before the turn goes on (an AI told to choose again, the player waited on,
+// each only on a look taken with that step), and every half second between,
+// a walk under way included. So a slow that lands in the middle of a walk is
+// paid from the look that finds it, half a second on at the latest, and what
+// was walked until then was charged at the pace till then. No read of the
+// engine was added for it: the look was there, for the cards.
+//
+// Nothing is given back and nothing is taken: the time spent stays spent,
+// and meters paid for and not yet walked (an attack's walk, paid as it was
+// let through) stay paid for. A walk judged to fit that no longer does is
+// cut where its time runs out, as any walk past its bar is (TrackMovement).
+// The bar's caption, the path's preview, what an order would cost and "Too
+// far" all read this one pace, each from the turn's budget (View, Judge).
+//
+// Said once as it changes, at info, with what the turn has left; and what was
+// read, at debug. Not as built: there a turn's meters are made once, as it
+// begins (NewSpend).
+void TurnMachine::FollowPace()
+{
+    const Combatant *current = order_.Current();
+    if (current == nullptr || !budget_.begun || budget_.begun->who != current->id || !budget_.spend.Timed())
+    {
+        return;
+    }
+    const float pace = BarPace(*current);
+    if (pace == budget_.pace)
+    {
+        return;
+    }
+    const float before = std::exchange(budget_.pace, pace);
+    budget_.spend.SetPace(budget_.personMps * pace);
+    const float rate = MovementRate(current->movement);
+    (void)RememberRate(current->id, rate);
+    SayMovementEffects(*current, "as its pace changes in its turn");
+    Log(LogLevel::Info,
+        std::format("{} moves at {:.2f} a person's pace from now in this turn ({:.2f} m a second of its bar; {:.2f} "
+                    "from its build, {:.2f} from haste or slows): it was {:.2f}, and it has {}",
+                    Utf8(current->name), pace, budget_.spend.PaceMps(), current->speed, rate, before, BudgetLeft()));
 }
 
 // With time, an action pays as it is let through: its walk to its target
@@ -3587,18 +3667,17 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
             // As one the scan did not find: where neither perceives the
             // other; and where it is not in the fight, or has left it, since
             // being perceived brings nobody in (who joins is as it was).
-            Combatant *in = order_.Find(seen.id);
+            const Combatant *in = order_.Find(seen.id);
             if (in == nullptr || in->down || !stays(seen))
             {
-                // (Its Haste and slows are taken all the same, as the scan
-                // read them: a turn of its that comes before it is out of
-                // the fight, kAbsentMs on, is made at the pace it has then,
-                // as anyone's is. Found by the random fights with strays,
-                // seed 16, as issue 49 gave them effects that come and go.)
-                if (in != nullptr)
-                {
-                    in->movement = seen.movement;
-                }
+                // (What the machine knows of it stays as it was, until it is
+                // out of the fight kAbsentMs on. Not its Haste and slows,
+                // which are the statuses' to read, of everyone in the order:
+                // a turn of its that comes meanwhile is made at the pace it
+                // has then, as anyone's is. Read with the scan, as they first
+                // were, they went stale here with the rest: the random
+                // fights with strays, seed 16, as issue 49 gave them effects
+                // that come and go.)
                 continue;
             }
             if (afar_.insert(seen.id).second)
@@ -3624,13 +3703,19 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
             // after an action, for up to half a second (read in the code
             // with issue 23's second half, 2026-10-03; not looked for in
             // play).
+            // Its Haste and slows too (CombatantStatus::movement; issue 49):
+            // a scan in the middle of its turn, which reads none, would
+            // otherwise put the bar back at its build's pace until the next
+            // look.
             const int initiative = known->initiative;
             const float energy = known->energy;
             const bool mana = known->mana;
+            MovementEffects movement = std::move(known->movement);
             *known = seen;
             known->initiative = initiative;
             known->energy = energy;
             known->mana = mana;
+            known->movement = std::move(movement);
             absentSince_.erase(seen.id);
             if (left_.erase(seen.id) > 0 && !seen.down)
             {
@@ -3749,6 +3834,10 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses, st
         c->health = status.health;
         c->energy = status.energy;
         c->mana = status.mana;
+        // Its Haste and slows as they stand now: what its next turn's meters
+        // are made of, and with time what its turn under way walks at from
+        // here (FollowPace; issue 49).
+        c->movement = status.movement;
         Held &held = held_[status.id];
         if (status.condition != Condition::None && status.condition != held.seen)
         {

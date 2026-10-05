@@ -5,6 +5,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <limits>
+
 using Catch::Approx;
 using tb::TurnBudget;
 using tb::TurnTime;
@@ -153,6 +155,70 @@ TEST_CASE("with time, meters paid for and not walked stay walkable", "[turnbudge
     CHECK(budget.CapacityLeftMs() == 3000);
     budget.Walk(4.5f); // 2 m paid for, 2.5 m at the pace
     CHECK(budget.CapacityLeftMs() == 2500);
+}
+
+TEST_CASE("with time, a pace that changes in the turn is what is left to walk, and not what was paid", "[turnbudget]")
+{
+    // Issue 49: a salve drunk or a trap walked onto in the middle of a turn.
+    TurnBudget budget = TurnBudget::Time(TurnTime(4000), 5.0f, 1.0f);
+    budget.Walk(6.0f); // the free meter and a second at 5 m/s
+    REQUIRE(budget.CapacityLeftMs() == 3000);
+    REQUIRE(budget.MovementLeft() == Approx(15.0f));
+    // Hasted from here: the 3 s left walk 18 m, and the second spent stays
+    // spent.
+    budget.SetPace(6.0f);
+    CHECK(budget.PaceMps() == 6.0f);
+    CHECK(budget.CapacityLeftMs() == 3000);
+    CHECK(budget.MovementLeft() == Approx(18.0f));
+    CHECK(budget.Walked() == Approx(6.0f));
+    CHECK(budget.WalkCostMs(3.0f) == 500);
+    budget.Walk(6.0f); // a second's walk at the new pace
+    CHECK(budget.CapacityLeftMs() == 2000);
+    // Slowed: the 2 s left walk 5 m.
+    budget.SetPace(2.5f);
+    CHECK(budget.MovementLeft() == Approx(5.0f));
+    CHECK(budget.WalkCostMs(2.5f) == 1000);
+    // A walk judged to fit before the slow, 12 m with 12 m left, is cut
+    // where its time runs out.
+    budget.Walk(5.0f);
+    CHECK(budget.CapacityLeftMs() <= 1);
+    CHECK(budget.MovementLeft() == Approx(0.0f).margin(0.01f));
+    budget.Walk(0.5f);
+    CHECK(budget.Overwalked() == Approx(0.5f).margin(0.01f));
+}
+
+TEST_CASE("with time, meters paid for stay paid for whatever the pace comes to", "[turnbudget]")
+{
+    // An attack's walk, paid as the attack was let through: its creature
+    // slowed on the way, the swing still cannot leave the walk short.
+    TurnBudget budget = TurnBudget::Time(TurnTime(4000), 5.0f, 0.0f);
+    budget.Prepay(5.0f);
+    REQUIRE(budget.CapacityLeftMs() == 3000);
+    budget.SetPace(2.5f);
+    CHECK(budget.CapacityLeftMs() == 3000);
+    CHECK(budget.PaidMeters() == Approx(5.0f));
+    CHECK(budget.MovementLeft() == Approx(5.0f + 7.5f));
+    budget.Walk(5.0f);
+    CHECK(budget.CapacityLeftMs() == 3000);
+    CHECK(budget.MovementLeft() == Approx(7.5f));
+}
+
+TEST_CASE("what is no pace is not taken for one within a turn, and as built nothing is", "[turnbudget]")
+{
+    TurnBudget budget = TurnBudget::Time(TurnTime(4000), 5.0f, 0.0f);
+    budget.SetPace(0.0f);
+    CHECK(budget.PaceMps() == 5.0f);
+    budget.SetPace(-3.0f);
+    CHECK(budget.PaceMps() == 5.0f);
+    budget.SetPace(std::numeric_limits<float>::quiet_NaN());
+    CHECK(budget.PaceMps() == 5.0f);
+    budget.SetPace(std::numeric_limits<float>::infinity());
+    CHECK(budget.PaceMps() == 5.0f);
+    CHECK(budget.MovementLeft() == Approx(20.0f));
+    TurnBudget built = TurnBudget::Actions(1, 9.0f);
+    built.SetPace(6.0f);
+    CHECK(built.PaceMps() == 0.0f);
+    CHECK(built.MovementLeft() == Approx(9.0f));
 }
 
 TEST_CASE("a pending attack's walk is credited as it lands", "[turnbudget]")

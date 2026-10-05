@@ -14,7 +14,8 @@
 //      turns, and runs otherwise;
 //   4. nobody walks further in a turn than its movement, give or take the
 //      frame it is stopped in (with a turn a bar of time, than the bar would
-//      walk as the turn began);
+//      walk as the turn began, and the more a haste put on it in the turn
+//      lets the rest of it walk: 19);
 //   5. nobody spends two actions in a turn, unless stopped short of the first
 //      and given it back (with time: no action begins with no time left);
 //   6. each combatant starts at most one turn a round;
@@ -64,12 +65,15 @@
 //      whatever is chosen meanwhile: one begun as the player's is never told
 //      to choose, one begun as its tactics' never waits on an order. Nothing
 //      is ever chosen for the hero, whose turns are the player's (issue 46);
-//  19. a turn's meters are made of its creature's pace as the turn begins:
-//      its build's times every Haste, salve and slow on it then, whether put
-//      on before the fight or in the middle of it, in its own turn or in
-//      another's. With time the bar walks at that pace; as built the turn has
-//      that pace's meters; and 4 holds against them to the turn's end,
-//      whatever is put on its creature or ends in it (issue 49).
+//  19. a turn's meters are made of its creature's pace: its build's times
+//      every Haste, salve and slow on it, whether put on before the fight or
+//      in the middle of it, in its own turn or in another's. With time the
+//      bar walks at the pace its creature had at the machine's last look at
+//      everyone, as the turn begins and in every frame of it after, and a
+//      change in the turn is said once, never as built. As built the turn
+//      has the meters of its pace as it began, and 4 holds against them to
+//      the turn's end, whatever is put on its creature or ends in it (issue
+//      49).
 //
 // The arena is World.h's stand-in with the creatures made to act. An AI
 // chooses when told to and whenever its command ends, as COMMAND_COMPLETE
@@ -224,6 +228,8 @@ struct Coverage
     int paceInOwnTurn = 0;   // of them, in the middle of its creature's own turn
     int pacedTurns = 0;      // turns begun at a pace its creature's effects had changed: faster, or slower
     int hastedTurns = 0;     // of them, faster than its build
+    int pacedInTurn = 0;     // with time: a bar's pace changed in the middle of its turn, its creature's having changed
+    int hastedInTurn = 0;    // of them, to a faster one
 };
 
 class Arena
@@ -419,9 +425,10 @@ class Arena
                 FollowTurn();
                 turnMeters_ = world_.machine.View().movementLeft;
                 // Its meters are of its creature's pace as the world has it
-                // in this frame, which is the frame the machine scanned in
-                // (19): its build's times every movement rate effect on it.
-                // And that pace is the turn's from here (4).
+                // in this frame, which is a frame the machine looked at
+                // everyone in (19): its build's times every movement rate
+                // effect on it. As built that pace is the turn's from here
+                // (4); with time, until a look finds another.
                 {
                     const Creature &c = world_.Get(world_.Current());
                     const TurnView view = world_.machine.View();
@@ -448,6 +455,30 @@ class Arena
                 heldPaidDue_ = heldAtStart_; // until the machine says it free: a frame or two after it is
                 turnBeganAtMs_ = turnRunMs_; // a padded round's wait came before
                 turnFromMs_ = turnRunMs_;
+            }
+            // With time, a bar's pace changed in the middle of its turn (19):
+            // to its creature's as the world has it in this frame, which is
+            // the frame the machine looked in. What the rest of the turn may
+            // walk is the more for a haste, and the bound (4) with it; for a
+            // slow the bound is left as it was (the less is held by the
+            // bar's pace, checked every frame: Check).
+            if (line.find(" a person's pace from now in this turn ") != std::string_view::npos)
+            {
+                FollowTurn();
+                Must(settings_.turnClock == TurnClock::Time, "a turn's pace changed in the middle of it, as built");
+                const Creature &c = world_.Get(world_.Current());
+                const float pace = Pace(c.speed, c.movement);
+                Must(std::abs(world_.machine.View().paceMps - settings_.paceMps * pace) < 0.001f,
+                     "a bar's pace changed in its turn is not its creature's pace then");
+                Must(turnPace_ && pace != *turnPace_, "a turn's pace said to change, and it had not");
+                ++coverage_.pacedInTurn;
+                if (turnPace_ && pace > *turnPace_)
+                {
+                    ++coverage_.hastedInTurn;
+                    const float rest = std::max(0.0f, turnMeters_ - walked_);
+                    turnMeters_ = std::max(turnMeters_, walked_ + rest * pace / *turnPace_);
+                }
+                turnPace_ = pace;
             }
             if (line.find(" m to walk with ") != std::string_view::npos)
             {
@@ -562,7 +593,19 @@ class Arena
         {
             Tick();
             grabbedBefore_ = world_.machine.OwnEffectTarget();
+            const int looks = world_.statusReads;
             world_.Frame(kFrameMs);
+            // A look at everyone the machine took up with this frame (not a
+            // menu's first frame nor a conversation's, which it lets lie):
+            // each creature's pace as it was then is what a bar of time
+            // walks at until the next (19).
+            if (world_.statusReads != looks && world_.mode == Mode::Combat)
+            {
+                for (const Creature &c : world_.creatures)
+                {
+                    looked_[c.id] = Pace(c.speed, c.movement);
+                }
+            }
             Check();
             held = held || world_.machine.Active();
             if (held && world_.machine.GetPhase() == Phase::Idle && world_.mode != Mode::Combat &&
@@ -2470,6 +2513,20 @@ class Arena
             if (current != kNoObject)
             {
                 const Creature &c = world_.Get(current);
+                // With time, the bar of a turn the machine has begun walks,
+                // in every frame of it, at its creature's pace as the
+                // machine's last look at everyone found it (19): no older,
+                // and not the engine's of this instant, which the machine
+                // has not read.
+                const bool playing = phase == Phase::AwaitingOrder || phase == Phase::Dispatching ||
+                                     phase == Phase::AiThinking || phase == Phase::Executing ||
+                                     phase == Phase::Settling;
+                if (const auto looked = looked_.find(current);
+                    settings_.turnClock == TurnClock::Time && turnPace_ && playing && looked != looked_.end())
+                {
+                    Must(std::abs(world_.machine.View().paceMps - settings_.paceMps * looked->second) < 0.001f,
+                         "a turn's bar does not walk at its creature's pace as the machine last looked at it");
+                }
                 // As built, the meters of its pace as the turn began (19):
                 // what is put on it or ends within the turn is the next
                 // turn's. (Its build's, in a turn the machine began no
@@ -2600,8 +2657,12 @@ class Arena
     float walked_ = 0.0f;
     float turnMeters_ = 0.0f; // with time: what the bar would walk as the turn began
     // Its creature's pace, build and effects, as the machine began the turn
-    // (19): none in a turn it began no budget for.
+    // or, with time, last changed it in the turn (19): none in a turn it
+    // began no budget for.
     std::optional<float> turnPace_;
+    // Each creature's pace as it was at the last look at everyone the
+    // machine took up (19).
+    std::unordered_map<ObjectId, float> looked_;
     int actions_ = 0;
     int clears_ = 0;
     int interruptions_ = 0; // conversations during this turn
@@ -2888,16 +2949,38 @@ TEST_CASE("random fights with hostiles unaware and combatants out of reach keep 
         // 364 the game's own, 13 and 29 with no turn; 148 and 156 under, 140
         // and 149 up, 363 and 295 inactive turns, 74 and 77 in the middle,
         // 120 and 75 queued; 36 and 65 turned away, 36 and 47 told).
-        CHECK(coverage.paceChanges > 90);
-        CHECK(coverage.paceInOwnTurn > 45);
-        CHECK(coverage.pacedTurns > 140);
-        CHECK(coverage.hastedTurns > 60);
+        //
+        // With time the pace is read again within the turn (the user's
+        // choice, the same day), and the fights with time took other courses
+        // for it; as built they are draw for draw what they were. With time
+        // now: 234 put on or ended, 120 in their creature's own turn; 376
+        // turns begun at a changed pace, 161 the faster; and 102 bars whose
+        // pace changed in the middle of their turn, 53 of them to a faster
+        // one (56 turns skipped as unaware, 63 that noticed, 15 in their
+        // beat; 156 out of reach, 160 kept, 62 out, 73 back; 18 turn limits;
+        // 347 the game's own, 30 with no turn; 139 under, 131 up, 213
+        // inactive turns, 68 in the middle, 62 queued; 61 turned away, 46
+        // told).
+        CHECK(coverage.paceChanges > 78);
+        CHECK(coverage.paceInOwnTurn > 40);
+        CHECK(coverage.pacedTurns > 125);
+        CHECK(coverage.hastedTurns > 53);
         CHECK(coverage.pacedTurns - coverage.hastedTurns > 60); // and the slower
+        if (clock == TurnClock::Time)
+        {
+            CHECK(coverage.pacedInTurn > 34);
+            CHECK(coverage.hastedInTurn > 17);
+            CHECK(coverage.pacedInTurn - coverage.hastedInTurn > 16); // and to a slower one
+        }
+        else
+        {
+            CHECK(coverage.pacedInTurn == 0); // one pace a turn
+        }
         // And with time, what rolls over where so many turns are not their
         // actors' to end (272 turns rolled time over, 162 left time that was
         // not saved; 233 and 182 with issue 30's holds and a limit on an AI's
         // turn where a cap on its commands was, issue 38; 155 and 165 since
-        // issue 43; 230 and 279 since issue 44; 297 and 275 since issue 49).
+        // issue 43; 230 and 279 since issue 44; 247 and 241 since issue 49).
         if (clock == TurnClock::Time)
         {
             CHECK(coverage.rolledOver > 90);

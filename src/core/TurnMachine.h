@@ -191,6 +191,12 @@ struct CombatantStatus
     // game layer can read them (0: not known): with a turn a bar of time, a
     // hold takes its own time of its victim's turns.
     float conditionSeconds = 0.0f;
+    // Its movement rate effects as they stand on it now: Haste, a salve, a
+    // slow (core/Types.h). This look is where they are read, a scan does not
+    // read them: it comes as every turn begins, as each action ends and
+    // every half second between, so a creature's pace is never older than
+    // that (core/Rules.h, Pace; issue 49).
+    MovementEffects movement;
 };
 
 struct Observation
@@ -756,6 +762,13 @@ class TurnMachine
             std::optional<bool> chosen;
         };
         std::optional<Begun> begun;
+        // With time: the pace the bar walks at now, its creature's against a
+        // person's (core/Rules.h, Pace), and a person's meters a second as
+        // the turn began ([turns] pace: a setting changed in a turn is the
+        // next turn's). The first follows its creature's Haste and slows
+        // through the turn (FollowPace; issue 49).
+        float pace = 1.0f;
+        float personMps = 0.0f;
         std::uint32_t lastCostMs = 0;    // what the last action let through was charged
         std::uint32_t pendingPaidMs = 0; // what this turn paid, as it began, for an action kept for it
         std::uint32_t rolledMs = 0;      // what of its bar rolled over from the turn before
@@ -859,9 +872,16 @@ class TurnMachine
     [[nodiscard]] std::uint32_t TurnMs() const;
     [[nodiscard]] int TacticsOf(const Combatant &who) const;
     [[nodiscard]] TurnBudget NewSpend(const Combatant &who) const;
-    // As a turn begins: the pace its meters were made from, and what the
-    // scan read of its creature's Haste and slows.
+    // As a turn begins: the pace its meters were made from, and what was
+    // read of its creature's Haste and slows.
     void SayPace(const Combatant &who);
+    // With time, in a turn under way: the bar walks at its creature's pace
+    // as the last look at everyone found it, said once as it changes.
+    void FollowPace();
+    // What was read of a creature's Haste and slows, at debug.
+    void SayMovementEffects(const Combatant &who, std::string_view when) const;
+    float RememberRate(ObjectId who, float rate);
+    [[nodiscard]] static float BarPace(const Combatant &who);
     [[nodiscard]] std::optional<Verdict> PayAction(const Combatant &who, const CommandRequest &request);
     // With time, an AI's wait takes its own length of its creature's bar:
     // whether it was paid for (then its AI chooses again), or is the pass a
@@ -1195,9 +1215,10 @@ class TurnMachine
     // while that action ran (a grab, Overwhelm), owed of its own turns
     // (GrabAtTurnStart, LoseTurn).
     std::unordered_map<ObjectId, std::uint32_t> grabbedMs_;
-    // What each creature's movement rate effects came to as its last turn
-    // began, where that was not 1: its pace is said as it changes, and once
-    // more as its effects end (SayPace; issue 49). This fight's.
+    // What each creature's movement rate effects came to when its pace was
+    // last said, where that was not 1: as its last turn began, or, with
+    // time, as they changed in it. Its pace is said as it changes, and once
+    // more as its effects end (SayPace, FollowPace; issue 49). This fight's.
     std::unordered_map<ObjectId, float> paceRates_;
     static constexpr std::uint32_t kAbsentMs = 4000;
     // Those that left the fight alive (missing from the scans for
