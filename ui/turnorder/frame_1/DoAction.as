@@ -13,6 +13,9 @@
 // says so (TB_Cleared): the plugin releases the portraits it rendered only
 // then, as the game's screens let go of theirs before releasing them.
 //
+// And, for a tester, a portrait put up large with what it is under it
+// (TB_GetShow; drawShow, near the end), a fight on or not.
+//
 // Outside the game there is no plugin to ask, and it draws a sample fight,
 // so the look can be checked in any Flash player.
 
@@ -1589,6 +1592,130 @@ function drawPreview(text)
     }
 }
 
+// A portrait put up large, for a tester (the turnbased_portrait tool's
+// `show`, issue 32; src/core/Portraits.h, EncodeShow): the one who frames the
+// portraits cannot see them, and every appearance the game has is to be
+// looked at in the game's own frame, a fight on or not (the user, 2026-10-04:
+// "we can enumerate all the creatures in the game, test portraits, see which
+// ones need special handling"). The plugin gives one string (TB_GetShow):
+// the version, a serial, the texture's name and two lines. On the left of
+// the screen, clear of the party's portraits and under the bar: the picture
+// in a card's own medallion four times a card's size, so that a bad framing
+// is plain in a screenshot; beside it the render as it is, square, at its
+// own 146 pixels, which shows what the round frame hides; under that the
+// medallion at a card's size, as the bar shows it; and the two lines under
+// all three, what it is (the appearance's number and label, and what framed
+// it: its own row of the framing table, or its kind's default) and the
+// camera. Not there for the mouse, as the preview is not: a click through it
+// is the world's.
+//
+// When the string changes the old picture is dropped, the new one drawn, and
+// the plugin told the serial now on the screen (TB_ShowCleared): it releases
+// a renderer only once the picture made by it is gone from here, as with
+// the cards at a fight's end.
+var SHOW_VERSION = 1;
+var SHOW_X = 150;
+var SHOW_Y = 176;
+var SHOW_BIG = 240;
+var SHOW_RAW = 146;
+var SHOW_PAD = 16;
+var lastShow = null;
+
+// Outside the game (the parameter show=1): a dragonling's, with the words its
+// row of the framing table gives it and a picture of the sample's standing in.
+function sampleShow()
+{
+    if (_root.show != "1")
+    {
+        return "";
+    }
+    return [SHOW_VERSION, 1, "gui_portrait_49", "64 Dragonling: its own row",
+            "0.90 m, pitch 0.0, rotation 35.0, -0.50 aside, 0.45 up; 0.47 m across; feet to head 1.43 m"].join(FIELD);
+}
+
+function askShow()
+{
+    if (!inGame)
+    {
+        return sampleShow();
+    }
+    var show = flash.external.ExternalInterface.call("TB_GetShow");
+    return show == undefined || show == null ? "" : String(show);
+}
+
+// A card's medallion at any size: the party bar's backplate, a painted
+// background, the picture masked round, and the gold ring (drawCard's own
+// stack, without what a fight adds to it). The picture is asked for at the
+// size it is drawn, not a card's made larger.
+function medallion(clip, depth, x, y, size, texture)
+{
+    var holder = clip.createEmptyMovieClip("medallion" + depth, depth);
+    holder._x = x;
+    holder._y = y;
+    var unit = size / 114;
+    var orb = 74 * unit;
+    var orbAt = 20 * unit;
+    art(holder, "Portraits_IC2", 1, 0, 0, size, size);
+    art(holder, backgroundTexture(1), 3, orbAt, orbAt, orb, orb);
+    if (texture.length > 0)
+    {
+        var picture = art(holder, texture, 4, 22 * unit, orbAt, 72 * unit, 72 * unit);
+        var round = holder.createEmptyMovieClip("round", 5);
+        circle(round, size / 2, orbAt + orb / 2, orb / 2, 0xFFFFFF, 100);
+        picture.setMask(round);
+    }
+    art(holder, "Portraits_I3C", 16, 0, 0, size, size);
+    return holder;
+}
+
+function drawShow(text)
+{
+    if (text == lastShow)
+    {
+        return;
+    }
+    lastShow = text;
+    _root.showcase.removeMovieClip();
+    var f = text.split(FIELD);
+    if (text == "" || Number(f[0]) != SHOW_VERSION)
+    {
+        return;
+    }
+    var texture = f[2] == undefined ? "" : f[2];
+    var title = f[3] == undefined ? "" : f[3];
+    if (texture.length > 0 || title.length > 0)
+    {
+        var clip = _root.createEmptyMovieClip("showcase", 20);
+        clip._x = SHOW_X;
+        clip._y = SHOW_Y;
+        var wide = SHOW_PAD * 3 + SHOW_BIG + SHOW_RAW;
+        var linesAt = SHOW_PAD + SHOW_BIG + 8;
+        panel(clip.createEmptyMovieClip("plate", 1), 0, 0, wide, linesAt + 24 + 38 + SHOW_PAD, 10);
+        medallion(clip, 2, SHOW_PAD, SHOW_PAD, SHOW_BIG, texture);
+        var rawAt = SHOW_PAD * 2 + SHOW_BIG;
+        if (texture.length > 0)
+        {
+            art(clip, texture, 3, rawAt, SHOW_PAD, SHOW_RAW, SHOW_RAW);
+            outline(clip.createEmptyMovieClip("edge", 4), rawAt, SHOW_PAD, SHOW_RAW, SHOW_RAW, 1, GOLD);
+        }
+        medallion(clip, 5, rawAt + (SHOW_RAW - CARD_W) / 2, SHOW_PAD + SHOW_RAW + 20, CARD_W, texture);
+        var what = label(clip, "what", 6, SHOW_PAD, linesAt, wide - 2 * SHOW_PAD, 24, 16, GOLD, "center", true);
+        what.text = title;
+        var how = label(clip, "how", 7, SHOW_PAD, linesAt + 24, wide - 2 * SHOW_PAD, 38, 12, PARCHMENT, "center", false);
+        how.multiline = true;
+        how.wordWrap = true;
+        how.text = f[4] == undefined ? "" : f[4];
+        _global.gfxExtensions = true;
+        clip.hitTestDisable = true;
+        what.hitTestDisable = true;
+        how.hitTestDisable = true;
+    }
+    if (inGame)
+    {
+        fscommand("TB_ShowCleared", f[1]);
+    }
+}
+
 Stage.scaleMode = "showAll";
 _root.onEnterFrame = function()
 {
@@ -1603,6 +1730,7 @@ _root.onEnterFrame = function()
     else if (ticks++ % 10 == 0)
     {
         draw(ask());
+        drawShow(askShow());
     }
     // Outside the game, for a picture with no hand to move the mouse
     // (tools/snapshot.ps1 -Set): point=later or point=earlier puts the
@@ -1624,3 +1752,4 @@ _root.onEnterFrame = function()
     drawPreview(askPreview());
 };
 draw(ask());
+drawShow(askShow());

@@ -78,6 +78,7 @@ BAR = "src/core/Bar.cpp"
 BARWINDOW = "src/core/BarWindow.cpp"
 GIVENBACK = "src/core/GivenBack.cpp"
 PORTRAITS = "src/core/Portraits.cpp"
+PORTRAIT_TABLE = "src/core/PortraitTable.h"
 JSON = "src/core/Json.cpp"
 KEYS = "src/core/Keys.h"
 PREVIEW = "src/core/Preview.cpp"
@@ -889,10 +890,10 @@ MUTANTS = [
         "    case CommandType::PickupItem:\n        return CommandKind::Action;",
     ),
     Mutant(
-        "a beast with no camera is rendered as a person is",
+        "a beast whose kin has a picture is rendered as a person is",
         PORTRAITS,
-        "    if (person)\n    {\n        return {PortraitSource::Render, {}};",
-        "    if (person || appearance > 0)\n    {\n        return {PortraitSource::Render, {}};",
+        "    if (person)\n    {\n        return {PortraitSource::Render, {}, false};",
+        "    if (person || appearance > 0)\n    {\n        return {PortraitSource::Render, {}, false};",
     ),
     Mutant(
         "a creature gets the picture of another family",
@@ -3055,17 +3056,315 @@ MUTANTS = [
         "                debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0));",
         "                debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0) * 0);",
     ),
+    # A picture for every card (issue 32): which creatures are rendered, the
+    # kind of body each is, the one table of framings and how a creature is
+    # looked up in it, the engine's far plane, and what a tester gives and is
+    # told.
     Mutant(
-        "a creature bigger than a person is framed from a person's distance",
-        "src/core/Portraits.cpp",
-        "    return personDistance * std::pow(personalSpace / kPortraitPersonSpace, kPortraitSizePower);",
-        "    return personDistance * personalSpace / kPortraitPersonSpace;",
+        "a creature with no picture, kin or camera in the table gets no portrait",
+        PORTRAITS,
+        "    // framed by its kind and size.\n    return {PortraitSource::Render, {}, false};",
+        "    // framed by its kind and size.\n    return {};",
     ),
     Mutant(
-        "a person is framed from further back",
-        "src/core/Portraits.cpp",
-        "        personalSpace <= kPortraitPersonSpace)",
-        "        personalSpace < 0.0f)",
+        "a creature the table has a camera for is framed anew",
+        PORTRAITS,
+        "            return {PortraitSource::Render, {}, true}; // the table has its camera",
+        "            return {PortraitSource::Render, {}, false}; // the table has its camera",
+    ),
+    Mutant(
+        "a creature's model, standing up and a person's size, is taken for a person's body",
+        PORTRAITS,
+        "    return personsModel && personSized ? BodyKind::Person : BodyKind::Upright;",
+        "    return (personsModel || personSized) && personSized ? BodyKind::Person : BodyKind::Upright;",
+    ),
+    Mutant(
+        "a body on four legs is taken for one that stands up",
+        PORTRAITS,
+        "    if (terrainFollowPitch > 0.0f)\n    {\n        return BodyKind::OnAllFours;",
+        "    if (terrainFollowPitch > 100.0f)\n    {\n        return BodyKind::OnAllFours;",
+    ),
+    Mutant(
+        "a person's model bigger than a person is taken for a person's body",
+        PORTRAITS,
+        "    const bool personSized = extent <= kPersonExtent * kBiggerThanPerson;",
+        "    const bool personSized = extent <= kPersonExtent * kBiggerThanPerson * 100.0f;",
+    ),
+    Mutant(
+        "the framing table's row for an appearance is not used",
+        PORTRAITS,
+        "        if (const FramingRow *row = RowOf(appearance))",
+        "        if (const FramingRow *row = RowOf(-appearance))",
+    ),
+    Mutant(
+        "the framing table's row is found for another appearance",
+        PORTRAITS,
+        "[appearance](const FramingRow &r) { return appearance > 0 && r.appearance == appearance; });",
+        "[appearance](const FramingRow &r) { return appearance > 0 && r.appearance == appearance + 1; });",
+    ),
+    Mutant(
+        "a kind's default row is taken for an appearance's own",
+        PORTRAITS,
+        "[appearance](const FramingRow &r) { return appearance > 0 && r.appearance == appearance; });",
+        "[appearance](const FramingRow &r) { return r.appearance == appearance; });",
+    ),
+    Mutant(
+        "a kind's default is another kind's",
+        PORTRAITS,
+        "[kind](const FramingRow &r) { return r.appearance == 0 && r.kind == kind; });",
+        "[kind](const FramingRow &r) { return r.appearance == 0 && r.kind != kind; });",
+    ),
+    Mutant(
+        "a kind a tester asks for is passed over for the appearance's row",
+        PORTRAITS,
+        "    if (!kindAsked)\n    {\n        if (const FramingRow *row = RowOf(appearance))",
+        "    if (!kindAsked || appearance > 0)\n    {\n        if (const FramingRow *row = RowOf(appearance))",
+    ),
+    Mutant(
+        "the game's own row for a creature is passed over for its kind's default",
+        PORTRAITS,
+        "        if (gamesOwn != nullptr)\n        {\n            PortraitFrame frame;",
+        "        if (gamesOwn != nullptr && extent < 0.0f)\n        {\n            PortraitFrame frame;",
+    ),
+    Mutant(
+        "a row's aside and up are taken one for the other",
+        PORTRAITS,
+        "    return PortraitFrame{PortraitCamera{row.pitch, row.rotation, row.distance, row.up, row.aside},",
+        "    return PortraitFrame{PortraitCamera{row.pitch, row.rotation, row.distance, row.aside, row.up},",
+    ),
+    Mutant(
+        "a default's distance does not follow the creature's size",
+        PORTRAITS,
+        "    const float bySize = std::isfinite(extent) ? row.distance * std::max(extent, 0.0f) : 0.0f;",
+        "    const float bySize = std::isfinite(extent) ? row.distance : 0.0f;",
+    ),
+    Mutant(
+        "a default frames from past the far plane, where nothing is drawn",
+        PORTRAITS,
+        "    const float distance = std::clamp(bySize, kFramedFromLeast, kFramedFromMost);",
+        "    const float distance = std::max(bySize, kFramedFromLeast);",
+    ),
+    Mutant(
+        "a default frames a creature with next to no measure from inside it",
+        PORTRAITS,
+        "    const float distance = std::clamp(bySize, kFramedFromLeast, kFramedFromMost);",
+        "    const float distance = std::min(bySize, kFramedFromMost);",
+    ),
+    Mutant(
+        "a default's aside and up do not go by the creature's size",
+        PORTRAITS,
+        "    const float size = row.distance > 0.0f ? distance / row.distance : 0.0f;",
+        "    const float size = row.distance > 0.0f ? 1.0f : 0.0f;",
+    ),
+    Mutant(
+        "a creature held at the furthest its head is drawn from is not said to be",
+        PORTRAITS,
+        "                         bySize > kFramedFromMost};",
+        "                         bySize < 0.0f};",
+    ),
+    Mutant(
+        "the distance a tester gives is not used",
+        PORTRAITS,
+        "tuning.distance.value_or(rule.distance)",
+        "rule.distance",
+    ),
+    Mutant(
+        "a creature's extent is the longer of the head's two readings",
+        PORTRAITS,
+        "    return HeadExtent{std::min(world, own), world <= own};",
+        "    return HeadExtent{std::max(world, own), world <= own};",
+    ),
+    Mutant(
+        "a camera past the far plane is not said to be",
+        PORTRAITS,
+        "    return kPortraitBackOff * camera.distance > kPortraitFarPlane;",
+        "    return camera.distance > kPortraitFarPlane;",
+    ),
+    Mutant(
+        "a camera value that is not a number is taken for the rule's",
+        PORTRAITS,
+        '                return wrong(std::string{key} + " is not a number.");',
+        "                continue;",
+    ),
+    Mutant(
+        "a kind there is none of is taken for the rule's",
+        PORTRAITS,
+        '            return wrong("The kind is not one there is.");',
+        "            (void)0;",
+    ),
+    Mutant(
+        "the picture put up large loses its serial",
+        PORTRAITS,
+        "    out += std::to_wstring(serial);",
+        "    out += std::to_wstring(serial + 1);",
+    ),
+    Mutant(
+        "the portrait tool's answer leaves out where the head node is",
+        PORTRAITS,
+        "        AppendPoint(out, *report.head);",
+        '        out += "null";',
+    ),
+    Mutant(
+        "the portrait tool's answer does not say which row of the table framed the picture",
+        PORTRAITS,
+        '    AppendText(out, "row", report.row);',
+        '    AppendText(out, "row", std::string_view{});',
+    ),
+    Mutant(
+        "the portrait tool's answer says nothing of the camera against the creature's size",
+        PORTRAITS,
+        "                       report.atMost, sized ? report.camera.distance / report.extent : 0.0f,",
+        "                       report.atMost, sized ? 0.0f : 0.0f,",
+    ),
+    Mutant(
+        "the log's line for a portrait leaves out what was measured of its creature",
+        PORTRAITS,
+        "                           MeasureWords(report));\n        if (!report.problem.empty())",
+        "                           std::string{});\n        if (!report.problem.empty())",
+    ),
+    Mutant(
+        "the log does not say which row of the table framed a portrait",
+        PORTRAITS,
+        '        return std::format("row {} ({})", frame.label, frame.note);',
+        '        return std::format("row ({})", frame.note);',
+    ),
+    Mutant(
+        "a portrait waiting to be released is not known to be",
+        PORTRAITS,
+        "    return std::ranges::find(releasing_, id) != releasing_.end();",
+        "    return std::ranges::find(releasing_, id) == releasing_.end();",
+    ),
+    # A creature with no head node (issue 32, the deepstalker): rendered by a
+    # row from its root or a tester's values, and by nothing else.
+    Mutant(
+        "a row about a head frames a creature whose head is only late",
+        PORTRAITS,
+        "    const bool rooted = row != nullptr && row->fromRoot;",
+        "    const bool rooted = row != nullptr;",
+    ),
+    Mutant(
+        "a creature with no head node and no row is rendered about its root all the same",
+        PORTRAITS,
+        "    const bool rooted = row != nullptr && row->fromRoot;",
+        "    const bool rooted = row == nullptr || row->fromRoot;",
+    ),
+    Mutant(
+        "a tester's values do not render a creature with no head node",
+        PORTRAITS,
+        "    return tuning.AnyValue() || (rooted && !tuning.kind.has_value());",
+        "    return rooted && !tuning.kind.has_value();",
+    ),
+    Mutant(
+        "a kind's default, asked for, frames a body with no feet-to-head",
+        PORTRAITS,
+        "    return tuning.AnyValue() || (rooted && !tuning.kind.has_value());",
+        "    return tuning.AnyValue() || rooted;",
+    ),
+    Mutant(
+        "a creature rendered from its root is said not to be ready",
+        PORTRAITS,
+        "                       report.lack == PortraitLack::Nothing || report.rendered, PortraitLackName(report.lack),",
+        "                       report.lack == PortraitLack::Nothing, PortraitLackName(report.lack),",
+    ),
+    Mutant(
+        "what a portrait's camera was set about is said the wrong way round",
+        PORTRAITS,
+        '    const std::string_view aimedAt = !report.rendered ? "" : report.head ? "head_node" : "scene_origin";',
+        '    const std::string_view aimedAt = !report.rendered ? "" : report.head ? "scene_origin" : "head_node";',
+    ),
+    Mutant(
+        "the deepstalker is turned as the rest are, and its round mouth is edge on",
+        PORTRAIT_TABLE,
+        '    FromRoot(Row(33, "33 Deepstalker", 0.9f, 20.0f, 0.0f, 0.29f, 0.83f,',
+        '    FromRoot(Row(33, "33 Deepstalker", 0.9f, 35.0f, 0.0f, 0.29f, 0.83f,',
+    ),
+    Mutant(
+        "the deepstalker's row is about a head it does not have, and its card keeps its initials",
+        PORTRAIT_TABLE,
+        '    FromRoot(Row(33, "33 Deepstalker", 0.9f, 20.0f, 0.0f, 0.29f, 0.83f,',
+        '    (Row(33, "33 Deepstalker", 0.9f, 20.0f, 0.0f, 0.29f, 0.83f,',
+    ),
+    Mutant(
+        "the halla's picture is at its feet",
+        PORTRAIT_TABLE,
+        '    FromRoot(Row(85, "85 Halla", 2.1f, 35.0f, 0.0f, 0.49f, 1.72f,',
+        '    FromRoot(Row(85, "85 Halla", 2.1f, 35.0f, 0.0f, 0.49f, 0.0f,',
+    ),
+    Mutant(
+        "the mark of a row from the root is lost in its making",
+        PORTRAIT_TABLE,
+        "    row.fromRoot = true;",
+        "    row.fromRoot = false;",
+    ),
+    # The table's own numbers (src/core/PortraitTable.h): a row moved off what
+    # was seen, a default turned with no aside, the limits.
+    Mutant(
+        "the high dragon's row is not the camera that was seen",
+        PORTRAIT_TABLE,
+        '    Row(66, "66 Dragon, High", 6.0f, 35.0f, 0.0f, -1.7f, -0.8f,',
+        '    Row(66, "66 Dragon, High", 6.0f, 35.0f, 0.0f, 1.7f, -0.8f,',
+    ),
+    Mutant(
+        "a row is turned with no aside, and its head slides out of the picture",
+        PORTRAIT_TABLE,
+        '    Row(64, "64 Dragonling", 0.9f, 35.0f, 0.0f, -0.5f, 0.45f,',
+        '    Row(64, "64 Dragonling", 0.9f, 35.0f, 0.0f, 0.0f, 0.45f,',
+    ),
+    # The rows of the sweep, 2026-10-04: a side profile of each, a person's
+    # turn for a person's body, and the aside to the side it was seen at.
+    Mutant(
+        "a row is left straight on: no side profile of a bronto",
+        PORTRAIT_TABLE,
+        '    Row(11, "11 Bronto", 3.0f, 35.0f, 0.0f, 0.35f, -0.45f,',
+        '    Row(11, "11 Bronto", 3.0f, 0.0f, 0.0f, 0.35f, -0.45f,',
+    ),
+    Mutant(
+        "a row is turned further than was asked for",
+        PORTRAIT_TABLE,
+        '    Row(41, "41 Rat, Small", 0.62f, 35.0f, 0.0f, 0.08f, -0.01f,',
+        '    Row(41, "41 Rat, Small", 0.62f, 53.0f, 0.0f, 0.08f, -0.01f,',
+    ),
+    Mutant(
+        "a dog's aside is to the dragons' side, and its head is out of the picture",
+        PORTRAIT_TABLE,
+        '    Row(34, "34 Dog, Mabari", 0.95f, 35.0f, 0.0f, 0.15f, 0.04f,',
+        '    Row(34, "34 Dog, Mabari", 0.95f, 35.0f, 0.0f, -0.15f, 0.04f,',
+    ),
+    Mutant(
+        "the hurlock alpha, a person's body, is turned as a creature is",
+        PORTRAIT_TABLE,
+        '    Row(17, "17 Hurlock - Alpha", 0.9f, 23.5f, -7.5f, 0.007f, 0.06f,',
+        '    Row(17, "17 Hurlock - Alpha", 0.9f, 35.0f, -7.5f, 0.007f, 0.06f,',
+    ),
+    Mutant(
+        "the werewolf is framed from a person's distance, its muzzle cut off",
+        PORTRAIT_TABLE,
+        '    Row(22, "22 Werewolf A", 1.05f, 23.5f, -7.5f, 0.15f, 0.1f,',
+        '    Row(22, "22 Werewolf A", 0.675f, 23.5f, -7.5f, 0.15f, 0.1f,',
+    ),
+    Mutant(
+        "the archdemon's picture is raised off its head, which hangs low",
+        PORTRAIT_TABLE,
+        '    Row(89, "89 Archdemon", 6.0f, 35.0f, 0.0f, -1.2f, -1.45f,',
+        '    Row(89, "89 Archdemon", 6.0f, 35.0f, 0.0f, -1.2f, 1.45f,',
+    ),
+    Mutant(
+        "the cat is given an aside it does not have",
+        PORTRAIT_TABLE,
+        '    Row(63, "63 Cat", 0.4f, 35.0f, 0.0f, 0.0f, 0.0f,',
+        '    Row(63, "63 Cat", 0.4f, 35.0f, 0.0f, 0.14f, 0.0f,',
+    ),
+    Mutant(
+        "a default is turned with no aside to go with it",
+        PORTRAIT_TABLE,
+        '    DefaultFor(BodyKind::OnAllFours, "a body on all fours", 0.6f, 0.0f, 0.0f, 0.0f, 0.0f,',
+        '    DefaultFor(BodyKind::OnAllFours, "a body on all fours", 0.6f, 35.0f, 0.0f, 0.0f, 0.0f,',
+    ),
+    Mutant(
+        "the table's furthest is past what the engine draws",
+        PORTRAIT_TABLE,
+        "inline constexpr float kFramedFromMost = 12.0f;",
+        "inline constexpr float kFramedFromMost = 13.0f;",
     ),
     Mutant(
         "after its action is kept, a creature may still start something",

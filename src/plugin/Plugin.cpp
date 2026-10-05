@@ -754,6 +754,56 @@ void SettingsTool(void * /*context*/, const char *args, EluvianReply *reply)
     reply->ok(reply, out.c_str());
 }
 
+// A tester's instrument for the cards' portraits (issue 32): the one who
+// writes the framing cannot see it, and the one who sees it finds the numbers
+// with this. One creature's portrait rendered now, by the rule as built or
+// with a kind and any of the camera's values given in its place, its card
+// showing the result, and everything the rule saw in the answer: the image,
+// the camera used, where the creature and its head node are, the extent from
+// the one to the other, its appearance, and which rule framed it. With
+// `show` the picture is put up large in the bar's movie, in a fight or out
+// of one, for the sweep of every appearance the game has (the user,
+// 2026-10-04: "we can enumerate all the creatures in the game, test
+// portraits, see which ones need special handling beyond the standard
+// humanoid"). game/Bar.h's TryPortrait says whose renderer is whose, which is
+// what makes it safe under a movie that is showing the picture.
+void PortraitTool(void * /*context*/, const char *args, EluvianReply *reply)
+{
+    const tb::PortraitAskRead read = tb::ReadPortraitAsk(args != nullptr ? args : "{}");
+    if (!read.ask)
+    {
+        reply->error(reply, read.error.c_str());
+        return;
+    }
+    // The engine is asked a dozen things on the way: whatever one of them
+    // throws is the caller's to read, and the frame's to survive.
+    try
+    {
+        tb::TurnView view;
+        {
+            const std::lock_guard lock(g.mutex);
+            view = g.machine->View();
+        }
+        const tb::PortraitReport report =
+            g.bar.TryPortrait(*read.ask, view, static_cast<std::uint32_t>(GetTickCount64()));
+        if (report.lack == tb::PortraitLack::Creature)
+        {
+            reply->error(reply, std::format("There is no creature with the id {:#x}: give one of inspect's ids, of a "
+                                            "creature in the area the party is in.",
+                                            read.ask->id)
+                                    .c_str());
+            return;
+        }
+        reply->ok(reply, tb::ToJson(report).c_str());
+    }
+    catch (const std::exception &e)
+    {
+        spdlog::error("turnbased_portrait: {}", e.what());
+        reply->error(reply,
+                     std::format("The portrait could not be got: {}. turnbased.log has the line.", e.what()).c_str());
+    }
+}
+
 // Once, on the first frame: the loader loads plugins by name, so eluvian.dll
 // comes after this one and is not there yet in DAOLib_Load. Absent from a
 // player's install, and then nothing is registered.
@@ -822,6 +872,41 @@ void LookForEluvian()
             R"("string"}, "value": {"type": "string"}}}})",
             &SettingsTool, nullptr, 0),
         "turnbased_settings");
+    check(
+        e.RegisterTool(
+            "turnbased_portrait",
+            R"({"description": "Render one creature's portrait for the turn bar now and say everything about it: for )"
+            R"(tuning the framing by eye. id alone looks the creature up in the mod's framing table: its appearance's )"
+            R"(own row, else the game's own portraits-table row for it, else its kind's default row. kind frames it )"
+            R"(by that kind's default, the rows passed over (person: the game's Default row; upright, on_all_fours: )"
+            R"(the table's defaults). Any of pitch, )"
+            R"(rotation (degrees), distance, zAdjust, xAdjust (metres), lightX, lightY, lightZ replaces the row's )"
+            R"(value: the camera stands 3 x distance from the head node, the picture is 0.525 x distance across, and )"
+            R"(nothing past 40 m from the camera is drawn. show: true puts the picture up large in the game's frame )"
+            R"(with the appearance and kind under it, in a fight or out of one, for `seconds` (20; at most 600) or )"
+            R"(until the next call without show. Any creature by id; its card, if it has one, shows the result. )"
+            R"(Answers id, name, tag, appearance, label, personal_space, persons_model, terrain_follow_pitch, kind, )"
+            R"(kind_by, source (rendered, the game's, the portraits table's, none), framed_by (row, portraits_table, )"
+            R"(default, person), row (the table's row that framed it, by its label), rule (the same in words, with )"
+            R"(where the row came from), image, texture, ready (false: nothing )"
+            R"(could be rendered) with lack saying which (no_head_node: its model has none, or the creature is not )"
+            R"(set up yet, so ask again in a moment; a creature with no head node is rendered all the same, about )"
+            R"(the origin of its scene, its root, where the framing table has a row from the root for it or a )"
+            R"(camera value is given here: ready is then true and lack stays; no_render), rendered, aimed_at )"
+            R"((head_node, or scene_origin for one with none), fresh (by a renderer made now, not one it )"
+            R"(had), shown, camera {given, pitch, rotation, distance, zAdjust, xAdjust, lightX, )"
+            R"(lightY, lightZ}, at_most, distance_per_extent, z_per_extent, picture_m, camera_from_head_m, )"
+            R"(past_far_plane, position, head (null )"
+            R"(for no head node), extent, extent_by, problem. A party member's portrait is the game's own and is )"
+            R"(left alone.", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "kind": )"
+            R"({"type": "string", "enum": ["person", "upright", "on_all_fours"]}, "pitch": {"type": "number"}, )"
+            R"("rotation": )"
+            R"({"type": "number"}, "distance": {"type": "number"}, "zAdjust": {"type": "number"}, "xAdjust": )"
+            R"({"type": "number"}, "lightX": {"type": "number"}, "lightY": {"type": "number"}, "lightZ": )"
+            R"({"type": "number"}, "show": {"type": "boolean"}, "seconds": {"type": "integer"}}, )"
+            R"("required": ["id"]}})",
+            &PortraitTool, nullptr, 0),
+        "turnbased_portrait");
     // What each turnbased.* topic means, for `events describe=true` (Eluvian
     // 0.2.0; an older one's interface ends before DescribeEvent).
     int described = 0;
@@ -868,8 +953,8 @@ void LookForEluvian()
         spdlog::warn("Eluvian refused {}: its reason is in eluvian.log", name);
     }
     spdlog::info("registered with Eluvian (build {}): inspect turnbased.state; turnbased_end_turn, turnbased_delay, "
-                 "turnbased_seed, "
-                 "turnbased_settings; events turnbased.<kind>, {} described; {} refused",
+                 "turnbased_seed, turnbased_settings, turnbased_portrait; events turnbased.<kind>, {} described; "
+                 "{} refused",
                  e.build, described, refused.size());
 }
 

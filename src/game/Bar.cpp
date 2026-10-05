@@ -2,6 +2,7 @@
 
 #include "core/Bar.h"
 #include "core/Text.h"
+#include "game/Camera.h"
 
 #include "dao/Abilities.h"
 #include "dao/ClientExoApp.h"
@@ -15,6 +16,8 @@
 
 #include <algorithm>
 #include <charconv>
+#include <format>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
@@ -95,8 +98,36 @@ void BarLink::Install()
             spdlog::error("TB_Cleared: {}", e.what());
         }
     });
+    // A portrait put up large (TryPortrait's `show`): what to draw, and the
+    // movie's word that it has drawn it and let the one before go.
+    dao::gui::OnExternalInterface("TB_GetShow", [this](const dao::gui::Call &call) {
+        try
+        {
+            std::wstring show;
+            {
+                const std::lock_guard lock(mutex_);
+                show = showEncoded_;
+            }
+            call.Return(dao::gui::Value::WString(show.c_str()));
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("TB_GetShow: {}", e.what());
+        }
+    });
+    dao::gui::OnFSCommand("TB_ShowCleared", [this](void *, std::string_view args) {
+        std::uint32_t serial = 0;
+        const auto [end, error] = std::from_chars(args.data(), args.data() + args.size(), serial);
+        if (error != std::errc{} || end != args.data() + args.size())
+        {
+            spdlog::warn("TB_ShowCleared with '{}': not the serial of a picture shown", args);
+            return;
+        }
+        const std::lock_guard lock(mutex_);
+        showDrawn_ = std::max(showDrawn_, serial);
+    });
     spdlog::info("the turn bar's calls are answered: TB_GetView, TB_EndTurn, TB_Delay, TB_Focus, TB_Scroll, "
-                 "TB_Cleared");
+                 "TB_Cleared, TB_GetShow, TB_ShowCleared");
 }
 
 bool BarLink::FollowRow(const TurnView &view)
@@ -171,15 +202,21 @@ void BarLink::KeepScreen(bool fighting)
     {
         return;
     }
-    if (fighting && !screenShown_)
+    // Up for a fight, and for a portrait put up large outside one
+    // (TryPortrait's `show`), whose movie it is too: with no fight it draws
+    // no bar, only that picture.
+    const bool up = fighting || showing_.has_value() || !showLeaving_.empty();
+    if (up && !screenShown_)
     {
         screenShown_ = dao::gui::ShowScreen(kScreen);
-        spdlog::info("the turn bar {}", screenShown_ ? "is shown" : "could not be shown");
+        spdlog::info("the turn bar {}{}", screenShown_ ? "is shown" : "could not be shown",
+                     fighting ? "" : " (no fight: for a portrait put up large)");
     }
-    else if (!fighting && screenShown_ && !portraits_.AwaitingMovie())
+    else if (!up && screenShown_ && !portraits_.AwaitingMovie())
     {
         // After a fight it stays up, drawing nothing, until its movie has
         // let the portraits go (FollowFight): a hidden movie may not run.
+        // And so for a picture taken down (showLeaving_).
         screenShown_ = false;
         if (!dao::gui::HideScreen(kScreen))
         {
@@ -296,11 +333,13 @@ void BarLink::FollowFight(const TurnView &view, std::uint32_t nowMs)
     {
         HideGameBanner(false);
     }
+    FollowShow(nowMs);
     const std::size_t known = portraits_.Tried();
     portraits_.Follow(view, nowMs);
     if (known > 0 && portraits_.Tried() == 0)
     {
         spdlog::debug("nothing to show (the fight over, or the bar turned off): its {} portraits forgotten", known);
+        headTries_.clear();
     }
     bool letGo = false;
     {
@@ -320,20 +359,125 @@ void BarLink::FollowFight(const TurnView &view, std::uint32_t nowMs)
     // of the creature go now, not with the area (core/Portraits.h).
     auto *app = dao::CClientExoApp::Get();
     std::size_t released = 0;
+    std::size_t kept = 0;
     for (const ObjectId id : releases)
     {
+        // One the picture put up large is of, or was until a moment ago: the
+        // movie may be drawing it yet. It is released with that picture
+        // (FollowShow), not under it.
+        if (toolOwned_.contains(id) || ShowHolds(id))
+        {
+            toolOwned_.try_emplace(id, nowMs);
+            ++kept;
+            continue;
+        }
         if (dao::CCCreature *creature = app != nullptr ? app->GetCreatureById(id) : nullptr)
         {
             creature->ReleasePortrait();
             ++released;
         }
+        // The camera it was framed by goes with it: ids are reused once an
+        // area is left, and DAOLib keeps a camera by its creature's id.
+        dao::portraits::ClearCamera(id);
     }
     // A creature the game has already destroyed (a body gone) cannot be
     // asked: its renderer went with it, or not (dev/DAOLIB_NEEDS.md, check
     // 16's memory question).
-    spdlog::info("released {} of the fight's {} rendered portraits ({} of their creatures gone already), {}", released,
-                 releases.size(), releases.size() - released,
+    spdlog::info("released {} of the fight's {} rendered portraits ({} of their creatures gone already{}), {}",
+                 released, releases.size(), releases.size() - released - kept,
+                 kept > 0 ? std::format(", {} kept for the picture put up large", kept) : std::string{},
                  letGo ? "the bar having let them go" : "the bar not having said it let them go");
+}
+
+bool BarLink::ShowHolds(ObjectId id) const
+{
+    return (showing_ && showing_->id == id) ||
+           std::ranges::find(showLeaving_, id, &ShowLeaving::id) != showLeaving_.end();
+}
+
+void BarLink::SetShow(const PortraitReport *report, std::uint32_t seconds, std::uint32_t nowMs)
+{
+    if (report == nullptr && !showing_)
+    {
+        return; // nothing up, nothing to take down
+    }
+    ++showSerial_;
+    if (showing_)
+    {
+        showLeaving_.push_back(ShowLeaving{showing_->id, showSerial_, nowMs});
+    }
+    std::wstring encoded;
+    if (report != nullptr)
+    {
+        showing_ = Showing{report->id, nowMs, seconds * 1000};
+        encoded = EncodeShow(showSerial_, report->image, ShowTitle(*report), ShowDetail(*report));
+    }
+    else
+    {
+        showing_.reset();
+        encoded = EncodeShow(showSerial_, {}, {}, {});
+    }
+    const std::lock_guard lock(mutex_);
+    showEncoded_ = std::move(encoded);
+}
+
+void BarLink::FollowShow(std::uint32_t nowMs)
+{
+    auto *app = dao::CClientExoApp::Get();
+    const auto creatureOf = [app](ObjectId id) { return app != nullptr ? app->GetCreatureById(id) : nullptr; };
+    // Taken down by itself after its time, and when its creature is gone: a
+    // picture left up would keep its renderer until its creature's area
+    // went, which is what the bar's own are released to avoid
+    // (core/Portraits.h).
+    if (showing_)
+    {
+        const bool over = nowMs - showing_->sinceMs >= showing_->forMs;
+        if (over || creatureOf(showing_->id) == nullptr)
+        {
+            spdlog::info("the portrait put up large of {:#010x} is taken down: {}", showing_->id,
+                         over ? "its time is over" : "its creature is gone");
+            SetShow(nullptr, 0, nowMs);
+        }
+    }
+    std::uint32_t drawn = 0;
+    {
+        const std::lock_guard lock(mutex_);
+        drawn = showDrawn_;
+    }
+    std::erase_if(showLeaving_, [&](const ShowLeaving &leaving) {
+        return drawn >= leaving.serial || nowMs - leaving.sinceMs >= PortraitBook::kReleaseWaitMs;
+    });
+    // Not in the frame it was rendered in: the engine's render marks the
+    // picture to be drawn and returns (PortraitRenderer::Render, read
+    // 2026-10-04), so a renderer released in the same call would go with its
+    // picture still to draw. Half a second on, with nothing showing it.
+    constexpr std::uint32_t kToolKeepMs = 500;
+    for (auto owned = toolOwned_.begin(); owned != toolOwned_.end();)
+    {
+        const ObjectId id = owned->first;
+        if (ShowHolds(id) || nowMs - owned->second < kToolKeepMs)
+        {
+            ++owned;
+            continue;
+        }
+        if (!portraits_.Of(id).empty())
+        {
+            // A fight's card has a picture of it now: the renderer is the
+            // bar's, released with the fight's others.
+            portraits_.Got(id, std::wstring{portraits_.Of(id)}, true);
+        }
+        else
+        {
+            if (dao::CCCreature *creature = creatureOf(id))
+            {
+                creature->ReleasePortrait();
+            }
+            dao::portraits::ClearCamera(id);
+            spdlog::debug(
+                "{:#010x}'s portrait, rendered for the turnbased_portrait tool, is released: nothing shows it", id);
+        }
+        owned = toolOwned_.erase(owned);
+    }
 }
 
 namespace
@@ -344,19 +488,31 @@ namespace
 // wolf, 09 and 68 bears, 59 and 57 spiders, 14 the swarm, 06 the golem, 12,
 // 28 and 37 forms of the Fade, textures in gui.erf, as the party bar shows
 // a ranger's summons). Read once: the table does not change in a game.
-// Which picture a creature gets from it is core's (ChoosePortrait).
+// Which picture a creature gets from it is core's (ChoosePortrait), and so
+// is how a render is framed (FramePortrait, which looks the creature up in
+// core/PortraitTable.h's table): a person's body by this table's Default row.
 constexpr std::int32_t kPortraitsTable = 7;
 
-const std::vector<PortraitRow> &PortraitRows()
+struct PortraitTable
 {
-    static std::vector<PortraitRow> rows;
-    if (!rows.empty())
+    std::vector<PortraitRow> rows;
+    std::vector<PortraitCamera> cameras;    // each row's, at its place in `rows`
+    PortraitCamera person = kShippedPerson; // its Default row: as the game ships it, until read
+};
+
+const PortraitTable &Table()
+{
+    static PortraitTable table;
+    if (!table.rows.empty())
     {
-        return rows;
+        return table;
     }
     const std::int32_t count = dao::gda::Rows(kPortraitsTable).value_or(0);
     const auto text = [](std::int32_t row, std::string_view column) {
         return dao::gda::GetString(kPortraitsTable, row, dao::core::GdaColumnHash(column)).value_or(std::wstring{});
+    };
+    const auto number = [](std::int32_t row, std::string_view column) {
+        return dao::gda::GetFloat(kPortraitsTable, row, dao::core::GdaColumnHash(column)).value_or(0.0f);
     };
     for (std::int32_t row = 0; row < count; ++row)
     {
@@ -365,50 +521,59 @@ const std::vector<PortraitRow> &PortraitRows()
         r.label = text(row, "Label");
         r.tag = text(row, "Tag");
         r.made = text(row, "Override");
-        rows.push_back(std::move(r));
-    }
-    return rows;
-}
-
-// The portraits table's camera for a person (its Default row), read once.
-struct PersonCamera
-{
-    float distance = 0.675f;
-    float xAdjust = 0.007f;
-    float zAdjust = 0.038f;
-};
-
-PersonCamera PersonCameraOf()
-{
-    static const PersonCamera camera = [] {
-        PersonCamera read;
-        for (std::int32_t row = 0; row < dao::gda::Rows(kPortraitsTable).value_or(0); ++row)
+        const PortraitCamera camera{number(row, "CameraPitch"), number(row, "CameraRotation"),
+                                    number(row, "CameraDistance"), number(row, "CameraZAdjust"),
+                                    number(row, "CameraXAdjust")};
+        // The row a person's body is framed by, by its label: the table's
+        // own where it has one with a distance, else the game's as shipped.
+        if (camera.distance > 0.0f && r.label == L"Default")
         {
-            const auto label = dao::gda::GetString(kPortraitsTable, row, dao::core::GdaColumnHash("Label"));
-            if (label && *label == L"Default")
-            {
-                const auto column = [&](std::string_view name, float fallback) {
-                    return dao::gda::GetFloat(kPortraitsTable, row, dao::core::GdaColumnHash(name)).value_or(fallback);
-                };
-                read.distance = column("CameraDistance", read.distance);
-                read.xAdjust = column("CameraXAdjust", read.xAdjust);
-                read.zAdjust = column("CameraZAdjust", read.zAdjust);
-                break;
-            }
+            table.person = camera;
         }
-        return read;
-    }();
-    return camera;
+        table.rows.push_back(std::move(r));
+        table.cameras.push_back(camera);
+    }
+    return table;
 }
 
-// A person (the appearance table's ModelType H, or P for the races a player
-// is of) has a face the default camera frames; W and S are creatures. An
-// appearance the table does not know is taken for a person's, as before.
+// The camera the table has for a creature, as the renderer finds its row:
+// by its tag, else by its appearance (DAOLib's dao/Portraits.h). Null for a
+// creature the table has none for.
+const PortraitCamera *TableCameraOf(const PortraitTable &table, std::int32_t appearance, std::wstring_view tag)
+{
+    for (std::size_t i = 0; i < table.rows.size(); ++i)
+    {
+        if (!tag.empty() && table.rows[i].tag == tag)
+        {
+            return &table.cameras[i];
+        }
+    }
+    for (std::size_t i = 0; i < table.rows.size(); ++i)
+    {
+        if (appearance > 0 && table.rows[i].appearance == appearance)
+        {
+            return &table.cameras[i];
+        }
+    }
+    return nullptr;
+}
+
+// What the appearance table says of a creature's looks. `person` is its
+// ModelType H, or P for the races a player is of, and an appearance the
+// table does not know: a model put together as a person's is. Since
+// 2026-09-30 it is what is rendered before its kin's ready-made picture is
+// looked for (core's ChoosePortrait). It is not by itself a kind of body: the
+// table's H has the ogre, the high dragon, the cat and the pig beside people
+// (read 2026-10-04). A person's body is that, standing up
+// (TerrainFollowPitch 0) and no bigger than a person (core's BodyKindOf).
 struct Looks
 {
     std::int32_t appearance = 0;
     std::wstring label;
+    std::wstring modelType;
     bool person = true;
+    float personalSpace = 0.0f;
+    float terrainFollowPitch = 0.0f;
 };
 
 Looks LooksOf(ObjectId id)
@@ -418,8 +583,206 @@ Looks LooksOf(ObjectId id)
     const auto type = dao::gda::GetString(dao::script::Table::Appearance, looks.appearance, "ModelType");
     looks.label =
         dao::gda::GetString(dao::script::Table::Appearance, looks.appearance, "Label").value_or(std::wstring{});
+    looks.modelType = type.value_or(std::wstring{});
     looks.person = !type || type->empty() || *type == L"H" || *type == L"P";
+    looks.personalSpace =
+        dao::gda::GetFloat(dao::script::Table::Appearance, looks.appearance, "PerSpace").value_or(0.0f);
+    looks.terrainFollowPitch =
+        dao::gda::GetFloat(dao::script::Table::Appearance, looks.appearance, "TerrainFollowPitch").value_or(0.0f);
     return looks;
+}
+
+// One creature's portrait: what to do for it.
+struct ShotOrder
+{
+    PortraitTuning tuning;   // nothing given: the rule as built
+    bool render = true;      // false: only what there is already, and `whyNot` says why nothing is rendered
+    std::string_view whyNot; // "portraits = false", or that nothing would show a render
+    bool again = false;      // the renderer it has is the mod's own, to be rendered again in place
+};
+
+// One creature's portrait, got: its ready-made picture, the one it has, or a
+// render framed by the rule (or as `order` tunes it), with everything that
+// was seen on the way, for the log and for a tester. The one place a
+// portrait's camera is given to the engine.
+PortraitReport Shoot(ObjectId id, const ShotOrder &order)
+{
+    namespace api = dao::script::api;
+    PortraitReport report;
+    report.id = id;
+    report.source = "none";
+    auto *app = dao::CClientExoApp::Get();
+    dao::CCCreature *creature = app != nullptr ? app->GetCreatureById(id) : nullptr;
+    if (creature == nullptr)
+    {
+        report.lack = PortraitLack::Creature;
+        report.problem = "no creature by that id";
+        return report;
+    }
+    const PortraitTable &table = Table();
+    const Looks looks = LooksOf(id);
+    report.name = api::GetName(id);
+    report.tag = api::GetTag(id);
+    report.appearance = looks.appearance;
+    report.label = looks.label;
+    report.personalSpace = looks.personalSpace;
+    report.personsModel = looks.person;
+    report.terrainFollowPitch = looks.terrainFollowPitch;
+    const BodyMeasure body = MeasureBody(id);
+    report.feet = body.feet;
+    report.head = body.head;
+    report.extent = body.extent.meters;
+    report.extentBy = !body.head          ? "no head node"
+                      : body.extent.world ? "its head a point in the world"
+                                          : "its head a point about its own origin";
+    report.kind = order.tuning.kind.value_or(BodyKindOf(looks.person, looks.terrainFollowPitch, report.extent));
+    report.kindBy = order.tuning.kind
+                        ? std::string{"asked for"}
+                        : std::format("{} (ModelType {}, TerrainFollowPitch {:.0f}, {:.2f} m from feet to head)",
+                                      BodyKindWhy(looks.person, looks.terrainFollowPitch, report.extent),
+                                      looks.modelType.empty() ? std::string{"none"} : Utf8(looks.modelType),
+                                      looks.terrainFollowPitch, report.extent);
+    // A tester who gives a kind or a value wants that framing rendered, where
+    // the rule would give its kin's ready-made picture. Not where the table
+    // names a picture for its own appearance: the engine renders nothing for
+    // one of those. Its render looks the appearance up in the table and,
+    // finding a picture named, gives the creature that name and returns
+    // before it draws (PortraitRenderer::Render, 0x007F46E0 in GOG's build,
+    // read 2026-10-04 with DAOLib's tools/daoexe.py).
+    const bool tuned = order.tuning.kind.has_value() || order.tuning.AnyValue();
+    const PortraitChoice choice = ChoosePortrait(looks.appearance, looks.label, looks.person, report.tag, table.rows);
+    const bool ownPicture = std::ranges::any_of(table.rows, [&](const PortraitRow &row) {
+        return looks.appearance > 0 && row.appearance == looks.appearance && !row.made.empty();
+    });
+    if (choice.source == PortraitSource::ReadyMade && (!tuned || ownPicture))
+    {
+        report.image = L"img://" + choice.made;
+        report.source = "the portraits table's";
+        report.rule = "the portraits table's ready-made picture of its appearance, or of its kin";
+        if (tuned)
+        {
+            report.problem = "the engine renders no portrait of an appearance the portraits table names a picture "
+                             "for: not rendered, and its picture is the table's";
+        }
+        return report;
+    }
+    const std::wstring had = creature->PortraitImage();
+    if (!had.empty() && !order.again)
+    {
+        // The party's, which the game's party bar shows: never framed anew.
+        report.image = had;
+        report.source = "the game's";
+        report.rule = "the portrait it has already";
+        if (tuned)
+        {
+            report.problem = "its portrait is the game's own, which its party bar shows: not rendered again";
+        }
+        return report;
+    }
+    report.image = had;
+    if (!body.head)
+    {
+        if (!order.render)
+        {
+            report.problem = order.whyNot;
+            return report;
+        }
+        // The engine's camera then aims at its scene's origin, the clone's
+        // root (a giant spider's came out as its abdomen, 2026-10-01): no
+        // picture rather than that one, but for a camera that carries the
+        // framing from there, a row of the table marked so or a tester's
+        // values (core's RendersWithoutHead; core/PortraitTable.h, FromRoot).
+        report.lack = PortraitLack::HeadNode;
+        if (!RendersWithoutHead(RowOf(looks.appearance), order.tuning))
+        {
+            report.problem = "its model has no head node for a portrait's camera to aim at, or is not set up yet (a "
+                             "creature just made or changed takes a few frames), and the framing table has no row "
+                             "from its root for it";
+            return report;
+        }
+    }
+    // Its framing, looked up (core's FramePortrait, in core/PortraitTable.h's
+    // table): its appearance's own row, else the game's own row for it, else
+    // its kind's default; with what a tester gave over whichever it is.
+    const PortraitCamera *gamesOwn = choice.tableCamera ? TableCameraOf(table, looks.appearance, report.tag) : nullptr;
+    const PortraitFrame frame = FramePortrait(looks.appearance, report.kind, order.tuning.kind.has_value(), gamesOwn,
+                                              body.extent.meters, table.person);
+    const auto light = [&frame](const std::optional<float> &given, float rows) {
+        return given ? given : frame.lit ? std::optional<float>{rows} : std::nullopt;
+    };
+    report.camera = Tuned(frame.camera, order.tuning);
+    report.framedBy = frame.by;
+    report.row = frame.label;
+    report.atMost = frame.atMost && !order.tuning.distance;
+    report.lightX = light(order.tuning.lightX, frame.lightX);
+    report.lightY = light(order.tuning.lightY, frame.lightY);
+    report.lightZ = light(order.tuning.lightZ, frame.lightZ);
+    // What the game's own table frames by itself, its own row for the
+    // creature or its Default row for a person's body, is given nothing: the
+    // engine reads its table as it has, and people's portraits are as they
+    // have been. A row of the mod's table, and anything a tester gave, is
+    // given whole.
+    const bool games = frame.by == FramedBy::PortraitsTable || frame.by == FramedBy::Person;
+    report.cameraGiven = !games || order.tuning.AnyValue();
+    report.rule = FramingRule(frame);
+    if (order.tuning.AnyValue())
+    {
+        report.rule += ", with the values given";
+    }
+    if (!body.head)
+    {
+        report.rule += ", about its root at the scene's origin, its model having no head node";
+    }
+    if (!order.render)
+    {
+        // What the rule would frame it by is said all the same; nothing is
+        // given to the engine.
+        report.cameraGiven = false;
+        report.problem = order.whyNot;
+        return report;
+    }
+    if (report.cameraGiven)
+    {
+        dao::portraits::Camera camera;
+        camera.pitch = report.camera.pitch;
+        camera.rotation = report.camera.rotation;
+        camera.distance = report.camera.distance;
+        camera.zAdjust = report.camera.zAdjust;
+        camera.xAdjust = report.camera.xAdjust;
+        camera.lightX = report.lightX;
+        camera.lightY = report.lightY;
+        camera.lightZ = report.lightZ;
+        dao::portraits::SetCamera(id, camera);
+    }
+    else
+    {
+        // The table's, and not one given it before (ids are reused).
+        dao::portraits::ClearCamera(id);
+    }
+    report.fresh = had.empty();
+    report.image = creature->RenderPortrait();
+    report.rendered = !report.image.empty();
+    if (!report.rendered)
+    {
+        // A renderer made for it now that drew nothing is not left behind
+        // (core/Portraits.h: none is left to die with its creature's area).
+        if (had.empty())
+        {
+            creature->ReleasePortrait();
+            dao::portraits::ClearCamera(id);
+        }
+        report.lack = PortraitLack::Render;
+        report.problem = "the engine made no portrait of it";
+        return report;
+    }
+    report.source = "rendered";
+    if (PastFarPlane(report.camera))
+    {
+        report.problem = std::format("the camera stands {:.1f} m from its head, past the {:.0f} m it draws to: "
+                                     "nothing of it is drawn",
+                                     kPortraitBackOff * report.camera.distance, kPortraitFarPlane);
+    }
+    return report;
 }
 } // namespace
 
@@ -430,87 +793,117 @@ void BarLink::KeepPortraits(const TurnView &view, bool render)
     {
         return;
     }
-    auto *app = dao::CClientExoApp::Get();
-    dao::CCCreature *creature = app != nullptr ? app->GetCreatureById(*id) : nullptr;
-    std::wstring url;
-    const char *how = "none";
-    bool rendered = false;
-    if (creature != nullptr)
+    ShotOrder order;
+    order.render = render;
+    order.whyNot = "portraits = false";
+    PortraitReport report = Shoot(*id, order);
+    // A creature come into the fight this moment may have no model yet, and
+    // so no head node: asked again with the next views for a while, before
+    // its card is left with initials for the fight (each is tried once).
+    // The cards after it wait meanwhile, which is why not for long.
+    constexpr int kHeadTries = 10;
+    if (report.lack == PortraitLack::HeadNode && report.image.empty())
     {
-        const Looks looks = LooksOf(*id);
-        const PortraitChoice choice =
-            ChoosePortrait(looks.appearance, looks.label, looks.person, dao::script::api::GetTag(*id), PortraitRows());
-        switch (choice.source)
+        if (++headTries_[*id] < kHeadTries)
         {
-        case PortraitSource::ReadyMade:
-            url = L"img://" + choice.made;
-            how = "the portraits table's";
-            break;
-        case PortraitSource::Render:
-            url = creature->PortraitImage();
-            how = "the game's";
-            if (url.empty() && render)
+            if (headTries_[*id] == 1)
             {
-                // A creature bigger than a person, framed from further back
-                // (core: PortraitDistance); the rest of the camera the
-                // table's.
-                const float space =
-                    dao::gda::GetFloat(dao::script::Table::Appearance, looks.appearance, "PerSpace").value_or(0.0f);
-                const PersonCamera person = PersonCameraOf();
-                if (const std::optional<PortraitFraming> frame =
-                        FrameBySize(space, person.distance, person.xAdjust, person.zAdjust))
-                {
-                    dao::portraits::Camera camera;
-                    camera.distance = frame->distance;
-                    camera.xAdjust = frame->xAdjust;
-                    camera.zAdjust = frame->zAdjust;
-                    dao::portraits::SetCamera(*id, camera);
-                    spdlog::info("{:#010x} is bigger than a person (personal space {:.2f}): its portrait is framed "
-                                 "from {:.2f} m, {:.2f} m aside, {:.2f} m up",
-                                 *id, space, frame->distance, frame->xAdjust, frame->zAdjust);
-                    // Where the game's own portrait camera would aim (issue
-                    // 32: the high dragon's card came out a blank disc): its
-                    // model's head node, or none.
-                    const dao::Vector at = dao::script::api::GetPosition(*id);
-                    if (const std::optional<dao::Vector> head = dao::portraits::HeadPosition(*id))
-                    {
-                        spdlog::info("{:#010x}: its head node is at ({:.1f}, {:.1f}, {:.1f}), itself at ({:.1f}, "
-                                     "{:.1f}, {:.1f})",
-                                     *id, head->x, head->y, head->z, at.x, at.y, at.z);
-                    }
-                    else
-                    {
-                        spdlog::info("{:#010x}: its model has no head node for a portrait's camera to aim at", *id);
-                    }
-                }
-                url = creature->RenderPortrait();
-                how = "rendered";
-                rendered = !url.empty();
+                spdlog::debug("{:#010x} has no head node yet: its portrait is asked for again with the next views",
+                              *id);
             }
-            break;
-        case PortraitSource::None:
-            // No picture and no camera for it: a render would be a person's
-            // framing of a beast.
-            how = "no picture or camera for its kind";
-            spdlog::debug("{:#010x} is a {} (appearance {}): the game has no picture of it or its kin, and no camera",
-                          *id, Utf8(looks.label), looks.appearance);
-            break;
+            return;
         }
     }
-    const auto card = std::ranges::find(view.upcoming, *id, &CardView::id);
-    const std::string name = card != view.upcoming.end() ? Utf8(card->name) : std::string{};
-    if (url.empty())
+    headTries_.erase(*id);
+    // One the turnbased_portrait tool rendered before the fight had its
+    // card comes as the one it has: the bar's from now on, released with the
+    // fight's others.
+    const bool tools = toolOwned_.erase(*id) > 0 && !report.image.empty();
+    if (tools && !report.rendered)
     {
-        spdlog::info("{} ({:#010x}) has no portrait{}: its card shows initials", name, *id,
-                     creature == nullptr ? ", nor a creature by its id"
-                     : render            ? ""
-                                         : " (portraits = false)");
+        report.source = "rendered before, by the turnbased_portrait tool";
+    }
+    if (const auto card = std::ranges::find(view.upcoming, *id, &CardView::id); card != view.upcoming.end())
+    {
+        report.name = card->name;
+    }
+    spdlog::info("{}", PortraitLine(report));
+    portraits_.Got(*id, report.image, report.rendered || tools);
+}
+
+PortraitReport BarLink::TryPortrait(const PortraitAsk &ask, const TurnView &view, std::uint32_t nowMs)
+{
+    // With no movie of the bar's (the bar off since the game started, or its
+    // movie not found) nothing would show a render, and nothing here would
+    // run to release one: none is made, and the answer still says what the
+    // rule measured and how it would frame.
+    const bool movie = installed_ && movieFound_;
+    ShotOrder order;
+    order.tuning = ask.tuning;
+    order.render = movie;
+    order.whyNot = "not rendered: the turn bar's movie is not there to show it ([feedback] turn_bar is off, or "
+                   "turnorder.swf was not found)";
+    // Rendered again in place where the renderer is the mod's own: nothing
+    // is released under a movie that may be showing it.
+    order.again = portraits_.RenderedFor(ask.id) || portraits_.Leaving(ask.id) || toolOwned_.contains(ask.id);
+    PortraitReport report = Shoot(ask.id, order);
+    if (report.lack == PortraitLack::Creature)
+    {
+        // A wrong id changes nothing: what is up stays up.
+        spdlog::info("turnbased_portrait for {:#x}: no creature by that id", ask.id);
+        return report;
+    }
+    const auto also = [&report](std::string_view more) {
+        report.problem += std::string{report.problem.empty() ? "" : "; "} + std::string{more};
+    };
+    const bool card = portraits_.Has(ask.id);
+    if (report.rendered)
+    {
+        const bool fights =
+            view.phase != Phase::Idle && std::ranges::find(view.upcoming, ask.id, &CardView::id) != view.upcoming.end();
+        if (card || fights)
+        {
+            // The fight's: its card shows it, and it goes with the fight's.
+            portraits_.Got(ask.id, report.image, true);
+            toolOwned_.erase(ask.id);
+        }
+        else if (!portraits_.Leaving(ask.id))
+        {
+            // This tool's, released once nothing shows it (FollowShow). Not
+            // one the last fight's cards may still be showing: that one is
+            // released in its turn, once the bar's movie has let go.
+            toolOwned_.insert_or_assign(ask.id, nowMs);
+        }
+    }
+    else if (card && report.lack == PortraitLack::Nothing && !report.image.empty())
+    {
+        // The rule as built gave a picture that is not a render (the
+        // table's): its card goes back to it.
+        portraits_.Got(ask.id, report.image, false);
+    }
+    if (!movie)
+    {
+        if (ask.show)
+        {
+            also("not put up: the turn bar's movie is not there");
+        }
+    }
+    else if (ask.show)
+    {
+        SetShow(&report, ask.seconds, nowMs);
+        report.shown = true;
     }
     else
     {
-        spdlog::info("{}'s portrait: {} ({})", name, Utf8(url), how);
+        SetShow(nullptr, 0, nowMs);
     }
-    portraits_.Got(*id, std::move(url), rendered);
+    if (report.rendered && toolOwned_.contains(ask.id) && !ShowHolds(ask.id))
+    {
+        also("nothing shows it (no card of a fight, and show not asked for): its renderer is released in a moment");
+    }
+    spdlog::info("turnbased_portrait for {:#x}{}: {}", ask.id, report.shown ? ", put up large" : "",
+                 PortraitLine(report));
+    return report;
 }
 
 bool BarLink::TakeEndTurn()

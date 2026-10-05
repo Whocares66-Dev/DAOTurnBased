@@ -39,6 +39,7 @@ class Descriptors(unittest.TestCase):
                 "turnbased.state",
                 "turnbased_delay",
                 "turnbased_end_turn",
+                "turnbased_portrait",
                 "turnbased_seed",
                 "turnbased_settings",
             },

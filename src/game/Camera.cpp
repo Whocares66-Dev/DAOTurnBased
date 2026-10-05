@@ -129,12 +129,10 @@ void CameraDirector::TurnTo(ObjectId id)
 // the game flips to by the zoom, never comes of this.
 //
 // The size is the engine's: from the creature's feet to its head, the node
-// the game's own portrait camera aims at (dao::portraits::HeadPosition).
-// Whether that point is the world's or about the creature's own origin was
-// not known as this was written: the shorter of the two readings is taken,
-// the other being the creature's distance from the map's origin, and which
-// it was is said. A model with no node of that name answers nothing, and
-// then it is the appearance table's personal space against a person's.
+// the game's own portrait camera aims at (MeasureBody, below; core's
+// ExtentOf has the two readings of that point and why the shorter is taken).
+// A model with no node of that name answers nothing, and then it is the
+// appearance table's personal space against a person's.
 void CameraDirector::StandBackFor(ObjectId id)
 {
     namespace api = dao::script::api;
@@ -144,13 +142,11 @@ void CameraDirector::StandBackFor(ObjectId id)
     std::string_view by = "one of the party";
     if (!party)
     {
-        const dao::Vector feet = api::GetPosition(id);
-        if (const std::optional<dao::Vector> head = dao::portraits::HeadPosition(id))
+        const BodyMeasure body = MeasureBody(id);
+        if (body.head)
         {
-            const float world = std::hypot(head->x - feet.x, head->y - feet.y, head->z - feet.z);
-            const float own = std::hypot(head->x, head->y, head->z);
-            extent = std::min(world, own);
-            by = world <= own ? "its head, a point in the world" : "its head, a point about its own origin";
+            extent = body.extent.meters;
+            by = body.extent.world ? "its head, a point in the world" : "its head, a point about its own origin";
         }
         else
         {
@@ -170,6 +166,19 @@ void CameraDirector::StandBackFor(ObjectId id)
     dao::camera::SetCloseDistance(close);
     spdlog::info("the camera's distance for {:#010x}: {} ({:.1f} m from feet to head, by {})", id,
                  close ? std::format("{:.1f} m", *close) : std::string{"the game's own"}, extent, by);
+}
+
+BodyMeasure MeasureBody(ObjectId id)
+{
+    BodyMeasure body;
+    const dao::Vector feet = dao::script::api::GetPosition(id);
+    body.feet = Vec3{feet.x, feet.y, feet.z};
+    if (const std::optional<dao::Vector> head = dao::portraits::HeadPosition(id))
+    {
+        body.head = Vec3{head->x, head->y, head->z};
+        body.extent = ExtentOf(*body.head, body.feet);
+    }
+    return body;
 }
 
 void CameraDirector::Release()

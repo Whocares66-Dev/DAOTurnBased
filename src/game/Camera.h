@@ -15,6 +15,7 @@
 // the frame callback applies.
 #pragma once
 
+#include "core/Portraits.h"
 #include "core/Types.h"
 
 #include <cstdint>
@@ -27,6 +28,20 @@ class CameraController;
 
 namespace tb::game
 {
+
+// A creature's body as the engine has it: where it stands, where its model's
+// head node is (DAOLib's dao::portraits::HeadPosition, the point the game's
+// own portrait camera aims at; nothing for a model with no node of that name,
+// or one not set up yet), and from the one to the other (core's ExtentOf,
+// with its reasons). The turn camera's distance and a portrait's framing are
+// both by this one measure (issues 33 and 32). On the game's thread.
+struct BodyMeasure
+{
+    Vec3 feet;
+    std::optional<Vec3> head;
+    HeadExtent extent; // nothing of it with no head node
+};
+[[nodiscard]] BodyMeasure MeasureBody(ObjectId id);
 
 class CameraDirector
 {
