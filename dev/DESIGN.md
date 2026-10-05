@@ -263,7 +263,7 @@ The mod selects the party member (`SetPrimaryControlled`) and waits, paused. An 
 
 With `turns.party = tactics`, the companions play their turns through their tactics like the AI, and only the hero waits for the player. The hero is kept selected on the companions' turns, since the game gives a controlled character only its "keep attacking" AI (`AI_DetermineCombatRound_Partial`); with the hero down, another of the party standing is ("Who is in the fight", "The party is where its living members are").
 
-### Whose tactics play its turns: a choice a companion (issue 46; built 2026-10-05 without its checkbox, not yet seen in play)
+### Whose tactics play its turns: a choice a companion (issue 46; built 2026-10-05 without its checkbox; seen in play 2026-10-05 in Soldier's Peak: the tool's choices, a change in the middle of a fight, and the file written and read back with a manual save and an autosave)
 
 The user, 2026-10-05: "what if there was an auto option for a party member so that instead of the player having to pick they just let the tactics do the work for that turn (or every turn of that character as the case may be). ... the general combat can be done by the combat AI, just bound by a turn." Of where the choice lives: "Should probably add a checkbox to the tactics page, 'use when turn-based', off by default, per character. Should be changeable even during battle, applies to character's next turn." Of the player's own character: "We can skip the hero for now if that requires additional development." And of where it is kept: "I think we have functionality for a cosave right?", "This is also a good opportunity to exercise the cosave".
 
