@@ -413,8 +413,8 @@ MUTANTS = [
     Mutant(
         "End waits out what the engine holds the creature in",
         MACHINE,
-        "        if (endTurnRequested_ && Classify(actor.current) == CommandKind::Involuntary)",
-        "        if (endTurnRequested_ && Classify(actor.current) == CommandKind::Pass)",
+        "        if (endTurnRequested_)\n        {\n            const bool queued = actor.current == CommandType::Invalid;",
+        "        if (endTurnRequested_ && Classify(actor.current) != CommandKind::Involuntary)\n        {\n            const bool queued = actor.current == CommandType::Invalid;",
     ),
     Mutant(
         "a condition on the game's clock costs no turn",
@@ -4865,6 +4865,212 @@ MUTANTS = [
         MACHINE,
         '    const char *what = request.type == CommandType::Attack ? "attack" : "ability";',
         '    const char *what = request.type != CommandType::Invalid ? "attack" : "ability";',
+    ),
+    # No clock on the player's turn, and a mode that keeps its user at a
+    # command (issue 51). How its own mode's command is told from another's
+    # hold: three things of an effect standing on the creature, all of them.
+    Mutant(
+        "ownmode: an effect another put on a creature reads as its own mode's",
+        RULES,
+        "        if (effect.creator == creature && effect.modeOn && KeepsItsCreatureAtACommand(effect.type))",
+        "        if (effect.modeOn && KeepsItsCreatureAtACommand(effect.type))",
+    ),
+    Mutant(
+        "ownmode: a mode that is off still has its creature at its command",
+        RULES,
+        "        if (effect.creator == creature && effect.modeOn && KeepsItsCreatureAtACommand(effect.type))",
+        "        if (effect.creator == creature && KeepsItsCreatureAtACommand(effect.type))",
+    ),
+    Mutant(
+        "ownmode: any effect of a mode that is on reads as the mode's command: a warrior with Shield Wall on, thrown, is not held",
+        RULES,
+        "        if (effect.creator == creature && effect.modeOn && KeepsItsCreatureAtACommand(effect.type))",
+        "        if (effect.creator == creature && effect.modeOn)",
+    ),
+    Mutant(
+        "ownmode: the song's effect is not one that keeps its creature at a command",
+        RULES,
+        "    return effectType == kEffectSinging || effectType == kEffectFeignDeath;",
+        "    return effectType == kEffectFeignDeath;",
+    ),
+    Mutant(
+        "ownmode: Feign Death's effect is not one that keeps its creature at a command",
+        RULES,
+        "    return effectType == kEffectSinging || effectType == kEffectFeignDeath;",
+        "    return effectType == kEffectSinging;",
+    ),
+    Mutant(
+        "ownmode: the singing effect's number is not the engine's",
+        "src/core/Rules.h",
+        "inline constexpr std::int32_t kEffectSinging = 1060;",
+        "inline constexpr std::int32_t kEffectSinging = 1061;",
+    ),
+    Mutant(
+        "ownmode: any creature at an effect's command is at its own mode's, whatever the game layer said: no hold is a hold",
+        MACHINE,
+        "    return actor.exists && !actor.down && actor.busy && actor.current == CommandType::ExecuteEffect &&\n           actor.ownMode != kNoMode;",
+        "    return actor.exists && !actor.down && actor.busy && actor.current == CommandType::ExecuteEffect;",
+    ),
+    # A turn the player plays, its creature at its own mode's command.
+    Mutant(
+        "ownmode: a turn the player plays takes its creature's own mode's command for a hold, and is lost to it",
+        MACHINE,
+        "    if (obs.actor && AtItsOwnMode(*obs.actor))\n    {\n        if (const Combatant *current = order_.Current())\n        {\n            SayOwnMode(*current, *obs.actor);",
+        "    if (obs.actor && AtItsOwnMode(*obs.actor) && !obs.actor->busy)\n    {\n        if (const Combatant *current = order_.Current())\n        {\n            SayOwnMode(*current, *obs.actor);",
+    ),
+    Mutant(
+        "ownmode: nothing says why a turn waits at its creature's own mode's command",
+        MACHINE,
+        "        if (const Combatant *current = order_.Current())\n        {\n            SayOwnMode(*current, *obs.actor);\n        }\n        return;",
+        "        return;",
+    ),
+    Mutant(
+        "ownmode: why a turn waits at its creature's own mode's command is said every frame",
+        MACHINE,
+        "    if (std::exchange(budget_.ownModeSaid, actor.ownMode) == actor.ownMode)",
+        "    if (false)",
+    ),
+    Mutant(
+        "ownmode: End at its creature's own mode's command ends the turn as any End, its second rolled over",
+        MACHINE,
+        "    if (const Combatant *current = order_.Current(); current != nullptr && obs.actor && AtItsOwnMode(*obs.actor))\n    {\n        SpentOnItsMode(*current, obs.actor->ownMode, fx);",
+        "    if (const Combatant *current = order_.Current();\n        current != nullptr && obs.actor && AtItsOwnMode(*obs.actor) && !obs.actor->busy)\n    {\n        SpentOnItsMode(*current, obs.actor->ownMode, fx);",
+    ),
+    Mutant(
+        "ownmode: a turn spent on its creature's mode keeps what its bar had, and a second rolls over",
+        MACHINE,
+        '    budget_.spend.SpendAllActions();\n    EndTurn(fx, "keeping up its mode");',
+        '    EndTurn(fx, "keeping up its mode");',
+    ),
+    Mutant(
+        "ownmode: a turn spent on its creature's mode is not its actor's doing by the table",
+        TURNEND,
+        'TurnEnd{"keeping up its mode", true},',
+        'TurnEnd{"keeping up its mode", false},',
+    ),
+    Mutant(
+        "ownmode: a mode turned on in its own turn is taken for the turn's action, and the turn stands at executing",
+        MACHINE,
+        "    if (AtItsOwnMode(actor))\n    {\n        ownEffectSince_.reset();",
+        "    if (AtItsOwnMode(actor) && !actor.busy)\n    {\n        ownEffectSince_.reset();",
+    ),
+    Mutant(
+        "ownmode: End pressed as its mode's command begins waits out the settling",
+        MACHINE,
+        "        if (endTurnRequested_)\n        {\n            SpentOnItsMode(*current, actor.ownMode, fx);\n            return;\n        }\n",
+        "",
+    ),
+    Mutant(
+        "ownmode: held by another's effect, a creature that turns its own mode on stays held",
+        MACHINE,
+        "        if (std::exchange(heldByEffect_, false))\n        {\n            HoldLetGo(*current, fx);\n        }\n        if (endTurnRequested_)",
+        "        if (endTurnRequested_)",
+    ),
+    Mutant(
+        "ownmode: a turn settling at its creature's own mode's command goes back to executing, and never waits",
+        MACHINE,
+        "    if (obs.actor && obs.actor->busy && !ownMode)",
+        "    if (obs.actor && obs.actor->busy)",
+    ),
+    Mutant(
+        "ownmode: an order that queues nothing is taken for the mode's command, and the turn stands at executing",
+        MACHINE,
+        "    if (obs.actor && obs.actor->busy && !AtItsOwnMode(*obs.actor))",
+        "    if (obs.actor && obs.actor->busy)",
+    ),
+    # A turn its tactics play.
+    Mutant(
+        "ownmode: a turn its tactics play is not spent on its creature's mode: its AI is told to choose behind the song",
+        MACHINE,
+        "    if (ownMode && !player)\n    {\n        SpentOnItsMode(*current, obs.actor->ownMode, fx);",
+        "    if (ownMode && !player && !obs.actor->busy)\n    {\n        SpentOnItsMode(*current, obs.actor->ownMode, fx);",
+    ),
+    # The gate, at its own mode's command.
+    Mutant(
+        "ownmode: an action is let through at its creature's own mode's command, to wait behind it",
+        MACHINE,
+        "mode != kNoMode && !landing && !approaching && (kind == CommandKind::Action || kind == CommandKind::Move))",
+        "mode != kNoMode && !landing && !approaching && (kind == CommandKind::Move))",
+    ),
+    Mutant(
+        "ownmode: a move is let through at its creature's own mode's command, to wait behind it",
+        MACHINE,
+        "mode != kNoMode && !landing && !approaching && (kind == CommandKind::Action || kind == CommandKind::Move))",
+        "mode != kNoMode && !landing && !approaching && (kind == CommandKind::Action))",
+    ),
+    Mutant(
+        "ownmode: what is free is refused at its creature's own mode's command, and the mode cannot be turned off",
+        MACHINE,
+        "mode != kNoMode && !landing && !approaching && (kind == CommandKind::Action || kind == CommandKind::Move))",
+        "mode != kNoMode && !landing && !approaching)",
+    ),
+    Mutant(
+        "ownmode: the player is not told why an order at its creature's own mode's command is refused",
+        MACHINE,
+        "        if (player && asked)\n        {\n            Refuse(who->id, std::wstring{kModeFirst}, request.type,",
+        "        if (false)\n        {\n            Refuse(who->id, std::wstring{kModeFirst}, request.type,",
+    ),
+    Mutant(
+        "ownmode: its own AI's order refused at its creature's mode is said to the player",
+        MACHINE,
+        "        if (player && asked)\n        {\n            Refuse(who->id, std::wstring{kModeFirst}, request.type,",
+        "        if (player)\n        {\n            Refuse(who->id, std::wstring{kModeFirst}, request.type,",
+    ),
+    Mutant(
+        "ownmode: the bar's caption does not say an order at its creature's own mode's command is refused",
+        MACHINE,
+        "            notice_ = Notice{RefusedLine(kModeFirst, who->name, request.type), lastNow_};\n",
+        "",
+    ),
+    # No clock of the mod's ends a turn the player plays.
+    Mutant(
+        "limit: a turn the player plays is stopped at max_action_ms, as an AI's is",
+        MACHINE,
+        "        if (const Combatant *current = order_.Current(); current != nullptr && PlayerControls(*current))\n        {\n            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))",
+        "        if (const Combatant *current = order_.Current();\n            current != nullptr && PlayerControls(*current) && !actor.busy)\n        {\n            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))",
+    ),
+    Mutant(
+        "limit: a turn an AI plays has no limit on an action either",
+        MACHINE,
+        "        if (const Combatant *current = order_.Current(); current != nullptr && PlayerControls(*current))\n        {\n            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))",
+        "        if (const Combatant *current = order_.Current(); current != nullptr)\n        {\n            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))",
+    ),
+    Mutant(
+        "limit: a player's action past max_action_ms is said every frame it stands",
+        MACHINE,
+        "            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))",
+        "            if (!heldByEffect_ && clock_ - executingSince_ > limit)",
+    ),
+    Mutant(
+        "limit: a player's second action that stands past max_action_ms is not said, the first having been",
+        MACHINE,
+        "    budget_.longSaid = false;\n    executingSince_ = clock_;",
+        "    executingSince_ = clock_;",
+    ),
+    # Whatever ends a turn by force stops what its creature was at.
+    Mutant(
+        "End: End waits for an action of the turn's that is still running",
+        MACHINE,
+        "        if (endTurnRequested_)\n        {\n            const bool queued = actor.current == CommandType::Invalid;",
+        "        if (endTurnRequested_ && Classify(actor.current) == CommandKind::Involuntary)\n        {\n            const bool queued = false;",
+    ),
+    Mutant(
+        "End: an action End stopped is left running into the next creature's turn",
+        MACHINE,
+        "                fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));\n                const Combatant *current = order_.Current();\n                Log(LogLevel::Info,\n                    std::format(\"{}'s {} is stopped",
+        "                const Combatant *current = order_.Current();\n                Log(LogLevel::Info,\n                    std::format(\"{}'s {} is stopped",
+    ),
+    Mutant(
+        "End: a command let through and not yet begun is left to begin in the next creature's turn",
+        MACHINE,
+        "            if (queued || Classify(actor.current) != CommandKind::Involuntary)",
+        "            if (Classify(actor.current) != CommandKind::Involuntary)",
+    ),
+    Mutant(
+        "End: End clears what the engine holds the creature in",
+        MACHINE,
+        "            if (queued || Classify(actor.current) != CommandKind::Involuntary)",
+        "            if (true)",
     ),
 ]
 

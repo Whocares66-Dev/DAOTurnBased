@@ -166,6 +166,16 @@ struct ActorObservation
     // the middle of its turn has that turn end there (issue 44;
     // TurnMachine::InactiveNow). Anyone's: a party member's is read the same.
     bool inactive = false;
+    // At an effect's command: the mode of its own whose command that is, its
+    // ability; kNoMode where the command is another's doing (a knockback, a
+    // grab) or it is at no effect's command. The game layer says which from
+    // the effects standing on the creature (core/Rules.h,
+    // OwnModeAtItsCommand: Captivating Song, Feign Death). Its own mode's
+    // command is no hold and no action of the turn's: a turn the player plays
+    // waits on it, a turn its tactics play is spent on it (issue 51;
+    // TurnMachine::AtItsOwnMode). Last, since tests fill the fields above by
+    // place.
+    std::int32_t ownMode = kNoMode;
 };
 
 // What holds a creature, as far as turns go: disabled, it cannot act
@@ -623,8 +633,15 @@ class TurnMachine
     }
 
     // End turn: the turn bar's End, its key, a tool. True if a turn-based
-    // fight is on; a party member's turn that the player plays ends, its
-    // own action first if one is playing out.
+    // fight is on; a party member's turn that the player plays ends with the
+    // next step, and an action of its own still running then is stopped, its
+    // commands cleared (issue 51: a turn the player plays has no time limit,
+    // so End is its way out of an action the engine never finishes; the
+    // user, 2026-10-05: "timeout should end any actions that are still being
+    // taken when it forces an end"). Until then its own action was finished
+    // first. What the engine put on the creature (an effect's command) is
+    // the engine's to end, and the turn ends at once all the same. A mode it
+    // has on stays on.
     [[nodiscard]] bool OnEndTurn();
 
     // Delay (Settings::delay): the party member whose turn it is puts it
@@ -847,6 +864,12 @@ class TurnMachine
         int givenBack = 0;     // how many times this turn
         bool retried = false;  // an AI told to choose again, its failed action given back
         bool landing = false;  // the turn began with a kept action given: its creature's turn follows it
+        // Said once a turn the player plays: that its creature is at its own
+        // mode's command and the turn waits on it (which mode); and, of the
+        // command let through last, that it has run past max_action_ms and is
+        // not stopped for it (issue 51).
+        std::int32_t ownModeSaid = kNoMode;
+        bool longSaid = false;
         CommandKind lastKind = CommandKind::Involuntary;
         std::int32_t lastAbility = -1; // the ability the last command was to use; -1 for any other command
         float movementAtCommand = 0;   // meters walked as the last command was let through
@@ -946,6 +969,38 @@ class TurnMachine
     [[nodiscard]] std::uint32_t Patience(std::uint32_t ms) const;
     // A turn its AI plays that is still going after max_turn_ms: ended.
     [[nodiscard]] bool TurnTooLong(std::vector<Effect> &fx);
+    // At its own mode's command (issue 51; ActorObservation::ownMode,
+    // core/Rules.h): a creature the engine keeps at an effect's command by a
+    // mode of its own that is on (Captivating Song). Not a hold, whose time
+    // would be taken of the bar (HoldRuns), and not its action's own effect,
+    // which the turn waits to see the end of: it ends when the mode is turned
+    // off, and that is its user's to choose.
+    // - A turn the player plays waits for an order as on any turn, the bar
+    //   not running, for as long as the player likes: never "executing" for
+    //   it. The mode turned off is free, as turning any mode is, and leaves
+    //   the turn to act with. End goes on with the mode, and the turn is
+    //   spent on it. An action or a move ordered meanwhile is refused before
+    //   anything is spent (Judge): the game queues such an order behind the
+    //   mode's command and carries it out only when the mode ends.
+    // - A turn its tactics play is spent on the mode at once, as its
+    //   creature is found so: as the turn begins, while its AI thinks, or
+    //   after its own command that turned the mode on. Its AI is not told.
+    // Either way the turn ends "keeping up its mode", its bar spent on it:
+    // nothing rolls over, and its creature's own clock moves a turn's
+    // seconds, as for any turn that ends.
+    [[nodiscard]] static bool AtItsOwnMode(const ActorObservation &actor);
+    // The mode whose command the creature whose turn it is was at, by the
+    // last look at it; kNoMode for none. What the gate judges by.
+    [[nodiscard]] std::int32_t OwnModeSeen() const;
+    void SayOwnMode(const Combatant &who, const ActorObservation &actor);
+    void SpentOnItsMode(const Combatant &who, std::int32_t mode, std::vector<Effect> &fx);
+    // End, taken up on a turn the player plays: the turn ends as its player
+    // ended it, what is left of its bar rolling over; or, its creature at its
+    // own mode's command, spent on the mode.
+    void EndedByThePlayer(const Observation &obs, std::vector<Effect> &fx);
+    // What the player is told of an order refused a creature at its own
+    // mode's command (Judge): over the character and on the bar's caption.
+    static constexpr std::wstring_view kModeFirst = L"Turn its mode off first";
     // What an action stopped as too long added to its target's debt.
     void ForgiveGrab();
     [[nodiscard]] bool EngineConjures(const CommandRequest &request) const;
@@ -1050,6 +1105,8 @@ class TurnMachine
     // the machine ended), the engine holds it, as it says by where it has
     // the creature. Its orders are refused meanwhile, its AI not told, what
     // it kept not given, and the time it is held is its turn's (HoldRuns).
+    // Not one at its own mode's command (AtItsOwnMode; issue 51): that is
+    // its own doing, and no hold.
     bool heldByEffect_ = false;
     // The current combatant is a hostile that has noticed nobody to fight
     // (core/Rules.h, Unaware), in the beat its turn is skipped after

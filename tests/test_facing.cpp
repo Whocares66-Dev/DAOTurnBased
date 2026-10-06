@@ -573,3 +573,56 @@ TEST_CASE("a facing the engine does not have for done after is said at warning w
     EndFight(w);
     CHECK(Lines(w, "in this fight 1 attack or ability was") == 1);
 }
+
+// Where this rule meets issue 51's two (2026-10-05, the tree of issues 50, 40
+// and 51 together). Neither changes the other; these hold that it stays so.
+
+// A creature at its own mode's command (a bard singing) is refused an attack
+// before anything is spent, "Turn its mode off first" (issue 51). Refused is
+// not given, so its creature is not turned for it, whatever the engine says
+// of the turn: the facing is the gate's last step before a command it gives,
+// and is never taken for one it does not.
+TEST_CASE("an attack refused a creature at its own mode's command turns nobody, though the engine would not turn it",
+          "[facing][ownmode]")
+{
+    World w = Placed();
+    w.Get(kHero).modes.insert(kSong);
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    w.Stall(kHero, kGenlock, 1.5f);
+    CHECK(w.Attack(kHero, kGenlock, Source::Player) == Verdict::Block);
+    CHECK(w.facedFirst.empty());
+    CHECK(OffItsPlace(w) == Approx(1.5f).margin(0.01f));
+    CHECK_FALSE(Logged(w, kFaced));
+    CHECK_FALSE(Logged(w, kNotFaced));
+    CHECK(Logged(w, "Hero: attack from player refused, it is at its own mode's command (ability 1000)"));
+    // The song switched off is given: aimed at nobody, it turns nobody.
+    CHECK(w.Switch(kHero, Source::Player, kSong) == Verdict::Allow);
+    CHECK(w.facedFirst.empty());
+}
+
+// End pressed while an attack of the turn runs stops it (issue 51). One that
+// was faced first was faced all the same: the count said as the fight ends
+// is of the facings done, not of the attacks that then played out.
+TEST_CASE("an attack faced first and then stopped by End is counted for the fight's end all the same",
+          "[facing][ownmode]")
+{
+    World w = Placed();
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    w.Stall(kHero, kGenlock, 1.5f);
+    REQUIRE(w.Attack(kHero, kGenlock, Source::Player) == Verdict::Allow);
+    REQUIRE(w.facedFirst.size() == 1);
+    w.Frame();
+    w.applied.clear();
+    REQUIRE(w.machine.OnEndTurn());
+    w.Frame();
+    CHECK(w.Current() != kHero);
+    CHECK(std::ranges::count_if(w.applied, [](const Effect &e) {
+              return e.kind == EffectKind::ClearCommands && e.target == kHero;
+          }) == 1);
+    CHECK(Lines(w, "Hero's attack is stopped: its turn was ended while it ran") == 1);
+    EndFight(w);
+    CHECK(Lines(w, "in this fight 1 attack or ability was given to a creature the engine would not have turned to "
+                   "its target, which was faced at it exactly first (issue 40)") == 1);
+}

@@ -245,18 +245,26 @@ TEST_CASE("an AI creature that chooses nothing passes after ai_think_ms", "[mach
     CHECK(w.Current() != kGenlock);
 }
 
-TEST_CASE("an action that never ends is stopped after max_action_ms", "[machine]")
+TEST_CASE("an AI's action that never ends is stopped after max_action_ms", "[machine]")
 {
+    // An AI's: a turn the player plays has no such limit (issue 51;
+    // test_ownmode.cpp), and the case was the hero's until then.
     Settings settings = Fixed();
     settings.maxActionMs = 2000;
     World w{settings};
     w.StartFight();
-    CHECK(w.Order(kHero, CommandType::UseAbility, Source::Player) == Verdict::Allow);
+    w.onPoke = [&](ObjectId id) { CHECK(w.Order(id, CommandType::UseAbility, Source::Script) == Verdict::Allow); };
+    CHECK(w.machine.OnEndTurn());
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    w.applied.clear(); // the fight's beginning cleared everyone's commands
     w.RunFor(1900);
-    CHECK(w.Current() == kHero);
-    w.RunFor(200);
-    CHECK(w.Did(EffectKind::ClearCommands, kHero));
     CHECK(w.Current() == kGenlock);
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock));
+    w.RunFor(200);
+    CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
+    CHECK(w.Current() == kCompanion);
 }
 
 TEST_CASE("the machine's patience with the engine is of the wall's time, whatever the fight's speed", "[machine]")
@@ -273,14 +281,20 @@ TEST_CASE("the machine's patience with the engine is of the wall's time, whateve
         settings.fightSpeed = speed;
         World w{settings};
         w.StartFight();
-        CHECK(w.Order(kHero, CommandType::UseAbility, Source::Player) == Verdict::Allow);
+        // (An AI's action: a turn the player plays has no such limit, issue
+        // 51.)
+        w.onPoke = [&](ObjectId id) { CHECK(w.Order(id, CommandType::UseAbility, Source::Script) == Verdict::Allow); };
+        CHECK(w.machine.OnEndTurn());
+        w.Frame();
+        w.Frame();
+        REQUIRE(w.Current() == kGenlock);
         w.applied.clear(); // the fight's beginning cleared everyone's commands
         w.RunFor(1900);
-        CHECK(w.Current() == kHero);
-        CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
-        w.RunFor(200);
-        CHECK(w.Did(EffectKind::ClearCommands, kHero));
         CHECK(w.Current() == kGenlock);
+        CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock));
+        w.RunFor(200);
+        CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
+        CHECK(w.Current() == kCompanion);
     }
 }
 
@@ -1140,9 +1154,14 @@ TEST_CASE("End pressed while something the engine put there holds the creature e
     CHECK(w.Order(kHero, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
     w.RunFor(100);
     REQUIRE(w.machine.GetPhase() == Phase::Executing);
+    w.applied.clear();
     CHECK(w.machine.OnEndTurn());
     w.Frame();
     CHECK(w.Current() != kHero);
+    // The pin's command is the engine's to end: not cleared, as an action
+    // of her own would be (issue 51).
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+    CHECK(w.Get(kHero).current == CommandType::ExecuteEffect);
 }
 
 TEST_CASE(
@@ -1182,19 +1201,23 @@ TEST_CASE(
     }));
 }
 
-TEST_CASE("End pressed during the creature's own action waits for it", "[machine]")
+TEST_CASE("End pressed during the creature's own action stops it, and the turn ends at once", "[machine]")
 {
+    // Until issue 51 End waited for the action ("its own action it finishes
+    // first"), and one the engine never finished held the turn to
+    // max_action_ms. A turn the player plays has no such limit now, so End
+    // is its way out (test_ownmode.cpp has the rest).
     World w;
     w.StartFight();
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
     w.RunFor(100);
     REQUIRE(w.machine.GetPhase() == Phase::Executing);
+    w.applied.clear();
     CHECK(w.machine.OnEndTurn());
-    w.RunFor(200);
-    CHECK(w.Current() == kHero); // still swinging
-    w.Finish(kHero);
-    w.RunFor(600);
+    w.Frame();
     CHECK(w.Current() != kHero);
+    CHECK(w.Did(EffectKind::ClearCommands, kHero));
+    CHECK_FALSE(w.Get(kHero).busy); // the swing stopped: nothing of it arrives in the genlock's turn
 }
 
 TEST_CASE("on the game's clock a held creature loses each turn while its condition lasts", "[machine][conditions]")

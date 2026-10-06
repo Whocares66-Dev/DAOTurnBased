@@ -2186,6 +2186,66 @@ void TurnMachine::HoldLetGo(const Combatant &who, std::vector<Effect> &fx)
                                     static_cast<float>(budget_.holdBarMs) / 1000.0f, BudgetLeft()));
 }
 
+// At its own mode's command (issue 51; the header has the rule): at an
+// effect's command, and the game layer has said it is a mode of its own that
+// keeps it there (ActorObservation::ownMode; core/Rules.h,
+// OwnModeAtItsCommand).
+bool TurnMachine::AtItsOwnMode(const ActorObservation &actor)
+{
+    return actor.exists && !actor.down && actor.busy && actor.current == CommandType::ExecuteEffect &&
+           actor.ownMode != kNoMode;
+}
+
+std::int32_t TurnMachine::OwnModeSeen() const
+{
+    const Combatant *current = order_.Current();
+    const bool seen = current != nullptr && seenActor_ && seenActor_->id == current->id && AtItsOwnMode(*seenActor_);
+    return seen ? seenActor_->ownMode : kNoMode;
+}
+
+// Said once a turn (and again for another mode): nothing on the screen says
+// yet why a singer's turn waits with nothing running.
+void TurnMachine::SayOwnMode(const Combatant &who, const ActorObservation &actor)
+{
+    if (std::exchange(budget_.ownModeSaid, actor.ownMode) == actor.ownMode)
+    {
+        return;
+    }
+    Log(LogLevel::Info,
+        std::format("{} is at its own mode's command (ability {}), not held: its turn waits for the player, its bar "
+                    "not running ({}); End goes on with the mode, the turn spent on it, and the mode turned off is "
+                    "free{}",
+                    Utf8(who.name), actor.ownMode, BudgetLeft(),
+                    actor.effects.empty() ? std::string{} : " (" + actor.effects + ")"));
+}
+
+// A turn spent on its creature's own mode: the mode goes on, and the turn's
+// time is the mode's, as the game spends a bard's time on its song. The bar
+// is spent, so nothing is left to roll over, and the turn's end moves its
+// creature's own clock the rest of a turn's seconds as any turn's does
+// (EndTurn): its cooldowns, the mode's upkeep. Nothing is cleared: the mode's
+// command is all it is at, and the engine's to keep.
+void TurnMachine::SpentOnItsMode(const Combatant &who, std::int32_t mode, std::vector<Effect> &fx)
+{
+    Log(LogLevel::Info,
+        std::format("{}'s turn is spent on its own mode (ability {}), which keeps it at its command: {}",
+                    Utf8(who.name), mode,
+                    PlayerControls(who) ? "End was pressed, and the mode goes on"
+                                        : "its tactics have it on, and its AI is not told to choose"));
+    budget_.spend.SpendAllActions();
+    EndTurn(fx, "keeping up its mode");
+}
+
+void TurnMachine::EndedByThePlayer(const Observation &obs, std::vector<Effect> &fx)
+{
+    if (const Combatant *current = order_.Current(); current != nullptr && obs.actor && AtItsOwnMode(*obs.actor))
+    {
+        SpentOnItsMode(*current, obs.actor->ownMode, fx);
+        return;
+    }
+    EndTurn(fx, "ended by the player");
+}
+
 // A creature's effects, its regeneration and the scripts' timers on it run on
 // its own clock (Settings::ownClocks).
 bool TurnMachine::OwnClocks() const
@@ -2292,6 +2352,10 @@ void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
     // after its beat whatever holds it, and a hold is not stood out for a
     // turn that is skipped anyway. Held first, as it was while a hold was
     // given two seconds, it would stand out its bar and then its beat.)
+    // (One at its own mode's command comes this way too, and is not told to
+    // choose either: with the next step it is found at its mode and not
+    // held, nothing charged, and its turn is spent on the mode as it settles.
+    // StepExecuting, AtItsOwnMode; issue 51.)
     if (!UnawareNow(who) && seenActor_ && seenActor_->id == who.id && seenActor_->busy &&
         seenActor_->current == CommandType::ExecuteEffect)
     {
@@ -2412,7 +2476,7 @@ void TurnMachine::StepAwaiting(const Observation &obs, std::vector<Effect> &fx)
     }
     if (endTurnRequested_)
     {
-        EndTurn(fx, "ended by the player");
+        EndedByThePlayer(obs, fx);
         return;
     }
     if (std::exchange(delayRequested_, false) && CanDelay())
@@ -2435,6 +2499,20 @@ void TurnMachine::StepAwaiting(const Observation &obs, std::vector<Effect> &fx)
         dispatchUntilNow_ = obs.nowMs + static_cast<std::uint32_t>(settings_.orderRunMs);
         Log(LogLevel::Info, "an order but no command while paused: running a moment for it");
         phase_ = Phase::Dispatching;
+        return;
+    }
+    // At its own mode's command (AtItsOwnMode; issue 51): the turn waits for
+    // the player as on any turn, for as long as the player likes, and
+    // nothing of its bar is taken meanwhile. Until 2026-10-05 this was "busy
+    // with a execute effect the gate did not see", a hold, and the singer's
+    // turn was lost four seconds of the game's time later, turn after turn:
+    // ninety of Lyna's in a row in one fight.
+    if (obs.actor && AtItsOwnMode(*obs.actor))
+    {
+        if (const Combatant *current = order_.Current())
+        {
+            SayOwnMode(*current, *obs.actor);
+        }
         return;
     }
     if (obs.actor && obs.actor->busy)
@@ -2463,10 +2541,12 @@ void TurnMachine::StepDispatching(const Observation &obs, std::vector<Effect> &f
     }
     if (endTurnRequested_)
     {
-        EndTurn(fx, "ended by the player");
+        EndedByThePlayer(obs, fx);
         return;
     }
-    if (obs.actor && obs.actor->busy)
+    // (Its own mode's command is not the order's: the turn goes on waiting
+    // for what the order queues, AtItsOwnMode.)
+    if (obs.actor && obs.actor->busy && !AtItsOwnMode(*obs.actor))
     {
         phase_ = Phase::Executing;
         executingSince_ = clock_;
@@ -2584,6 +2664,45 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     if (budget_.onArrivalMs > 0 && actor.busy && !actor.moving && Classify(actor.current) == CommandKind::Action)
     {
         ChargeOnArrival(fx);
+    }
+    // At its own mode's command (AtItsOwnMode; issue 51): a mode turned on
+    // in its own turn, say, whose command the engine then keeps it at. That
+    // command is not an action the turn waits to see the end of: taken for
+    // its action's own effect, below, a song turned on by the player held
+    // the turn at "executing" until the action's limit, `still at a execute
+    // effect after 108000 ms: stopped`, twelve seconds of the wall's time at
+    // three times the speed with the fight standing still (2026-10-05). Nor
+    // is it a hold, though a creature found at an effect's command as its
+    // turn came, or while its AI thought, is taken for held until this look
+    // (Handover, StepThinking): nothing was charged for it. The turn settles
+    // from here as after any command of its own, and there a turn its
+    // tactics play is spent on the mode, with the next step, and a turn the
+    // player plays waits for the next order (StepSettling, StepAwaiting).
+    // End pressed already, the player's is spent on the mode here and now.
+    if (AtItsOwnMode(actor))
+    {
+        ownEffectSince_.reset();
+        stoodAt_.reset();
+        const Combatant *current = order_.Current();
+        if (current == nullptr)
+        {
+            return;
+        }
+        // (Held until now by another's effect, and its own mode on: what the
+        // hold ran is the hold's.)
+        if (std::exchange(heldByEffect_, false))
+        {
+            HoldLetGo(*current, fx);
+        }
+        if (endTurnRequested_)
+        {
+            SpentOnItsMode(*current, actor.ownMode, fx);
+            return;
+        }
+        deadline_ = clock_ + static_cast<std::uint32_t>(settings_.settleMs);
+        phase_ = Phase::Settling;
+        statusWanted_ = true;
+        return;
     }
     // Its own action's effect keeps it there (roundAgedMs_): that effect's
     // time runs with the action. Not one it did not choose, which is a hold
@@ -2786,12 +2905,38 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     if (actor.busy)
     {
         idleTicks_ = 0;
-        // End pressed while something the engine put there holds the
-        // creature (an effect's command, say): the turn ends now, not when
-        // it does. Its own action it finishes first.
-        if (endTurnRequested_ && Classify(actor.current) == CommandKind::Involuntary)
+        // End pressed while its creature is at a command: the turn ends now,
+        // not when the command does. A command of its own (an attack, a
+        // talent, a walk) is stopped, its commands cleared, so that nothing
+        // of the turn is left to arrive in another's (issue 51; the user,
+        // 2026-10-05: "timeout should end any actions that are still being
+        // taken when it forces an end"). What it spent on the action stays
+        // spent, and a cooldown it set is held: stopped, it is not given
+        // back. A mode it has on stays on, since only commands are cleared
+        // (the user, the same day: "Yeah, sustained abilities should not be
+        // ended"). Something the engine put there (an effect's command) is
+        // the engine's to end, and is left. A command let through and not
+        // yet begun (nothing current, something queued) is cleared with the
+        // rest: left, it began in the next creature's turn.
+        //
+        // Until then its own action was finished first: End was taken up
+        // only at a command it did not choose, and one the engine never
+        // finished held the turn until max_action_ms, which a turn the
+        // player plays no longer has (below).
+        if (endTurnRequested_)
         {
-            EndTurn(fx, "ended by the player");
+            const bool queued = actor.current == CommandType::Invalid;
+            if (queued || Classify(actor.current) != CommandKind::Involuntary)
+            {
+                fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
+                const Combatant *current = order_.Current();
+                Log(LogLevel::Info,
+                    std::format("{}'s {} is stopped: its turn was ended while it ran, and what it spent on it stays "
+                                "spent",
+                                current != nullptr ? Utf8(current->name) : std::string{"?"},
+                                queued ? "command, not yet begun," : Name(actor.current)));
+            }
+            EndedByThePlayer(obs, fx);
             return;
         }
         // At an effect's command with nothing of its own let through this
@@ -2822,6 +2967,27 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         // the bar, above, and the effect is the engine's to end.)
         const std::uint32_t limit =
             Patience(static_cast<std::uint32_t>(settings_.maxActionMs)) * (ownEffectSince_ ? kOwnEffectPatience : 1);
+        // A turn the player plays is never ended by a clock of the mod's
+        // (issue 51; the user, 2026-10-05: "I think there probably should
+        // not be a time out for the player, unless they're letting tactics
+        // run the actor"): not at max_turn_ms (TurnTooLong), and not here.
+        // An action the engine never finishes is the player's to end, with
+        // End (above), which stops it. Said once, so that a log shows where a
+        // turn stood.
+        if (const Combatant *current = order_.Current(); current != nullptr && PlayerControls(*current))
+        {
+            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))
+            {
+                Log(LogLevel::Info,
+                    std::format("{} is still at a {} after {} ms: its turn is the player's, and is not ended for it "
+                                "(End stops it)",
+                                Utf8(current->name), Name(actor.current), limit));
+            }
+            return;
+        }
+        // On a turn its tactics play, what it is at is stopped and the turn
+        // ended, as at max_turn_ms (TurnTooLong): its commands cleared, and
+        // no mode switched off by it.
         if (!heldByEffect_ && clock_ - executingSince_ > limit)
         {
             fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
@@ -2871,7 +3037,10 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
         EndTurn(fx, "fell");
         return;
     }
-    if (obs.actor && obs.actor->busy)
+    // (At its own mode's command it is at nothing the turn waits for:
+    // AtItsOwnMode, issue 51.)
+    const bool ownMode = obs.actor && AtItsOwnMode(*obs.actor);
+    if (obs.actor && obs.actor->busy && !ownMode)
     {
         // A follow-up the gate let through (a move after an attack).
         phase_ = Phase::Executing;
@@ -2886,6 +3055,14 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
         return;
     }
     const bool player = PlayerControls(*current);
+    // A turn its tactics play, its creature at its own mode's command as the
+    // world settles: spent on the mode. The player's settles, and waits for
+    // an order with the mode on (below).
+    if (ownMode && !player)
+    {
+        SpentOnItsMode(*current, obs.actor->ownMode, fx);
+        return;
+    }
     // An AI is told to choose in mid-turn only on a look taken with this
     // step: on one half a second old, a creature stunned since was told
     // (test_fights.cpp, seeds 35 and 126 with time). The statuses are asked
@@ -2982,7 +3159,7 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
     }
     if (endTurnRequested_)
     {
-        EndTurn(fx, "ended by the player");
+        EndedByThePlayer(obs, fx);
         return;
     }
     if (TurnSpent())
@@ -4488,6 +4665,37 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         }
         return Verdict::Block;
     }
+    // At its own mode's command (AtItsOwnMode; issue 51), by the last look
+    // at it: an action or a move is refused before anything is spent, and
+    // the player told why, over the character and on the bar's caption. The
+    // game itself queues such an order behind the mode's command and carries
+    // it out only when the mode ends (in real time, 2026-10-05, the song on:
+    // "A move order then moved her 0.0 m and an attack order struck
+    // nothing", and the attack was made as the song was ordered off). Let
+    // through, it would take its time of the bar for nothing and leave a
+    // command to arrive later, in whoever's turn the mode ends in. What is
+    // free goes through: the mode turned off above all, which is what the
+    // player is told to do first. (A rule of the mod's making, 2026-10-05,
+    // not the user's words: dev/DESIGN.md.) Not what the mod itself gives the
+    // creature, which is given by its own rules (LandCast: not to one at an
+    // effect's command).
+    if (const std::int32_t mode = OwnModeSeen();
+        mode != kNoMode && !landing && !approaching && (kind == CommandKind::Action || kind == CommandKind::Move))
+    {
+        if (player && asked)
+        {
+            Refuse(who->id, std::wstring{kModeFirst}, request.type,
+                   std::format("ability {} is on, and keeps it at its command", mode));
+            notice_ = Notice{RefusedLine(kModeFirst, who->name, request.type), lastNow_};
+        }
+        if (Logs(refusals))
+        {
+            Refused(refusals, std::format("{}: {} from {} refused, it is at its own mode's command (ability {}): the "
+                                          "mode is to be turned off first",
+                                          Utf8(who->name), Name(request.type), Name(request.source), mode));
+        }
+        return Verdict::Block;
+    }
     // On a turn the player plays, the character's own AI does not spend it:
     // a controlled character carries on attacking by itself (in real time,
     // AI_DetermineCombatRound_Partial), and in play that ended a pinned
@@ -4740,7 +4948,9 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     // Each command has max_action_ms of its own: counted from the turn's
     // first, a spider's second attack was stopped a second after it began,
     // the first having stood ten at a target it could not reach (play test
-    // 29, "still at a attack after 12000 ms").
+    // 29, "still at a attack after 12000 ms"). (And what is said of one the
+    // player's turn has stood at past it, once a command: issue 51.)
+    budget_.longSaid = false;
     executingSince_ = clock_;
     return Verdict::Allow;
 }

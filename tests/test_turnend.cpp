@@ -46,6 +46,11 @@ TEST_CASE("the ends that leave nothing in the bar are their actors' own", "[turn
         CAPTURE(why);
         CHECK(tb::EndedByItsActor(why) == true);
     }
+    // And a turn spent on a mode of its creature's own that keeps it at a
+    // command (issue 51): the player's End with the song on, or its tactics
+    // keeping it on. The machine spends the bar on the mode as it ends the
+    // turn so (test_ownmode.cpp has what then rolls over: nothing).
+    CHECK(tb::EndedByItsActor("keeping up its mode") == true);
 }
 
 TEST_CASE("a reason the table does not have rolls nothing over, and says it is not known", "[turnend]")

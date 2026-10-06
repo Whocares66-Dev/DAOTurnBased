@@ -424,6 +424,27 @@ bool AsksForTarget(std::int32_t targetType, std::int32_t useType)
     return useType != kUseTypeMode && (targetType & ~kTargetSelf) != 0;
 }
 
+bool KeepsItsCreatureAtACommand(std::int32_t effectType)
+{
+    return effectType == kEffectSinging || effectType == kEffectFeignDeath;
+}
+
+std::int32_t OwnModeAtItsCommand(ObjectId creature, std::span<const EffectOn> standing)
+{
+    if (creature == kNoObject)
+    {
+        return kNoMode;
+    }
+    for (const EffectOn &effect : standing)
+    {
+        if (effect.creator == creature && effect.modeOn && KeepsItsCreatureAtACommand(effect.type))
+        {
+            return effect.ability;
+        }
+    }
+    return kNoMode;
+}
+
 float SpeedFactor(float combatSpeed)
 {
     if (!std::isfinite(combatSpeed) || combatSpeed <= 0.0f)

@@ -68,7 +68,21 @@
 //      in the middle of it, in its own turn or in another's. The bar walks
 //      at the pace its creature had at the machine's last look at everyone,
 //      as the turn begins and in every frame of it after, and a change in
-//      the turn is said once (issue 49).
+//      the turn is said once (issue 49);
+//  20. no clock of the mod's ends a turn the player plays: none ends "took
+//      too long". And a creature at its own mode's command (a song that
+//      keeps its singer at it) is not held: no turn is lost to that command
+//      and nothing of a bar is taken for it; on a turn the player plays the
+//      turn waits, never "executing" for it, and an action or a move
+//      ordered meanwhile is refused with nothing spent; on a turn its
+//      tactics play it is never told to choose, and the turn is over within
+//      a frame or two. Either ends "keeping up its mode", as only such a
+//      creature's turn does, the player's only by End (issue 51);
+//  21. End pressed on a turn the player plays ends it: with the next step,
+//      or as the world settles after a command of its creature's that was
+//      already over. An action still running then is stopped, so that
+//      nothing of the turn runs on into another's (2), and the turn ends
+//      "ended by the player" only when End was pressed (issue 51).
 //
 // The promises were checked on two clocks until issue 50 (2026-10-05): the
 // bar of time, and one action and an allowance of meters a turn, which is
@@ -230,6 +244,14 @@ struct Coverage
     int hastedTurns = 0;     // of them, faster than its build
     int pacedInTurn = 0;     // with time: a bar's pace changed in the middle of its turn, its creature's having changed
     int hastedInTurn = 0;    // of them, to a faster one
+    int endStops = 0;        // End pressed with an action of the turn's still running: stopped (issue 51)
+    int songsOn = 0;         // a mode that keeps its user at a command turned on by its own order, in its own turn
+    int songsOff = 0;        // and turned off by the player, for nothing, its turn then its own
+    int songsOver = 0;       // and ended from outside (its upkeep gone)
+    int songWaits = 0;       // turns the player plays that waited at their creature's own mode's command
+    int songRefused = 0;     // an action or a move ordered at it, refused with nothing spent
+    int songTurns = 0;       // turns ended "keeping up its mode"
+    int songTurnsEnded = 0;  // of them, the player's, by End
 };
 
 class Arena
@@ -253,8 +275,8 @@ class Arena
     Arena(std::uint64_t seed, Coverage &coverage, bool strays = false, bool choices = false)
         : rng_(seed), reach_(seed ^ 0x22EAC4ull), waits_(seed ^ 0x3A175ull), notice_(seed ^ 0x29A11ull),
           asks_(seed ^ 0x45C5ull), burrows_(seed ^ 0x44B0ull), chooses_(seed ^ 0x46C4ull), paces_(seed ^ 0x49FA57ull),
-          settings_(RandomSettings(rng_)), world_(settings_, RandomFight(rng_), seed), coverage_(coverage),
-          runners_(strays), choices_(choices)
+          sings_(seed ^ 0x5150ull), settings_(RandomSettings(rng_)), world_(settings_, RandomFight(rng_), seed),
+          coverage_(coverage), runners_(strays), choices_(choices)
     {
         // The engine's perception says of these that they perceive nobody
         // to fight; the party perceives them.
@@ -263,6 +285,17 @@ class Arena
             if (strays && c.side == Side::Enemy && Chance(notice_, 0.5))
             {
                 c.perception = Unnoticing();
+            }
+        }
+        // And one in ten comes into the fight with a song on that keeps its
+        // singer at the song's own command (20; issue 51), whoever it is: a
+        // party member, an ally, an enemy. In the fights with strays, on a
+        // stream of its own.
+        for (Creature &c : world_.creatures)
+        {
+            if (strays && Chance(sings_, 0.1))
+            {
+                c.modes.insert(kSong);
             }
         }
         world_.record = false;
@@ -394,6 +427,20 @@ class Arena
                 // Lost only once the hold has outlasted the bar (13).
                 Must(world_.machine.View().timeLeftMs == 0, "a turn lost to a hold with time left on its bar");
             }
+            // One at its own mode's command is not held (20): no hold is
+            // begun for it, whatever else the engine has laid on it.
+            if (line.find(" is held by an effect's command, ") != std::string_view::npos)
+            {
+                Must(!Sings(world_.Current()), "one at its own mode's command taken for held by an effect");
+            }
+            if (line.find(" is at its own mode's command (ability ") != std::string_view::npos)
+            {
+                ++coverage_.songWaits;
+            }
+            if (line.find(" is stopped: its turn was ended while it ran") != std::string_view::npos)
+            {
+                ++coverage_.endStops;
+            }
             // A hold let go within the turn (13): with time, what it ran is
             // gone from the bar, whatever else the turn paid as it began (the
             // debt of a kept action). On the machine's clock, which runs at
@@ -436,9 +483,11 @@ class Arena
                     coverage_.pacedTurns += rate != 1.0f ? 1 : 0;
                     coverage_.hastedTurns += rate > 1.0f ? 1 : 0;
                 }
+                // (Not one at its own mode's command, whatever else the
+                // engine has laid on it: it is not held, 20.)
                 const auto found = tasks_.find(world_.Current());
                 heldAtStart_ = found != tasks_.end() && found->second.type == CommandType::ExecuteEffect &&
-                               world_.Get(world_.Current()).condition == Condition::None;
+                               world_.Get(world_.Current()).condition == Condition::None && !Sings(world_.Current());
                 heldAtStartMs_ = 0;
                 heldPaidDue_ = heldAtStart_; // until the machine says it free: a frame or two after it is
                 turnBeganAtMs_ = turnRunMs_; // a padded round's wait came before
@@ -553,7 +602,7 @@ class Arena
                 FollowTurn();
                 const auto found = tasks_.find(world_.Current());
                 heldAtStart_ = found != tasks_.end() && found->second.type == CommandType::ExecuteEffect &&
-                               world_.Get(world_.Current()).condition == Condition::None;
+                               world_.Get(world_.Current()).condition == Condition::None && !Sings(world_.Current());
                 heldAtStartMs_ = 0;
                 heldPaidDue_ = heldAtStart_;
                 turnBeganAtMs_ = turnRunMs_;
@@ -827,6 +876,17 @@ class Arena
         {
             return;
         }
+        // Nor does the script of one at its own mode's command queue
+        // anything (20): the game's scripts run no AI for a creature that is
+        // at a command ("Do not run any AI if the creature is doing something
+        // right now": ai_main_h_2.nss), and a cutscene does not walk a bard
+        // that sings. The player's orders for it come, and are judged
+        // (below). With no draw: nobody sang before there were songs.
+        const bool sings = Sings(id);
+        if (sings && source == Source::Script)
+        {
+            return;
+        }
         FollowTurn();
         const bool active = world_.machine.Active();
         const ObjectId current = world_.Current();
@@ -971,6 +1031,19 @@ class Arena
                 ++coverage_.turnedAway;
             }
         }
+        // At its own mode's command, on its own turn (20): an action or a
+        // move is refused before anything is spent. The game would queue it
+        // behind the mode's command, to be carried out when the mode ends, in
+        // whoever's turn that is. (The machine has looked at it since the
+        // mode came on: a creature turns one on by an order of its own turn,
+        // and the arena gives it no other in that frame.)
+        if (sings && active && id == current && (kind == CommandKind::Action || kind == CommandKind::Move))
+        {
+            Must(verdict == Verdict::Block, "an action or a move let through for one at its own mode's command");
+            Must(world_.machine.View().timeLeftMs == timeLeft,
+                 "an order refused one at its own mode's command took time of its bar");
+            ++coverage_.songRefused;
+        }
         if (verdict == Verdict::Conjure)
         {
             Must(active && conjures, "a spell given to the engine to conjure that was none");
@@ -992,6 +1065,14 @@ class Arena
         if (active && kind == CommandKind::Action)
         {
             Must(id != current || timeLeft > 0, "an action let through with no time left");
+        }
+        // What is let through for one at its own mode's command (what
+        // costs nothing; what the engine does to it is below) does not run
+        // while the mode is on: World binds it at the mode's command, and
+        // nothing of it is the arena's to play out.
+        if (sings && kind != CommandKind::Involuntary)
+        {
+            return;
         }
         Task task{item ? CommandType::UseItem : type};
         switch (type)
@@ -1056,6 +1137,10 @@ class Arena
         {
             return; // nor one that perceives nobody to fight: it has nobody to choose
         }
+        if (Sings(id))
+        {
+            return; // nor one at its own mode's command: its script runs no AI for a creature at a command
+        }
         if (c.side != Side::Party && !world_.InCombat(id))
         {
             // Nor one the game does not have in combat, enemy or ally: the
@@ -1086,6 +1171,14 @@ class Arena
             {
                 Try(id, CommandType::Attack, Source::Script);
             }
+            return;
+        }
+        // Now and then its tactics open with the song (20), on its own turn:
+        // free, and from the next frame the song's command has it, its turn
+        // spent on it. On the songs' own stream, in the fights with strays.
+        if (runners_ && world_.machine.Active() && id == world_.Current() && Chance(sings_, 0.03))
+        {
+            SwitchSong(id, Source::Script);
             return;
         }
         const double roll = Unit(rng_);
@@ -1176,6 +1269,7 @@ class Arena
             Must(!NothingToFight(world_.Get(e.target).side, world_.Get(e.target).perception),
                  "one the game does not have in combat, nobody for it to fight, told to choose: it has no turn");
             Must(!world_.Get(e.target).inactive, "one the game has made inactive told to choose: it has no turn");
+            Must(!Sings(e.target), "one at its own mode's command told to choose: its turn is spent on the mode");
             FollowTurn();
             told_ = e.target;
             break;
@@ -1369,9 +1463,82 @@ class Arena
             Wandering();
             Burrowing();
             Pacing();
+            Singing();
         }
         Player();
         Happenings();
+    }
+
+    // At its own mode's command, as the world has it (20; issue 51): a song
+    // on that binds its singer, while it stands in the world.
+    bool Sings(ObjectId id) const
+    {
+        return id != kNoObject && world_.OwnMode(id) != kNoMode;
+    }
+
+    // The song turned on, or off if it is on, by an order of its creature's
+    // own turn: free either way, if it is taken at all (not in a turn that
+    // is over: an action kept, an AI that has passed). Turned on, the song's
+    // command has its singer from the next frame, and nothing more is
+    // ordered it in this one. Turned off, the order plays out a moment and
+    // the turn is its creature's.
+    void SwitchSong(ObjectId id, Source source)
+    {
+        const bool on = world_.Get(id).modes.contains(kSong);
+        const std::uint32_t bar = world_.machine.View().timeLeftMs;
+        if (world_.Switch(id, source, kSong) != Verdict::Allow)
+        {
+            return;
+        }
+        Must(id == world_.Current(), "a mode switched out of its creature's turn");
+        Must(world_.machine.View().timeLeftMs == bar, "switching a mode took time of the bar");
+        if (!on)
+        {
+            ++coverage_.songsOn;
+            return;
+        }
+        ++coverage_.songsOff;
+        Task task{CommandType::UseAbility};
+        task.workMs = 200;
+        tasks_[id] = task;
+    }
+
+    // Now and then a song ends by itself (its singer's stamina gone to its
+    // upkeep), in anyone's turn: its command with it, and its singer's AI
+    // chooses again, as a command's end has it. On the songs' own stream.
+    void Singing()
+    {
+        if (!runners_ || !world_.machine.Active())
+        {
+            return;
+        }
+        for (Creature &c : world_.creatures)
+        {
+            if (!c.modes.contains(kSong) || c.down || !c.exists || !Chance(sings_, 0.0006))
+            {
+                continue;
+            }
+            c.modes.erase(kSong);
+            ++coverage_.songsOver;
+            // (Out of the world it was at no command: nothing to end.)
+            if (c.inactive)
+            {
+                continue;
+            }
+            // (Whatever the engine had laid on it besides goes on: the
+            // stand-in's word for that is put back.)
+            if (const auto task = tasks_.find(c.id); task != tasks_.end())
+            {
+                c.busy = true;
+                c.current = task->second.type;
+                continue;
+            }
+            world_.Finish(c.id);
+            if (world_.machine.Order().Find(c.id) != nullptr)
+            {
+                Decide(c.id, true);
+            }
+        }
     }
 
     // Now and then Haste, a salve or a slow is put on one of the fight, or
@@ -1766,6 +1933,12 @@ class Arena
                 tasks_.erase(found);
                 continue;
             }
+            // (At its own mode's command nothing of its own runs, 20: only
+            // what the engine has laid on it besides.)
+            if (Sings(id) && Classify(task.type) != CommandKind::Involuntary)
+            {
+                continue;
+            }
             if (task.walk > 0.0f)
             {
                 // At its build's pace times its Haste and slows as they are
@@ -1982,6 +2155,18 @@ class Arena
     void PressPause()
     {
         const bool holding = world_.machine.Active();
+        // Taken up for a turn the player plays (21): that turn is then over
+        // within its settling, whatever its creature is at (Check).
+        const ObjectId current = world_.Current();
+        const Phase phase = world_.machine.GetPhase();
+        const bool playing = phase == Phase::AwaitingOrder || phase == Phase::Dispatching ||
+                             phase == Phase::Executing || phase == Phase::Settling;
+        if (holding && playing && current != kNoObject && PlayerControls(current) && !endAsked_)
+        {
+            FollowTurn();
+            endAsked_ = turn_;
+            endAskedFrames_ = 0;
+        }
         Must(world_.machine.OnEndTurn() == holding,
              "End turn taken when no fight holds the world, or not when one does");
     }
@@ -2023,6 +2208,17 @@ class Arena
         }
         if (phase != Phase::AwaitingOrder)
         {
+            return;
+        }
+        // The song (20), in the fights with strays and on its own stream:
+        // now and then the player turns it on, which is free, and the turn
+        // then waits at it; with it on, three times in ten the player turns
+        // it off, free again, and has the turn to act with. Else the player
+        // goes on as on any turn: an action or a move, refused; End, which
+        // sings on and spends the turn; the rest.
+        if (runners_ && (Sings(current) ? Chance(sings_, 0.3) : Chance(sings_, 0.04)))
+        {
+            SwitchSong(current, Source::Player);
             return;
         }
         const double roll = Unit(rng_);
@@ -2175,6 +2371,7 @@ class Arena
             }
             turnOpen_ = false;
             begunOf_ = kNoObject; // put off: it begins again when it comes (18)
+            endAsked_.reset();    // and an End pressed beside the delay went with it (21)
             ++coverage_.delays;
             break;
         case EventKind::TurnStarted:
@@ -2250,9 +2447,35 @@ class Arena
         case EventKind::TurnEnded: {
             turnsThisFrame_.insert(e.who);
             const bool wasOpen = std::exchange(turnOpen_, false);
+            const bool players = PlayerControls(e.who); // as the turn began (18)
             begunOf_ = kNoObject; // no turn is under way: the next begins by what is chosen then (18)
             Must(EndedByItsActor(e.detail).has_value(), "a turn ended for a reason core/TurnEnd.h does not class");
             endedWhy_[e.who] = e.detail;
+            // No clock of the mod's ends a turn the player plays (20).
+            if (e.detail == "took too long")
+            {
+                Must(!players, "a turn the player plays ended as having taken too long");
+            }
+            // Nor is a turn lost to its creature's own mode's command (20).
+            if (e.detail == "held by an effect")
+            {
+                Must(!Sings(e.who), "a turn lost to its creature's own mode's command, as to a hold");
+            }
+            // Spent on its creature's own mode (20): only the turn of one at
+            // its own mode's command ends so, and the player's only by End.
+            const bool ended = std::exchange(endAsked_, std::nullopt).has_value();
+            if (e.detail == "keeping up its mode")
+            {
+                Must(Sings(e.who), "a turn spent on a mode of its creature's that it is not at the command of");
+                Must(!players || ended, "a turn the player plays spent on its creature's mode with no End pressed");
+                ++coverage_.songTurns;
+                coverage_.songTurnsEnded += players ? 1 : 0;
+            }
+            // And only End ends a turn "ended by the player" (21).
+            if (e.detail == "ended by the player")
+            {
+                Must(players && ended, "a turn ended by the player that the player did not end");
+            }
             // An unaware hostile's turn (11): skipped only while it has
             // noticed nobody, only after its beat was said and is out (of the
             // fight's clock, which runs with its speed), and never waited out
@@ -2319,6 +2542,7 @@ class Arena
         case EventKind::FightOver:
             turnOpen_ = false;
             begunOf_ = kNoObject;
+            endAsked_.reset();
             delayed_.clear();
             break;
         case EventKind::Gone:
@@ -2591,6 +2815,52 @@ class Arena
             const Creature &c = world_.Get(whose);
             Must(!(c.inactive && c.exists && !c.down), "a turn went on for one the game has made inactive");
         }
+        // One at its own mode's command (20), by the same count of frames:
+        // a turn its tactics play is over within a frame or two of its
+        // creature being so, the frame it is found in and the one that
+        // closes it; and a turn the player plays is never "executing" for
+        // it, but waits. Not the beat that skips an unaware hostile's turn,
+        // nor one a condition holds, whose turn that takes (and one with
+        // nobody to fight has none, above).
+        const bool atMode = played && world_.mode == Mode::Combat && whose != kNoObject && beatOf_ != whose &&
+                            Sings(whose) && world_.Get(whose).condition != Condition::Disabled &&
+                            !NothingToFight(world_.Get(whose).side, world_.Get(whose).perception);
+        const bool modeTurn = atMode && !PlayerControls(whose);
+        modeTurnFrames_ = modeTurn && whose == modeTurnOf_ ? modeTurnFrames_ + 1 : (modeTurn ? 1 : 0);
+        modeTurnOf_ = modeTurn ? whose : kNoObject;
+        Must(modeTurnFrames_ <= 2, "a turn its tactics play went on for one at its own mode's command");
+        const bool modeExec = atMode && PlayerControls(whose) && phase == Phase::Executing;
+        modeExecFrames_ = modeExec && whose == modeExecOf_ ? modeExecFrames_ + 1 : (modeExec ? 1 : 0);
+        modeExecOf_ = modeExec ? whose : kNoObject;
+        Must(modeExecFrames_ <= 1, "a turn the player plays stood at executing for its creature's own mode's command");
+        // And while such a turn waits, nothing of its bar is taken (20).
+        // (The view is asked for only in such a frame: it is every card of
+        // the fight, and asked for in every frame of every fight it made the
+        // fights take twice as long.)
+        const bool modeWait = atMode && PlayerControls(whose) && phase == Phase::AwaitingOrder;
+        if (modeWait)
+        {
+            const std::uint32_t barNow = world_.machine.View().timeLeftMs;
+            Must(!(modeWaitOf_ == turn_ && barNow < modeBar_),
+                 "a turn waiting at its creature's own mode's command had time taken of its bar");
+            modeBar_ = barNow;
+        }
+        modeWaitOf_ = modeWait ? turn_ : std::pair{0, kNoObject};
+        // End pressed on a turn the player plays ends it (21): at once, or
+        // as the world settles after a command of its creature's that was
+        // over (settle_ms of the fight's clock, which runs at its speed).
+        // Counted in the frames the machine steps the turn in: not under a
+        // menu or in a conversation, which the turn outlasts.
+        if (phase == Phase::Idle || (endAsked_ && *endAsked_ != turn_))
+        {
+            endAsked_.reset();
+        }
+        if (endAsked_ && played && world_.mode == Mode::Combat)
+        {
+            const auto settle =
+                static_cast<int>(std::ceil(static_cast<float>(settings_.settleMs) / (kFrameMs * settings_.fightSpeed)));
+            Must(++endAskedFrames_ <= settle + 8, "a turn the player ended with End went on");
+        }
     }
 
     Rng rng_;
@@ -2601,6 +2871,7 @@ class Arena
     Rng burrows_; // whom the game makes inactive, and for how long (Burrowing; issue 44): its own stream
     Rng chooses_; // whose tactics the player chooses to play its turns, and when (Choosing; issue 46): its own stream
     Rng paces_;   // on whom Haste or a slow is put, or ends, and when (Pacing; issue 49): its own stream
+    Rng sings_; // who has a song on that keeps it at its command, and when it turns (Singing; issue 51): its own stream
     Settings settings_;
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
     std::set<ObjectId> secondsKnown_;             // held with seconds the machine could read, and not yet ended by it
@@ -2654,6 +2925,16 @@ class Arena
     Phase phaseBefore_ = Phase::Idle; // the machine's phase as the last frame ended
     ObjectId noTurnOf_ = kNoObject;   // the creature whose turn it is, found with no turn to have (16)
     int noTurnFrames_ = 0;            // and for how many frames running
+    ObjectId modeTurnOf_ = kNoObject; // the creature whose tactics' turn it is, found at its own mode's command (20)
+    int modeTurnFrames_ = 0;          // and for how many frames running
+    ObjectId modeExecOf_ = kNoObject; // the one whose turn the player plays, at its mode's command and "executing"
+    int modeExecFrames_ = 0;          // and for how many frames running
+    std::pair<int, ObjectId> modeWaitOf_{0, kNoObject}; // the turn that waited at its creature's mode's command last
+    std::uint32_t modeBar_ = 0;                         // frame, and what its bar had left then
+    // The turn End was pressed on, taken up for a turn the player plays and
+    // not yet over (21), and the frames the machine has stepped it in since.
+    std::optional<std::pair<int, ObjectId>> endAsked_;
+    int endAskedFrames_ = 0;
     bool runners_ = false;            // this fight has combatants that go out of the scan's reach (Wandering)
     bool choices_ = false;            // the player chooses whose tactics play its turns in this fight (Choosing)
     std::map<ObjectId, bool> chosen_; // what was chosen, and for whom (18): the arena's own record
@@ -2678,6 +2959,109 @@ class Arena
 namespace
 {
 
+// What a lot of fights reached, printed where TB_COUNTS is set: what the
+// floors below are measured against (each about a third of it), for when a
+// change sends the fights other ways and they are measured again.
+// `set TB_COUNTS=1& tb_tests "[fights]"`.
+void Count(const Coverage &c, std::uint64_t count, bool strays, bool choices)
+{
+#pragma warning(suppress : 4996) // the C library's getenv: a test's knob, read once
+    const char *wanted = std::getenv("TB_COUNTS");
+    if (wanted == nullptr || *wanted == '\0')
+    {
+        return;
+    }
+    std::printf("%llu fights%s%s: %d turns, %d rounds, %lld frames\n", static_cast<unsigned long long>(count),
+                strays ? ", strays" : "", choices ? ", choices" : "", c.turns, c.rounds, c.frames);
+    const std::vector<std::pair<const char *, int>> counts{
+        {"blockedOutOfTurn", c.blockedOutOfTurn},
+        {"movementCuts", c.movementCuts},
+        {"refunds", c.refunds},
+        {"dispatches", c.dispatches},
+        {"interludes", c.interludes},
+        {"menus", c.menus},
+        {"joiners", c.joiners},
+        {"timeouts", c.timeouts},
+        {"partyWipes", c.partyWipes},
+        {"bledOut", c.bledOut},
+        {"tooFar", c.tooFar},
+        {"vanished", c.vanished},
+        {"stunned", c.stunned},
+        {"lostTurns", c.lostTurns},
+        {"lostOnClock", c.lostOnClock},
+        {"heldByEffect", c.heldByEffect},
+        {"heldFreed", c.heldFreed},
+        {"heldPaid", c.heldPaid},
+        {"speedChanges", c.speedChanges},
+        {"conditionsEnded", c.conditionsEnded},
+        {"cooldownsHeld", c.cooldownsHeld},
+        {"cooldownsReleased", c.cooldownsReleased},
+        {"roundsAged", c.roundsAged},
+        {"ownAged", c.ownAged},
+        {"kept", c.kept},
+        {"landed", c.landed},
+        {"conjured", c.conjured},
+        {"grabs", c.grabs},
+        {"conjureLanded", c.conjureLanded},
+        {"conjureCleared", c.conjureCleared},
+        {"wholeTurns", c.wholeTurns},
+        {"owed", c.owed},
+        {"choseAgain", c.choseAgain},
+        {"rolledOver", c.rolledOver},
+        {"forfeited", c.forfeited},
+        {"unawareTurns", c.unawareTurns},
+        {"noticed", c.noticed},
+        {"noticedInBeat", c.noticedInBeat},
+        {"ranOff", c.ranOff},
+        {"stayedAfar", c.stayedAfar},
+        {"leftUnperceived", c.leftUnperceived},
+        {"cameBack", c.cameBack},
+        {"delays", c.delays},
+        {"delayedTurns", c.delayedTurns},
+        {"unplayed", c.unplayed},
+        {"walkedOnAction", c.walkedOnAction},
+        {"arrivals", c.arrivals},
+        {"heldShares", c.heldShares},
+        {"approaches", c.approaches},
+        {"targetsGone", c.targetsGone},
+        {"turned", c.turned},
+        {"waitsPaid", c.waitsPaid},
+        {"waitsTooLong", c.waitsTooLong},
+        {"turnLimits", c.turnLimits},
+        {"turnedAway", c.turnedAway},
+        {"toldTurnedAway", c.toldTurnedAway},
+        {"gamesOwn", c.gamesOwn},
+        {"noTurns", c.noTurns},
+        {"wentUnder", c.wentUnder},
+        {"cameUp", c.cameUp},
+        {"inactiveTurns", c.inactiveTurns},
+        {"inactiveMidTurn", c.inactiveMidTurn},
+        {"inactiveQueued", c.inactiveQueued},
+        {"choices", c.choices},
+        {"chosenTurns", c.chosenTurns},
+        {"chosenInTurn", c.chosenInTurn},
+        {"choicesForHero", c.choicesForHero},
+        {"paceChanges", c.paceChanges},
+        {"paceInOwnTurn", c.paceInOwnTurn},
+        {"pacedTurns", c.pacedTurns},
+        {"hastedTurns", c.hastedTurns},
+        {"pacedInTurn", c.pacedInTurn},
+        {"hastedInTurn", c.hastedInTurn},
+        {"endStops", c.endStops},
+        {"songsOn", c.songsOn},
+        {"songsOff", c.songsOff},
+        {"songsOver", c.songsOver},
+        {"songWaits", c.songWaits},
+        {"songRefused", c.songRefused},
+        {"songTurns", c.songTurns},
+        {"songTurnsEnded", c.songTurnsEnded},
+    };
+    for (const auto &[name, value] : counts)
+    {
+        std::printf("  %s %d\n", name, value);
+    }
+}
+
 // Plays fights from seed 1 up, and says what they reached.
 Coverage PlayFights(std::uint64_t count, bool strays = false, bool choices = false)
 {
@@ -2690,6 +3074,7 @@ Coverage PlayFights(std::uint64_t count, bool strays = false, bool choices = fal
         Arena arena{seed, coverage, strays, choices};
         arena.Play();
     }
+    Count(coverage, count, strays, choices);
     return coverage;
 }
 
@@ -2720,6 +3105,18 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     // from the world; 876 conditions landed, 62 turns lost to one on the
     // game's clock, 337 conditions ended by the machine; 35 cooldowns
     // released within the fight of 98 held).
+    //
+    // With issue 51 (2026-10-05) these eighty take other courses, and every
+    // floor is still reached. Two things send them there: End pressed in the
+    // middle of an action stops it and ends the turn there, where the turn
+    // went on until the action was over (208 actions stopped so, below); and
+    // in the three fights of ten where an action has two seconds, a turn
+    // the player plays is no longer ended at them. 3285 turns in 672 rounds;
+    // 18,405 turned away out of turn, 117 dispatches, 420 menus, 240
+    // conversations, 142 joiners, 36 fights lost, 280 speed changes, 230
+    // bled out, 96 gone, 803 conditions, 63 turns lost on the game's clock,
+    // 297 conditions ended, 43 cooldowns released of 90 held; and `took too
+    // long` 127 times where it was 158, all of them turns an AI played (20).
     CHECK(coverage.blockedOutOfTurn > 6000);
     CHECK(coverage.dispatches > 33);
     CHECK(coverage.menus > 145);
@@ -2727,6 +3124,9 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     CHECK(coverage.joiners > 49);
     CHECK(coverage.partyWipes > 12);
     CHECK(coverage.timeouts > 50);
+    // End pressed with an action of the turn's still running, and the action
+    // stopped (21).
+    CHECK(coverage.endStops > 69);
     CHECK(coverage.speedChanges > 95);
     CHECK(coverage.bledOut > 80);
     CHECK(coverage.vanished > 27);
@@ -2910,6 +3310,32 @@ TEST_CASE("random fights with hostiles unaware and combatants out of reach keep 
         // 230 and 279 since issue 44; 247 and 241 since issue 49).
         CHECK(coverage.rolledOver > 90);
         CHECK(coverage.forfeited > 54);
+        // And songs that keep their singers at a command (20; issue 51,
+        // 2026-10-05), one fighter in ten coming with one on: 58 turned on
+        // by their singer's own order in its turn, 23 turned off by the
+        // player for nothing, 27 over by themselves; 74 turns the player
+        // plays that waited at one, 40 actions and moves ordered there and
+        // refused; and 138 turns spent on one, 21 of them the player's, by
+        // End, and 117 their tactics', at once. And 75 actions stopped by End
+        // (21). With them, and with End stopping an action and no limit on a
+        // player's action, the fights take other courses once more, and every
+        // floor above is still reached (68 turns skipped as unaware, 58 that
+        // noticed, 15 in their beat; 141 out of reach, 144 kept, 58 out, 60
+        // back; 21 turn limits; 358 the game's own, 28 with no turn; 127
+        // under, 116 up, 316 inactive turns, 56 in the middle, 69 queued; 46
+        // turned away, 45 told; 240 put on or ended, 113 in their creature's
+        // own turn, 390 turns begun at a changed pace, 172 the faster, 94
+        // bars changed in their turn, 47 to a faster one; 250 turns rolled
+        // time over, 235 left time that was not saved).
+        CHECK(coverage.songsOn > 19);
+        CHECK(coverage.songsOff > 7);
+        CHECK(coverage.songsOver > 9);
+        CHECK(coverage.songWaits > 24);
+        CHECK(coverage.songRefused > 13);
+        CHECK(coverage.songTurns > 46);
+        CHECK(coverage.songTurnsEnded > 7);
+        CHECK(coverage.songTurns - coverage.songTurnsEnded > 39); // and their tactics'
+        CHECK(coverage.endStops > 25);
     }
 }
 
@@ -2936,6 +3362,12 @@ TEST_CASE("random fights with the party's tactics chosen and changed in them kee
         CHECK(coverage.choicesForHero > 115);
         CHECK(coverage.interludes > 30);
         CHECK(coverage.delayedTurns > 5);
+        // With issue 51 these thirty take other courses too (End stopping an
+        // action, 65 times, and no limit on a player's action), and the
+        // floors above are still reached: 510 choices, 126 turns begun by
+        // one, 58 made in a companion's own turn, 374 asked for the hero;
+        // among 98 conversations and 19 turns put off and taken.
+        CHECK(coverage.endStops > 21);
     }
 }
 

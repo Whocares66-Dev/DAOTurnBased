@@ -33,6 +33,12 @@ constexpr std::array kTurnEnds{
     TurnEnd{"charging", true},
     TurnEnd{"its spell conjuring", true},
     TurnEnd{"its spell cast at once", true},
+    // And a turn spent on a mode of its creature's own that keeps it at a
+    // command while it is on (Captivating Song; issue 51): the player pressed
+    // End and the song goes on, or its tactics have the mode on. Its actor's
+    // doing either way, and the machine spends the bar on the mode as it
+    // ends the turn so (TurnMachine::SpentOnItsMode): nothing is left.
+    TurnEnd{"keeping up its mode", true},
 
     // Not its actor's doing: nothing rolls over.
     //
@@ -48,8 +54,10 @@ constexpr std::array kTurnEnds{
     TurnEnd{"inactive", false},
     // Told its turn had come, its AI queued nothing within ai_think_ms.
     TurnEnd{"chose nothing", false},
-    // Its command ran past max_action_ms and was stopped; or, a turn its AI
-    // played, the turn itself ran past max_turn_ms and was ended (issue 38).
+    // A turn its AI played: its command ran past max_action_ms and was
+    // stopped, or the turn itself ran past max_turn_ms and was ended (issue
+    // 38). Never a turn the player plays, which no clock of the mod's ends
+    // (issue 51).
     TurnEnd{"took too long", false},
     // An AI whose actions were given back twice: stopped by the mod, the
     // time of what it could not do back in its bar.

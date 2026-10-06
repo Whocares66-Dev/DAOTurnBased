@@ -104,6 +104,10 @@ static_assert(static_cast<int>(CommandType::SwitchWeaponSets) ==
 static_assert(static_cast<int>(CommandType::Turn) == static_cast<int>(dao::core::CommandType::Turn));
 static_assert(static_cast<int>(CommandType::Fly) == static_cast<int>(dao::core::CommandType::Fly));
 static_assert(kNoObject == dao::kInvalidObject);
+// The two kinds of effect by which a mode keeps its user at a command
+// (core/Rules.h, KeepsItsCreatureAtACommand; issue 51).
+static_assert(kEffectSinging == static_cast<std::int32_t>(dao::script::EffectType::Singing));
+static_assert(kEffectFeignDeath == static_cast<std::int32_t>(dao::script::EffectType::FeignDeath));
 
 namespace
 {
@@ -1081,6 +1085,35 @@ void SayEffectCommand(ObjectId id, const dao::Command &command, const std::vecto
                   said.empty() ? "none left" : said, parameters);
 }
 
+// The creature whose turn it is, found at its own mode's command (core:
+// ActorObservation::ownMode; issue 51): said once as it is found so, and
+// again when it is found so after it was not, or of another mode: on each of
+// its turns while the mode is on, the frame looking at another creature
+// between. Which mode by its ability, and which of its effects keeps the
+// creature there, by its kind. Nothing on the screen says it yet, and what
+// the machine then does with the turn (waits for the player, or spends it on
+// the mode) is read against this line in a play test's log. Not yet seen in
+// play.
+void SayOwnMode(ObjectId id, std::int32_t mode, std::int32_t effectType)
+{
+    static ObjectId lastWho = dao::kInvalidObject;
+    static std::int32_t lastMode = kNoMode;
+    if (id == lastWho && mode == lastMode)
+    {
+        return;
+    }
+    lastWho = id;
+    lastMode = mode;
+    if (mode == kNoMode)
+    {
+        return;
+    }
+    spdlog::info("{:#x} is at its own mode's command, not held: its ability {} ({}) is a mode and is on, and the "
+                 "effect of type {} ({}) that it put on itself by it keeps it there",
+                 id, mode, Utf8(dao::abilities::Name(mode).value_or(std::wstring{L"no name read"})), effectType,
+                 dao::script::Name(static_cast<dao::script::EffectType>(effectType)));
+}
+
 } // namespace
 
 ActorObservation Bridge::Actor(ObjectId id)
@@ -1093,6 +1126,7 @@ ActorObservation Bridge::Actor(ObjectId id)
         return actor;
     }
     actor.down = api::IsDead(id) != 0;
+    std::int32_t ownModeEffect = 0; // the kind of effect its own mode keeps it at a command by, if one does
     if (const dao::script::OwnedCommand current = api::GetCurrentCommand(id))
     {
         actor.current = static_cast<CommandType>(api::GetCommandType(*current.get()));
@@ -1133,8 +1167,27 @@ ActorObservation Bridge::Actor(ObjectId id)
             // who did and the seconds it has left (DAOLib's
             // dao::effects::On). For the machine's lines: which of them the
             // command is of is not read (the diagnostic above is to show).
+            //
+            // And whether the command is its own mode's, not a hold (core:
+            // ActorObservation::ownMode, Rules.h's OwnModeAtItsCommand;
+            // issue 51): by an effect standing on it that it put on itself,
+            // by an ability that is a mode of its own and on, of a kind that
+            // keeps its creature at a command (Captivating Song's singing
+            // effect, Feign Death's). The mode is asked about only for an
+            // effect that passes the two cheap tests, so a creature with no
+            // such effect costs no table read and no script call more.
+            std::vector<EffectOn> standing;
             for (const dao::effects::Standing &effect : dao::effects::On(id))
             {
+                EffectOn on;
+                on.type = static_cast<std::int32_t>(effect.type);
+                on.ability = effect.ability;
+                on.creator = effect.creator;
+                on.modeOn = on.creator == id && KeepsItsCreatureAtACommand(on.type) && on.ability > 0 &&
+                            dao::gda::GetInt(dao::script::Table::AbilitiesTalents, on.ability, "UseType").value_or(0) ==
+                                kUseTypeMode &&
+                            api::IsModalAbilityActive(id, on.ability) != 0;
+                standing.push_back(on);
                 if (!(effect.remaining > 0.0f))
                 {
                     continue;
@@ -1150,6 +1203,14 @@ ActorObservation Bridge::Actor(ObjectId id)
             if (actor.effects.empty())
             {
                 actor.effects = "no temporary effect stands on it";
+            }
+            actor.ownMode = OwnModeAtItsCommand(id, standing);
+            if (actor.ownMode != kNoMode)
+            {
+                const auto own = std::ranges::find_if(standing, [&](const EffectOn &on) {
+                    return on.modeOn && on.ability == actor.ownMode && KeepsItsCreatureAtACommand(on.type);
+                });
+                ownModeEffect = own != standing.end() ? own->type : 0;
             }
         }
         if (actor.current == CommandType::Attack)
@@ -1196,6 +1257,7 @@ ActorObservation Bridge::Actor(ObjectId id)
             }
         }
     }
+    SayOwnMode(id, actor.ownMode, ownModeEffect);
     // Busy with a command of its own, or with one queued and not yet begun
     // (core: ActorObservation::busy says what the queue's half is for).
     actor.busy = actor.current != CommandType::Invalid || api::GetCommandQueueSize(id) > 0;

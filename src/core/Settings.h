@@ -55,7 +55,7 @@ struct Settings
     int settleMs = 400;           // the world runs on this long after an action ends
     int aiThinkMs = 1500;         // an AI creature that has chosen nothing by then passes
     int aiFollowUpMs = 500;       // after its action, how long an AI creature has to choose a move
-    int maxActionMs = 12000;      // an action still running then is stopped
+    int maxActionMs = 12000;      // on a turn an AI plays, an action still running then is stopped (issue 51)
     int maxTurnMs = 30000;        // a turn its AI plays still going then is ended (issue 38)
     int orderRunMs = 0;           // an order that queued nothing while paused: run the world this long (0: off)
     // A hold whose seconds the game does not say takes this many turns of

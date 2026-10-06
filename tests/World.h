@@ -15,6 +15,7 @@
 #include <functional>
 #include <numbers>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -24,6 +25,12 @@
 
 namespace tb::test
 {
+
+// A mode that keeps its user at a command of its own while it is on (issue
+// 51; core/Rules.h, OwnModeAtItsCommand): Captivating Song, the game's
+// ABILITY_TALENT_CAPTIVATE. Every other mode leaves its user free (Shield
+// Wall): World::binding says which do.
+inline constexpr std::int32_t kSong = 1000;
 
 struct Creature
 {
@@ -115,6 +122,15 @@ struct Creature
     // creature not facing the aim, which its facing above says). A fact a
     // case gives, as DAOLib's TurnTo gives the game layer its `stalls`.
     bool stalled = false;
+    // The modes it has on (sustained abilities), as the scripts'
+    // IsModalAbilityActive answers: a sustained ability's use let through
+    // turns its mode on, or off if it was on (World::Queue), and a case may
+    // put one on from the start. Nothing else turns one off: not the
+    // machine's clearing of its commands, and so no forced end of its turn
+    // (issue 51; the user: "Yeah, sustained abilities should not be ended").
+    // One of them that binds (World::binding) keeps it at an effect's
+    // command of the mode's own for as long as it is on (World::Sings).
+    std::set<std::int32_t> modes;
 };
 
 // A hostile the party perceives that the game does not have in combat and
@@ -229,11 +245,51 @@ class World
         return Get(id).perception.inCombat;
     }
 
+    // The mode of its own that keeps a creature at its command now (issue
+    // 51): one it has on that binds, while it stands in the world. kNoMode
+    // with none.
+    std::int32_t OwnMode(const Creature &c) const
+    {
+        if (c.modes.empty() || !c.exists || c.down || c.inactive)
+        {
+            return kNoMode;
+        }
+        const auto bound = std::ranges::find_if(c.modes, [&](std::int32_t on) { return binding.contains(on); });
+        return bound != c.modes.end() ? *bound : kNoMode;
+    }
+    std::int32_t OwnMode(ObjectId id) const
+    {
+        return OwnMode(Get(id));
+    }
+
+    // What the engine does with a creature whose own mode binds it: keeps it
+    // at the mode's effect's command, in front of whatever else is queued
+    // for it, for as long as the mode is on. So from the frame after its own
+    // order turned the mode on, through anything ordered meanwhile (which
+    // does not run: in real time a move ordered so "moved her 0.0 m and an
+    // attack order struck nothing"), and through a clearing of its commands
+    // (in play the song went on after `clear commands`), until an order
+    // turns the mode off.
+    void Bind(Creature &c)
+    {
+        if (OwnMode(c) == kNoMode)
+        {
+            return;
+        }
+        c.busy = true;
+        c.moving = false;
+        c.current = CommandType::ExecuteEffect;
+    }
+
     // One frame: the machine asks, the world answers, the machine steps, the
     // world does what it said.
     void Frame(std::uint32_t ms = 16)
     {
         now += ms;
+        for (Creature &c : creatures)
+        {
+            Bind(c);
+        }
         const Needs needs = machine.WhatToObserve(now);
         Observation obs;
         obs.nowMs = now;
@@ -282,9 +338,14 @@ class World
         if (needs.actor != kNoObject)
         {
             const Creature &c = Get(needs.actor);
-            obs.actor = ActorObservation{c.id,         c.exists,   c.down,        c.busy,       c.moving,
-                                         c.current,    c.position, c.conjureHeld, c.timersHeld, c.approaching,
-                                         c.perception, c.effects,  c.heldSeconds, c.heldKnown,  c.inactive};
+            // (Its own mode's command, where that is what it is at: as the
+            // game layer tells it from another's hold, by the effects
+            // standing on it. Here, by the mode itself.)
+            const bool atAnEffect = c.busy && c.current == CommandType::ExecuteEffect;
+            obs.actor = ActorObservation{c.id,          c.exists,      c.down,       c.busy,
+                                         c.moving,      c.current,     c.position,   c.conjureHeld,
+                                         c.timersHeld,  c.approaching, c.perception, c.effects,
+                                         c.heldSeconds, c.heldKnown,   c.inactive,   atAnEffect ? OwnMode(c) : kNoMode};
         }
         for (const ObjectId id : needs.statuses)
         {
@@ -366,6 +427,13 @@ class World
         request.sustained = sustained;
         request.sustainedOn = on;
         return Queue(request);
+    }
+
+    // A mode switched: on, or off if its creature has it on, as the gate
+    // reads that of the creature (the scripts' IsModalAbilityActive).
+    Verdict Switch(ObjectId id, Source source, std::int32_t ability)
+    {
+        return UseAbility(id, source, ability, 0.0f, true, Get(id).modes.contains(ability));
     }
 
     // The way from a creature to where the engine aims it at another: the
@@ -479,6 +547,18 @@ class World
             Creature &started = Get(id);
             started.busy = true;
             running[id] = request;
+            // A sustained ability's use switches its mode (Creature::modes).
+            if (type == CommandType::UseAbility && request.sustained)
+            {
+                if (request.sustainedOn)
+                {
+                    started.modes.erase(request.ability);
+                }
+                else
+                {
+                    started.modes.insert(request.ability);
+                }
+            }
             if (started.inactive)
             {
                 started.queued = type; // queued, and not begun (SetActive)
@@ -561,6 +641,8 @@ class World
         return Queue(request);
     }
 
+    // A creature's command over, or cleared: it is at nothing. But for one
+    // its own mode binds, which is at the mode's command still (Bind).
     void Finish(ObjectId id)
     {
         Creature &c = Get(id);
@@ -568,6 +650,7 @@ class World
         c.moving = false;
         c.current = CommandType::Invalid;
         c.queued = CommandType::Invalid;
+        Bind(c);
     }
 
     // The engine fails a creature's command without acting, by its own name
@@ -666,6 +749,9 @@ class World
     // its own target gone (src/game/Bridge.cpp, ReleaseCast): a test's own,
     // or from where the two stand, hostile and in sight, in reach within this.
     std::function<Foe(ObjectId attacker, ObjectId other)> onMeasure;
+    // The modes that keep their user at a command while they are on (kSong;
+    // a case may name others, or none).
+    std::unordered_set<std::int32_t> binding{kSong};
     float reach = 2.05f;                               // the stand-in's own: the game layer asks the engine
     std::vector<std::pair<ObjectId, ObjectId>> turned; // kept attacks turned on another: whose, and on whom
     // Whom the gate faced at its target before its command, the engine
