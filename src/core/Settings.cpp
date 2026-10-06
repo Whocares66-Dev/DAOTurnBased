@@ -465,8 +465,9 @@ ai_think_ms = 1500
 ; After its action, how long an AI creature has to choose a move.
 ai_follow_up_ms = 500
 ; On a turn an AI plays, an action still running after this long is stopped
-; and the turn ends. Your own turns have no such limit: End stops an action
-; that never ends.
+; and the turn ends: one that stands still, not one the game is still playing
+; out (a long finishing blow). Your own turns have no such limit: End stops
+; an action that never ends.
 max_action_ms = 12000
 ; A turn an AI plays that is still going after this long is ended, whatever
 ; it is doing. In play such a turn takes two or three seconds, and the

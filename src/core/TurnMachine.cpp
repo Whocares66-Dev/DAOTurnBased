@@ -2672,6 +2672,11 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     {
         return;
     }
+    // The step its command is at, as the engine times it: looked at with
+    // every step while it acts, its command over or not, so that the look
+    // after a command's end sees no step and nothing is taken to advance
+    // from it into the next (issue 28).
+    const std::uint32_t notCounted = StepTimeNotCounted(actor);
     // A spell given to the engine to conjure: the turn is over once its
     // caster stands at the held conjure, the rest of its time owed to its
     // next turn. Over before it got there (cast at once, a conjure of no
@@ -2991,6 +2996,28 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         // the bar, above, and the effect is the engine's to end.)
         const std::uint32_t limit =
             Patience(static_cast<std::uint32_t>(settings_.maxActionMs)) * (ownEffectSince_ ? kOwnEffectPatience : 1);
+        // The time the engine has the action at a timed step that is
+        // advancing is not counted by the limit (issue 28; core/TimedStep.h:
+        // an ogre's death blow, a step of 12.5 s by the engine's own count,
+        // was stopped half a second before its end and its turn lost). Not
+        // deferred and judged after: so it was first built, and in play the
+        // blow was stopped a frame after its timed step ended, the command
+        // still at its tail and the count already spent (2026-10-06). What
+        // the limit counts is the time the action stood: before the step,
+        // after it, and while its clock did not move.
+        const std::uint32_t ran = clock_ - executingSince_;
+        const std::uint32_t counted = ran - notCounted;
+        if (ran > limit && counted <= limit && !std::exchange(budget_.stepSaid, true))
+        {
+            const Combatant *current = order_.Current();
+            const StepTime &step = budget_.step.Last();
+            Log(LogLevel::Info,
+                std::format("{} is still at a {} after {} ms: {} ms of that at the engine's own step of {:.2f} s while "
+                            "it advanced ({:.1f} s of it done), which the limit does not count (issue 28)",
+                            current != nullptr ? Utf8(current->name) : std::string{"?"}, Name(actor.current), limit,
+                            notCounted, static_cast<float>(step.durationMs) / 1000.0f,
+                            static_cast<float>(step.elapsedMs) / 1000.0f));
+        }
         // A turn the player plays is never ended by a clock of the mod's
         // (issue 51; the user, 2026-10-05: "I think there probably should
         // not be a time out for the player, unless they're letting tactics
@@ -3000,7 +3027,7 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         // turn stood.
         if (const Combatant *current = order_.Current(); current != nullptr && PlayerControls(*current))
         {
-            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))
+            if (!heldByEffect_ && counted > limit && !std::exchange(budget_.longSaid, true))
             {
                 Log(LogLevel::Info,
                     std::format("{} is still at a {} after {} ms: its turn is the player's, and is not ended for it "
@@ -3012,7 +3039,7 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         // On a turn its tactics play, what it is at is stopped and the turn
         // ended, as at max_turn_ms (TurnTooLong): its commands cleared, and
         // no mode switched off by it.
-        if (!heldByEffect_ && clock_ - executingSince_ > limit)
+        if (!heldByEffect_ && counted > limit)
         {
             fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
             Log(LogLevel::Warn, std::format("still at a {} after {} ms: stopped", Name(actor.current), limit));
@@ -4124,6 +4151,38 @@ std::uint32_t TurnMachine::Patience(std::uint32_t ms) const
 // and was stopped), and ten more took over 10 s. Twelve seconds,
 // max_action_ms's own, would have cut that one and stood within two seconds
 // of the ten.
+// A look at the step the acting creature's command is at, and what of the
+// action's time so far its limit does not count: the time the engine had it
+// at a timed step that advanced (issue 28; core/TimedStep.h). The same time
+// is kept off the turn's limit (TurnTooLong).
+//
+// Each command's own, as its limit is (executingSince_). Not a creature an
+// effect's command holds: a knockback's command has a timed step too, and a
+// hold's bound is the bar. And not without end: a step renewed as it runs (a
+// looping animation, its length pushed ahead again and again) advances for
+// ever, so no more than kStepFree times the limit's own length is left
+// uncounted, of the action and of the turn each.
+std::uint32_t TurnMachine::StepTimeNotCounted(const ActorObservation &actor)
+{
+    if (budget_.stepOf != executingSince_)
+    {
+        budget_.stepOf = executingSince_;
+        budget_.stepFreeMs = 0;
+        budget_.stepSaid = false;
+    }
+    const std::uint32_t advanced = budget_.step.Look(actor.step, clock_);
+    if (!heldByEffect_)
+    {
+        budget_.stepFreeMs = std::min(budget_.stepFreeMs + advanced,
+                                      Patience(static_cast<std::uint32_t>(settings_.maxActionMs)) * kStepFree);
+        budget_.turnFreeMs = std::min(budget_.turnFreeMs + advanced,
+                                      Patience(static_cast<std::uint32_t>(settings_.maxTurnMs)) * kStepFree);
+    }
+    // (A look can reach back before this command began, to the one before
+    // it: never more than the command has run.)
+    return std::min(budget_.stepFreeMs, clock_ - executingSince_);
+}
+
 bool TurnMachine::TurnTooLong(std::vector<Effect> &fx)
 {
     const Combatant *current = order_.Current();
@@ -4133,8 +4192,21 @@ bool TurnMachine::TurnTooLong(std::vector<Effect> &fx)
         return false;
     }
     const std::uint32_t limit = Patience(static_cast<std::uint32_t>(settings_.maxTurnMs));
-    if (clock_ - turnSince_ <= limit)
+    // Not counted: the time the engine had an action of the turn's at a timed
+    // step that advanced (issue 28, as at max_action_ms: StepExecuting,
+    // StepTimeNotCounted). Said once, as the turn first runs past the limit
+    // by the clock and is not ended for it.
+    const std::uint32_t ran = clock_ - turnSince_;
+    const std::uint32_t counted = ran - std::min(ran, budget_.turnFreeMs);
+    if (counted <= limit)
     {
+        if (ran > limit && !std::exchange(budget_.turnStepSaid, true))
+        {
+            Log(LogLevel::Info,
+                std::format("{}'s turn is still going after {} ms: {} ms of that at a step of the engine's own timing "
+                            "while it advanced, which the limit does not count (issue 28)",
+                            Utf8(current->name), limit, budget_.turnFreeMs));
+        }
         return false;
     }
     Log(LogLevel::Warn, std::format("{}'s turn is still going after {} ms, {} of its commands let through: ended",

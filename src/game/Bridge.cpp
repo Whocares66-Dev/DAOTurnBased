@@ -1186,6 +1186,34 @@ void SayEffectCommand(ObjectId id, const dao::Command &command, const std::vecto
                   said.empty() ? "none left" : said, parameters);
 }
 
+// The creature whose turn it is, found at a long step the engine times
+// (issue 28): said at debug once a step, by who, which sub-action and its
+// length, so that a log shows which of the game's actions are long by the
+// engine's own count before the limit's line ever comes (four seconds and
+// more: a person's death blow is 2.0 to 2.3 s, an ogre's 12.5).
+void SayLongStep(ObjectId id, CommandType command, const dao::commands::SubAction &running)
+{
+    constexpr std::int32_t kLong = 4000;
+    static ObjectId lastWho = dao::kInvalidObject;
+    static std::uint32_t lastType = 0;
+    static std::int32_t lastLength = 0;
+    if (running.durationMs < kLong)
+    {
+        return;
+    }
+    if (id == lastWho && running.type == lastType && running.durationMs == lastLength)
+    {
+        return;
+    }
+    lastWho = id;
+    lastType = running.type;
+    lastLength = running.durationMs;
+    spdlog::debug("{:#x}'s {} is at sub-action {}, which the engine times: {} ms long, {} ms of it done{} (issue 28)",
+                  id, Name(command), running.type, running.durationMs, running.elapsedMs,
+                  running.delayMs > 0 ? std::format(", {} ms still to wait before it runs", running.delayMs)
+                                      : std::string{});
+}
+
 // The creature whose turn it is, found at its own mode's command (core:
 // ActorObservation::ownMode; issue 51): said once as it is found so, and
 // again when it is found so after it was not, or of another mode: on each of
@@ -1231,6 +1259,25 @@ ActorObservation Bridge::Actor(ObjectId id)
     if (const dao::script::OwnedCommand current = api::GetCurrentCommand(id))
     {
         actor.current = static_cast<CommandType>(api::GetCommandType(*current.get()));
+        // The step the command is at, where the engine times it: its elapsed
+        // time and its length, whatever the command (the running sub-action,
+        // the first of DAOLib's dao::commands::SubActions; a length of 0 is a
+        // step the engine does not time, or one not begun). The machine's
+        // limits do not count the time an action is at a timed step that
+        // advances (core/TimedStep.h, issue 28: an ogre's death blow is
+        // sub-action 37 with a length of 12,500 ms, measured in play
+        // 2026-10-05 and read here as that 2026-10-06, and was stopped half a
+        // second before its end). One still waiting out its delay has not
+        // begun, and is given as untimed.
+        if (const std::vector<dao::commands::SubAction> steps = dao::commands::SubActions(id); !steps.empty())
+        {
+            const dao::commands::SubAction &running = steps.front();
+            if (running.delayMs <= 0)
+            {
+                actor.step = StepTime{running.elapsedMs, running.durationMs};
+            }
+            SayLongStep(id, actor.current, running);
+        }
         // At an attack: whether its command is still at its approach, as the
         // engine itself has it (the sub-action the command is at). The
         // machine judges an attacker that stands still by this (core:

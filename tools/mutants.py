@@ -85,6 +85,7 @@ PREVIEW = "src/core/Preview.cpp"
 TURNEND = "src/core/TurnEnd.cpp"
 PARTYTACTICS = "src/core/PartyTactics.cpp"
 FACING = "src/core/Facing.cpp"
+TIMEDSTEP = "src/core/TimedStep.cpp"
 TEXT = "src/core/Text.h"
 
 MUTANTS = [
@@ -253,7 +254,7 @@ MUTANTS = [
     Mutant(
         "an action may run forever",
         MACHINE,
-        "        if (!heldByEffect_ && clock_ - executingSince_ > limit)",
+        "        if (!heldByEffect_ && counted > limit)",
         "        if (false)",
     ),
     Mutant(
@@ -302,8 +303,8 @@ MUTANTS = [
     Mutant(
         "limit: a turn an AI plays may go on for ever",
         MACHINE,
-        "    if (clock_ - turnSince_ <= limit)",
-        "    if (true)",
+        "    if (counted <= limit)",
+        "    if (counted <= limit || counted > limit)",
     ),
     Mutant(
         "limit: a turn the player plays is ended at max_turn_ms too",
@@ -500,8 +501,8 @@ MUTANTS = [
     Mutant(
         "max_action_ms stops a hold, and clears the effect's command",
         MACHINE,
-        "        if (!heldByEffect_ && clock_ - executingSince_ > limit)",
-        "        if (clock_ - executingSince_ > limit)",
+        "        if (!heldByEffect_ && counted > limit)",
+        "        if (counted > limit)",
     ),
     Mutant(
         "an AI whose bar a hold spent as it let go is asked to choose with nothing",
@@ -5051,26 +5052,26 @@ MUTANTS = [
     Mutant(
         "limit: a turn the player plays is stopped at max_action_ms, as an AI's is",
         MACHINE,
-        "        if (const Combatant *current = order_.Current(); current != nullptr && PlayerControls(*current))\n        {\n            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))",
-        "        if (const Combatant *current = order_.Current();\n            current != nullptr && PlayerControls(*current) && !actor.busy)\n        {\n            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))",
+        "        if (const Combatant *current = order_.Current(); current != nullptr && PlayerControls(*current))\n        {\n            if (!heldByEffect_ && counted > limit && !std::exchange(budget_.longSaid, true))",
+        "        if (const Combatant *current = order_.Current();\n            current != nullptr && PlayerControls(*current) && !actor.busy)\n        {\n            if (!heldByEffect_ && counted > limit && !std::exchange(budget_.longSaid, true))",
     ),
     Mutant(
         "limit: a turn an AI plays has no limit on an action either",
         MACHINE,
-        "        if (const Combatant *current = order_.Current(); current != nullptr && PlayerControls(*current))\n        {\n            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))",
-        "        if (const Combatant *current = order_.Current(); current != nullptr)\n        {\n            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))",
+        "        if (const Combatant *current = order_.Current(); current != nullptr && PlayerControls(*current))\n        {\n            if (!heldByEffect_ && counted > limit && !std::exchange(budget_.longSaid, true))",
+        "        if (const Combatant *current = order_.Current(); current != nullptr)\n        {\n            if (!heldByEffect_ && counted > limit && !std::exchange(budget_.longSaid, true))",
     ),
     Mutant(
         "limit: a player's action past max_action_ms is said every frame it stands",
         MACHINE,
-        "            if (!heldByEffect_ && clock_ - executingSince_ > limit && !std::exchange(budget_.longSaid, true))",
-        "            if (!heldByEffect_ && clock_ - executingSince_ > limit)",
+        "            if (!heldByEffect_ && counted > limit && !std::exchange(budget_.longSaid, true))",
+        "            if (!heldByEffect_ && counted > limit)",
     ),
     Mutant(
         "limit: a player's second action that stands past max_action_ms is not said, the first having been",
         MACHINE,
-        "    budget_.longSaid = false;\n    executingSince_ = clock_;",
-        "    executingSince_ = clock_;",
+        "    budget_.longSaid = false;\n",
+        "",
     ),
     # Whatever ends a turn by force stops what its creature was at.
     Mutant(
@@ -5096,6 +5097,118 @@ MUTANTS = [
         MACHINE,
         "            if (queued || Classify(actor.current) != CommandKind::Involuntary)",
         "            if (true)",
+    ),
+    # The time the engine has an action at a timed step that advances is not
+    # counted by the limits (issue 28; core/TimedStep.h). The rule: between
+    # two looks, the step had time left and its elapsed time moved.
+    Mutant(
+        "long: a step the engine does not time has time left",
+        TIMEDSTEP,
+        "    return step.durationMs > 0 && step.elapsedMs < step.durationMs;",
+        "    return step.elapsedMs < step.durationMs || step.durationMs <= 0;",
+    ),
+    Mutant(
+        "long: a step at its end still has time left",
+        TIMEDSTEP,
+        "    return step.durationMs > 0 && step.elapsedMs < step.durationMs;",
+        "    return step.durationMs > 0 && step.elapsedMs <= step.durationMs;",
+    ),
+    Mutant(
+        "long: a timed step that stands advances at every look",
+        TIMEDSTEP,
+        "    const bool advanced = HasTimeLeft(last_) && step.elapsedMs != last_.elapsedMs;",
+        "    const bool advanced = HasTimeLeft(last_);\n    (void)step;",
+    ),
+    Mutant(
+        "long: a step with no time left advances if its count moves",
+        TIMEDSTEP,
+        "    const bool advanced = HasTimeLeft(last_) && step.elapsedMs != last_.elapsedMs;",
+        "    const bool advanced = step.elapsedMs != last_.elapsedMs;",
+    ),
+    Mutant(
+        "long: a length pushed ahead under an elapsed time that stands is a move",
+        TIMEDSTEP,
+        "    const bool advanced = HasTimeLeft(last_) && step.elapsedMs != last_.elapsedMs;",
+        "    const bool advanced = HasTimeLeft(last_) && (step.elapsedMs != last_.elapsedMs || step.durationMs != last_.durationMs);",
+    ),
+    Mutant(
+        "long: a step that advanced answers none of the time, and one that stood all of it",
+        TIMEDSTEP,
+        "    return advanced ? since : 0;",
+        "    return advanced ? 0 : since;",
+    ),
+    Mutant(
+        "long: the time since the look before is counted from the watch's first look, not its last",
+        TIMEDSTEP,
+        "    const std::uint32_t since = clock - std::exchange(lookedAt_, clock);",
+        "    const std::uint32_t since = clock - lookedAt_;",
+    ),
+    # What the limits do with it.
+    Mutant(
+        "long: the time an action's timed step advances is counted by max_action_ms",
+        MACHINE,
+        "        const std::uint32_t counted = ran - notCounted;",
+        "        const std::uint32_t counted = ran;",
+    ),
+    Mutant(
+        "long: the time an action's timed step advances is counted by max_turn_ms",
+        MACHINE,
+        "    const std::uint32_t counted = ran - std::min(ran, budget_.turnFreeMs);",
+        "    const std::uint32_t counted = ran;",
+    ),
+    Mutant(
+        "long: a hold's time is not counted while its command's timed step advances",
+        MACHINE,
+        "    if (!heldByEffect_)\n    {\n        budget_.stepFreeMs = std::min(budget_.stepFreeMs + advanced,",
+        "    if (!heldByEffect_ || advanced > 0)\n    {\n        budget_.stepFreeMs = std::min(budget_.stepFreeMs + advanced,",
+    ),
+    Mutant(
+        "long: an action whose step is renewed for ever is never stopped",
+        MACHINE,
+        "Patience(static_cast<std::uint32_t>(settings_.maxActionMs)) * kStepFree);",
+        "Patience(static_cast<std::uint32_t>(settings_.maxActionMs)) * kStepFree * 1000);",
+    ),
+    Mutant(
+        "long: what is left uncounted of an action is once its limit at most, not four times",
+        MACHINE,
+        "Patience(static_cast<std::uint32_t>(settings_.maxActionMs)) * kStepFree);",
+        "Patience(static_cast<std::uint32_t>(settings_.maxActionMs)));",
+    ),
+    Mutant(
+        "long: an AI's turn in an action whose step is renewed for ever never ends",
+        MACHINE,
+        "Patience(static_cast<std::uint32_t>(settings_.maxTurnMs)) * kStepFree);",
+        "Patience(static_cast<std::uint32_t>(settings_.maxTurnMs)) * kStepFree * 1000);",
+    ),
+    Mutant(
+        "long: what one action's step left uncounted is the next action's too",
+        MACHINE,
+        "        budget_.stepFreeMs = 0;\n",
+        "",
+    ),
+    Mutant(
+        "long: that a limit's time went by uncounted is said with every step",
+        MACHINE,
+        "        if (ran > limit && counted <= limit && !std::exchange(budget_.stepSaid, true))",
+        "        if (ran > limit && counted <= limit && !std::exchange(budget_.stepSaid, false))",
+    ),
+    Mutant(
+        "long: that a limit's time went by uncounted is said once a turn, not of each action",
+        MACHINE,
+        "        budget_.stepFreeMs = 0;\n        budget_.stepSaid = false;\n",
+        "        budget_.stepFreeMs = 0;\n",
+    ),
+    Mutant(
+        "long: that a turn's limit went by uncounted is said with every step",
+        MACHINE,
+        "        if (ran > limit && !std::exchange(budget_.turnStepSaid, true))",
+        "        if (ran > limit && !std::exchange(budget_.turnStepSaid, false))",
+    ),
+    Mutant(
+        "long: the look after a command's end is not taken, and its step advances into the next command",
+        MACHINE,
+        "    const std::uint32_t notCounted = StepTimeNotCounted(actor);\n",
+        "    const std::uint32_t notCounted = actor.busy ? StepTimeNotCounted(actor) : 0;\n",
     ),
 ]
 

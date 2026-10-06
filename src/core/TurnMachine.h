@@ -22,6 +22,7 @@
 #include "core/PartyTactics.h"
 #include "core/Rules.h"
 #include "core/Settings.h"
+#include "core/TimedStep.h"
 #include "core/TurnBudget.h"
 #include "core/TurnOrder.h"
 #include "core/Types.h"
@@ -179,9 +180,15 @@ struct ActorObservation
     // OwnModeAtItsCommand: Captivating Song, Feign Death). Its own mode's
     // command is no hold and no action of the turn's: a turn the player plays
     // waits on it, a turn its tactics play is spent on it (issue 51;
-    // TurnMachine::AtItsOwnMode). Last, since tests fill the fields above by
-    // place.
+    // TurnMachine::AtItsOwnMode).
     std::int32_t ownMode = kNoMode;
+    // The step its command is at, as the engine times it: its elapsed time
+    // and its length, whatever the command (the running sub-action, DAOLib's
+    // dao::commands::SubActions; nothing for no command, for a step the
+    // engine does not time and for one not begun). The time an action is at
+    // a timed step that advances is not counted by either limit of the
+    // machine's (issue 28; core/TimedStep.h).
+    StepTime step;
 };
 
 // What holds a creature, as far as turns go: disabled, it cannot act
@@ -764,6 +771,16 @@ class TurnMachine
     // took 9.7 s of the 12 (seen in play, 2026-10-01), and a longer one
     // would have been cut short.
     static constexpr std::uint32_t kOwnEffectPatience = 3;
+    // The time the engine has an action at a timed step that advances is
+    // not counted by the limits (issue 28; core/TimedStep.h). Not without
+    // end: a step that is renewed as it runs (a looping animation, its
+    // length pushed ahead again and again) advances and never ends. At most
+    // this many times the limit's own length is left uncounted, of an action
+    // and of a turn each: so an action is stopped a minute from its start at
+    // the latest and an AI's turn ended two and a half from its, at the
+    // defaults, far over any step the engine has been seen to time (12.5 s,
+    // the ogre's death blow; 15.2 s of the wall, that command whole).
+    static constexpr std::uint32_t kStepFree = 4;
     // The same order again this soon after it was taken is the game's own
     // repeat of it, not the player's: Eleanor's attack, and the dog's, came
     // a second time 31 to 78 ms after the first, was refused for want of an
@@ -856,6 +873,18 @@ class TurnMachine
         // not stopped for it (issue 51).
         std::int32_t ownModeSaid = kNoMode;
         bool longSaid = false;
+        // The step the turn's creature is at, look by look while it acts
+        // (StepExecuting), and the time it advanced, which the limits do
+        // not count: of the command now running (told by when it began,
+        // executingSince_) and of the turn. And that a limit's time came and
+        // went by the clock for that, said once of the command and once of
+        // the turn (issue 28; StepTimeNotCounted).
+        StepWatch step;
+        std::optional<std::uint32_t> stepOf;
+        std::uint32_t stepFreeMs = 0;
+        std::uint32_t turnFreeMs = 0;
+        bool stepSaid = false;
+        bool turnStepSaid = false;
         CommandKind lastKind = CommandKind::Involuntary;
         std::int32_t lastAbility = -1; // the ability the last command was to use; -1 for any other command
         float movementAtCommand = 0;   // meters walked as the last command was let through
@@ -955,6 +984,9 @@ class TurnMachine
     [[nodiscard]] std::uint32_t Patience(std::uint32_t ms) const;
     // A turn its AI plays that is still going after max_turn_ms: ended.
     [[nodiscard]] bool TurnTooLong(std::vector<Effect> &fx);
+    // A look at the step the acting creature's command is at; answers what
+    // of the running action's time its limit does not count (issue 28).
+    [[nodiscard]] std::uint32_t StepTimeNotCounted(const ActorObservation &actor);
     // At its own mode's command (issue 51; ActorObservation::ownMode,
     // core/Rules.h): a creature the engine keeps at an effect's command by a
     // mode of its own that is on (Captivating Song). Not a hold, whose time

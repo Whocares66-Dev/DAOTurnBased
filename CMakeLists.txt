@@ -122,6 +122,7 @@ add_library(
     src/core/Rules.cpp
     src/core/Settings.cpp
     src/core/State.cpp
+    src/core/TimedStep.cpp
     src/core/TurnMachine.cpp
     src/core/TurnOrder.cpp
     src/core/TurnBudget.cpp

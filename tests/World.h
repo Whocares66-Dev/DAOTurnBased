@@ -151,6 +151,21 @@ struct Creature // NOLINT(bugprone-exception-escape)
     // One of them that binds (World::binding) keeps it at an effect's
     // command of the mode's own for as long as it is on (World::Sings).
     std::set<std::int32_t> modes;
+    // The step its command is at, as the engine times it
+    // (ActorObservation::step; issue 28): none unless a case gives its
+    // command one (World::TimedStep). While the world runs its elapsed time
+    // climbs with the frames and its command ends by itself as it reaches
+    // its length; unless it stands (the engine has stopped its clock), or is
+    // renewed (a looping animation: at its end the engine pushes its length
+    // ahead by so much, and it never ends). Or the command has a tail: after
+    // its timed step it is at a step the engine does not time for so long,
+    // and ends by itself then (in play a death blow went on 2.7 s past its
+    // 12.5 s step, at sub-action 0: issue 28, 2026-10-06).
+    StepTime step;
+    std::int32_t stepRenews = 0;
+    std::int32_t stepTailMs = 0;
+    bool stepStands = false;
+    bool atTail = false; // its timed step has ended, and its command is at its tail
 };
 
 // A hostile the party perceives that the game does not have in combat and
@@ -368,10 +383,23 @@ class World
             // game layer tells it from another's hold, by the effects
             // standing on it. Here, by the mode itself.)
             const bool atAnEffect = c.busy && c.current == CommandType::ExecuteEffect;
-            obs.actor = ActorObservation{c.id,          c.exists,      c.down,       c.busy,
-                                         c.moving,      c.current,     c.position,   c.conjureHeld,
-                                         c.timersHeld,  c.approaching, c.perception, c.effects,
-                                         c.heldSeconds, c.heldKnown,   c.inactive,   atAnEffect ? OwnMode(c) : kNoMode};
+            obs.actor = ActorObservation{c.id,
+                                         c.exists,
+                                         c.down,
+                                         c.busy,
+                                         c.moving,
+                                         c.current,
+                                         c.position,
+                                         c.conjureHeld,
+                                         c.timersHeld,
+                                         c.approaching,
+                                         c.perception,
+                                         c.effects,
+                                         c.heldSeconds,
+                                         c.heldKnown,
+                                         c.inactive,
+                                         atAnEffect ? OwnMode(c) : kNoMode,
+                                         c.busy ? c.step : StepTime{}};
         }
         for (const ObjectId id : needs.statuses)
         {
@@ -394,6 +422,61 @@ class World
         if (!paused)
         {
             TurnStep();
+            TimedSteps(ms);
+        }
+    }
+
+    // A creature's command given a step the engine times, so long, with so
+    // much of it done already.
+    void TimedStep(ObjectId id, std::int32_t durationMs, std::int32_t elapsedMs = 0)
+    {
+        Creature &c = Get(id);
+        c.step = StepTime{elapsedMs, durationMs};
+    }
+
+    // The engine's own step of every timed step, a frame of the world
+    // running: its elapsed time climbs, and at its length the command ends by
+    // itself, or the step is renewed, or the command goes on at its untimed
+    // tail and ends when that has run.
+    void TimedSteps(std::uint32_t ms)
+    {
+        const auto frame = static_cast<std::int32_t>(ms);
+        for (Creature &c : creatures)
+        {
+            if (!c.busy || c.stepStands)
+            {
+                continue;
+            }
+            if (c.step.durationMs <= 0)
+            {
+                // No timed step: at its tail, if it has come to one.
+                if (c.atTail)
+                {
+                    c.stepTailMs -= frame;
+                    if (c.stepTailMs <= 0)
+                    {
+                        Finish(c.id);
+                    }
+                }
+                continue;
+            }
+            c.step.elapsedMs += frame;
+            if (c.step.elapsedMs < c.step.durationMs)
+            {
+                continue;
+            }
+            if (c.stepRenews > 0)
+            {
+                c.step.durationMs += c.stepRenews;
+                continue;
+            }
+            if (c.stepTailMs > 0)
+            {
+                c.step = StepTime{};
+                c.atTail = true;
+                continue;
+            }
+            Finish(c.id);
         }
     }
 
@@ -728,6 +811,11 @@ class World
         c.current = CommandType::Invalid;
         c.queued = CommandType::Invalid;
         c.atTurnToFace = false;
+        c.step = StepTime{};
+        c.stepStands = false;
+        c.stepRenews = 0;
+        c.stepTailMs = 0;
+        c.atTail = false;
         Bind(c);
     }
 

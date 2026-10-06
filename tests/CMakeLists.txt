@@ -40,6 +40,7 @@ add_executable(
     test_keys.cpp
     test_machine.cpp
     test_noattack.cpp
+    test_longaction.cpp
     test_ownmode.cpp
     test_pace.cpp
     test_partytactics.cpp
