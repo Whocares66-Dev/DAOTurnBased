@@ -1,5 +1,6 @@
 #include "core/TurnMachine.h"
 
+#include "core/Facing.h"
 #include "core/GivenBack.h"
 #include "core/Text.h"
 #include "core/TurnEnd.h"
@@ -660,6 +661,7 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     approach_ = false;
     roundAgedMs_ = 0;
     ownEffectSince_.reset();
+    facedFirst_ = 0; // the last fight's, said as it ended (End) or dropped with the world unsaid
     // Only who is fighting the party (Combatant::engaged): the rest wait
     // outside the order, and join when they are.
     for (const Combatant &c : roster)
@@ -3264,6 +3266,17 @@ void TurnMachine::DelayTurn(std::vector<Effect> &fx)
 void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
 {
     Log(LogLevel::Info, std::format("the turn-based fight is over after {} rounds: {}", order_.Round(), why));
+    // How often the fight's creatures were faced at their targets first
+    // (FaceFirst; issue 40): once, here, and only if any were. The count is
+    // the fight's, begun again with the next (StartFight).
+    if (facedFirst_ > 0)
+    {
+        Log(LogLevel::Info, std::format("in this fight {} given to a creature under {:g} deg off its target, which "
+                                        "was faced at it exactly first (issue 40)",
+                                        facedFirst_ == 1 ? std::string{"1 attack or ability was"}
+                                                         : std::format("{} attacks and abilities were", facedFirst_),
+                                        kFacedExactlyWithinDegrees));
+    }
     // The hero, the player's own, is who they control after: the last turn's
     // companion stayed selected, and the first click after the fight moved
     // her (the third play test, 2026-09-30).
@@ -4208,6 +4221,36 @@ Verdict TurnMachine::OnCommand(const CommandRequest &request)
         }
     }
     return verdict;
+}
+
+// A creature all but facing what its attack is aimed at is faced at it
+// exactly before the command is given (core/Facing.h has the engine's
+// reading and the hang it is for: issue 40). Asked of every command the gate
+// lets through, since the edge is the engine's and no one path's: a kept
+// action given back by the mod (where every hang seen was), an AI's own, the
+// player's order.
+bool TurnMachine::FaceFirst(const CommandRequest &request, Verdict verdict)
+{
+    const bool given = verdict == Verdict::Allow || verdict == Verdict::Conjure;
+    if (!given || !Active() || !TurnsToFace(request.type) || !request.turnDegrees)
+    {
+        return false;
+    }
+    const Combatant *who = order_.Find(request.object);
+    if (who == nullptr || FacingFor(*request.turnDegrees) != Facing::Face)
+    {
+        return false;
+    }
+    ++facedFirst_;
+    if (Logs(LogLevel::Debug))
+    {
+        const char *what = request.type == CommandType::Attack ? "attack" : "ability";
+        Log(LogLevel::Debug,
+            std::format("{} stands {:.2f} deg off {} as its {} is given: faced at it exactly (the engine's turn to "
+                        "face does not begin at a degree, and its {} would wait for one: issue 40)",
+                        Utf8(who->name), std::abs(*request.turnDegrees), Aimed(request.target), what, what));
+    }
+    return true;
 }
 
 Verdict TurnMachine::Judge(const CommandRequest &request)

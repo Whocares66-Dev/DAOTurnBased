@@ -1,5 +1,6 @@
 #include "game/Gate.h"
 
+#include "core/Facing.h"
 #include "core/Rules.h"
 #include "core/Text.h"
 
@@ -263,6 +264,115 @@ std::string RoomOf(const dao::attack::Approach &approach)
                                                               "strike at once";
     return std::format("{} (in reach {}, strikes at once {}, room once its ring is filled {})", room,
                        said(approach.inReach), said(approach.strikesAtOnce), said(approach.roomOnceFilled));
+}
+
+// A creature all but facing what its attack is aimed at is faced at it
+// exactly before the command is given (core/Facing.h, with the engine's turn
+// to face as DAOLib's session read it; issue 40). The measure and the
+// setting are the scripts' own calls, each read in the game's executable for
+// this (GOG's build, 2026-10-05):
+//
+// - GetOrientation (0x00655290) answers the direction kept at the object's
+//   +0x130 as it is, which is the facing the engine's own test reads
+//   (CSSubActionHandler::TurnToward); GetPosition, where each stands
+//   (+0x120).
+// - The engine's turn (sub-action 39's handler, 0x007A69E0) is toward where
+//   the target stands for a creature with a ranged weapon, and for any other
+//   toward the target's own point for an attacker standing where this one
+//   does (its vtable's slot 29; a creature's, 0x006A4EA0, is where it
+//   stands, unless the search of its melee rings gives a ring, 0x007CC1A0,
+//   and then that ring's first three floats, its centre by the look of it;
+//   for a person the point is where it stands, by DAOLib's reading). No
+//   script asks for that point and the mod has no address of its own, so
+//   the measure is to where the target stands: the engine's own for a shot
+//   or a spell from a staff, and for a blow wherever the ring's point is its
+//   creature's place (dev/DAOLIB_NEEDS.md asks DAOLib for the engine's own
+//   turn). A target that is no creature has a slot 29 of its own, not read:
+//   it is left.
+// - SetFacingObject, SetFacingPosition and SetFacing do not set the facing
+//   of a creature in the world. All three go through one helper
+//   (0x00655170): an object that is not active has the direction written; an
+//   active creature has it given to its movement controller as the facing
+//   wanted (0x00A638B0, the call TurnToward itself makes), which begins a
+//   turn only with the controller idle and the wanted facing already within
+//   about 0.08 degrees of its own. On a creature at rest a degree off its
+//   target that is the hang's own call again, and turns nothing. (Their
+//   bInvert, since the default must not turn a creature's back: the handler,
+//   0x00655790, takes the direction from the object to its target and
+//   negates it when bInvert is FALSE. TRUE, the default, faces the target,
+//   as the game's scripts use it for creatures; FALSE they use for a
+//   ballista alone.)
+// - SetOrientation (0x00655340) takes any object with an orientation (a
+//   creature is one: its slot 6), makes the vector a length of one and
+//   writes it (0x00694CE0: the direction at +0x130, then the object's slot
+//   32, which for a creature hands the facing to its model and marks it
+//   changed, 0x006A0190), with no test of whether it is active and nothing
+//   of the controller: at once. The game's scripts set a live creature's
+//   facing so as they jump it to a waypoint (utility_h.nss, UT_LocalJump:
+//   SetPosition, SetOrientation). An idle controller copies its creature's
+//   facing at its next update (DAOLib's reading), so the write stands; one
+//   turning or walking writes its own over it, and from there the engine's
+//   turn works as it always has.
+//
+// Not seen in the game when this was written (2026-10-05): the facing set
+// standing until the command's first run. What the scripts answer straight
+// after is read back and said if it is not what was set (FaceExactly).
+struct Bearing
+{
+    float degrees = 0.0f; // core: TurnDegrees
+    dao::Vector toward;   // from the creature to its target on the ground, a length of one
+};
+
+// Its creature not const: DAOLib's AsCreature is not.
+std::optional<Bearing> BearingOf(dao::CCObject &self, const dao::Command &command, CommandType type)
+{
+    // Script calls: on the scripts' thread only, as the rest of the gate's.
+    if (!TurnsToFace(type) || self.AsCreature() == nullptr || GetCurrentThreadId() != dao::script::ScriptThreadId())
+    {
+        return std::nullopt;
+    }
+    const ObjectId creature = self.Id();
+    const std::optional<ObjectId> target = command.Target();
+    // An ability aimed at a place, or at its own user, turns to nobody.
+    if (!target || *target == dao::kInvalidObject || *target == creature || api::IsObjectValid(*target) == 0 ||
+        api::GetObjectType(*target) != k::OBJECT_TYPE_CREATURE)
+    {
+        return std::nullopt;
+    }
+    const dao::Vector facing = api::GetOrientation(creature);
+    const dao::Vector from = api::GetPosition(creature);
+    const dao::Vector to = api::GetPosition(*target);
+    const float x = to.x - from.x;
+    const float y = to.y - from.y;
+    const std::optional<float> degrees = TurnDegrees(facing.x, facing.y, x, y);
+    if (!degrees)
+    {
+        return std::nullopt; // no facing read, or the two on one spot
+    }
+    // Flat, as the engine's test flattens both directions before it takes
+    // their angles, and as its controller keeps the facing it turns to.
+    const float length = std::hypot(x, y);
+    return Bearing{*degrees, dao::Vector{x / length, y / length, 0.0f}};
+}
+
+// Faces a creature the way its target is (above): the machine has said so
+// (TurnMachine::FaceFirst), and said it in the log. Here only what the game
+// answers: read back at once, the facing is what was set, or the log says
+// what it is, at warning, since the rule then did nothing and its line said
+// it had.
+void FaceExactly(ObjectId creature, ObjectId target, const Bearing &bearing)
+{
+    api::SetOrientation(creature, bearing.toward);
+    const dao::Vector now = api::GetOrientation(creature);
+    const std::optional<float> after = TurnDegrees(now.x, now.y, bearing.toward.x, bearing.toward.y);
+    if (!after || FacingFor(*after) != Facing::Faces)
+    {
+        spdlog::warn("{:#x} stood {:.2f} deg off {:#x} and was set to face it exactly, and the scripts answer {} "
+                     "straight after: SetOrientation did not set its facing, and its command is given as it stands "
+                     "(issue 40)",
+                     creature, std::abs(bearing.degrees), target,
+                     after ? std::format("a facing {:.2f} deg off it", std::abs(*after)) : std::string{"no facing"});
+    }
 }
 
 std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Command &command)
@@ -837,10 +947,23 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             {
                 request.actionSeconds = SwingSecondsOf(self->Id());
             }
+            // How far its creature stands off facing what the command is
+            // aimed at, for the machine to say whether it is faced at it
+            // first (BearingOf; issue 40). Here, since this is the one place
+            // every command passes on its way to a creature: an action the
+            // mod kept and gives back through the scripts' AddCommand
+            // (Bridge.cpp, ReleaseCast), an AI's own, the player's order.
+            const std::optional<Bearing> bearing = BearingOf(*self, *command, type);
+            if (bearing)
+            {
+                request.turnDegrees = bearing->degrees;
+            }
             Verdict verdict = Verdict::Allow;
+            bool face = false;
             {
                 const std::lock_guard lock(*g_mutex);
                 verdict = g_machine->OnCommand(request);
+                face = g_machine->FaceFirst(request, verdict);
             }
             if (verdict == Verdict::Block && source == Source::Player && reached && reached->walk &&
                 *reached->walk > 0.0f)
@@ -903,6 +1026,13 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
                 // before it adds one.
                 dao::script::DestroyStructure(dao::EngineStructure::Command, command);
                 return 0;
+            }
+            // Let through, and its creature all but facing its target: faced
+            // at it exactly before the queue has the command, so that the
+            // command's first run finds it facing and asks for no turn.
+            if (face && bearing)
+            {
+                FaceExactly(self->Id(), request.target, *bearing);
             }
         }
         catch (...)

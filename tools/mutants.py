@@ -84,6 +84,8 @@ KEYS = "src/core/Keys.h"
 PREVIEW = "src/core/Preview.cpp"
 TURNEND = "src/core/TurnEnd.cpp"
 PARTYTACTICS = "src/core/PartyTactics.cpp"
+FACING = "src/core/Facing.cpp"
+FACING_H = "src/core/Facing.h"
 TEXT = "src/core/Text.h"
 
 MUTANTS = [
@@ -4733,6 +4735,196 @@ MUTANTS = [
         MACHINE,
         '    if (potencies.empty())\n    {\n        return "none";\n    }\n',
         "",
+    ),
+    # A creature all but facing what its attack is aimed at is faced at it
+    # exactly before the command is given (core/Facing.h; issue 40): the
+    # angle, what is done at each, for which commands, and the machine's say
+    # as the gate lets one through.
+    Mutant(
+        "the angle to a target is not the angle between the two directions",
+        FACING,
+        "    const float cross = facingX * towardY - facingY * towardX;",
+        "    const float cross = facingX * towardY + facingY * towardX;",
+    ),
+    Mutant(
+        "one with its back to its target is measured as facing it",
+        FACING,
+        "    return std::atan2(cross, dot) * (180.0f / std::numbers::pi_v<float>);",
+        "    return std::atan2(cross, std::abs(dot)) * (180.0f / std::numbers::pi_v<float>);",
+    ),
+    Mutant(
+        "the angle to a target is in radians, a degree read as fifty-seven",
+        FACING,
+        "    return std::atan2(cross, dot) * (180.0f / std::numbers::pi_v<float>);",
+        "    return std::atan2(cross, dot);",
+    ),
+    Mutant(
+        "a facing never read has an angle to its target",
+        FACING,
+        "std::hypot(facingX, facingY) < kNoLength || ",
+        "",
+    ),
+    Mutant(
+        "a target where its creature stands has an angle to it",
+        FACING,
+        "std::hypot(towardX, towardY) < kNoLength)",
+        "std::hypot(towardX, towardY) < 0.0f)",
+    ),
+    Mutant(
+        "a facing that is no number has an angle",
+        FACING,
+        "!std::isfinite(facingX) || !std::isfinite(facingY) || ",
+        "",
+    ),
+    Mutant(
+        "a target's place that is no number has an angle",
+        FACING,
+        "!std::isfinite(towardX) || !std::isfinite(towardY) ||\n",
+        "\n",
+    ),
+    Mutant(
+        "a creature five degrees off its target is faced at it too",
+        FACING,
+        "    if (!(off < kFacedExactlyWithinDegrees))",
+        "    if (!(off <= kFacedExactlyWithinDegrees))",
+    ),
+    Mutant(
+        "a measure that is no number turns its creature",
+        FACING,
+        "    if (!(off < kFacedExactlyWithinDegrees))",
+        "    if (off >= kFacedExactlyWithinDegrees)",
+    ),
+    Mutant(
+        "a creature off its target the other way round is taken for facing it",
+        FACING,
+        "    const float off = std::abs(turnDegrees);",
+        "    const float off = turnDegrees;",
+    ),
+    Mutant(
+        "one that faces its target already is turned all the same",
+        FACING,
+        "    return off < kFacesAlreadyDegrees ? Facing::Faces : Facing::Face;",
+        "    return off < 0.0f ? Facing::Faces : Facing::Face;",
+    ),
+    Mutant(
+        "nobody is ever faced: every creature within the rule's angle is taken for facing",
+        FACING,
+        "    return off < kFacesAlreadyDegrees ? Facing::Faces : Facing::Face;",
+        "    return off < kFacedExactlyWithinDegrees ? Facing::Faces : Facing::Face;",
+    ),
+    Mutant(
+        "the rule's angle is the engine's own degree: the edge it is for is left",
+        FACING_H,
+        "inline constexpr float kFacedExactlyWithinDegrees = 5.0f;",
+        "inline constexpr float kFacedExactlyWithinDegrees = 1.0f;",
+    ),
+    Mutant(
+        "a creature thirty degrees off its target is snapped round to it",
+        FACING_H,
+        "inline constexpr float kFacedExactlyWithinDegrees = 5.0f;",
+        "inline constexpr float kFacedExactlyWithinDegrees = 45.0f;",
+    ),
+    Mutant(
+        "a creature half a degree off its target is taken for facing it already",
+        FACING_H,
+        "inline constexpr float kFacesAlreadyDegrees = 0.05f;",
+        "inline constexpr float kFacesAlreadyDegrees = 0.75f;",
+    ),
+    Mutant(
+        "an ability aimed at another is not the rule's",
+        FACING,
+        "    return type == CommandType::Attack || type == CommandType::UseAbility;",
+        "    return type == CommandType::Attack;",
+    ),
+    Mutant(
+        "an attack is not the rule's",
+        FACING,
+        "    return type == CommandType::Attack || type == CommandType::UseAbility;",
+        "    return type == CommandType::UseAbility;",
+    ),
+    Mutant(
+        "a walk to someone faces its creature at them first, as an attack does",
+        FACING,
+        "    return type == CommandType::Attack || type == CommandType::UseAbility;",
+        "    return type == CommandType::Attack || type == CommandType::UseAbility || "
+        "type == CommandType::MoveToObject;",
+    ),
+    Mutant(
+        "a command kept to be given later has its creature faced now",
+        MACHINE,
+        "    const bool given = verdict == Verdict::Allow || verdict == Verdict::Conjure;",
+        "    const bool given = verdict != Verdict::Block;",
+    ),
+    Mutant(
+        "a command refused has its creature faced all the same",
+        MACHINE,
+        "    const bool given = verdict == Verdict::Allow || verdict == Verdict::Conjure;",
+        "    const bool given = verdict != Verdict::Hold;",
+    ),
+    Mutant(
+        "a cast the engine conjures is given without its caster faced",
+        MACHINE,
+        "    const bool given = verdict == Verdict::Allow || verdict == Verdict::Conjure;",
+        "    const bool given = verdict == Verdict::Allow;",
+    ),
+    Mutant(
+        "a fight standing aside for a conversation faces its creatures in the scene",
+        MACHINE,
+        "    if (!given || !Active() || !TurnsToFace(request.type) || !request.turnDegrees)",
+        "    if (!given || !TurnsToFace(request.type) || !request.turnDegrees)",
+    ),
+    Mutant(
+        "the machine faces a creature for a command that turns it to nobody",
+        MACHINE,
+        "    if (!given || !Active() || !TurnsToFace(request.type) || !request.turnDegrees)",
+        "    if (!given || !Active() || !request.turnDegrees)",
+    ),
+    Mutant(
+        "one the fight does not hold is faced by it",
+        MACHINE,
+        "    const Combatant *who = order_.Find(request.object);\n"
+        "    if (who == nullptr || FacingFor(*request.turnDegrees) != Facing::Face)\n"
+        "    {\n        return false;\n    }\n    ++facedFirst_;",
+        "    const Combatant *who = order_.Find(request.object);\n"
+        "    if (FacingFor(*request.turnDegrees) != Facing::Face)\n"
+        "    {\n        return false;\n    }\n"
+        "    if (who == nullptr)\n    {\n        return true;\n    }\n    ++facedFirst_;",
+    ),
+    Mutant(
+        "a creature is faced whatever angle it stands at",
+        MACHINE,
+        "    if (who == nullptr || FacingFor(*request.turnDegrees) != Facing::Face)",
+        "    if (who == nullptr || FacingFor(*request.turnDegrees) == Facing::Faces)",
+    ),
+    Mutant(
+        "a creature faced first is not counted for the fight's end",
+        MACHINE,
+        "    ++facedFirst_;\n",
+        "",
+    ),
+    Mutant(
+        "a fight says how many were faced in the fights before it too",
+        MACHINE,
+        "    facedFirst_ = 0; // the last fight's, said as it ended (End) or dropped with the world unsaid\n",
+        "",
+    ),
+    Mutant(
+        "a fight in which nobody was faced says so all the same",
+        MACHINE,
+        "    if (facedFirst_ > 0)",
+        "    if (facedFirst_ + 1 > 0)",
+    ),
+    Mutant(
+        "a creature off its target one way round is said to stand less than nothing off it",
+        MACHINE,
+        "                        Utf8(who->name), std::abs(*request.turnDegrees), Aimed(request.target), what, what));",
+        "                        Utf8(who->name), *request.turnDegrees, Aimed(request.target), what, what));",
+    ),
+    Mutant(
+        "an ability's caster faced first is said to have been given an attack",
+        MACHINE,
+        '        const char *what = request.type == CommandType::Attack ? "attack" : "ability";',
+        '        const char *what = request.type != CommandType::Invalid ? "attack" : "ability";',
     ),
 ]
 

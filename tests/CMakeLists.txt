@@ -32,6 +32,7 @@ add_executable(
     test_delay.cpp
     test_pause.cpp
     test_events.cpp
+    test_facing.cpp
     test_fights.cpp
     test_givenback.cpp
     test_inactive.cpp
