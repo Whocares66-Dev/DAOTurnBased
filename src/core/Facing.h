@@ -1,5 +1,5 @@
-// A creature all but facing what its attack is aimed at is faced at it
-// exactly before the command is given (issue 40).
+// A creature the engine would not turn to face what its attack is aimed at
+// is faced at it exactly before the command is given (issue 40).
 //
 // What it is for. An attack, and an ability aimed at another, turns its
 // creature to face the target before it acts: the command's sub-action 39.
@@ -11,83 +11,95 @@
 // sub-action 39 until the limit, of ten stuck attacks in the kept logs).
 //
 // Why, as DAOLib's session read it in the game's executable (2026-10-05, its
-// issue 25), and as the log of that day's play had it:
-// - The command's test (CSSubActionHandler::TurnToward, 0x007A51F0): the
-//   angle d between the creature's facing and the direction to the target's
-//   point. Done when |d| <= 1.0 degree, a plain <= against the float 1.0, on
-//   its first run as on every later one; within a degree on the first run it
-//   answers done at once and touches nothing. While |d| > 1.0 it answers
-//   "still turning".
-// - The turn itself is the movement controller's: TurnToward gives it the
-//   wanted facing, and its update turns the creature only while it is at a
-//   turn or a walk (its states 3 and 4; the path follower leaves it in 3 as a
-//   walk arrives). Idle, state 0, it copies the creature's facing and does
-//   nothing; and being given a wanted facing begins a turn by itself only
-//   when that is already within about 0.08 degrees of its own.
-// - So a creature at rest, its controller idle, a little over a degree off
-//   its target, waits at sub-action 39 for a turn nothing on that path
-//   begins. Larger angles from rest are taken up some other way: by the
-//   animation's own turn, as DAOLib's session takes it (not read; only the
-//   edge has been seen to stick). Of 141 turns to face in that log, the 140
-//   that ended began with the controller turning (each followed an
-//   approach), the smallest at -1.02 degrees; the one that hung began at
-//   -1.00 with it idle.
-// - Kept attacks find the edge by themselves: the creature turned at this
-//   same target a turn before, that turn was over as soon as the engine's
-//   test was satisfied, a degree short, and neither has moved since.
+// issue 25; this is its reading as corrected after that day's two captures
+// of a hang, 17:01 and 19:41), and as the logs had it:
+// - The engine keeps two facings and has two tests. The command's test
+//   (CSSubActionHandler::TurnToward, 0x007A51F0) is of the creature's facing
+//   (its +0x130) against the direction to the target's point, each an angle
+//   by an arc tangent, their difference wrapped: done when it is at most 1.0
+//   degree, a plain <= against the float 1.0, on its first run as on every
+//   later one; within a degree on the first run it answers done at once and
+//   touches nothing. Over a degree it asks the movement controller for the
+//   turn and answers "still turning".
+// - The controller begins a turn (SetDesiredFacing, 0x00A638B0: its state 0
+//   to its state 4) only when the facing wanted is more than about 1.0
+//   degree from the controller's own facing, which is another one, kept in
+//   the controller, and measured another way (the arc cosine of a dot
+//   product, in float). The controller's own facing follows the creature's
+//   only while a flag of the controller's is set, which two functions of
+//   the engine clear and set, so the two facings can differ by the engine's
+//   own doing, and then the two tests can disagree for ever: the command
+//   not done, the controller with nothing to turn. That is the dead case.
+// - The hang of 17:01 (a Hurlock's kept attack given back): both facings the
+//   same, the aim "1.00 degree" off, the arc tangent and the arc cosine in
+//   float falling on opposite sides of one degree. Of 141 turns to face in
+//   that log, the 140 that ended began with the controller turning (each
+//   followed an approach), the smallest at -1.02 degrees; the one that hung
+//   began at -1.00 with it idle. Kept attacks find that edge by themselves:
+//   the creature turned at this same target a turn before, that turn was
+//   over as soon as a test was satisfied, a degree short, and neither has
+//   moved since.
+// - The hang of 19:41 was this rule's own first form's doing (below): it
+//   set a creature's facing 3.95 degrees off the engine's aim while the
+//   controller's own stayed on the aim. The controller saw nothing to turn,
+//   and the command never saw its creature facing. So the dead case is not
+//   the edge alone: it is any creature not within the command's degree
+//   whose controller is idle with its own facing within a degree of the aim
+//   (or with its motion record busy, a second thing SetDesiredFacing begins
+//   no turn for, which the address library's session found in it).
 //
-// The rule: one within kFacedExactlyWithinDegrees of facing its target is
-// faced at it exactly as the command is given, whatever its controller is
-// at, which the mod does not read; the command's first run then finds
-// |d| <= 1.0 and asks for no turn. At that or over it nothing is done: the
-// engine's own turn takes it, as it always did. The turn itself is left
-// alone: DAOLib's session advises against touching sub-action 39 or the
-// controller's state. The game layer measures and sets (src/game/Gate.cpp,
-// where every command reaches a creature, and where what the scripts' facing
-// calls do is written); what is decided here needs no game.
+// The rule: a creature the engine would not turn, and that is not facing its
+// aim, is faced at it, at whatever angle. Whether that is so is the engine's
+// to say, and DAOLib asks it (dao::attack::TurnTo, its issue 32: the turn
+// left, the engine's own test's "done", and "stalls", which is the dead case
+// by the engine's own two measures); the game layer hands that answer here
+// as it came (src/game/Gate.cpp, where every command reaches a creature).
+// The facing is DAOLib's too (dao::attack::FaceExactly): the creature's
+// facing, the facing its controller wants and the controller's own, all
+// three, so that nothing is left apart. Everything else is the engine's own
+// turn, as it always was: one it has for facing is left as it stands, and so
+// is one it would turn, however little.
+//
+// The rule's two earlier forms, both of 2026-10-05, and why each went:
+// - The first measured by itself, from the scripts' GetOrientation and two
+//   positions, to where the target stands, and set its creature's facing
+//   there with the scripts' SetOrientation when that was under 5 degrees. In
+//   play it made the hang it was for: a blow at a big creature is aimed by
+//   the engine at a point of its ring, not at where it stands, and the mod
+//   turned a creature that faced the engine's aim 3.95 degrees off it
+//   (Gate.cpp has the lines).
+// - The second took the engine's measure and aim (TurnTo) and still set the
+//   creature's facing alone, under 5 degrees. A facing set on the creature
+//   alone leaves the controller's own behind; a creature that stands and is
+//   faced more than once gathers a gap; and then an aim 5 degrees or more
+//   from the creature and within a degree of the controller's stale facing
+//   begins no turn and is outside the bound: the hang again, made possible
+//   by the rule itself. The user asked why the set left the controller's
+//   facing behind, and the answer was that it must not. It was not gated or
+//   played.
+// So the angle the mod chose is gone (the 5 degrees, and the first form's
+// floor of a twentieth of one under which a creature "faced already"), with
+// the mod's own measure and its own set. What is decided here needs no game.
 #pragma once
 
 #include "core/Types.h"
 
-#include <optional>
-
 namespace tb
 {
 
-// The engine's own test, for setting beside the rule's: a creature within
-// this of facing its target is taken for facing it, and its command turns
-// nothing (TurnToward, above). Not the rule's number: the mod's measure of
-// the angle is its own sum over positions the scripts hand it, and is not
-// held to the engine's last bit, so nothing is decided at one degree.
-inline constexpr float kEngineFacesWithinDegrees = 1.0f;
-
-// The rule's: under this many degrees off, faced exactly. Five is DAOLib's
-// session's number (2026-10-05): up to five a creature set straight is not
-// seen to move, and from there up the engine's own turn has always worked
-// (in the log, every turn of 3 degrees or more ended, in 569 ms at most).
-// The edge it is for is at one.
-inline constexpr float kFacedExactlyWithinDegrees = 5.0f;
-
-// One this near already faces its target as exactly as it can be set (a
-// facing set and read back differs by a float's rounding): nothing to do,
-// and nothing to say or count. Far under the engine's degree.
-inline constexpr float kFacesAlreadyDegrees = 0.05f;
-
-// How far a creature has to turn to face a point: the angle from its facing
-// to the direction toward the point, in degrees on the ground, from -180 to
-// 180 (positive and negative are the two ways round; which is which is the
-// engine's axes' business, and only the size is used). Both are directions
-// on the ground, of any length. Nothing where either has none: a facing
-// never read, or a target where its creature stands.
-[[nodiscard]] std::optional<float> TurnDegrees(float facingX, float facingY, float towardX, float towardY);
-
-enum class Facing : std::uint8_t
+// The turn a command would make to face its target, as the engine has it
+// when the game layer asks (DAOLib's dao::attack::FacingTurn): how far, in
+// degrees from -180 to 180 (which way round is which is the engine's
+// business; only the size is said); whether the engine's own test takes it
+// for done, which is the command going past its turn at its first run; and
+// whether the turn would stall, the dead case: not done, and the engine
+// would begin no turn for it.
+struct TurnToFace
 {
-    Leave, // at the rule's angle or over it: the engine's own turn takes it
-    Faces, // it faces its target already
-    Face,  // all but: faced at it exactly before the command is given
+    float degrees = 0.0f;
+    bool done = false;
+    bool stalls = false;
 };
-[[nodiscard]] Facing FacingFor(float turnDegrees);
 
 // The commands that turn their creature to face a target before they act,
 // and so the ones the rule is for: an attack, and an ability's use. Both run
@@ -99,7 +111,7 @@ enum class Facing : std::uint8_t
 // slot 29: a point of one of its melee rings, which for a person is where it
 // stands, by DAOLib's reading). An ability aimed at a place or at its own
 // user has no other object to turn to, which the game layer tells by having
-// no angle to give.
+// no turn to give.
 [[nodiscard]] bool TurnsToFace(CommandType type);
 
 } // namespace tb

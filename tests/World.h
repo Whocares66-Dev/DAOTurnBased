@@ -95,13 +95,26 @@ struct Creature
     float heldSeconds = 0.0f;
     bool heldKnown = false;
     std::string effects;
-    // The way it faces, on the ground, as the game layer reads it of the
-    // engine with a command aimed at another (the scripts' GetOrientation;
-    // src/game/Gate.cpp, BearingOf). None unless a case gives one
-    // (World::FaceOff): with none there is no angle to measure, and nobody
-    // is faced (issue 40).
+    // The way it faces, on the ground, as the engine keeps it and its turn
+    // to face a target is reckoned from (DAOLib's dao::attack::TurnTo;
+    // src/game/Gate.cpp, TurnOf). None unless a case gives one
+    // (World::FaceOff): with none the engine has no turn to answer, and
+    // nobody is faced (issue 40).
     float facingX = 0.0f;
     float facingY = 0.0f;
+    // Where the engine aims whoever strikes at it, from where it stands: a
+    // person's is where it stands; a big creature's is a point of its melee
+    // ring, which a case gives (in play a Great Bear's was 3.95 degrees from
+    // its place for a striker 2.58 m off, and facing the striker at the
+    // place made the hang the rule was for: issue 40).
+    float aimX = 0.0f;
+    float aimY = 0.0f;
+    // The engine would begin no turn for it, whatever it is asked to face:
+    // its movement controller idle, with its own facing where the aim is
+    // (the dead case's half that is the controller's; the other is the
+    // creature not facing the aim, which its facing above says). A fact a
+    // case gives, as DAOLib's TurnTo gives the game layer its `stalls`.
+    bool stalled = false;
 };
 
 // A hostile the party perceives that the game does not have in combat and
@@ -355,56 +368,93 @@ class World
         return Queue(request);
     }
 
-    // How far a creature has to turn to face another, as the game layer
-    // measures it of the engine for a command that turns its creature to
-    // face its target (src/game/Gate.cpp, BearingOf): nothing for any other
-    // command, with nobody else aimed at, or with no facing read.
-    std::optional<float> Bearing(CommandType type, ObjectId id, ObjectId target) const
+    // The way from a creature to where the engine aims it at another: the
+    // other's place, moved by its aim (Creature::aimX).
+    std::pair<float, float> AimFrom(ObjectId id, ObjectId target) const
     {
-        const auto aimed = std::ranges::find(creatures, target, &Creature::id);
-        if (!TurnsToFace(type) || target == id || aimed == creatures.end())
+        const Creature &c = Get(id);
+        const Creature &aimed = Get(target);
+        return {aimed.position.x + aimed.aimX - c.position.x, aimed.position.y + aimed.aimY - c.position.y};
+    }
+
+    // The turn a command would make to face its target, as the engine
+    // answers the game layer (DAOLib's dao::attack::TurnTo, through
+    // src/game/Gate.cpp's TurnOf): how far from the creature's facing to the
+    // engine's aim, the engine's own test of it, a degree, and whether the
+    // turn would stall: not done, and the engine would begin none
+    // (Creature::stalled). Nothing for a command that turns its creature to
+    // nobody, with nobody else aimed at, with no facing, or with the aim
+    // where the creature stands.
+    std::optional<TurnToFace> Turn(CommandType type, ObjectId id, ObjectId target) const
+    {
+        if (!TurnsToFace(type) || target == id ||
+            std::ranges::find(creatures, target, &Creature::id) == creatures.end())
         {
             return std::nullopt;
         }
         const Creature &c = Get(id);
-        return TurnDegrees(c.facingX, c.facingY, aimed->position.x - c.position.x, aimed->position.y - c.position.y);
+        const auto [x, y] = AimFrom(id, target);
+        if (std::hypot(c.facingX, c.facingY) < 1e-3f || std::hypot(x, y) < 1e-3f)
+        {
+            return std::nullopt;
+        }
+        const float degrees = std::atan2(c.facingX * y - c.facingY * x, c.facingX * x + c.facingY * y) *
+                              (180.0f / std::numbers::pi_v<float>);
+        // The engine's own test: within a degree, a plain <= (core/Facing.h).
+        const bool done = std::abs(degrees) <= 1.0f;
+        return TurnToFace{degrees, done, !done && c.stalled};
     }
 
-    // A creature turned to stand so many degrees off facing another, one way
-    // round or the other: where a case wants it as its command comes.
+    // A creature turned to stand so many degrees off the engine's aim at
+    // another, one way round or the other: where a case wants it as its
+    // command comes.
     void FaceOff(ObjectId id, ObjectId target, float degrees)
     {
         Creature &c = Get(id);
-        const Creature &aimed = Get(target);
-        const float bearing = std::atan2(aimed.position.y - c.position.y, aimed.position.x - c.position.x);
-        const float facing = bearing - degrees * (std::numbers::pi_v<float> / 180.0f);
+        const auto [x, y] = AimFrom(id, target);
+        const float facing = std::atan2(y, x) - degrees * (std::numbers::pi_v<float> / 180.0f);
         c.facingX = std::cos(facing);
         c.facingY = std::sin(facing);
     }
 
+    // The dead case: a creature so many degrees off the engine's aim at
+    // another, for which the engine would begin no turn.
+    void Stall(ObjectId id, ObjectId target, float degrees)
+    {
+        FaceOff(id, target, degrees);
+        Get(id).stalled = true;
+    }
+
     Verdict Queue(const CommandRequest &asked)
     {
-        // As the gate measures it with every command, afresh: a kept action
-        // given again is measured as its creature stands now.
+        // As the gate asks the engine with every command, afresh: a kept
+        // action given again is asked of as its creature stands now.
         CommandRequest request = asked;
-        request.turnDegrees = Bearing(request.type, request.object, request.target);
+        request.turn = Turn(request.type, request.object, request.target);
         const ObjectId id = request.object;
         const CommandType type = request.type;
         const Verdict verdict = machine.OnCommand(request);
-        // And as the gate faces one the machine says to, before the command
-        // is given (the scripts' SetOrientation; issue 40).
+        // And as the gate has the engine face one the machine says to, before
+        // the command is given: at the engine's own aim (DAOLib's
+        // FaceExactly), the engine asked again, and the machine told what
+        // came of it (Gate.cpp, QueueCommand; issue 40).
         if (machine.FaceFirst(request, verdict))
         {
-            FaceOff(id, request.target, 0.0f);
-            facedFirst.emplace_back(id, request.target);
+            const bool taken = !faceRefused;
+            if (taken)
+            {
+                FaceOff(id, request.target, 0.0f);
+                facedFirst.emplace_back(id, request.target);
+            }
+            machine.Faced(request, taken, Turn(type, id, request.target));
         }
         if (verdict == Verdict::Allow || verdict == Verdict::Conjure)
         {
             // What the command finds as it begins: its creature's turn to
             // face its target, which the engine's own test is asked of.
-            if (const std::optional<float> off = Bearing(type, id, request.target))
+            if (const std::optional<TurnToFace> found = Turn(type, id, request.target))
             {
-                foundOff[id] = std::abs(*off);
+                foundOff[id] = std::abs(found->degrees);
             }
             else
             {
@@ -618,12 +668,18 @@ class World
     std::function<Foe(ObjectId attacker, ObjectId other)> onMeasure;
     float reach = 2.05f;                               // the stand-in's own: the game layer asks the engine
     std::vector<std::pair<ObjectId, ObjectId>> turned; // kept attacks turned on another: whose, and on whom
-    // Whom the gate faced at its target before its command, and at whom
-    // (TurnMachine::FaceFirst); and how many degrees off its target each
-    // creature's last command aimed at another found it as it began, after
-    // that (issue 40).
+    // Whom the gate faced at its target before its command, the engine
+    // having it for facing after, and at whom (TurnMachine::FaceFirst,
+    // Faced); and how many degrees off the engine's aim each creature's
+    // last command aimed at another found it as it began, after that
+    // (issue 40).
     std::vector<std::pair<ObjectId, ObjectId>> facedFirst;
     std::unordered_map<ObjectId, float> foundOff;
+    // The engine will not face a creature it is asked to (DAOLib's
+    // FaceExactly answers no where the movement controller is not idle, and
+    // sets nothing): a case says so for one whose controller has begun
+    // something since the engine was asked.
+    bool faceRefused = false;
     bool record = true; // keep the log and the effects (a long random fight does not)
     Mode mode = Mode::Explore;
     bool paused = false;

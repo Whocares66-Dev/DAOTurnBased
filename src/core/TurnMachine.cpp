@@ -3267,15 +3267,15 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
 {
     Log(LogLevel::Info, std::format("the turn-based fight is over after {} rounds: {}", order_.Round(), why));
     // How often the fight's creatures were faced at their targets first
-    // (FaceFirst; issue 40): once, here, and only if any were. The count is
+    // (Faced; issue 40): once, here, and only if any were. The count is
     // the fight's, begun again with the next (StartFight).
     if (facedFirst_ > 0)
     {
-        Log(LogLevel::Info, std::format("in this fight {} given to a creature under {:g} deg off its target, which "
-                                        "was faced at it exactly first (issue 40)",
-                                        facedFirst_ == 1 ? std::string{"1 attack or ability was"}
-                                                         : std::format("{} attacks and abilities were", facedFirst_),
-                                        kFacedExactlyWithinDegrees));
+        Log(LogLevel::Info,
+            std::format("in this fight {} given to a creature the engine would not have turned to its target, which "
+                        "was faced at it exactly first (issue 40)",
+                        facedFirst_ == 1 ? std::string{"1 attack or ability was"}
+                                         : std::format("{} attacks and abilities were", facedFirst_)));
     }
     // The hero, the player's own, is who they control after: the last turn's
     // companion stayed selected, and the first click after the fight moved
@@ -4223,34 +4223,51 @@ Verdict TurnMachine::OnCommand(const CommandRequest &request)
     return verdict;
 }
 
-// A creature all but facing what its attack is aimed at is faced at it
-// exactly before the command is given (core/Facing.h has the engine's
-// reading and the hang it is for: issue 40). Asked of every command the gate
-// lets through, since the edge is the engine's and no one path's: a kept
-// action given back by the mod (where every hang seen was), an AI's own, the
-// player's order.
-bool TurnMachine::FaceFirst(const CommandRequest &request, Verdict verdict)
+// A creature the engine would not turn to face what its attack is aimed at
+// is faced at it exactly before the command is given (core/Facing.h has the
+// engine's reading and the hang it is for: issue 40). Asked of every command
+// the gate lets through, since the dead case is the engine's and no one
+// path's: a kept action given back by the mod (where the first hangs seen
+// were), an AI's own, the player's order.
+bool TurnMachine::FaceFirst(const CommandRequest &request, Verdict verdict) const
 {
     const bool given = verdict == Verdict::Allow || verdict == Verdict::Conjure;
-    if (!given || !Active() || !TurnsToFace(request.type) || !request.turnDegrees)
+    if (!given || !Active() || !TurnsToFace(request.type) || !request.turn)
     {
         return false;
     }
-    const Combatant *who = order_.Find(request.object);
-    if (who == nullptr || FacingFor(*request.turnDegrees) != Facing::Face)
+    return request.turn->stalls && order_.Find(request.object) != nullptr;
+}
+
+void TurnMachine::Faced(const CommandRequest &request, bool taken, const std::optional<TurnToFace> &now)
+{
+    // What it stood off before, as the engine had it then.
+    const float stood = request.turn ? std::abs(request.turn->degrees) : 0.0f;
+    const char *what = request.type == CommandType::Attack ? "attack" : "ability";
+    if (!taken || !now || !now->done)
     {
-        return false;
+        Log(LogLevel::Warn,
+            std::format("{} stood {:.2f} deg off {} as its {} was given, the engine with no turn to begin for it, "
+                        "and was to be faced at it exactly: {}, and the engine {}; its {} is given as it stands "
+                        "(issue 40)",
+                        Aimed(request.object), stood, Aimed(request.target), what,
+                        taken ? "it was"
+                              : "the engine would not face it (its movement controller is not idle), nothing was set",
+                        !now        ? std::string{"has no turn to say for it now"}
+                        : now->done ? std::format("has it {:.2f} deg off now: done", std::abs(now->degrees))
+                                    : std::format("still has it {:.2f} deg off: not done", std::abs(now->degrees)),
+                        what));
+        return;
     }
     ++facedFirst_;
     if (Logs(LogLevel::Debug))
     {
-        const char *what = request.type == CommandType::Attack ? "attack" : "ability";
         Log(LogLevel::Debug,
-            std::format("{} stands {:.2f} deg off {} as its {} is given: faced at it exactly (the engine's turn to "
-                        "face does not begin at a degree, and its {} would wait for one: issue 40)",
-                        Utf8(who->name), std::abs(*request.turnDegrees), Aimed(request.target), what, what));
+            std::format("{} stands {:.2f} deg off {} as its {} is given: faced at it exactly (the engine would begin "
+                        "no turn for it, and its {} would wait for one: issue 40); the engine now has it {:.2f} deg "
+                        "off: done",
+                        Aimed(request.object), stood, Aimed(request.target), what, what, std::abs(now->degrees)));
     }
-    return true;
 }
 
 Verdict TurnMachine::Judge(const CommandRequest &request)

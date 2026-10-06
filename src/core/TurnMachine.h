@@ -18,6 +18,7 @@
 #pragma once
 
 #include "core/Events.h"
+#include "core/Facing.h"
 #include "core/PartyTactics.h"
 #include "core/Rules.h"
 #include "core/Settings.h"
@@ -332,13 +333,14 @@ struct CommandRequest
     // back and its AI told to choose again (TurnMachine::NoAttackToMake;
     // issue 27). After the target, for the same reason.
     NoAttack noAttack = NoAttack::None;
-    // For an attack, and an ability aimed at another: how far its creature
-    // has to turn to face what it is aimed at, in degrees from -180 to 180,
-    // where the game layer could measure it (core/Facing.h, TurnDegrees;
-    // src/game/Gate.cpp, BearingOf). One all but facing its target is faced
-    // at it exactly before the command is given (TurnMachine::FaceFirst;
-    // issue 40). Last, for the same reason again.
-    std::optional<float> turnDegrees;
+    // For an attack, and an ability aimed at another: the turn the command
+    // would make to face what it is aimed at, as the engine itself has it
+    // when the game layer asks (core/Facing.h, TurnToFace; src/game/Gate.cpp,
+    // TurnOf, by DAOLib's dao::attack::TurnTo); nothing where the engine had
+    // no answer. One the engine would not turn, and that is not facing its
+    // aim, is faced at it exactly before the command is given
+    // (TurnMachine::FaceFirst; issue 40). Last, for the same reason again.
+    std::optional<TurnToFace> turn;
 };
 
 // With a turn a bar of time: what an action costs of it, in milliseconds.
@@ -577,13 +579,24 @@ class TurnMachine
     // And as the gate lets that command through, with the verdict it was
     // given: whether its creature is to be faced at its target exactly
     // first (core/Facing.h; issue 40). So for one of the fight's own, given
-    // an attack or an ability aimed at another that it stands all but
-    // facing (CommandRequest::turnDegrees, as the game layer measured it);
-    // the game layer then faces it, and gives the command. Not for a command
-    // refused or kept, which is not given; nor with no fight on, where the
-    // game is as it was without the mod; nor for one the fight does not
-    // hold. Said at debug each time, and counted for the fight's end (End).
-    [[nodiscard]] bool FaceFirst(const CommandRequest &request, Verdict verdict);
+    // an attack or an ability aimed at another, whose turn to face it the
+    // engine says would stall (CommandRequest::turn, as the engine answered
+    // the game layer: the dead case, at whatever angle); the game layer
+    // then has the engine face it, asks the engine again, says what it
+    // answered (Faced), and gives the command. Not for a command refused or
+    // kept, which is not given; nor with no fight on, where the game is as
+    // it was without the mod; nor for one the fight does not hold.
+    [[nodiscard]] bool FaceFirst(const CommandRequest &request, Verdict verdict) const;
+    // What came of facing that command's creature: whether the engine took
+    // the facing (DAOLib's FaceExactly answers no for a creature whose
+    // movement controller is not idle, and does nothing), and the turn the
+    // engine has for it now, asked again after (nothing: it had no answer).
+    // Faced and done, as it should be: said at debug, and counted for the
+    // fight's end (End). Anything else is said at warning, with both
+    // angles: the command is given all the same, as it would have been with
+    // no rule. That second asking is the check in play of the whole of the
+    // game's half, for the mod and for DAOLib alike.
+    void Faced(const CommandRequest &request, bool taken, const std::optional<TurnToFace> &now);
 
     // The player gave an order through explore mode (a click to move, an
     // ability chosen). With `order_run_ms`, if no command follows while the
@@ -1268,10 +1281,10 @@ class TurnMachine
     // are to come.
     std::unordered_set<ObjectId> turnedAway_;
     // How many times in this fight a creature was faced at its target
-    // exactly before its attack or its ability was given (FaceFirst; issue
-    // 40): said once, as the fight ends, if any were. A play test's log
-    // then says how often the rule had anything to do, without its debug
-    // lines.
+    // exactly before its attack or its ability was given, the engine having
+    // it for facing after (Faced; issue 40): said once, as the fight ends,
+    // if any were. A play test's log then says how often the rule had
+    // anything to do, without its debug lines.
     std::uint32_t facedFirst_ = 0;
     // In the fight by the engine's perception alone, the scan's rules for
     // who is fighting no longer finding them (Combatant::fighting false,
