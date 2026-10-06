@@ -133,6 +133,33 @@ std::string WriteChoices(const PartyTactics &choices)
     return out;
 }
 
+namespace
+{
+
+// What is wrong with the file's first line, "<name> <version>", or nothing:
+// not the mod's file, a version that is no number, or another build's.
+std::optional<std::string> WrongHead(std::string_view head)
+{
+    if (!head.starts_with(kFileName) || head.size() <= kFileName.size() || head[kFileName.size()] != ' ')
+    {
+        return std::format("it does not begin with \"{} <version>\": not the mod's file, or damaged", kFileName);
+    }
+    head.remove_prefix(kFileName.size() + 1);
+    const std::optional<std::uint64_t> version = WholeNumber(head);
+    if (!version)
+    {
+        return "its version is not a number: damaged";
+    }
+    if (*version != static_cast<std::uint64_t>(kPartyTacticsVersion))
+    {
+        return std::format("it is of version {}, and this build reads version {}: written by another build", *version,
+                           kPartyTacticsVersion);
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
 ChoicesRead ReadChoices(std::string_view file)
 {
     const auto damaged = [](std::string why) { return ChoicesRead{PartyTactics{}, std::move(why)}; };
@@ -148,22 +175,9 @@ ChoicesRead ReadChoices(std::string_view file)
         }
         return text;
     };
-    std::string_view head = line();
-    if (!head.starts_with(kFileName) || head.size() <= kFileName.size() || head[kFileName.size()] != ' ')
+    if (std::optional<std::string> wrong = WrongHead(line()))
     {
-        return damaged(
-            std::format("it does not begin with \"{} <version>\": not the mod's file, or damaged", kFileName));
-    }
-    head.remove_prefix(kFileName.size() + 1);
-    const std::optional<std::uint64_t> version = WholeNumber(head);
-    if (!version)
-    {
-        return damaged("its version is not a number: damaged");
-    }
-    if (*version != static_cast<std::uint64_t>(kPartyTacticsVersion))
-    {
-        return damaged(std::format("it is of version {}, and this build reads version {}: written by another build",
-                                   *version, kPartyTacticsVersion));
+        return damaged(std::move(*wrong));
     }
     ChoicesRead read;
     bool ended = false;

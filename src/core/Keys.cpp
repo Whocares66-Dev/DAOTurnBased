@@ -59,54 +59,65 @@ std::optional<int> Number(std::string_view text)
     return n;
 }
 
-std::optional<std::uint8_t> Key(const std::string &name)
+// A key of one character: a letter or a digit.
+std::optional<std::uint8_t> OneCharacter(char c)
 {
-    if (name.empty())
+    if (c >= 'a' && c <= 'z')
+    {
+        return static_cast<std::uint8_t>('A' + (c - 'a'));
+    }
+    if (c >= '0' && c <= '9')
+    {
+        return static_cast<std::uint8_t>(c);
+    }
+    return std::nullopt;
+}
+
+// A function key, "f1" to "f24".
+std::optional<std::uint8_t> FunctionKey(std::string_view name)
+{
+    if (name[0] != 'f')
     {
         return std::nullopt;
     }
-    if (name.size() == 1)
+    if (const auto n = Number(name.substr(1)); n && *n >= 1 && *n <= 24)
     {
-        const char c = name[0];
-        if (c >= 'a' && c <= 'z')
-        {
-            return static_cast<std::uint8_t>('A' + (c - 'a'));
-        }
-        if (c >= '0' && c <= '9')
-        {
-            return static_cast<std::uint8_t>(c);
-        }
+        return static_cast<std::uint8_t>(kF1 + *n - 1);
+    }
+    return std::nullopt;
+}
+
+// A key by its VK_* code, as FormatKeyChord writes one it has no name for:
+// "0xBA". Two hex digits, and not the code 0.
+std::optional<std::uint8_t> ByCode(std::string_view name)
+{
+    const auto digit = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
+    const int high = digit(name[2]);
+    const int low = digit(name[3]);
+    if (high >= 0 && low >= 0 && (high != 0 || low != 0))
+    {
+        return static_cast<std::uint8_t>((high * 16) + low);
+    }
+    return std::nullopt;
+}
+
+// A key of the number pad, "numpad0" to "numpad9".
+std::optional<std::uint8_t> NumPadKey(std::string_view name)
+{
+    if (!name.starts_with("numpad"))
+    {
         return std::nullopt;
     }
-    if (name[0] == 'f')
+    if (const auto n = Number(name.substr(6)); n && *n <= 9)
     {
-        if (const auto n = Number(std::string_view{name}.substr(1)); n && *n >= 1 && *n <= 24)
-        {
-            return static_cast<std::uint8_t>(kF1 + *n - 1);
-        }
+        return static_cast<std::uint8_t>(kNumPad0 + *n);
     }
-    // Any other key by its VK_* code, as FormatKeyChord writes one it has no
-    // name for: "0xBA".
-    if (name.size() == 4 && name.starts_with("0x"))
-    {
-        const auto digit = [](char c) {
-            return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
-        };
-        const int high = digit(name[2]);
-        const int low = digit(name[3]);
-        if (high >= 0 && low >= 0 && (high != 0 || low != 0))
-        {
-            return static_cast<std::uint8_t>((high * 16) + low);
-        }
-        return std::nullopt;
-    }
-    if (name.starts_with("numpad"))
-    {
-        if (const auto n = Number(std::string_view{name}.substr(6)); n && *n <= 9)
-        {
-            return static_cast<std::uint8_t>(kNumPad0 + *n);
-        }
-    }
+    return std::nullopt;
+}
+
+// A key by the name the table has for it.
+std::optional<std::uint8_t> ByName(std::string_view name)
+{
     for (const auto &named : kNamed)
     {
         if (Lower(named.name) == name)
@@ -115,6 +126,35 @@ std::optional<std::uint8_t> Key(const std::string &name)
         }
     }
     return std::nullopt;
+}
+
+// A key by its name, in lower case: one character, a function key, a code,
+// a key of the number pad, or one the table names. A name that begins as a
+// function key's or the number pad's and is not one may still be the
+// table's.
+std::optional<std::uint8_t> Key(const std::string &name)
+{
+    if (name.empty())
+    {
+        return std::nullopt;
+    }
+    if (name.size() == 1)
+    {
+        return OneCharacter(name[0]);
+    }
+    if (const auto function = FunctionKey(name))
+    {
+        return function;
+    }
+    if (name.size() == 4 && name.starts_with("0x"))
+    {
+        return ByCode(name);
+    }
+    if (const auto pad = NumPadKey(name))
+    {
+        return pad;
+    }
+    return ByName(name);
 }
 
 } // namespace

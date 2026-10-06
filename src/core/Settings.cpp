@@ -139,6 +139,134 @@ auto Float(float Settings::*field, float lo, float hi)
     };
 }
 
+// A key, by its name or its chord; `what` is said of a text that is none.
+auto Chord(KeyChord Settings::*field, const char *what)
+{
+    return [field, what](Settings &s, std::string_view text) -> std::string {
+        const auto chord = ParseKeyChord(text);
+        if (!chord)
+        {
+            return what;
+        }
+        s.*field = *chord;
+        return {};
+    };
+}
+
+// [turns] party: who plays the party's turns.
+std::string PartyPlay(Settings &s, std::string_view text)
+{
+    const std::string v = Lower(text);
+    if (v == "manual")
+    {
+        s.partyControl = PartyControl::Manual;
+    }
+    else if (v == "tactics")
+    {
+        s.partyControl = PartyControl::Tactics;
+    }
+    else
+    {
+        return "not manual or tactics";
+    }
+    return {};
+}
+
+// [turns] ai_poke: how an AI is told its turn has come.
+std::string PokedBy(Settings &s, std::string_view text)
+{
+    const std::string v = Lower(text);
+    if (v == "command_complete")
+    {
+        s.aiPoke = AiPoke::CommandComplete;
+    }
+    else if (v == "kickstart")
+    {
+        s.aiPoke = AiPoke::Kickstart;
+    }
+    else
+    {
+        return "not command_complete or kickstart";
+    }
+    return {};
+}
+
+// An item of a list, without the spaces round it.
+std::string_view Unspaced(std::string_view item)
+{
+    while (!item.empty() && item.front() == ' ')
+    {
+        item.remove_prefix(1);
+    }
+    while (!item.empty() && item.back() == ' ')
+    {
+        item.remove_suffix(1);
+    }
+    return item;
+}
+
+// [turns] charge, "10002:1, 13000:2": an ability's id and its turns.
+std::string Charge(Settings &s, std::string_view text)
+{
+    std::vector<std::pair<std::int32_t, int>> list;
+    std::size_t at = 0;
+    while (at < text.size())
+    {
+        std::size_t end = text.find(',', at);
+        end = end == std::string_view::npos ? text.size() : end;
+        const std::string_view item = Unspaced(text.substr(at, end - at));
+        at = end + 1;
+        if (item.empty())
+        {
+            continue;
+        }
+        const std::size_t colon = item.find(':');
+        int ability = 0;
+        int turns = 0;
+        if (colon == std::string_view::npos || !WholeInt(item.substr(0, colon), ability) ||
+            !WholeInt(item.substr(colon + 1), turns) || ability < 0 || turns < 0 || turns > 9)
+        {
+            return "not a list of ability:turns, turns 0 to 9 (10002:1, 13000:2)";
+        }
+        list.emplace_back(ability, turns);
+    }
+    s.charge = std::move(list);
+    return {};
+}
+
+// [turns] enemy_tactics, "0, 0, 2, 4, 6": by rank, critter to elite boss.
+std::string EnemyTactics(Settings &s, std::string_view text)
+{
+    std::array<int, 5> ranks{};
+    std::size_t count = 0;
+    std::size_t at = 0;
+    while (at <= text.size())
+    {
+        std::size_t end = text.find(',', at);
+        end = end == std::string_view::npos ? text.size() : end;
+        const std::string_view item = Unspaced(text.substr(at, end - at));
+        at = end + 1;
+        int rank = 0;
+        if (count >= ranks.size() || !WholeInt(item, rank) || rank < 0 || rank > 8)
+        {
+            return "not five ranks 0 to 8, critter to elite boss (0, 0, 2, 4, 6)";
+        }
+        ranks.at(count++) = rank;
+        if (end == text.size())
+        {
+            break;
+        }
+    }
+    if (count != ranks.size())
+    {
+        return "not five ranks 0 to 8, critter to elite boss (0, 0, 2, 4, 6)";
+    }
+    s.enemyTactics = ranks;
+    return {};
+}
+
+// Every setting the file may hold: its section, its key, and what takes its
+// text. A table, and nothing but rows.
 const std::vector<Entry> &Entries()
 {
     static const std::vector<Entry> entries{
@@ -146,23 +274,7 @@ const std::vector<Entry> &Entries()
         {"initiative", "die", Int(&Settings::initiativeDie, 1, 100)},
         {"initiative", "per_dexterity", Float(&Settings::initiativePerDexterity, 0.0f, 5.0f)},
         {"initiative", "per_survival", Float(&Settings::initiativePerSurvival, 0.0f, 10.0f)},
-        {"turns", "party",
-         [](Settings &s, std::string_view text) -> std::string {
-             const std::string v = Lower(text);
-             if (v == "manual")
-             {
-                 s.partyControl = PartyControl::Manual;
-             }
-             else if (v == "tactics")
-             {
-                 s.partyControl = PartyControl::Tactics;
-             }
-             else
-             {
-                 return "not manual or tactics";
-             }
-             return {};
-         }},
+        {"turns", "party", PartyPlay},
         {"turns", "round_min_seconds", Float(&Settings::roundMinSeconds, 0.0f, 60.0f)},
         {"turns", "settle_ms", Int(&Settings::settleMs, 0, 5000)},
         {"turns", "ai_think_ms", Int(&Settings::aiThinkMs, 100, 10000)},
@@ -184,101 +296,13 @@ const std::vector<Entry> &Entries()
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
         {"turns", "join_by_sight", Bool(&Settings::joinBySight)},
         {"turns", "join_radius", Float(&Settings::joinRadius, 5.0f, 200.0f)},
-        {"turns", "charge",
-         [](Settings &s, std::string_view text) -> std::string {
-             // "10002:1, 13000:2": an ability's id and its turns.
-             std::vector<std::pair<std::int32_t, int>> list;
-             std::size_t at = 0;
-             while (at < text.size())
-             {
-                 std::size_t end = text.find(',', at);
-                 end = end == std::string_view::npos ? text.size() : end;
-                 std::string_view item = text.substr(at, end - at);
-                 at = end + 1;
-                 while (!item.empty() && item.front() == ' ')
-                 {
-                     item.remove_prefix(1);
-                 }
-                 while (!item.empty() && item.back() == ' ')
-                 {
-                     item.remove_suffix(1);
-                 }
-                 if (item.empty())
-                 {
-                     continue;
-                 }
-                 const std::size_t colon = item.find(':');
-                 int ability = 0;
-                 int turns = 0;
-                 if (colon == std::string_view::npos || !WholeInt(item.substr(0, colon), ability) ||
-                     !WholeInt(item.substr(colon + 1), turns) || ability < 0 || turns < 0 || turns > 9)
-                 {
-                     return "not a list of ability:turns, turns 0 to 9 (10002:1, 13000:2)";
-                 }
-                 list.emplace_back(ability, turns);
-             }
-             s.charge = std::move(list);
-             return {};
-         }},
-        {"turns", "ai_poke",
-         [](Settings &s, std::string_view text) -> std::string {
-             const std::string v = Lower(text);
-             if (v == "command_complete")
-             {
-                 s.aiPoke = AiPoke::CommandComplete;
-             }
-             else if (v == "kickstart")
-             {
-                 s.aiPoke = AiPoke::Kickstart;
-             }
-             else
-             {
-                 return "not command_complete or kickstart";
-             }
-             return {};
-         }},
+        {"turns", "charge", Charge},
+        {"turns", "ai_poke", PokedBy},
         {"turns", "seconds_per_turn", Float(&Settings::secondsPerTurn, 1.0f, 30.0f)},
         {"turns", "free_step", Float(&Settings::freeStepMeters, 0.0f, 10.0f)},
         {"turns", "pace", Float(&Settings::paceMps, 0.5f, 20.0f)},
         {"costs", "object", Float(&Settings::objectSeconds, 0.0f, 10.0f)},
-        {"turns", "enemy_tactics",
-         [](Settings &s, std::string_view text) -> std::string {
-             // "0, 0, 2, 4, 6": by rank, critter to elite boss.
-             std::array<int, 5> ranks{};
-             std::size_t count = 0;
-             std::size_t at = 0;
-             while (at <= text.size())
-             {
-                 std::size_t end = text.find(',', at);
-                 end = end == std::string_view::npos ? text.size() : end;
-                 std::string_view item = text.substr(at, end - at);
-                 at = end + 1;
-                 while (!item.empty() && item.front() == ' ')
-                 {
-                     item.remove_prefix(1);
-                 }
-                 while (!item.empty() && item.back() == ' ')
-                 {
-                     item.remove_suffix(1);
-                 }
-                 int rank = 0;
-                 if (count >= ranks.size() || !WholeInt(item, rank) || rank < 0 || rank > 8)
-                 {
-                     return "not five ranks 0 to 8, critter to elite boss (0, 0, 2, 4, 6)";
-                 }
-                 ranks.at(count++) = rank;
-                 if (end == text.size())
-                 {
-                     break;
-                 }
-             }
-             if (count != ranks.size())
-             {
-                 return "not five ranks 0 to 8, critter to elite boss (0, 0, 2, 4, 6)";
-             }
-             s.enemyTactics = ranks;
-             return {};
-         }},
+        {"turns", "enemy_tactics", EnemyTactics},
         {"feedback", "floaties", Bool(&Settings::floaties)},
         {"feedback", "script_events", Bool(&Settings::scriptEvents)},
         {"feedback", "camera_follow", Bool(&Settings::cameraFollow)},
@@ -286,36 +310,9 @@ const std::vector<Entry> &Entries()
         {"feedback", "portraits", Bool(&Settings::portraits)},
         {"feedback", "move_preview", Bool(&Settings::movePreview)},
         {"feedback", "move_preview_ground", Bool(&Settings::movePreviewGround)},
-        {"keys", "toggle",
-         [](Settings &s, std::string_view text) -> std::string {
-             const auto chord = ParseKeyChord(text);
-             if (!chord)
-             {
-                 return "not a key (None, Ctrl+T, F9, ...)";
-             }
-             s.toggleKey = *chord;
-             return {};
-         }},
-        {"keys", "end_turn",
-         [](Settings &s, std::string_view text) -> std::string {
-             const auto chord = ParseKeyChord(text);
-             if (!chord)
-             {
-                 return "not a key (Enter, E, F9, None, ...)";
-             }
-             s.endTurnKey = *chord;
-             return {};
-         }},
-        {"keys", "delay",
-         [](Settings &s, std::string_view text) -> std::string {
-             const auto chord = ParseKeyChord(text);
-             if (!chord)
-             {
-                 return "not a key (None, D, Ctrl+D, F9, ...)";
-             }
-             s.delayKey = *chord;
-             return {};
-         }},
+        {"keys", "toggle", Chord(&Settings::toggleKey, "not a key (None, Ctrl+T, F9, ...)")},
+        {"keys", "end_turn", Chord(&Settings::endTurnKey, "not a key (Enter, E, F9, None, ...)")},
+        {"keys", "delay", Chord(&Settings::delayKey, "not a key (None, D, Ctrl+D, F9, ...)")},
     };
     return entries;
 }
@@ -782,6 +779,53 @@ std::string WithMissingSettings(std::string_view ini)
     return out;
 }
 
+namespace
+{
+
+// Where a key is in a file's lines: its own line, if the file has one in
+// the key's section; and the last line of that section that says anything
+// (its header, if nothing else), which is where a line for the key goes
+// after. Neither: the file has no such section.
+struct KeyPlace
+{
+    std::optional<std::size_t> line;
+    std::optional<std::size_t> lastInSection;
+};
+
+KeyPlace PlaceOf(const std::vector<std::string> &lines, const std::string &wantSection, const std::string &wantKey)
+{
+    KeyPlace place;
+    std::string current;
+    for (std::size_t i = 0; i < lines.size(); ++i)
+    {
+        if (const auto header = Header(lines[i]))
+        {
+            current = *header;
+            if (current == wantSection)
+            {
+                place.lastInSection = i;
+            }
+            continue;
+        }
+        if (current != wantSection)
+        {
+            continue;
+        }
+        if (!Trim(lines[i]).empty())
+        {
+            place.lastInSection = i;
+        }
+        if (KeyOf(lines[i]) == wantKey)
+        {
+            place.line = i;
+            return place;
+        }
+    }
+    return place;
+}
+
+} // namespace
+
 std::string WithValue(std::string_view ini, std::string_view section, std::string_view key, std::string_view value)
 {
     const std::string eol = ini.find("\r\n") != std::string_view::npos ? "\r\n" : "\n";
@@ -802,49 +846,24 @@ std::string WithValue(std::string_view ini, std::string_view section, std::strin
         lines.pop_back();
     }
 
-    std::string current;
-    std::optional<std::size_t> lastInSection;
-    bool replaced = false;
-    for (std::size_t i = 0; i < lines.size() && !replaced; ++i)
+    const KeyPlace place = PlaceOf(lines, wantSection, wantKey);
+    const bool replaced = place.line.has_value();
+    if (place.line)
     {
-        if (const auto header = Header(lines[i]))
-        {
-            current = *header;
-            if (current == wantSection)
-            {
-                lastInSection = i;
-            }
-            continue;
-        }
-        if (current != wantSection)
-        {
-            continue;
-        }
-        if (!Trim(lines[i]).empty())
-        {
-            lastInSection = i;
-        }
-        if (KeyOf(lines[i]) == wantKey)
-        {
-            lines[i] = newLine;
-            replaced = true;
-        }
+        lines[*place.line] = newLine;
     }
-    if (!replaced)
+    else if (place.lastInSection)
     {
-        if (lastInSection)
+        lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(*place.lastInSection + 1), newLine);
+    }
+    else
+    {
+        if (!lines.empty() && !Trim(lines.back()).empty())
         {
-            lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(*lastInSection + 1), newLine);
+            lines.emplace_back();
         }
-        else
-        {
-            if (!lines.empty() && !Trim(lines.back()).empty())
-            {
-                lines.emplace_back();
-            }
-            lines.push_back("[" + std::string{section} + "]");
-            lines.push_back(newLine);
-        }
+        lines.push_back("[" + std::string{section} + "]");
+        lines.push_back(newLine);
     }
 
     std::string out;
