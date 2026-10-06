@@ -1,6 +1,5 @@
 #include "game/Gate.h"
 
-#include "core/Facing.h"
 #include "core/Rules.h"
 #include "core/Text.h"
 
@@ -264,92 +263,6 @@ std::string RoomOf(const dao::attack::Approach &approach)
                                                               "strike at once";
     return std::format("{} (in reach {}, strikes at once {}, room once its ring is filled {})", room,
                        said(approach.inReach), said(approach.strikesAtOnce), said(approach.roomOnceFilled));
-}
-
-// A creature the engine would not turn to face what its attack is aimed at
-// is faced at it exactly before the command is given (core/Facing.h, with the
-// engine's two facings and two tests as DAOLib's session read them; issue
-// 40). Both halves are the engine's own, through DAOLib (its issue 32, asked
-// for by this mod's dev/DAOLIB_NEEDS.md):
-//
-// - dao::attack::TurnTo answers the turn as the engine has it: the point its
-//   turn is to (where the target stands for a creature with a ranged weapon;
-//   for any other the target's own point for an attacker standing where
-//   this one does, its vtable's slot 29 called through the engine: where a
-//   person stands, a point of one of its melee rings for a creature whose
-//   rings give one), the flat direction there, the angle left by the
-//   engine's own VectorToAngle and Angle::Wrap, its own test's "done", and
-//   "stalls": not done, and the engine would begin no turn for it, as its
-//   SetDesiredFacing judges: the movement controller idle, and either its
-//   own facing within its degree of the aim or its motion record busy, a
-//   second refusal of that function's. That is the dead case itself,
-//   whatever made it.
-// - dao::attack::FaceExactly sets the creature's facing by the engine's own
-//   writer (its model told), the facing its controller wants by the engine's
-//   SetDesiredFacing, and the controller's own facing: all three, and only
-//   on an idle controller, else nothing and it answers no.
-//
-// The mod did both by itself first, and each way did harm or could
-// (2026-10-05; the design has the whole of it). Its own measure, from the
-// scripts' GetOrientation and two positions to where the target stands,
-// made the hang in play at 19:41: `Zevran stands 3.95 deg off Great Bear as
-// its attack is given: faced at it exactly`, then his attack at sub-action
-// 39 for twelve seconds and `took too long`. He had been facing -23.7
-// degrees, the engine's own aim for a blow at the bear (its ring's point);
-// the bear's place was at -27.6, and the mod set him to that with the
-// scripts' SetOrientation, which writes the creature's facing alone: the
-// controller's own stayed at -23.7, on the aim, so it had nothing to turn
-// and the command never saw its creature facing. And a set of the
-// creature's facing alone, even to the engine's aim, leaves the
-// controller's own behind, a gap that gathers on a creature faced more than
-// once where it stands, until an aim far from the creature and near the
-// controller's stale facing stalls outside any bound on the angle.
-//
-// Read in the executable on the way (GOG's build, 2026-10-05; DAOLib's
-// session has read the same): the scripts' SetFacingObject, SetFacingPosition
-// and SetFacing go through one helper (0x00655170) that writes the direction
-// only for an object that is not active, and for an active creature gives
-// it to the controller as the facing wanted (0x00A638B0), so they begin
-// nothing in the dead case; SetOrientation (0x00655340) writes the
-// creature's facing at once (0x00694CE0: its +0x130, and its model told)
-// whatever its state, and nothing of the controller. SetFacingObject's
-// bInvert: TRUE, the default, faces the target; FALSE negates the direction.
-//
-// The turn as the engine has it for a command's creature and its target, or
-// nothing: no command that turns its creature, nobody else aimed at (an
-// ability at a place, or at its own user), either of the two no creature
-// (DAOLib's answer), or off the game's thread, where its call does not
-// belong.
-std::optional<dao::attack::FacingTurn> TurnOf(const dao::CCObject &self, const dao::Command &command, CommandType type)
-{
-    if (!TurnsToFace(type) || GetCurrentThreadId() != dao::script::ScriptThreadId())
-    {
-        return std::nullopt;
-    }
-    const std::optional<ObjectId> target = command.Target();
-    if (!target || *target == dao::kInvalidObject || *target == self.Id())
-    {
-        return std::nullopt;
-    }
-    return dao::attack::TurnTo(self.Id(), *target);
-}
-
-TurnToFace AsCore(const dao::attack::FacingTurn &turn)
-{
-    return TurnToFace{turn.degrees, turn.done, turn.stalls};
-}
-
-// Where the engine's aim is not where the target stands, for a play test's
-// log: a blow at a big creature, the case the mod's own measure got wrong.
-void SayAim(ObjectId creature, ObjectId target, const dao::attack::FacingTurn &turn)
-{
-    const dao::Vector at = api::GetPosition(target);
-    if (const float apart = std::hypot(turn.point.x - at.x, turn.point.y - at.y); apart > 0.05f)
-    {
-        spdlog::debug("{:#x} is turned to a point {:.2f} m from where {:#x} stands: the engine's own aim for it, "
-                      "not its target's place (issue 40)",
-                      creature, apart, target);
-    }
 }
 
 std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Command &command)
@@ -924,24 +837,14 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
             {
                 request.actionSeconds = SwingSecondsOf(self->Id());
             }
-            // The turn the command would make to face what it is aimed at,
-            // as the engine has it, for the machine to say whether its
-            // creature is faced first (TurnOf; issue 40). Here, since this
-            // is the one place every command passes on its way to a
-            // creature: an action the mod kept and gives back through the
-            // scripts' AddCommand (Bridge.cpp, ReleaseCast), an AI's own, the
-            // player's order.
-            const std::optional<dao::attack::FacingTurn> turn = TurnOf(*self, *command, type);
-            if (turn)
-            {
-                request.turn = AsCore(*turn);
-            }
+            // (Nothing is asked here of the command's turn to face its
+            // target: the engine asks that after the command's approach, and
+            // so does the mod, as the command comes to it. Bridge.cpp,
+            // TurnLookOf; issue 40.)
             Verdict verdict = Verdict::Allow;
-            bool face = false;
             {
                 const std::lock_guard lock(*g_mutex);
                 verdict = g_machine->OnCommand(request);
-                face = g_machine->FaceFirst(request, verdict);
             }
             if (verdict == Verdict::Block && source == Source::Player && reached && reached->walk &&
                 *reached->walk > 0.0f)
@@ -1004,19 +907,6 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
                 // before it adds one.
                 dao::script::DestroyStructure(dao::EngineStructure::Command, command);
                 return 0;
-            }
-            // Let through, and the engine would begin no turn for it: faced
-            // at the engine's aim exactly before the queue has the command,
-            // so that the command's first run finds it facing and asks for
-            // no turn. The engine is asked again, and what came of it is the
-            // machine's to say.
-            if (face && turn)
-            {
-                const bool taken = dao::attack::FaceExactly(self->Id(), turn->toward);
-                const std::optional<dao::attack::FacingTurn> now = dao::attack::TurnTo(self->Id(), request.target);
-                SayAim(self->Id(), request.target, *turn);
-                const std::lock_guard lock(*g_mutex);
-                g_machine->Faced(request, taken, now ? std::optional<TurnToFace>(AsCore(*now)) : std::nullopt);
             }
         }
         catch (...)

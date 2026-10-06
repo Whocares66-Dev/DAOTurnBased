@@ -4736,9 +4736,10 @@ MUTANTS = [
         "",
     ),
     # A creature the engine would not turn to face what its attack is aimed
-    # at is faced at it exactly before the command is given (core/Facing.h;
-    # issue 40): for which commands, the machine's say as the gate lets one
-    # through, and what it says of what came of the facing.
+    # at is faced at it exactly, as its command comes to its turn to face
+    # (core/Facing.h; issue 40): for which commands, whom the game layer is
+    # asked to look at, what the machine does with each look, and what it
+    # says of what came of a facing.
     Mutant(
         "an ability aimed at another is not the rule's",
         FACING,
@@ -4752,92 +4753,122 @@ MUTANTS = [
         "    return type == CommandType::UseAbility;",
     ),
     Mutant(
-        "a walk to someone faces its creature at them first, as an attack does",
+        "a walk to someone faces its creature at them, as an attack does",
         FACING,
         "    return type == CommandType::Attack || type == CommandType::UseAbility;",
         "    return type == CommandType::Attack || type == CommandType::UseAbility || "
         "type == CommandType::MoveToObject;",
     ),
     Mutant(
-        "a command kept to be given later has its creature faced now",
+        "the game layer is not asked to look at anyone's turn to face",
         MACHINE,
-        "    const bool given = verdict == Verdict::Allow || verdict == Verdict::Conjure;",
-        "    const bool given = verdict != Verdict::Block;",
-    ),
-    Mutant(
-        "a command refused has its creature faced all the same",
-        MACHINE,
-        "    const bool given = verdict == Verdict::Allow || verdict == Verdict::Conjure;",
-        "    const bool given = verdict != Verdict::Hold;",
-    ),
-    Mutant(
-        "a cast the engine conjures is given without its caster faced",
-        MACHINE,
-        "    const bool given = verdict == Verdict::Allow || verdict == Verdict::Conjure;",
-        "    const bool given = verdict == Verdict::Allow;",
-    ),
-    Mutant(
-        "a fight standing aside for a conversation faces its creatures in the scene",
-        MACHINE,
-        "    if (!given || !Active() || !TurnsToFace(request.type) || !request.turn)",
-        "    if (!given || !TurnsToFace(request.type) || !request.turn)",
+        "                needs.turning.push_back(standing.id);\n",
+        "",
     ),
     Mutant(
         "the machine faces a creature for a command that turns it to nobody",
         MACHINE,
-        "    if (!given || !Active() || !TurnsToFace(request.type) || !request.turn)",
-        "    if (!given || !Active() || !request.turn)",
+        "        if (!TurnsToFace(look.type) || order_.Find(look.who) == nullptr)",
+        "        if (order_.Find(look.who) == nullptr)",
     ),
     Mutant(
         "one the fight does not hold is faced by it",
         MACHINE,
-        "    return request.turn->stalls && order_.Find(request.object) != nullptr;",
-        "    return request.turn->stalls;",
+        "        if (!TurnsToFace(look.type) || order_.Find(look.who) == nullptr)",
+        "        if (!TurnsToFace(look.type))",
     ),
     Mutant(
-        "a creature the engine would turn, or has for facing, is faced all the same",
+        "a creature the engine would turn is faced all the same",
         MACHINE,
-        "    return request.turn->stalls && order_.Find(request.object) != nullptr;",
-        "    return order_.Find(request.object) != nullptr;",
+        "        if (look.turn.stalls)\n",
+        "        if (!look.turn.done)\n",
     ),
     Mutant(
-        "a creature the engine would not turn is faced only once the engine has it for done: never",
+        "a creature whose turn waits is faced, where the engine would have turned it",
         MACHINE,
-        "    return request.turn->stalls && order_.Find(request.object) != nullptr;",
-        "    return request.turn->stalls && request.turn->done && order_.Find(request.object) != nullptr;",
+        "        if (look.turn.stalls)\n",
+        "        if (look.turn.stalls || look.turn.waits)\n",
+    ),
+    Mutant(
+        "a facing is asked for from the second look on, and with every frame",
+        MACHINE,
+        "            if (!std::exchange(turning.asked, true))",
+        "            if (std::exchange(turning.asked, true))",
+    ),
+    Mutant(
+        "a facing that did not come off is asked for again with every frame",
+        MACHINE,
+        "            if (!std::exchange(turning.asked, true))",
+        "            if (!turning.asked)",
+    ),
+    Mutant(
+        "what was asked of one command stands for the next: its turn to face is not faced",
+        MACHINE,
+        "        if (turning.command != look.command)",
+        "        if (turning.command != look.command && turning.command == 0)",
+    ),
+    Mutant(
+        "a creature is to be faced at itself, not at whom its command is aimed",
+        MACHINE,
+        "                face.others.push_back(look.target);",
+        "                face.others.push_back(look.who);",
+    ),
+    Mutant(
+        "a facing is asked for without saying what the command is",
+        MACHINE,
+        "                face.a = static_cast<std::int32_t>(look.type);\n",
+        "",
+    ),
+    Mutant(
+        "a creature that waits at its turn to face is said with every frame",
+        MACHINE,
+        "        else if (look.turn.waits && !std::exchange(turning.waited, true) && Logs(LogLevel::Debug))",
+        "        else if (look.turn.waits && !turning.waited && Logs(LogLevel::Debug))",
+    ),
+    Mutant(
+        "a creature that waits at its turn to face is not said",
+        MACHINE,
+        "        else if (look.turn.waits && !std::exchange(turning.waited, true) && Logs(LogLevel::Debug))",
+        "        else if (look.turn.done && !std::exchange(turning.waited, true) && Logs(LogLevel::Debug))",
     ),
     Mutant(
         "a facing the engine would not make is said and counted as made",
         MACHINE,
-        "    if (!taken || !now || !now->done)",
-        "    if (!now || !now->done)",
+        "    if (!faced.taken || !faced.now || !faced.now->done)",
+        "    if (!faced.now || !faced.now->done)",
     ),
     Mutant(
         "a facing the engine does not have for done after is said and counted as one",
         MACHINE,
-        "    if (!taken || !now || !now->done)",
-        "    if (!taken || !now)",
+        "    if (!faced.taken || !faced.now || !faced.now->done)",
+        "    if (!faced.taken || !faced.now)",
     ),
     Mutant(
         "a facing that did not come off is said with the angle it stood at, and not what the engine has now",
         MACHINE,
-        ': std::format("still has it {:.2f} deg off: not done", std::abs(now->degrees)),',
-        ': std::format("still has it {:.2f} deg off: not done", stood),',
+        ': std::format("still has it {:.2f} deg off: not done", std::abs(faced.now->degrees)),',
+        ': std::format("still has it {:.2f} deg off: not done", faced.stood),',
+    ),
+    Mutant(
+        "what the engine still has a creature off is said as less than nothing, one way round",
+        MACHINE,
+        ': std::format("still has it {:.2f} deg off: not done", std::abs(faced.now->degrees)),',
+        ': std::format("still has it {:.2f} deg off: not done", faced.now->degrees),',
     ),
     Mutant(
         "a facing made that the engine does not have for done after is said not to have been made",
         MACHINE,
-        '                        taken ? "it was"\n',
-        '                        !now ? "it was"\n',
+        '                faced.taken ? "it was"\n',
+        '                !faced.now ? "it was"\n',
     ),
     Mutant(
         "what the engine has after a facing is not said: the angle before it twice",
         MACHINE,
-        "Aimed(request.object), stood, Aimed(request.target), what, what, std::abs(now->degrees)));",
-        "Aimed(request.object), stood, Aimed(request.target), what, what, stood));",
+        "Aimed(faced.who), faced.stood, Aimed(faced.target), what, what, std::abs(faced.now->degrees)));",
+        "Aimed(faced.who), faced.stood, Aimed(faced.target), what, what, faced.stood));",
     ),
     Mutant(
-        "a creature faced first is not counted for the fight's end",
+        "a creature faced is not counted for the fight's end",
         MACHINE,
         "    ++facedFirst_;\n",
         "",
@@ -4845,7 +4876,7 @@ MUTANTS = [
     Mutant(
         "a fight says how many were faced in the fights before it too",
         MACHINE,
-        "    facedFirst_ = 0; // the last fight's, said as it ended (End) or dropped with the world unsaid\n",
+        "    facedFirst_ = 0;  // the last fight's, said as it ended (End) or dropped with the world unsaid\n",
         "",
     ),
     Mutant(
@@ -4855,16 +4886,10 @@ MUTANTS = [
         "    if (facedFirst_ + 1 > 0)",
     ),
     Mutant(
-        "a creature off its target one way round is said to stand less than nothing off it",
+        "an ability's caster faced is said to have been at an attack",
         MACHINE,
-        "    const float stood = request.turn ? std::abs(request.turn->degrees) : 0.0f;",
-        "    const float stood = request.turn ? request.turn->degrees : 0.0f;",
-    ),
-    Mutant(
-        "an ability's caster faced first is said to have been given an attack",
-        MACHINE,
-        '    const char *what = request.type == CommandType::Attack ? "attack" : "ability";',
-        '    const char *what = request.type != CommandType::Invalid ? "attack" : "ability";',
+        '    const char *what = faced.type == CommandType::Attack ? "attack" : "ability";',
+        '    const char *what = faced.type != CommandType::Invalid ? "attack" : "ability";',
     ),
     # No clock on the player's turn, and a mode that keeps its user at a
     # command (issue 51). How its own mode's command is told from another's

@@ -109,7 +109,7 @@ struct Creature // NOLINT(bugprone-exception-escape)
     std::string effects;
     // The way it faces, on the ground, as the engine keeps it and its turn
     // to face a target is reckoned from (DAOLib's dao::attack::TurnTo;
-    // src/game/Gate.cpp, TurnOf). None unless a case gives one
+    // src/game/Bridge.cpp, TurnLookOf). None unless a case gives one
     // (World::FaceOff): with none the engine has no turn to answer, and
     // nobody is faced (issue 40).
     float facingX = 0.0f;
@@ -125,8 +125,23 @@ struct Creature // NOLINT(bugprone-exception-escape)
     // its movement controller idle, with its own facing where the aim is
     // (the dead case's half that is the controller's; the other is the
     // creature not facing the aim, which its facing above says). A fact a
-    // case gives, as DAOLib's TurnTo gives the game layer its `stalls`.
+    // case gives, as DAOLib's TurnTo gives the game layer its `stalls`: it
+    // does not pass by itself.
     bool stalled = false;
+    // The engine begins no turn for it yet, for so many frames more of the
+    // world running: its own motion still playing (its controller's motion
+    // record busy: one just out of an ability's animation), DAOLib's
+    // `waits`. Then the engine turns it.
+    int waitsFrames = 0;
+    // Its command has come to its turn to face whom it is aimed at (the
+    // engine's sub-action 39), as a case says (World::AtTurnToFace), and
+    // which of its commands that is, by the engine's count of them. The
+    // stand-in's engine takes it from there, a frame at a time (World::
+    // TurnStep): past the turn at once if it faces its aim, turned and past
+    // if the engine would turn it, and standing at it if the turn stalls.
+    bool atTurnToFace = false;
+    ObjectId turnsTo = kNoObject;
+    std::uint32_t command = 0;
     // The modes it has on (sustained abilities), as the scripts'
     // IsModalAbilityActive answers: a sustained ability's use let through
     // turns its mode on, or off if it was on (World::Queue), and a case may
@@ -366,7 +381,20 @@ class World
         }
         statusReads += needs.statuses.empty() ? 0 : 1;
         obs.keptVoid = std::exchange(keptVoid, {});
+        obs.faced = std::exchange(facedLooks, {});
+        for (const ObjectId id : needs.turning)
+        {
+            if (const std::optional<TurnLook> look = LookAt(id))
+            {
+                obs.turns.push_back(*look);
+            }
+        }
+        obs.turns.insert(obs.turns.end(), looks.begin(), looks.end());
         Apply(machine.Step(obs));
+        if (!paused)
+        {
+            TurnStep();
+        }
     }
 
     void RunFor(std::uint32_t ms)
@@ -458,10 +486,11 @@ class World
 
     // The turn a command would make to face its target, as the engine
     // answers the game layer (DAOLib's dao::attack::TurnTo, through
-    // src/game/Gate.cpp's TurnOf): how far from the creature's facing to the
-    // engine's aim, the engine's own test of it, a degree, and whether the
-    // turn would stall: not done, and the engine would begin none
-    // (Creature::stalled). Nothing for a command that turns its creature to
+    // src/game/Bridge.cpp's TurnLookOf): how far from the creature's facing to the
+    // engine's aim, the engine's own test of it, a degree, whether the turn
+    // stalls (not done, and the engine will begin none: Creature::stalled),
+    // and whether it waits (not done, and the engine begins none yet:
+    // Creature::waitsFrames). Nothing for a command that turns its creature to
     // nobody, with nobody else aimed at, with no facing, or with the aim
     // where the creature stands.
     std::optional<TurnToFace> Turn(CommandType type, ObjectId id, ObjectId target) const
@@ -481,7 +510,8 @@ class World
                               (180.0f / std::numbers::pi_v<float>);
         // The engine's own test: within a degree, a plain <= (core/Facing.h).
         const bool done = std::abs(degrees) <= 1.0f;
-        return TurnToFace{degrees, done, !done && c.stalled};
+        const bool stalls = !done && c.stalled;
+        return TurnToFace{degrees, done, stalls, !done && !stalls && c.waitsFrames > 0};
     }
 
     // A creature turned to stand so many degrees off the engine's aim at
@@ -504,41 +534,77 @@ class World
         Get(id).stalled = true;
     }
 
-    Verdict Queue(const CommandRequest &asked)
+    // A creature's command come to its turn to face whom it is aimed at,
+    // as the game layer finds it there (the engine's sub-action 39).
+    void AtTurnToFace(ObjectId id, ObjectId target)
     {
-        // As the gate asks the engine with every command, afresh: a kept
-        // action given again is asked of as its creature stands now.
-        CommandRequest request = asked;
-        request.turn = Turn(request.type, request.object, request.target);
+        Creature &c = Get(id);
+        c.atTurnToFace = true;
+        c.turnsTo = target;
+    }
+
+    // The look the game layer takes of one named at its turn to face
+    // (Bridge.cpp, TurnLookOf): nothing for one not there, or with no answer
+    // from the engine.
+    std::optional<TurnLook> LookAt(ObjectId id) const
+    {
+        const auto found = std::ranges::find(creatures, id, &Creature::id);
+        if (found == creatures.end() || !found->atTurnToFace)
+        {
+            return std::nullopt;
+        }
+        const std::optional<TurnToFace> turn = Turn(found->current, id, found->turnsTo);
+        if (!turn)
+        {
+            return std::nullopt;
+        }
+        return TurnLook{id, found->turnsTo, found->current, found->command, *turn};
+    }
+
+    // The engine's own step of every turn to face, a frame of the world
+    // running: one facing its aim is past its turn; one the engine would
+    // turn is turned, and past it; one whose turn stalls stands at it for
+    // good; one whose turn waits stands at it while its own motion plays,
+    // and is turned by the engine after.
+    void TurnStep()
+    {
+        for (Creature &c : creatures)
+        {
+            if (!c.atTurnToFace)
+            {
+                continue;
+            }
+            const std::optional<TurnToFace> turn = Turn(c.current, c.id, c.turnsTo);
+            if (turn && turn->stalls)
+            {
+                continue;
+            }
+            if (turn && turn->waits)
+            {
+                --c.waitsFrames;
+                continue;
+            }
+            if (turn && !turn->done)
+            {
+                FaceOff(c.id, c.turnsTo, 0.0f);
+                ++turnedByEngine;
+            }
+            c.atTurnToFace = false;
+        }
+    }
+
+    Verdict Queue(const CommandRequest &request)
+    {
         const ObjectId id = request.object;
         const CommandType type = request.type;
         const Verdict verdict = machine.OnCommand(request);
-        // And as the gate has the engine face one the machine says to, before
-        // the command is given: at the engine's own aim (DAOLib's
-        // FaceExactly), the engine asked again, and the machine told what
-        // came of it (Gate.cpp, QueueCommand; issue 40).
-        if (machine.FaceFirst(request, verdict))
-        {
-            const bool taken = !faceRefused;
-            if (taken)
-            {
-                FaceOff(id, request.target, 0.0f);
-                facedFirst.emplace_back(id, request.target);
-            }
-            machine.Faced(request, taken, Turn(type, id, request.target));
-        }
         if (verdict == Verdict::Allow || verdict == Verdict::Conjure)
         {
-            // What the command finds as it begins: its creature's turn to
-            // face its target, which the engine's own test is asked of.
-            if (const std::optional<TurnToFace> found = Turn(type, id, request.target))
-            {
-                foundOff[id] = std::abs(found->degrees);
-            }
-            else
-            {
-                foundOff.erase(id);
-            }
+            // Another command of its creature's, by the engine's count, and
+            // not yet at any turn to face.
+            Creature &given = Get(id);
+            given.command = ++commands;
+            given.atTurnToFace = false;
         }
         if (verdict == Verdict::Hold)
         {
@@ -661,6 +727,7 @@ class World
         c.moving = false;
         c.current = CommandType::Invalid;
         c.queued = CommandType::Invalid;
+        c.atTurnToFace = false;
         Bind(c);
     }
 
@@ -765,13 +832,19 @@ class World
     std::unordered_set<std::int32_t> binding{kSong};
     float reach = 2.05f;                               // the stand-in's own: the game layer asks the engine
     std::vector<std::pair<ObjectId, ObjectId>> turned; // kept attacks turned on another: whose, and on whom
-    // Whom the gate faced at its target before its command, the engine
-    // having it for facing after, and at whom (TurnMachine::FaceFirst,
-    // Faced); and how many degrees off the engine's aim each creature's
-    // last command aimed at another found it as it began, after that
+    // Whom the game layer had the engine face at its target (EffectKind::
+    // FaceTarget, taken), and at whom; what came of each, for the machine
+    // with the next frame's look (Observation::faced); how many turns to
+    // face the stand-in's engine made by itself; and its count of commands
     // (issue 40).
-    std::vector<std::pair<ObjectId, ObjectId>> facedFirst;
-    std::unordered_map<ObjectId, float> foundOff;
+    std::vector<std::pair<ObjectId, ObjectId>> faced;
+    std::vector<FacedLook> facedLooks;
+    int turnedByEngine = 0;
+    std::uint32_t commands = 0;
+    // Looks a case hands the machine itself, with every frame's, as the
+    // game layer never would: one of a command that turns its creature to
+    // nobody, or of a creature the fight does not hold.
+    std::vector<TurnLook> looks;
     // The engine will not face a creature it is asked to (DAOLib's
     // FaceExactly answers no where the movement controller is not idle, and
     // sets nothing): a case says so for one whose controller has begun
@@ -861,6 +934,32 @@ class World
                 if (onPoke)
                 {
                     onPoke(e.target);
+                }
+                break;
+            case EffectKind::FaceTarget:
+                // The game layer has the engine face the creature at whom
+                // its command is aimed, asks the engine again, and keeps
+                // what came of it for the machine (Bridge.cpp, FaceTarget).
+                if (!e.others.empty())
+                {
+                    const ObjectId target = e.others.front();
+                    const auto type = static_cast<CommandType>(e.a);
+                    FacedLook look;
+                    look.who = e.target;
+                    look.target = target;
+                    look.type = type;
+                    if (const std::optional<TurnToFace> before = Turn(type, e.target, target))
+                    {
+                        look.stood = std::abs(before->degrees);
+                        look.taken = !faceRefused;
+                        if (look.taken)
+                        {
+                            FaceOff(e.target, target, 0.0f);
+                            faced.emplace_back(e.target, target);
+                        }
+                        look.now = Turn(type, e.target, target);
+                    }
+                    facedLooks.push_back(look);
                 }
                 break;
             case EffectKind::Approach:

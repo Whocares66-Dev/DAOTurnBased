@@ -129,6 +129,98 @@ constexpr float kChargedConjureSeconds = 1.0f;
 // already; the attack itself comes after (50, and the swing, 1).
 constexpr std::uint32_t kMeleeApproach = 4;
 constexpr std::uint32_t kRangedApproach = 15;
+// And at its turn to face its target, which an attack's command and an
+// ability's come to after the approach (sub-action 39, through
+// CSSubActionHandler::TurnToward: core/Facing.h has DAOLib's reading).
+constexpr std::uint32_t kTurnToFace = 39;
+
+TurnToFace AsCore(const dao::attack::FacingTurn &turn)
+{
+    return TurnToFace{turn.degrees, turn.done, turn.stalls, turn.waits};
+}
+
+// One of the fight's creatures, if its current command is an attack or an
+// ability aimed at another creature and is at its turn to face it: the turn
+// as the engine has it now (DAOLib's dao::attack::TurnTo, its issue 32: the
+// point the engine turns to, the angle left by its own VectorToAngle and
+// Angle::Wrap, its own test's "done", "stalls", the dead case, and "waits",
+// a turn the engine will begin by itself), for the machine to decide on
+// (core: TurnMachine::WatchTurnsToFace; issue 40). Asked
+// here, at the turn itself, where the engine asks it; the rule asked as the
+// command was given spun a creature 159 degrees for a command that began
+// with a walk (core/Facing.h). Every frame for everyone of the fight, so two
+// reads of the engine's own memory first and nothing else for a creature
+// that is not there: the sub-action its command is at, then the command.
+// Nothing for a command aimed at a place or at its own creature, or where
+// DAOLib has no answer (either of the two no creature).
+std::optional<TurnLook> TurnLookOf(ObjectId id)
+{
+    if (dao::commands::RunningSubAction(id) != kTurnToFace)
+    {
+        return std::nullopt;
+    }
+    auto *app = dao::CClientExoApp::Get();
+    const dao::CCObject *object = app != nullptr ? app->GetObjectById(id) : nullptr;
+    const dao::Command *command = object != nullptr ? object->CurrentCommand() : nullptr;
+    if (command == nullptr)
+    {
+        return std::nullopt;
+    }
+    const auto type = static_cast<CommandType>(static_cast<int>(command->Type()));
+    const std::optional<ObjectId> target = command->Target();
+    if (!TurnsToFace(type) || !target || *target == dao::kInvalidObject || *target == id)
+    {
+        return std::nullopt;
+    }
+    const std::optional<dao::attack::FacingTurn> turn = dao::attack::TurnTo(id, *target);
+    if (!turn)
+    {
+        return std::nullopt;
+    }
+    return TurnLook{id, *target, type, command->Sequence(), AsCore(*turn)};
+}
+
+// A creature faced exactly at whom its command is aimed, by the engine
+// (DAOLib's dao::attack::FaceExactly: the creature's facing by the engine's
+// own writer, the facing its movement controller wants by the engine's
+// SetDesiredFacing, and the controller's own, all three, on an idle
+// controller only), and the engine asked again: what the machine says in the
+// log is what it answers (core: TurnMachine::Faced). The mod set a creature's
+// facing by itself first, with the scripts' SetOrientation, which writes the
+// creature's alone and leaves the controller's behind (read in the
+// executable 2026-10-05: 0x00655340 to 0x00694CE0; the scripts' SetFacing,
+// SetFacingPosition and SetFacingObject only ask the controller, through
+// 0x00655170 to 0x00A638B0, and begin nothing in the dead case); dev/DESIGN.md
+// has what came of that in play.
+FacedLook FaceTarget(ObjectId creature, ObjectId target, CommandType type)
+{
+    FacedLook faced;
+    faced.who = creature;
+    faced.target = target;
+    faced.type = type;
+    const std::optional<dao::attack::FacingTurn> turn = dao::attack::TurnTo(creature, target);
+    if (!turn)
+    {
+        return faced; // not taken, and no answer after either
+    }
+    faced.stood = std::abs(turn->degrees);
+    faced.taken = dao::attack::FaceExactly(creature, turn->toward);
+    if (const std::optional<dao::attack::FacingTurn> now = dao::attack::TurnTo(creature, target))
+    {
+        faced.now = AsCore(*now);
+    }
+    // Where the engine's aim is not where the target stands, for a play
+    // test's log: a blow at a big creature, whose aim is a point of its
+    // melee ring, the case the mod's own measure got wrong.
+    const dao::Vector at = api::GetPosition(target);
+    if (const float apart = std::hypot(turn->point.x - at.x, turn->point.y - at.y); apart > 0.05f)
+    {
+        spdlog::debug("{:#x} is turned to a point {:.2f} m from where {:#x} stands: the engine's own aim for it, "
+                      "not its target's place (issue 40)",
+                      creature, apart, target);
+    }
+    return faced;
+}
 
 // The game's mode as the core names it; none yet (no game modes) is
 // Unknown, as before the world (DAOLib 3c8cccf made it an optional).
@@ -398,6 +490,7 @@ Observation Bridge::Observe(const Needs &needs, std::uint32_t nowMs)
         // Ids are the save's: another game can reuse them.
         known_.clear();
         keptVoid_.clear();
+        faced_.clear();
         party_.clear();
         leaderStands_ = true;
         return obs;
@@ -414,6 +507,14 @@ Observation Bridge::Observe(const Needs &needs, std::uint32_t nowMs)
     for (const ObjectId id : needs.statuses)
     {
         obs.statuses.push_back(Status(id));
+    }
+    obs.faced = std::exchange(faced_, {});
+    for (const ObjectId id : needs.turning)
+    {
+        if (const std::optional<TurnLook> look = TurnLookOf(id))
+        {
+            obs.turns.push_back(*look);
+        }
     }
     return obs;
 }
@@ -1534,6 +1635,12 @@ void Bridge::Apply(const std::vector<Effect> &effects)
         case EffectKind::DropCast:
             DropHeldCast(e.target);
             (void)DropEngineConjure(e.target);
+            break;
+        case EffectKind::FaceTarget:
+            if (!e.others.empty())
+            {
+                faced_.push_back(FaceTarget(e.target, e.others.front(), static_cast<CommandType>(e.a)));
+            }
             break;
         case EffectKind::Approach:
             // With a turn a bar of time, an attack that did not fit is kept

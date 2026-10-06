@@ -145,6 +145,8 @@ const char *Name(EffectKind kind)
         return "drop cast";
     case EffectKind::Approach:
         return "approach";
+    case EffectKind::FaceTarget:
+        return "face target";
     }
     return "?";
 }
@@ -286,6 +288,20 @@ Needs TurnMachine::WhatToObserve(std::uint32_t nowMs)
     {
         needs.actor = current->id;
     }
+    // Whose commands to look at for a turn to face that stalls: everyone of
+    // the fight that stands, every frame (WatchTurnsToFace). Not under a
+    // menu, where the world stands and the machine does nothing with what
+    // it is shown.
+    if (lastMode_ != Mode::Gui)
+    {
+        for (const Combatant &standing : order_.All())
+        {
+            if (!standing.down)
+            {
+                needs.turning.push_back(standing.id);
+            }
+        }
+    }
     // Every half second; fresh at every turn start: whether a creature is
     // stunned decides whether its turn is taken at all; and when asked for
     // (statusWanted_): as an action ends and before the turn goes on after
@@ -348,6 +364,12 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         SetSpeed(1.0f, fx);
         return fx;
     }
+    // What came of the facings asked for with the last step (FaceTarget;
+    // issue 40): said whatever the fight has come to since.
+    for (const FacedLook &faced : obs.faced)
+    {
+        Faced(faced);
+    }
     if (phase_ == Phase::Idle)
     {
         StepIdle(obs, fx);
@@ -407,6 +429,7 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
     }
     ApplyStatuses(obs.statuses, fx);
     FollowPace();
+    WatchTurnsToFace(obs, fx);
     if (currentStunned_ && (phase_ == Phase::AwaitingOrder || phase_ == Phase::Dispatching ||
                             phase_ == Phase::AiThinking || phase_ == Phase::Executing || phase_ == Phase::Settling))
     {
@@ -661,7 +684,8 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     approach_ = false;
     roundAgedMs_ = 0;
     ownEffectSince_.reset();
-    facedFirst_ = 0; // the last fight's, said as it ended (End) or dropped with the world unsaid
+    facedFirst_ = 0;  // the last fight's, said as it ended (End) or dropped with the world unsaid
+    turning_.clear(); // and whoever stood at a turn to face in it
     // Only who is fighting the party (Combatant::engaged): the rest wait
     // outside the order, and join when they are.
     for (const Combatant &c : roster)
@@ -3443,16 +3467,16 @@ void TurnMachine::DelayTurn(std::vector<Effect> &fx)
 void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
 {
     Log(LogLevel::Info, std::format("the turn-based fight is over after {} rounds: {}", order_.Round(), why));
-    // How often the fight's creatures were faced at their targets first
-    // (Faced; issue 40): once, here, and only if any were. The count is
-    // the fight's, begun again with the next (StartFight).
+    // How often the fight's creatures were faced at their targets (Faced;
+    // issue 40): once, here, and only if any were. The count is the
+    // fight's, begun again with the next (StartFight).
     if (facedFirst_ > 0)
     {
         Log(LogLevel::Info,
-            std::format("in this fight {} given to a creature the engine would not have turned to its target, which "
-                        "was faced at it exactly first (issue 40)",
-                        facedFirst_ == 1 ? std::string{"1 attack or ability was"}
-                                         : std::format("{} attacks and abilities were", facedFirst_)));
+            std::format("in this fight {} turn to face with a creature the engine would not have turned, which was "
+                        "faced at its target exactly (issue 40)",
+                        facedFirst_ == 1 ? std::string{"1 attack or ability came to its"}
+                                         : std::format("{} attacks and abilities came to their", facedFirst_)));
     }
     // The hero, the player's own, is who they control after: the last turn's
     // companion stayed selected, and the first click after the fight moved
@@ -4401,49 +4425,83 @@ Verdict TurnMachine::OnCommand(const CommandRequest &request)
 }
 
 // A creature the engine would not turn to face what its attack is aimed at
-// is faced at it exactly before the command is given (core/Facing.h has the
-// engine's reading and the hang it is for: issue 40). Asked of every command
-// the gate lets through, since the dead case is the engine's and no one
-// path's: a kept action given back by the mod (where the first hangs seen
-// were), an AI's own, the player's order.
-bool TurnMachine::FaceFirst(const CommandRequest &request, Verdict verdict) const
+// is faced at it exactly, as its command comes to its turn to face
+// (core/Facing.h has the engine's reading, the hang it is for and why it is
+// asked there and not as the command is given: issue 40). For any of the
+// fight's creatures, the turn's own or not: the dead case is the engine's
+// and no one path's.
+void TurnMachine::WatchTurnsToFace(const Observation &obs, std::vector<Effect> &fx)
 {
-    const bool given = verdict == Verdict::Allow || verdict == Verdict::Conjure;
-    if (!given || !Active() || !TurnsToFace(request.type) || !request.turn)
+    // One no longer at its turn to face is forgotten: what was said and
+    // asked of a command is that command's.
+    std::erase_if(turning_, [&](const auto &entry) {
+        return std::ranges::find(obs.turns, entry.first, &TurnLook::who) == obs.turns.end();
+    });
+    for (const TurnLook &look : obs.turns)
     {
-        return false;
+        if (!TurnsToFace(look.type) || order_.Find(look.who) == nullptr)
+        {
+            continue;
+        }
+        Turning &turning = turning_[look.who];
+        if (turning.command != look.command)
+        {
+            turning = Turning{look.command, false, false};
+        }
+        if (look.turn.stalls)
+        {
+            // The dead case: faced, asked for once a command. A facing
+            // that did not come off is said (Faced), and not tried again
+            // with every frame.
+            if (!std::exchange(turning.asked, true))
+            {
+                Effect face = Effect::Of(EffectKind::FaceTarget, look.who);
+                face.a = static_cast<std::int32_t>(look.type);
+                face.others.push_back(look.target);
+                fx.push_back(std::move(face));
+            }
+        }
+        else if (look.turn.waits && !std::exchange(turning.waited, true) && Logs(LogLevel::Debug))
+        {
+            // Not yet a stall, by the engine's own word: left, and looked at
+            // again with the next frame. Said once a command, for a play
+            // test's log to show it pass.
+            Log(LogLevel::Debug,
+                std::format("{} waits at its {}'s turn to face {}, {:.2f} deg off: the engine begins no turn for it "
+                            "yet, its own motion still playing, which passes by itself; left to the engine (issue 40)",
+                            Aimed(look.who), look.type == CommandType::Attack ? "attack" : "ability",
+                            Aimed(look.target), std::abs(look.turn.degrees)));
+        }
     }
-    return request.turn->stalls && order_.Find(request.object) != nullptr;
 }
 
-void TurnMachine::Faced(const CommandRequest &request, bool taken, const std::optional<TurnToFace> &now)
+void TurnMachine::Faced(const FacedLook &faced)
 {
-    // What it stood off before, as the engine had it then.
-    const float stood = request.turn ? std::abs(request.turn->degrees) : 0.0f;
-    const char *what = request.type == CommandType::Attack ? "attack" : "ability";
-    if (!taken || !now || !now->done)
+    const char *what = faced.type == CommandType::Attack ? "attack" : "ability";
+    if (!faced.taken || !faced.now || !faced.now->done)
     {
         Log(LogLevel::Warn,
-            std::format("{} stood {:.2f} deg off {} as its {} was given, the engine with no turn to begin for it, "
-                        "and was to be faced at it exactly: {}, and the engine {}; its {} is given as it stands "
-                        "(issue 40)",
-                        Aimed(request.object), stood, Aimed(request.target), what,
-                        taken ? "it was"
-                              : "the engine would not face it (its movement controller is not idle), nothing was set",
-                        !now        ? std::string{"has no turn to say for it now"}
-                        : now->done ? std::format("has it {:.2f} deg off now: done", std::abs(now->degrees))
-                                    : std::format("still has it {:.2f} deg off: not done", std::abs(now->degrees)),
-                        what));
+            std::format(
+                "{} stood {:.2f} deg off {} as its {} came to its turn to face, the engine with no turn to "
+                "begin for it, and was to be faced at it exactly: {}, and the engine {}; its {} is left as "
+                "it stands (issue 40)",
+                Aimed(faced.who), faced.stood, Aimed(faced.target), what,
+                faced.taken ? "it was"
+                            : "the engine would not face it (its movement controller is not idle), nothing was set",
+                !faced.now        ? std::string{"has no turn to say for it now"}
+                : faced.now->done ? std::format("has it {:.2f} deg off now: done", std::abs(faced.now->degrees))
+                                  : std::format("still has it {:.2f} deg off: not done", std::abs(faced.now->degrees)),
+                what));
         return;
     }
     ++facedFirst_;
     if (Logs(LogLevel::Debug))
     {
         Log(LogLevel::Debug,
-            std::format("{} stands {:.2f} deg off {} as its {} is given: faced at it exactly (the engine would begin "
-                        "no turn for it, and its {} would wait for one: issue 40); the engine now has it {:.2f} deg "
-                        "off: done",
-                        Aimed(request.object), stood, Aimed(request.target), what, what, std::abs(now->degrees)));
+            std::format("{} stands {:.2f} deg off {} as its {} comes to its turn to face: faced at it exactly (the "
+                        "engine would begin no turn for it, and its {} would wait for one: issue 40); the engine "
+                        "now has it {:.2f} deg off: done",
+                        Aimed(faced.who), faced.stood, Aimed(faced.target), what, what, std::abs(faced.now->degrees)));
     }
 }
 

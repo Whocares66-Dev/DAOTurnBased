@@ -1396,6 +1396,12 @@ class Arena
             Must(e.target != kNoObject, "an approach for nobody");
             Must(e.target == world_.Current(), "an approach for someone whose turn it is not");
             break;
+        case EffectKind::FaceTarget:
+            // The arena brings no command to a turn to face (issue 40's
+            // rule has its own cases, test_facing.cpp): nobody is looked at
+            // there, so nobody is to be faced.
+            Must(false, "a creature to be faced, with nobody at a turn to face");
+            break;
         case EffectKind::ClearCommands:
         case EffectKind::Floaty:
         case EffectKind::CenterCamera:

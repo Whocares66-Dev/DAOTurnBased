@@ -82,6 +82,9 @@ class Bridge
     // and, for a plain attack, no enemy in its reach to turn it on (Apply,
     // ReleaseCast): told to the machine with the next observation.
     std::vector<ObjectId> keptVoid_;
+    // What came of each facing asked for with the last effects (Apply,
+    // FaceTarget): said to the machine with the next look (issue 40).
+    std::vector<FacedLook> faced_;
     struct Known
     {
         std::wstring name;
