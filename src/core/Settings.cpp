@@ -146,27 +146,6 @@ const std::vector<Entry> &Entries()
         {"initiative", "die", Int(&Settings::initiativeDie, 1, 100)},
         {"initiative", "per_dexterity", Float(&Settings::initiativePerDexterity, 0.0f, 5.0f)},
         {"initiative", "per_survival", Float(&Settings::initiativePerSurvival, 0.0f, 10.0f)},
-        {"movement", "rule",
-         [](Settings &s, std::string_view text) -> std::string {
-             const std::string v = Lower(text);
-             if (v == "speed")
-             {
-                 s.movementRule = MovementRule::Speed;
-             }
-             else if (v == "constant")
-             {
-                 s.movementRule = MovementRule::Constant;
-             }
-             else
-             {
-                 return "not speed or constant";
-             }
-             return {};
-         }},
-        {"movement", "meters", Float(&Settings::movementMeters, 0.0f, 100.0f)},
-        {"movement", "per_dexterity", Float(&Settings::movementPerDexterity, 0.0f, 5.0f)},
-        {"movement", "min", Float(&Settings::movementMin, 0.0f, 100.0f)},
-        {"movement", "max", Float(&Settings::movementMax, 0.0f, 100.0f)},
         {"turns", "party",
          [](Settings &s, std::string_view text) -> std::string {
              const std::string v = Lower(text);
@@ -184,37 +163,22 @@ const std::vector<Entry> &Entries()
              }
              return {};
          }},
-        {"turns", "end_turn_when_action_used", Bool(&Settings::endTurnWhenActionUsed)},
         {"turns", "round_min_seconds", Float(&Settings::roundMinSeconds, 0.0f, 60.0f)},
         {"turns", "settle_ms", Int(&Settings::settleMs, 0, 5000)},
         {"turns", "ai_think_ms", Int(&Settings::aiThinkMs, 100, 10000)},
         {"turns", "ai_follow_up_ms", Int(&Settings::aiFollowUpMs, 0, 5000)},
         {"turns", "max_action_ms", Int(&Settings::maxActionMs, 1000, 60000)},
         {"turns", "max_turn_ms", Int(&Settings::maxTurnMs, 1000, 600000)},
-        // Gone (issue 38, 2026-10-04: the user, "let's get rid of the cap"):
-        // a file that still has it is told, once, by the warning.
-        {"turns", "max_commands_per_turn",
-         [](Settings &, std::string_view) -> std::string {
-             return "no longer a setting: nothing counts the commands an AI starts in a turn; its time is the limit, "
-                    "and max_turn_ms its turn's";
-         }},
         {"turns", "order_run_ms", Int(&Settings::orderRunMs, 0, 2000)},
         {"turns", "condition_turns", Int(&Settings::conditionTurns, 0, 5)},
-        {"turns", "cooldown_seconds_per_turn", Float(&Settings::cooldownSecondsPerTurn, 0.0f, 60.0f)},
         {"turns", "pause_on_player_turn", Bool(&Settings::pauseOnPlayerTurn)},
         {"turns", "pick_targets", Bool(&Settings::pickTargets)},
-        // Gone: a file that still has it is told, once, by the warning.
-        {"turns", "ai_turn_speed",
-         [](Settings &, std::string_view) -> std::string {
-             return "no longer a setting: [turns] speed is the fight's speed, everyone's turns alike";
-         }},
         {"turns", "speed", Float(&Settings::fightSpeed, 0.25f, 4.0f)},
         {"turns", "delay", Bool(&Settings::delay)},
         {"turns", "own_clocks", Bool(&Settings::ownClocks)},
         {"turns", "engine_conjure", Bool(&Settings::engineConjure)},
         {"turns", "give_back_unplayed", Bool(&Settings::giveBackUnplayed)},
         {"movement", "path_check", Bool(&Settings::pathCheck)},
-        {"turns", "effect_seconds_per_round", Float(&Settings::effectSecondsPerRound, 0.0f, 60.0f)},
         {"turns", "script_timers_from", Float(&Settings::scriptTimersFrom, 0.0f, 60.0f)},
         {"turns", "script_timers_trace", Bool(&Settings::scriptTimersTrace)},
         {"turns", "combat_radius", Float(&Settings::combatRadius, 5.0f, 200.0f)},
@@ -270,23 +234,6 @@ const std::vector<Entry> &Entries()
              else
              {
                  return "not command_complete or kickstart";
-             }
-             return {};
-         }},
-        {"turns", "clock",
-         [](Settings &s, std::string_view text) -> std::string {
-             const std::string v = Lower(text);
-             if (v == "actions")
-             {
-                 s.turnClock = TurnClock::Actions;
-             }
-             else if (v == "time")
-             {
-                 s.turnClock = TurnClock::Time;
-             }
-             else
-             {
-                 return "not actions or time";
              }
              return {};
          }},
@@ -469,11 +416,6 @@ ParsedSettings ParseSettings(std::string_view ini)
             out.warnings.push_back(std::format("line {}: [{}] {} = {}: {}", number, section, *key, value, problem));
         }
     }
-    if (out.settings.movementMin > out.settings.movementMax)
-    {
-        out.warnings.push_back("[movement] min is above max; max used for both");
-        out.settings.movementMin = out.settings.movementMax;
-    }
     return out;
 }
 
@@ -496,21 +438,13 @@ per_dexterity = 0.25
 per_survival = 2
 
 [movement]
-; How far a combatant may move in its turn, in meters.
-;   speed     meters times how fast it moves against a person: a shriek
-;             farther than a genlock, an ogre less far
-;   constant  meters for everyone
-rule = speed
-meters = 9
-; Extra meters per point of Dexterity above 10.
-per_dexterity = 0
-min = 3
-max = 20
+; How far a combatant may walk in its turn is the time it has left ([turns]
+; seconds_per_turn) at its pace ([turns] pace), and a free step.
 ; Judge how far an attack or a move must walk by the game's own path,
 ; around walls and tables, not a straight line: an enemy 5 m off round a
 ; corner may be 14 m of walking. What the walk cannot reach this turn is
 ; refused, "Too far", before a step is taken, a click on the ground too.
-; Off: a straight line for attacks, and a move walks until its meters run
+; Off: a straight line for attacks, and a move walks until its time runs
 ; out.
 path_check = true
 
@@ -521,10 +455,6 @@ path_check = true
 ; This is what each companion starts as. Where a playthrough has its own
 ; choice for a companion (kept with its saves), that choice wins over this.
 party = manual
-; End a party member's turn as soon as its action is spent, movement left or
-; not: the next combatant's turn comes at once. False keeps the turn open to
-; walk what is left, until the pause key ends it.
-end_turn_when_action_used = true
 ; A round lasts at least this many seconds of game time, so effects and
 ; cooldowns tick about as fast in every fight. 0 is off.
 round_min_seconds = 0
@@ -546,28 +476,19 @@ max_turn_ms = 30000
 ; nothing (an ability picked before its target) would run the world for
 ; nothing: 0, off.
 order_run_ms = 0
-; Conditions count in turns, not seconds. A stun, paralysis, sleep, pin or
-; knockdown costs the creature this many of its turns, the world still while
-; it loses them. When they are spent the mod ends the condition at the start
-; of the creature's turn, and it acts. 0 leaves each condition its own time
-; in seconds (spent a round at a time while effects count rounds), the
-; creature losing every turn that comes while it lasts.
+; A stun, paralysis, sleep, pin or knockdown takes its own seconds of its
+; victim's time: a turn's worth or more is a turn lost, the world still
+; while it is lost, and less is that much of its next turn's bar. When they
+; are spent the mod ends the condition at the start of the creature's turn,
+; and it acts. Where the game does not say how long one lasts, it counts as
+; this many turns; at 0 such a one costs every turn that comes while it
+; lasts.
 condition_turns = 1
-; Cooldowns count in turns: an ability used is held until the start of its
-; user's turn this many seconds of its cooldown later, rounded up (at 4,
-; Shield Bash is held 4 turns, as seen in play), so that a stun
-; or a pin, which costs its victim a whole turn, keeps about the share of
-; the time it has in real time. At 10 the archers' stun came back every
-; other turn. Waiting in real time no longer brings it back. A sustained
-; ability costs nothing to turn on, and turned off it waits for its user's
-; next turn. 0 leaves the game's timers in seconds, which run in real time,
-; paused or not.
-cooldown_seconds_per_turn = 4
 ; Pause the game while a party member's turn waits on your order. Off, the
 ; world idles on (breathing, torches, creatures shifting on their feet) and
 ; nobody acts out of turn, but what runs on the game's clock runs: damage
 ; over time and buffs tick, and stamina, mana and health come back, while
-; you choose. Stuns, pins and cooldowns count turns either way.
+; you choose. Stuns, pins and cooldowns go by the turns either way.
 pause_on_player_turn = false
 ; A talent chosen on the quickbar in a turn-based fight asks for its target,
 ; even with one selected. Off, the game uses it on the selected target at
@@ -584,29 +505,22 @@ speed = 1
 ; a healer after the fighter, a mage after the enemy has closed. The turn it
 ; then takes is whole, and its cooldowns and effects are none the older.
 delay = true
-; With clock = time: what wears off, burns or regenerates on a creature does
-; so on that creature's own clock, as its turn is spent: a poison ticks on
-; its victim's turn, a buff of 20 seconds lasts five of its owner's turns.
-; false: everyone's effects age together as each round begins.
+; What wears off, burns or regenerates on a creature does so on that
+; creature's own clock, as its turn is spent: a poison ticks on its victim's
+; turn, a buff of 20 seconds lasts five of its owner's turns. false:
+; everyone's effects age together, a turn's seconds as each round begins.
 own_clocks = true
-; With clock = time: a spell that conjures (Inferno, Chain Lightning) and has
-; not the time left this turn is begun at once, and its caster conjures
-; through the other turns until its time is paid: the game's own conjuring,
-; which a blow can interrupt by the game's own rule. false: the spell waits
-; unbegun until its time is paid.
+; A spell that conjures (Inferno, Chain Lightning) and has not the time left
+; this turn is begun at once, and its caster conjures through the other
+; turns until its time is paid: the game's own conjuring, which a blow can
+; interrupt by the game's own rule. false: the spell waits unbegun until its
+; time is paid.
 engine_conjure = true
-; With time: an action that ended at once, in under a quarter of the time it
-; takes, did not happen (a spell at a target the game would not take), and
-; its time is given back, once a turn.
+; An action that ended at once, in under a quarter of the time it takes, did
+; not happen (a spell at a target the game would not take), and its time is
+; given back.
 give_back_unplayed = true
-; Effects and regeneration count rounds: through a fight their clock is
-; held, and at each new round every temporary effect (buffs, debuffs, damage
-; and healing over time, timed summons, lasting areas) and every creature's
-; regeneration of health, mana and stamina runs this many seconds. At 6, a
-; 30 s buff lasts five rounds, whoever is thinking how long. 0 leaves them
-; on the game's clock.
-effect_seconds_per_round = 6
-; The scripts' own timers count rounds too: through a fight, a script event
+; The scripts' own timers count rounds: through a fight, a script event
 ; sent with a delay of at least this many seconds waits on that clock and
 ; comes as the rounds spend it (a boss's timed attack, a plot's countdown),
 ; so that everyone has a turn before it runs out. Shorter delays, by which
@@ -637,33 +551,32 @@ join_by_sight = true
 ; 45 m away is in plain sight, and is not yours. It waits as it is until
 ; your fight is over, or until it comes for you.
 join_radius = 30
-; A spell with a long casting time charges before it is cast: one whose
-; conjuring time is a turn's worth or more (cooldown_seconds_per_turn)
-; charges that many turns and is cast at the start of its caster's turn
-; after. At 4 s a turn: slow (4 s) charges one turn and is cast on the
-; second, ritual (6 s) two and on the third; instant, fast and normal are
-; cast on the turn. A stun, a knockdown, paralysis, sleep or death before
-; then interrupts it. The game's own abilities are instant, fast or normal,
-; so none charges by the rule; here an ability can be made to, by its id
-; and its turns: charge = 10002:1, 13000:1 (Inferno, Blizzard).
+; An ability made to cost whole turns of its caster's time, by its id and
+; its turns: charge = 10002:1, 13000:2 (Inferno a turn's worth, Blizzard
+; two). It is begun as it is ordered and lands when its caster's turns have
+; paid for it; a stun, a knockdown, paralysis, sleep or death before then
+; loses it. Empty: every ability costs the time the game takes for it.
 charge =
 ; How an AI creature is told its turn has come: command_complete or kickstart.
 ai_poke = command_complete
-; What a turn is. time: a bar of time, seconds_per_turn long, that actions
-; and walking both spend, each at its own length: a quick dagger strikes
-; more often than a greatsword, a long spell lands on the next turn, and
-; what is not spent rolls over a little. actions: one action (an attack, an
-; ability, an item) and the movement above, as the mod first played.
-clock = time
-; With time: a turn's bar in seconds, and what cooldowns and effects are
-; counted in.
+; What a turn is: a bar of time this many seconds long, that actions and
+; walking both spend, each at its own length. A quick dagger strikes more
+; often than a greatsword, a long spell lands on the next turn, and what is
+; not spent rolls over a little. It is also what everything timed counts
+; in. A creature's turn is this many seconds of its own clock: of its
+; cooldowns (Shield Bash's 20 s is five turns at 4; waiting in real time
+; does not bring it back; a sustained ability costs nothing to turn on, and
+; turned off it waits a turn) and of what wears off, burns or regenerates
+; on it. And a round is this many seconds of everything else: lasting
+; areas, the scripts' timers.
 seconds_per_turn = 4
-; With time: meters a turn walked for nothing, to shuffle in a melee ring.
+; Meters a turn walked for nothing, to shuffle in a melee ring.
 free_step = 1
-; With time: a person's walk in a fight, meters a second, times the
-; creature's movement speed.
+; A person's walk in a fight, meters a second. A creature walks at this
+; times its own pace: a shriek faster than a genlock, an ogre slower, and
+; faster or slower again for Haste, a salve or a slow on it.
 pace = 4.66
-; With time: the Combat Tactics rank enemies fight at, by their rank:
+; The Combat Tactics rank enemies fight at, by their rank:
 ; critter, normal, lieutenant, boss, elite boss. Each even rank adds half
 ; a second to a turn; each odd one lets half a second more roll over. So a
 ; lieutenant has half a second more a turn, a boss a second, an elite boss a
@@ -671,10 +584,9 @@ pace = 4.66
 enemy_tactics = 0, 0, 2, 4, 6
 
 [costs]
-; With clock = time, what the things that are not fighting cost of a turn's
-; bar, in seconds: a door, a chest or a lever used, a lock, a thing picked
-; up, taken or handed over. What does not fit is owed of the next turn. 0
-; for nothing.
+; What the things that are not fighting cost of a turn's bar, in seconds: a
+; door, a chest or a lever used, a lock, a thing picked up, taken or handed
+; over. What does not fit is owed of the next turn. 0 for nothing.
 object = 0.5
 
 [feedback]

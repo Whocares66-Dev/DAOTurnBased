@@ -231,7 +231,7 @@ enum class EffectKind : std::uint8_t
     AgeTime,       // every temporary effect aged b milliseconds, once; with a target, that creature's alone
     OwnClock,      // target's effects, regeneration and timers on a clock of its own (a 1), or the shared one (a 0)
     GameSpeed,     // the game runs at b thousandths of its speed (1000: as ever)
-    ReleaseCast,   // target's held cast of ability a is given to it now: it has charged its turns (others: Effect)
+    ReleaseCast,   // target's kept action of ability a is given to it now: its time is paid (others: Effect)
     DropCast,      // target's held cast is forgotten (interrupted); no target: everyone's
     Approach,      // target walks to where it can do the action kept for it (within reach of its target)
 };
@@ -291,7 +291,8 @@ struct CommandRequest
     // one from a way off, the game queues the door's use and the attack
     // again, and its creature walks a few metres and stands at "use
     // object" for good, the mod on or off (the ninth play test,
-    // 2026-10-01). Opening the door first costs no action.
+    // 2026-10-01). Opening the door first costs its own half second
+    // ([costs] object), and no more.
     bool doorInTheWay = false;
     // For a use of an ability: which, its cooldown in seconds (the ability
     // table's), and whether it is a sustained one (UseType 2) and already
@@ -302,7 +303,7 @@ struct CommandRequest
     bool sustainedOn = false;
     // And its conjuring time in seconds (the ability's Speed, through the
     // game's table of conjuring speeds: 0 instant, 1 fast, 2 normal, 4
-    // slow, 6 ritual): a turn's worth or more of it is charged in turns.
+    // slow, 6 ritual): what the spell costs of the bar before its cast.
     float conjureSeconds = 0.0f;
     // With a turn a bar of time (dev/REBALANCE.md, "Actions"): how long the
     // action takes when the game layer could tell, an attack's swing by the
@@ -342,9 +343,9 @@ enum class Verdict : std::uint8_t
 {
     Allow,
     Block,
-    // Not queued now, and kept by the game layer to give again: a cast
-    // that charges (TurnMachine::ChargeTurns). EffectKind::ReleaseCast asks
-    // for it, DropCast forgets it.
+    // Not queued now, and kept by the game layer to give again: an action
+    // that does not fit what is left of the bar (TurnMachine::PayAction).
+    // EffectKind::ReleaseCast asks for it, DropCast forgets it.
     Hold,
     // Let through now, the engine's own cast, and its conjure held by the
     // game layer (DAOLib's HoldConjure) until ReleaseCast lets it complete,
@@ -405,11 +406,9 @@ struct TurnView
     int round = 0;
     ObjectId current = kNoObject;
     bool playerTurn = false;
-    int actionsLeft = 0;
     float movementLeft = 0;
     float movementMax = 0;
-    // With a turn a bar of time: the bar, and what is left of it.
-    bool timed = false;
+    // The turn's bar of time, and what is left of it.
     std::uint32_t timeMs = 0;
     std::uint32_t timeLeftMs = 0;
     // And a turn's own seconds (the bar's are those, Combat Tactics' and
@@ -463,9 +462,8 @@ struct HeldView
     ObjectId id = kNoObject;
     std::wstring name;
     Condition seen = Condition::None;
-    int turnsOwed = 0;
     bool onClock = false; // ended, and the engine held it still: it runs out on the clock
-    // With a turn a bar of time: the time of its own clock it still owes.
+    // The time of its own clock it still owes.
     std::uint32_t owedMs = 0;
 };
 
@@ -473,10 +471,8 @@ struct CooldownView
 {
     ObjectId id = kNoObject;
     std::int32_t ability = -1;
-    int turns = 0; // its user's turns still to wait
-    int of = 0;    // of this many in all
-    // With a turn a bar of time: what is left of it on its user's own clock,
-    // and the whole it counts down from, in milliseconds (0 as built).
+    // What is left of it on its user's own clock, and the whole it counts
+    // down from, in milliseconds.
     std::uint32_t leftMs = 0;
     std::uint32_t ofMs = 0;
 };
@@ -485,8 +481,7 @@ struct ChargeView
 {
     ObjectId id = kNoObject;
     std::int32_t ability = -1;
-    int turns = 0; // its caster's turns still to go before it is cast
-    // With time: what it still owes, paid out of its creature's next turns.
+    // What it still owes, paid out of its creature's next turns.
     std::uint32_t owedMs = 0;
 };
 
@@ -648,8 +643,8 @@ class TurnMachine
 
     // From the game (DAOLib's command events): a creature's command ended
     // in a failure that did nothing, `why` the failure's name. The current
-    // creature's action, spent when the gate let it through, is given back
-    // once a turn, as for an approach cut short. True if it was. `target` is
+    // creature's action, its time taken when the gate let it through, is
+    // given back, each time it happens. True if it was. `target` is
     // what the failed command was aimed at, when the game layer says: for
     // the log's line alone ("X's attack on Y failed"), and nothing is
     // decided by it (issue 27).
@@ -747,9 +742,9 @@ class TurnMachine
   private:
     struct Budget
     {
-        // What the turn has to spend and has spent (core/TurnBudget.h): one
-        // action and meters as built, or a bar of time.
-        TurnBudget spend = TurnBudget::Actions(1, 0.0f);
+        // What the turn has to spend and has spent (core/TurnBudget.h): a bar
+        // of time; none in a turn passed over, and between two turns.
+        TurnBudget spend;
         // Whose turn was handed out (BeginTurn), and what was chosen for it
         // then, of whose tactics play its turns (nothing chosen: it began by
         // the setting, and goes by the setting). The turn is played out by
@@ -821,7 +816,7 @@ class TurnMachine
         bool refunded = false; // an action given back once already this turn
         int givenBack = 0;     // how many times this turn
         bool retried = false;  // an AI told to choose again, its failed action given back
-        bool landing = false;  // the turn began with a charged cast: its creature's turn follows it
+        bool landing = false;  // the turn began with a kept action given: its creature's turn follows it
         CommandKind lastKind = CommandKind::Involuntary;
         std::int32_t lastAbility = -1; // the ability the last command was to use; -1 for any other command
         float movementAtCommand = 0;   // meters walked as the last command was let through
@@ -861,14 +856,10 @@ class TurnMachine
     // And a turn already begun ended there, its creature made inactive in the
     // middle of it.
     void EndInactive(const Combatant &who, std::vector<Effect> &fx);
-    // A cast that charges (the user's rule, 2026-10-01): the turns an
-    // ability charges before it is cast; a turn of its caster's spent on
-    // one; the cast given again at the start of the turn it is cast on;
-    // and its loss.
-    [[nodiscard]] int ChargeTurns(const CommandRequest &request) const;
+    // An action kept for a later turn (PayAction): a turn of its creature's
+    // spent whole on what it still owes; the action given again at the start
+    // of the turn that has paid for it; and its loss.
     [[nodiscard]] bool ChargingTurn(const Combatant &who, std::vector<Effect> &fx);
-    // With a turn a bar of time (Settings::turnClock).
-    [[nodiscard]] bool Timed() const;
     [[nodiscard]] std::uint32_t TurnMs() const;
     [[nodiscard]] int TacticsOf(const Combatant &who) const;
     [[nodiscard]] TurnBudget NewSpend(const Combatant &who) const;
@@ -887,10 +878,7 @@ class TurnMachine
     // whether it was paid for (then its AI chooses again), or is the pass a
     // wait was before, which ends the turn.
     [[nodiscard]] bool PayWait(const Combatant &who, const CommandRequest &request);
-    // What a cooldown's and an effect's seconds are counted in.
-    [[nodiscard]] float CooldownTurnSeconds() const;
-    [[nodiscard]] float EffectRoundSeconds() const;
-    // There is an action spent this turn to give back (its time, with time).
+    // There is an action spent this turn to give back: its time.
     [[nodiscard]] bool ActionToGiveBack() const;
     void GiveActionBack();
     [[nodiscard]] std::string BudgetLeft() const;
@@ -925,7 +913,6 @@ class TurnMachine
     [[nodiscard]] bool HoldRuns(const ActorObservation &actor, std::vector<Effect> &fx);
     void HoldLetGo(const Combatant &who, std::vector<Effect> &fx);
     void ChargeHold(std::vector<Effect> &fx);
-    [[nodiscard]] std::uint32_t HoldTurnMs() const;
     [[nodiscard]] std::uint32_t Patience(std::uint32_t ms) const;
     // A turn its AI plays that is still going after max_turn_ms: ended.
     [[nodiscard]] bool TurnTooLong(std::vector<Effect> &fx);
@@ -947,7 +934,6 @@ class TurnMachine
     [[nodiscard]] bool LandCast(const Combatant &who, std::vector<Effect> &fx);
     void Interrupt(ObjectId who, std::string_view why, std::vector<Effect> &fx);
     void HoldUsed(std::vector<Effect> &fx);
-    void TickCooldowns(const Combatant &who, std::vector<Effect> &fx);
     void ReleaseCooldowns(std::vector<Effect> &fx);
     void HoldTime(bool held, std::vector<Effect> &fx);
     void SetSpeed(float speed, std::vector<Effect> &fx);
@@ -1010,14 +996,13 @@ class TurnMachine
 
     Settings settings_;
     // Conditions in turns (dev/DESIGN.md, "Conditions in turns"): what each
-    // creature was last seen held by, and how many of its turns it still
+    // creature was last seen held by, and how much of its time it still
     // owes to it. Kept apart from the order, which each scan rewrites.
     struct Held
     {
         Condition seen = Condition::None;
         Condition kind = Condition::None;
-        int turns = 0;
-        // With a turn a bar of time (dev/REBALANCE.md, "Holds"): a hold
+        // A hold (dev/REBALANCE.md, "Holds")
         // uses up its victim's own time, its seconds as the engine had them
         // when it landed. What is still owed: a turn's seconds or more is a
         // turn lost, less is that share of the next turn's bar.
@@ -1134,43 +1119,40 @@ class TurnMachine
     // lost or spent on a pending action; not a fallen one's, passed over).
     bool clockRuns_ = false;
     // Cooldowns in turns (dev/DESIGN.md): the abilities used in the action
-    // under way, held once it has run; and those held, with the turns of
-    // their user each still waits.
+    // under way, held once it has run; and those held, with what each still
+    // waits of its user's own clock.
     struct Hold
     {
         ObjectId creature = kNoObject;
         std::int32_t ability = -1;
-        int turns = 0;
-        int of = 0; // the turns it was held for in all: the sweep is turns over this
-        // With a turn a bar of time, the cooldown counts on its user's own
-        // clock, which moves a turn's seconds a turn of its user's, as its
-        // bar is spent (dev/REBALANCE.md, "The creature's own clock"): it
-        // lifts at the moment it runs out, mid-turn included.
+        // The cooldown counts on its user's own clock, which moves a turn's
+        // seconds a turn of its user's, as its bar is spent
+        // (dev/REBALANCE.md, "The creature's own clock"): it lifts at the
+        // moment it runs out, mid-turn included. What is left, and of what
+        // (the quickbar's sweep is the one over the other).
         std::uint32_t leftMs = 0;
         std::uint32_t ofMs = 0;
     };
     std::vector<Hold> usedNow_;
     std::vector<Hold> holds_;
-    // Casts that charge. The user's rule: a spell whose conjuring time is a
-    // turn's worth or more charges that many of its caster's turns, the one
-    // it is ordered on the first, and is cast at the start of the turn
-    // after: slow (4 s at 4 s a turn) one turn and cast on the second,
-    // ritual (6 s) two and on the third; instant, fast and normal on the
-    // turn. A caster held (a stun, a knockdown, paralysis, sleep), fallen
-    // or gone before then loses it, nothing spent. Cast, it costs no action
-    // of that turn: the caster then has its turn.
-    //
-    // With a turn a bar of time, the same keeps an action that does not fit
-    // what is left of its creature's bar (PayAction): it lands as a later
-    // turn has paid what it owes, and its walk to its target (an attack's),
-    // paid for in that, is walked for nothing. An action the game layer
+    // Actions kept: one that does not fit what is left of its creature's
+    // bar (PayAction) lands as a later turn has paid what it owes, and its
+    // walk to its target (an attack's), paid for in that, is walked for
+    // nothing. A caster held (a stun, a knockdown, paralysis, sleep), fallen
+    // or gone before then loses it, nothing spent. An action the game layer
     // cannot keep (an item's use) runs at once, and only what it owes is
     // kept, to be paid.
+    //
+    // (It began as "casts that charge", the user's rule of 2026-10-01 for a
+    // turn of one action: a spell whose conjuring was a turn's worth or more
+    // charged that many of its caster's turns and was cast at the start of
+    // the turn after. The bar's arithmetic does that now, and the counted
+    // turns went with the action clock, issue 50; the names are from then.)
     struct Charge
     {
         ObjectId caster = kNoObject;
         std::int32_t ability = -1;
-        int turns = 0; // its caster's turns still to go, the next included
+        int turns = 0; // 1 until the turn that has paid for it begins, 0 then: it is given (LandCast)
         std::uint32_t owedMs = 0;
         CommandType type = CommandType::UseAbility;
         bool kept = true;
@@ -1183,7 +1165,7 @@ class TurnMachine
     };
     std::vector<Charge> charges_;
     std::optional<Charge> landing_; // given again this turn, and not yet come through the gate
-    bool chargeBegan_ = false;      // a cast began to charge: its caster's turn ends with the next step
+    bool chargeBegan_ = false;      // an action was kept: its creature's turn ends with the next step
     // Effects' time in rounds (dev/DESIGN.md, "Everything in turns"):
     // whether the fight holds it.
     bool timeHeld_ = false;
@@ -1315,8 +1297,7 @@ class TurnMachine
     // eighth play test, 2026-10-01). While the acting creature is at an
     // effect's command after its own action, effects' time runs with the
     // world, a step at a time, and comes off the round's worth, so a round
-    // is still effect_seconds_per_round of it (more only if an action took
-    // more).
+    // is still a turn's seconds of it (more only if an action took more).
     std::uint32_t roundAgedMs_ = 0;
     std::optional<std::uint32_t> ownEffectSince_; // the world's clock as the action's own effect was last aged
     static constexpr std::uint32_t kOwnEffectStepMs = 250;

@@ -312,7 +312,6 @@ TEST_CASE("no marks for no spacing, no path, or a path of one point", "[preview]
 TEST_CASE("with a turn a bar of time, the preview says what the order would cost", "[preview]")
 {
     TurnView view;
-    view.timed = true;
     view.timeLeftMs = 2500;
     view.paceMps = 5.0f;
     view.paidMeters = 1.0f; // the free meter
@@ -327,7 +326,7 @@ TEST_CASE("with a turn a bar of time, the preview says what the order would cost
     // In reach: the swing alone; within the meters that cost nothing: nothing.
     CHECK(CostOf(view, 0.0f, 1.5f).seconds == Approx(1.5f));
     CHECK(CostOf(view, 0.8f, 0.0f).seconds == 0.0f);
-    // As built there is no bar to cost anything of.
+    // Between two turns there is no bar to cost anything of.
     CHECK(CostOf(TurnView{}, 6.0f, 1.5f).seconds == 0.0f);
 
     PreviewView shown;

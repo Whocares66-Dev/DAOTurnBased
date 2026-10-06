@@ -6,38 +6,25 @@
 namespace tb
 {
 
-TurnBudget TurnBudget::Actions(int actions, float meters)
-{
-    TurnBudget budget;
-    budget.actions_ = std::max(0, actions);
-    budget.movementMax_ = std::max(0.0f, meters);
-    return budget;
-}
-
 TurnBudget TurnBudget::Time(const TurnTime &time, float paceMps, float freeMeters)
 {
     TurnBudget budget;
-    budget.timed_ = true;
+    budget.bar_ = true;
     budget.time_ = time;
     budget.pace_ = paceMps > 0.0f ? paceMps : 1.0f;
     budget.free_ = std::max(0.0f, freeMeters);
     return budget;
 }
 
-int TurnBudget::ActionsLeft() const
+bool TurnBudget::TimeLeft() const
 {
-    if (!timed_)
-    {
-        return actions_;
-    }
-    return time_.CapacityLeft() > 0 ? 1 : 0;
+    return bar_ && time_.CapacityLeft() > 0;
 }
 
 std::uint32_t TurnBudget::SpendAction(std::uint32_t costMs)
 {
-    if (!timed_)
+    if (!bar_)
     {
-        actions_ = std::max(0, actions_ - 1);
         return 0;
     }
     const TimePayment paid = time_.Spend(costMs);
@@ -46,9 +33,8 @@ std::uint32_t TurnBudget::SpendAction(std::uint32_t costMs)
 
 void TurnBudget::GiveActionBack(std::uint32_t chargedMs)
 {
-    if (!timed_)
+    if (!bar_)
     {
-        actions_ = std::max(actions_, 1);
         return;
     }
     time_.Refund(chargedMs);
@@ -56,9 +42,8 @@ void TurnBudget::GiveActionBack(std::uint32_t chargedMs)
 
 void TurnBudget::SpendAllActions()
 {
-    if (!timed_)
+    if (!bar_)
     {
-        actions_ = 0;
         return;
     }
     // The free meter and meters paid for go with it: a creature whose
@@ -73,9 +58,8 @@ void TurnBudget::SpendAllActions()
 
 void TurnBudget::Pend()
 {
-    if (!timed_)
+    if (!bar_)
     {
-        actions_ = 0;
         return;
     }
     (void)time_.Spend(time_.CapacityLeft());
@@ -85,9 +69,9 @@ void TurnBudget::Pend()
 
 float TurnBudget::MovementLeft() const
 {
-    if (!timed_)
+    if (!bar_)
     {
-        return walked_ >= movementMax_ ? 0.0f : movementMax_ - walked_;
+        return 0.0f;
     }
     const float freeLeft = std::max(0.0f, free_ - freeWalked_);
     const float timed = static_cast<float>(time_.CapacityLeft()) / 1000.0f * pace_ - owedMeters_;
@@ -96,20 +80,17 @@ float TurnBudget::MovementLeft() const
 
 float TurnBudget::MovementMax() const
 {
-    if (!timed_)
+    if (!bar_)
     {
-        return movementMax_;
+        return 0.0f;
     }
     return walked_ - overwalked_ + MovementLeft();
 }
 
 float TurnBudget::Overwalked() const
 {
-    if (!timed_)
-    {
-        return std::max(0.0f, walked_ - movementMax_);
-    }
-    return overwalked_;
+    // (With no bar there is nothing to walk: every meter is one past it.)
+    return bar_ ? overwalked_ : walked_;
 }
 
 void TurnBudget::Walk(float meters)
@@ -119,7 +100,7 @@ void TurnBudget::Walk(float meters)
         return;
     }
     walked_ += meters;
-    if (!timed_)
+    if (!bar_)
     {
         return;
     }
@@ -152,7 +133,7 @@ void TurnBudget::Walk(float meters)
 
 void TurnBudget::SettleOverwalk()
 {
-    if (!timed_ || !(overwalked_ > 0.0f))
+    if (!bar_ || !(overwalked_ > 0.0f))
     {
         return;
     }
@@ -163,7 +144,7 @@ void TurnBudget::SettleOverwalk()
 
 std::uint32_t TurnBudget::WalkCostMs(float meters) const
 {
-    if (!timed_)
+    if (!bar_)
     {
         return 0;
     }
@@ -177,7 +158,7 @@ std::uint32_t TurnBudget::WalkCostMs(float meters) const
 
 void TurnBudget::Prepay(float meters)
 {
-    if (!timed_ || !(meters > credit_))
+    if (!bar_ || !(meters > credit_))
     {
         return;
     }
@@ -200,7 +181,7 @@ void TurnBudget::Credit(float meters)
 
 void TurnBudget::SetPace(float paceMps)
 {
-    if (!timed_ || !(paceMps > 0.0f) || !std::isfinite(paceMps))
+    if (!bar_ || !(paceMps > 0.0f) || !std::isfinite(paceMps))
     {
         return;
     }
@@ -209,34 +190,33 @@ void TurnBudget::SetPace(float paceMps)
 
 float TurnBudget::PaidMeters() const
 {
-    return timed_ ? credit_ + std::max(0.0f, free_ - freeWalked_) : 0.0f;
+    return bar_ ? credit_ + std::max(0.0f, free_ - freeWalked_) : 0.0f;
 }
 
 std::uint32_t TurnBudget::HoldClock(std::uint32_t clockMs)
 {
-    return timed_ ? time_.Hold(clockMs) : 0;
+    return bar_ ? time_.Hold(clockMs) : 0;
 }
 
 std::uint32_t TurnBudget::ClockElapsedMs() const
 {
-    return timed_ ? time_.ClockElapsed() : 0;
+    return bar_ ? time_.ClockElapsed() : 0;
 }
 
 std::uint32_t TurnBudget::CapacityMs() const
 {
-    return timed_ ? time_.Capacity() : 0;
+    return bar_ ? time_.Capacity() : 0;
 }
 
 std::uint32_t TurnBudget::CapacityLeftMs() const
 {
-    return timed_ ? time_.CapacityLeft() : 0;
+    return bar_ ? time_.CapacityLeft() : 0;
 }
 
 std::uint32_t TurnBudget::Finish(std::uint32_t rolloverCapMs)
 {
-    if (!timed_)
+    if (!bar_)
     {
-        actions_ = 0;
         return 0;
     }
     return time_.Finish(rolloverCapMs).rolloverMs;

@@ -190,12 +190,6 @@ MUTANTS = [
         "if (current == nullptr)",
     ),
     Mutant(
-        "the gate never spends an action",
-        MACHINE,
-        "        (void)budget_.spend.SpendAction(0);\n",
-        "\n",
-    ),
-    Mutant(
         "the gate never checks movement",
         MACHINE,
         "if (budget_.outOfMovement || budget_.MovementLeft() < kMinStep)",
@@ -302,12 +296,6 @@ MUTANTS = [
         "    const bool aiPassed = !player && passRequested_ && !landing && !approaching;",
         "    const bool aiPassed = !player && passRequested_ && !landing;",
     ),
-    Mutant(
-        "a settings file that still has max_commands_per_turn is told nothing",
-        SETTINGS,
-        '             return "no longer a setting: nothing counts the commands an AI starts in a turn; its time is the limit, "\n                    "and max_turn_ms its turn\'s";',
-        "             return {};",
-    ),
     # A turn an AI plays has a time limit, max_turn_ms (issue 38): what ends
     # a turn of steps that take nothing, with nothing counting its commands.
     Mutant(
@@ -398,12 +386,6 @@ MUTANTS = [
         "if (c >= 0x01)",
     ),
     Mutant(
-        "movement ignores speed",
-        RULES,
-        "meters *= sensible ? speedModifier : 1.0f;",
-        "(void)sensible;",
-    ),
-    Mutant(
         "an ogre's pace is taken for a shriek's",
         RULES,
         "return combatSpeed / kPersonCombatSpeed;",
@@ -418,14 +400,14 @@ MUTANTS = [
     Mutant(
         "a stun costs no turn",
         MACHINE,
-        "    const bool owes = timed ? held.owedMs >= turn : !Timed() && held.kind == Condition::Disabled && held.turns > 0;",
-        "    const bool owes = timed ? held.owedMs >= turn : !Timed() && held.kind == Condition::Disabled && held.turns > 99;",
+        "    const bool owes = held.kind == Condition::Disabled && held.owedMs >= turn;",
+        "    const bool owes = held.kind == Condition::Disabled && held.owedMs >= turn * 99;",
     ),
     Mutant(
-        "a condition that has had its turns is never ended",
+        "a condition that has had its time is never ended",
         MACHINE,
-        "if (held.turns <= 0 && held.owedMs == 0 && held.seen != Condition::None)",
-        "if (held.turns < 0 && held.owedMs == 0 && held.seen != Condition::None)",
+        "    if (held.owedMs == 0 && held.seen != Condition::None)",
+        "    if (held.owedMs > 4000000000U && held.seen != Condition::None)",
     ),
     Mutant(
         "End waits out what the engine holds the creature in",
@@ -445,32 +427,32 @@ MUTANTS = [
     Mutant(
         "a hold takes the turn at two seconds, whatever is left of the bar",
         MACHINE,
-        "    if (bar ? budget_.spend.CapacityLeftMs() > 0 : budget_.heldMs < HoldTurnMs())",
-        "    if (budget_.heldMs < 2000)",
+        "    if (budget_.spend.CapacityLeftMs() > 0)\n    {\n        return false;\n    }\n    Log(LogLevel::Info,",
+        "    if (budget_.heldMs < 2000)\n    {\n        return false;\n    }\n    Log(LogLevel::Info,",
     ),
     Mutant(
         "a turn waits out a hold however long it runs",
         MACHINE,
-        "    if (bar ? budget_.spend.CapacityLeftMs() > 0 : budget_.heldMs < HoldTurnMs())",
-        "    if (budget_.heldMs < 4000000000U)",
+        "    if (budget_.spend.CapacityLeftMs() > 0)\n    {\n        return false;\n    }\n    Log(LogLevel::Info,",
+        "    if (budget_.heldMs < 4000000000U)\n    {\n        return false;\n    }\n    Log(LogLevel::Info,",
     ),
     Mutant(
         "time: a hold takes nothing of the bar",
         MACHINE,
-        "        (void)budget_.spend.HoldClock(ran);",
-        "        (void)budget_.spend.HoldClock(0);",
+        "    (void)budget_.spend.HoldClock(ran);",
+        "    (void)budget_.spend.HoldClock(0);",
     ),
     Mutant(
         "time: a hold takes its time of the bar as an action does, not of the clock by the turn's ratio",
         MACHINE,
-        "        (void)budget_.spend.HoldClock(ran);",
-        "        (void)budget_.spend.SpendAction(ran);",
+        "    (void)budget_.spend.HoldClock(ran);",
+        "    (void)budget_.spend.SpendAction(ran);",
     ),
     Mutant(
         "time: a hold does not move its creature's own clock: an effect on it cannot wear off within the turn",
         MACHINE,
-        "        budget_.holdBarMs += before - budget_.spend.CapacityLeftMs();\n        MoveClock(fx);",
-        "        budget_.holdBarMs += before - budget_.spend.CapacityLeftMs();",
+        "    budget_.holdBarMs += before - budget_.spend.CapacityLeftMs();\n    MoveClock(fx);",
+        "    budget_.holdBarMs += before - budget_.spend.CapacityLeftMs();",
     ),
     Mutant(
         "one clock for everyone's effects stands still for a hold",
@@ -523,20 +505,8 @@ MUTANTS = [
     Mutant(
         "an AI whose bar a hold spent as it let go is asked to choose with nothing",
         MACHINE,
-        "        if (!actor.busy && current != nullptr && !PlayerControls(*current) &&\n            (!budget_.spend.Timed() || budget_.spend.ActionsLeft() > 0))",
+        "        if (!actor.busy && current != nullptr && !PlayerControls(*current) && budget_.spend.TimeLeft())",
         "        if (!actor.busy && current != nullptr && !PlayerControls(*current))",
-    ),
-    Mutant(
-        "as built with effects on the game's clock, a hold has no turn's worth: the turn is lost at once",
-        MACHINE,
-        "    const float seconds = EffectRoundSeconds() > 0.0f ? EffectRoundSeconds() : settings_.secondsPerTurn;",
-        "    const float seconds = EffectRoundSeconds();",
-    ),
-    Mutant(
-        "as built, a hold's turn's worth is a turn's seconds, not what a round spends on effects",
-        MACHINE,
-        "    const float seconds = EffectRoundSeconds() > 0.0f ? EffectRoundSeconds() : settings_.secondsPerTurn;",
-        "    const float seconds = settings_.secondsPerTurn;",
     ),
     Mutant(
         "an AI getting up from a condition the machine ended is told to choose behind the rise",
@@ -706,8 +676,8 @@ MUTANTS = [
     Mutant(
         "the state leaves out the conditions held",
         "src/core/TurnMachine.cpp",
-        "        if (held.seen == Condition::None && held.turns == 0)",
-        "        if (held.seen == Condition::None || held.turns >= 0)",
+        "        if (held.seen == Condition::None && held.owedMs == 0)",
+        "        if (held.seen == Condition::None || held.owedMs < 4000000000U)",
     ),
     Mutant(
         "a command that failed without acting keeps its action spent",
@@ -754,8 +724,8 @@ MUTANTS = [
     Mutant(
         "a hold taken off before its victim's turn still costs the turn",
         MACHINE,
-        "            if (takenOff && held.turns > 0)",
-        "            if (takenOff && held.turns > 99)",
+        "            if (takenOff && held.owedMs > 0)",
+        "            if (takenOff && held.owedMs > 4000000000U)",
     ),
     Mutant(
         "a hold run out on the clock gives its turns back",
@@ -768,12 +738,6 @@ MUTANTS = [
         MACHINE,
         "    // says whether a pan got there (src/game/Camera.cpp).\n    SetSpeed(TurnSpeed(), fx);",
         "    // says whether a pan got there (src/game/Camera.cpp).",
-    ),
-    Mutant(
-        "effects' time turned on mid-fight is never held",
-        MACHINE,
-        "        HoldTime(true, fx);",
-        "        ;",
     ),
     Mutant(
         "a fight stood down begins again while the game still says combat",
@@ -931,14 +895,14 @@ MUTANTS = [
     Mutant(
         "a held cooldown's sweep stays full",
         MACHINE,
-        "kCooldownHoldSeconds * h.turns / h.of, kCooldownHoldSeconds));",
-        "kCooldownHoldSeconds, kCooldownHoldSeconds));",
+        "                static_cast<std::int32_t>(static_cast<std::uint64_t>(kCooldownHoldSeconds) * h.leftMs / h.ofMs),",
+        "                static_cast<std::int32_t>(static_cast<std::uint64_t>(kCooldownHoldSeconds) * h.ofMs / h.ofMs),",
     ),
     Mutant(
         "an AI whose action was given back is not told to choose again",
         MACHINE,
-        "    if (!player && budget_.spend.ActionsLeft() > 0 && budget_.refunded && !budget_.retried &&",
-        "    if (!player && budget_.spend.ActionsLeft() > 9 && budget_.refunded && !budget_.retried &&",
+        "    if (!player && budget_.spend.TimeLeft() && budget_.refunded && !budget_.retried && !budget_.outOfMovement)",
+        "    if (!player && budget_.spend.TimeLeft() && !budget_.refunded && !budget_.retried && !budget_.outOfMovement)",
     ),
     Mutant(
         "an AI whose action was given back is told again and again",
@@ -1153,18 +1117,6 @@ MUTANTS = [
         '    Log(LogLevel::Info, std::format("the fight: {} combatants; {}"',
     ),
     Mutant(
-        "a slow spell is cast on the turn",
-        MACHINE,
-        "    if (!(turn > 0.0f) || request.conjureSeconds < turn)",
-        "    if (!(turn > 0.0f) || request.conjureSeconds <= turn)",
-    ),
-    Mutant(
-        "a ritual is cast a turn early",
-        MACHINE,
-        "        if (--charge->turns <= 0)",
-        "        if (--charge->turns <= 1)",
-    ),
-    Mutant(
         "a charged cast given again is taken for an order of the turn's",
         MACHINE,
         "    const bool landing = landing_ && landing_->caster == who->id && request.type == landing_->type &&",
@@ -1191,14 +1143,14 @@ MUTANTS = [
     Mutant(
         "an ability made to charge by the settings does not",
         MACHINE,
-        "        if (ability == request.ability)\n        {\n            return turns;",
-        "        if (ability != request.ability)\n        {\n            return turns;",
+        "            if (ability == request.ability)\n            {\n                cost = static_cast<std::uint32_t>(turns) * TurnMs();",
+        "            if (ability != request.ability)\n            {\n                cost = static_cast<std::uint32_t>(turns) * TurnMs();",
     ),
     Mutant(
-        "an AI that spent its action after its charged cast is told again",
+        "an AI whose bar was spent as its kept action landed is told again",
         MACHINE,
-        "        if (player || budget_.spend.ActionsLeft() > 0)\n        {\n            Handover(*current, fx);",
-        "        if (player || budget_.spend.ActionsLeft() > -9)\n        {\n            Handover(*current, fx);",
+        "        if (player || budget_.spend.TimeLeft())\n        {\n            Handover(*current, fx);",
+        "        if (player || budget_.spend.CapacityLeftMs() < 4000000000U)\n        {\n            Handover(*current, fx);",
     ),
     Mutant(
         "the 0 key is given to the game as another key",
@@ -1311,14 +1263,8 @@ MUTANTS = [
     Mutant(
         "an ability's cooldown is never held",
         MACHINE,
-        "        if (turns > 0)\n        {\n            // With time, its own seconds",
-        "        if (turns > 99)\n        {\n            // With time, its own seconds",
-    ),
-    Mutant(
-        "a held cooldown is released a turn early",
-        MACHINE,
-        "        if (--h.turns <= 0)",
-        "        if (--h.turns <= 1)",
+        "        if (ms > 0)\n        {\n            usedNow_.push_back(Hold{who->id, request.ability, ms, ms});",
+        "        if (ms > 4000000000U)\n        {\n            usedNow_.push_back(Hold{who->id, request.ability, ms, ms});",
     ),
     Mutant(
         "a sustained ability's toggle costs the action",
@@ -1329,8 +1275,8 @@ MUTANTS = [
     Mutant(
         "a sustained ability turned off can be turned on again in the same turn",
         MACHINE,
-        "? (request.sustainedOn ? 1 : 0)",
-        "? 0",
+        "? (request.sustainedOn ? TurnMs() : 0u)",
+        "? 0u",
     ),
     Mutant(
         "held cooldowns stay held after the fight",
@@ -1791,7 +1737,7 @@ MUTANTS = [
         "effects are never aged a round",
         MACHINE,
         "        e.b = static_cast<std::int32_t>(left);\n        fx.push_back(e);",
-        "        e.b = static_cast<std::int32_t>(left);",
+        "        e.b = static_cast<std::int32_t>(left);\n        (void)fx;",
     ),
     Mutant(
         "effects' time stays held after the fight",
@@ -1895,7 +1841,7 @@ MUTANTS = [
         "        Field(out, std::wstring_view{TextureName(portraits.Of(card.id))});\n",
         "        (void)portraits;\n",
     ),
-    # A turn as a bar of time (Settings::turnClock, dev/REBALANCE.md).
+    # A turn as a bar of time (dev/REBALANCE.md).
     Mutant(
         "turnbudget lets a kept action's creature walk its free meter",
         "src/core/TurnBudget.cpp",
@@ -2039,8 +1985,8 @@ MUTANTS = [
     Mutant(
         "time: an AI is not told to choose again with time left",
         MACHINE,
-        "        if (Timed() && budget_.spend.ActionsLeft() > 0 && !budget_.outOfMovement)",
-        "        if (Timed() && budget_.spend.ActionsLeft() > 99 && !budget_.outOfMovement)",
+        "        if (budget_.spend.TimeLeft() && !budget_.outOfMovement)",
+        "        if (budget_.spend.CapacityLeftMs() > 4000000000U && !budget_.outOfMovement)",
     ),
     Mutant(
         "time: an AI's wait ends its turn, whatever is left of its bar",
@@ -2091,22 +2037,16 @@ MUTANTS = [
         '        std::format("{} waits {:.2f} s; {}", Utf8(who.name), static_cast<float>(cost) / 1000.0f, BudgetLeft()));\n    ++budget_.commands;\n',
     ),
     Mutant(
-        "a wait is reckoned against a bar with one action a turn, where there is none",
-        MACHINE,
-        "    if (!Timed())\n    {\n        return false; // as built a turn is one action",
-        "    if (false)\n    {\n        return false; // as built a turn is one action",
-    ),
-    Mutant(
         "time: a failed action's time is not given back",
         MACHINE,
-        "    return budget_.spend.Timed() ? budget_.lastCostMs > 0 : budget_.spend.ActionsLeft() == 0;",
-        "    return budget_.spend.ActionsLeft() == 0;",
+        "    return budget_.lastCostMs > 0;",
+        "    return budget_.lastCostMs > 4000000000U;",
     ),
     Mutant(
         "time: a turn with its bar spent waits on its free meter",
         MACHINE,
-        "    if (settings_.endTurnWhenActionUsed || budget_.spend.Timed())",
-        "    if (settings_.endTurnWhenActionUsed)",
+        "    return !budget_.spend.TimeLeft();",
+        "    return !budget_.spend.TimeLeft() && (budget_.outOfMovement || budget_.MovementLeft() < kMinStep);",
     ),
     Mutant(
         "time: a turn ended over a conversation is resumed for the next creature",
@@ -2117,8 +2057,8 @@ MUTANTS = [
     Mutant(
         "time: a turn spent whole on what a kept action owes is not",
         MACHINE,
-        "        if (charge->owedMs <= bar.CapacityLeftMs())",
-        "        if (true)",
+        "    if (charge->owedMs <= bar.CapacityLeftMs())",
+        "    if (true)",
     ),
     Mutant(
         "time: a mode turned off costs time",
@@ -2149,12 +2089,6 @@ MUTANTS = [
         RULES,
         "    return rng.Roll(settings.initiativeDie) + static_cast<int>(bonus) + static_cast<int>(ranks);",
         "    return rng.Roll(settings.initiativeDie) + static_cast<int>(bonus) + static_cast<int>(ranks) * 0;",
-    ),
-    Mutant(
-        "settings: a bar of time is not read",
-        SETTINGS,
-        '             else if (v == "time")\n             {\n                 s.turnClock = TurnClock::Time;',
-        '             else if (v == "time")\n             {\n                 s.turnClock = TurnClock::Actions;',
     ),
     Mutant(
         "time: a kept attack's creature does not walk to its target",
@@ -2277,8 +2211,8 @@ MUTANTS = [
     Mutant(
         "time: Interrupted is said as a fight ends",
         MACHINE,
-        '    if (why == "held" || why == "struck" || why == kConjureCleared || (!Timed() && why != "the fight over"))',
-        '    if (why == "held" || why == "struck" || why == kConjureCleared || why == "the fight over" || (!Timed() && why != "the fight over"))',
+        '    if (why == "held" || why == "struck" || why == kConjureCleared)',
+        '    if (why == "held" || why == "struck" || why == kConjureCleared || why == "the fight over")',
     ),
     Mutant(
         "time: a cooldown does not move with its user's clock",
@@ -2307,8 +2241,8 @@ MUTANTS = [
     Mutant(
         "time: a hold of exactly a turn is not a turn lost",
         MACHINE,
-        "    const bool owes = timed ? held.owedMs >= turn :",
-        "    const bool owes = timed ? held.owedMs > turn :",
+        "held.kind == Condition::Disabled && held.owedMs >= turn;",
+        "held.kind == Condition::Disabled && held.owedMs > turn;",
     ),
     Mutant(
         "time: a hold in its victim's own turn does not count the rest of that turn",
@@ -2349,8 +2283,8 @@ MUTANTS = [
     Mutant(
         "time: an AI is told to choose again on a look half a second old",
         MACHINE,
-        "    const bool fresh = player || !Timed() || lastStatusNow_ == lastNow_;",
-        "    const bool fresh = player || !Timed() || lastStatusNow_ <= lastNow_;",
+        "    const bool fresh = player || lastStatusNow_ == lastNow_;",
+        "    const bool fresh = player || lastStatusNow_ <= lastNow_;",
     ),
     # Issue 23, its second half: the cards follow a heal or a hit at once.
     Mutant(
@@ -2426,12 +2360,6 @@ MUTANTS = [
         "    else if (facts.talent && facts.ranged && facts.loops > 99)",
     ),
     Mutant(
-        "time: between two turns the view says the turn is not a bar of time",
-        MACHINE,
-        "        view.timed = Timed();",
-        "        view.timed = budget_.spend.Timed();",
-    ),
-    Mutant(
         "time: the walk to a kept attack's target has no slack",
         MACHINE,
         "            budget_.spend.Credit(kApproachSlack);",
@@ -2470,8 +2398,8 @@ MUTANTS = [
     Mutant(
         "time: a walk past the bar stops an action that was charged",
         MACHINE,
-        "    if (budget_.spend.Timed() && budget_.lastKind == CommandKind::Action && budget_.lastCostMs > 0 &&\n        budget_.onArrivalMs == 0)",
-        "    if (budget_.spend.Timed() && budget_.lastKind == CommandKind::Action && budget_.lastCostMs > 0 &&\n        budget_.onArrivalMs == 99)",
+        "    if (budget_.lastKind == CommandKind::Action && budget_.lastCostMs > 0 && budget_.onArrivalMs == 0)",
+        "    if (budget_.lastKind == CommandKind::Action && budget_.lastCostMs > 0 && budget_.onArrivalMs == 99)",
     ),
     Mutant(
         "time: an action walked for on its own time is never charged",
@@ -2716,8 +2644,8 @@ MUTANTS = [
     Mutant(
         "time: the setting off, an action over at once is given back all the same",
         MACHINE,
-        "    if (current == nullptr || !Timed() || !settings_.giveBackUnplayed || budget_.lastKind != CommandKind::Action ||",
-        "    if (current == nullptr || !Timed() || budget_.lastKind != CommandKind::Action ||",
+        "    if (current == nullptr || !settings_.giveBackUnplayed || budget_.lastKind != CommandKind::Action ||",
+        "    if (current == nullptr || budget_.lastKind != CommandKind::Action ||",
     ),
     Mutant(
         "time: an action over at once is charged",
@@ -2776,14 +2704,8 @@ MUTANTS = [
     Mutant(
         "time: an action that did nothing is given back once a turn only",
         MACHINE,
-        "    if (Classify(type) != CommandKind::Action || !ActionToGiveBack() || (budget_.refunded && !Timed()))",
+        "    if (Classify(type) != CommandKind::Action || !ActionToGiveBack())",
         "    if (Classify(type) != CommandKind::Action || !ActionToGiveBack() || budget_.refunded)",
-    ),
-    Mutant(
-        "as built, a failed action is given back every time",
-        MACHINE,
-        "    if (Classify(type) != CommandKind::Action || !ActionToGiveBack() || (budget_.refunded && !Timed()))",
-        "    if (Classify(type) != CommandKind::Action || !ActionToGiveBack() || (budget_.refunded && Timed()))",
     ),
     Mutant(
         "a turn's commands share one limit, counted from the first",
@@ -3141,8 +3063,8 @@ MUTANTS = [
     Mutant(
         "own clocks: the setting is not asked",
         MACHINE,
-        "    return Timed() && settings_.ownClocks;",
-        "    return Timed();",
+        "    return settings_.ownClocks;",
+        "    return true;",
     ),
     Mutant(
         "own clocks: its action's own effect moves everyone's",
@@ -3165,20 +3087,20 @@ MUTANTS = [
     Mutant(
         "the engine's conjuring: a spell with no conjure is given to the engine",
         MACHINE,
-        "           request.abilityType == kAbilitySpell && !request.sustained && request.conjureAnim > 0 &&",
-        "           request.abilityType == kAbilitySpell && !request.sustained && request.conjureAnim >= 0 &&",
+        "           !request.sustained && request.conjureAnim > 0 && request.conjureSeconds > 0.0f;",
+        "           !request.sustained && request.conjureAnim >= 0 && request.conjureSeconds > 0.0f;",
     ),
     Mutant(
         "the engine's conjuring: the setting is not asked",
         MACHINE,
-        "    return Timed() && settings_.engineConjure && request.type == CommandType::UseAbility &&",
-        "    return Timed() && request.type == CommandType::UseAbility &&",
+        "    return settings_.engineConjure && request.type == CommandType::UseAbility &&",
+        "    return request.type == CommandType::UseAbility &&",
     ),
     Mutant(
         "the engine's conjuring: the mod's own rule still interrupts",
         MACHINE,
-        "    if (Timed() && settings_.engineConjure)\n    {\n        return false;\n    }",
-        "    if (Timed() && settings_.engineConjure && false)\n    {\n        return false;\n    }",
+        "    if (settings_.engineConjure)\n    {\n        return false;\n    }",
+        "    if (settings_.engineConjure && false)\n    {\n        return false;\n    }",
     ),
     Mutant(
         "the engine's conjuring: the turn does not end at the held conjure",
@@ -3219,8 +3141,8 @@ MUTANTS = [
     Mutant(
         "held by another's action, a turn's worth or more is not a lost turn",
         MACHINE,
-        "        Timed() && grabbed != grabbedMs_.end() && grabbed->second >= TurnMs())",
-        "        Timed() && grabbed != grabbedMs_.end() && grabbed->second >= TurnMs() * 100)",
+        "grabbed != grabbedMs_.end() && grabbed->second >= TurnMs())",
+        "grabbed != grabbedMs_.end() && grabbed->second >= TurnMs() * 100)",
     ),
     Mutant(
         "held by another's action, its share is not taken of its bar",
@@ -3865,10 +3787,10 @@ MUTANTS = [
         "    const bool actionKept = (chargeBegan_ || pendingEndNow_) && kind == CommandKind::Action;",
     ),
     Mutant(
-        "a door costs nothing with time",
+        "a door costs nothing of the bar",
         MACHINE,
-        "        if (Timed() && UsesAnObject(request.type) && settings_.objectSeconds > 0.0f)",
-        "        if (Timed() && UsesAnObject(request.type) && settings_.objectSeconds > 100.0f)",
+        "        if (UsesAnObject(request.type) && settings_.objectSeconds > 0.0f)",
+        "        if (UsesAnObject(request.type) && settings_.objectSeconds > 100.0f)",
     ),
     Mutant(
         "a door's cost that does not fit is not owed",
@@ -4686,12 +4608,6 @@ MUTANTS = [
         "    return MovementRate(effects) + 0.0f * build;",
     ),
     Mutant(
-        "as built, a turn's meters are a person's whatever its creature's pace",
-        MACHINE,
-        "        return TurnBudget::Actions(1, MovementBudget(settings_, Pace(who.speed, who.movement), who.dexterity));",
-        "        return TurnBudget::Actions(1, MovementBudget(settings_, 1.0f, who.dexterity));",
-    ),
-    Mutant(
         "with time, a turn's bar walks at a person's pace whatever its creature's",
         MACHINE,
         "settings_.paceMps * BarPace(who),",
@@ -4725,8 +4641,8 @@ MUTANTS = [
     Mutant(
         "what is no pace is taken for one within a turn",
         "src/core/TurnBudget.cpp",
-        "    if (!timed_ || !(paceMps > 0.0f) || !std::isfinite(paceMps))",
-        "    if (!timed_)",
+        "    if (!bar_ || !(paceMps > 0.0f) || !std::isfinite(paceMps))",
+        "    if (!bar_)",
     ),
     Mutant(
         "a pace changed within a turn is said at every look",
@@ -4780,7 +4696,7 @@ MUTANTS = [
         "a turn's pace is said every turn, with Haste or with nothing",
         MACHINE,
         "    if (rate == 1.0f && before == 1.0f)",
-        "    if (rate == 1.0f && before == 1.0f && Timed() != Timed())",
+        "    if (rate == 1.0f && before == 1.0f && TurnMs() != TurnMs())",
     ),
     Mutant(
         "a pace back at its creature's own is not said",

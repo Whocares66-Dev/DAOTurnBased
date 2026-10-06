@@ -55,23 +55,26 @@ TEST_CASE("a fight goes turn by turn: the party's orders, the AI's choices, roun
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
     CHECK(w.paused);
 
-    // Its auto-attack carrying on is a second action: no.
+    // Its auto-attack carrying on is its own AI's, not the player's order: no.
     CHECK(w.Order(kHero, CommandType::Attack, Source::Script) == Verdict::Block);
-    // It may still move, until its movement runs out.
+    // It may still move, until its movement runs out: the 2 s its swing left
+    // walk 10 m, and a meter is free.
     CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Allow);
     w.Frame();
     w.Get(kHero).moving = true;
-    for (int i = 0; i < 12 && w.Get(kHero).moving; ++i)
+    for (int i = 0; i < 14 && w.Get(kHero).moving; ++i)
     {
         w.Get(kHero).position.x += 1.0f;
         w.Frame();
     }
     CHECK(w.Did(EffectKind::ClearCommands, kHero));
     CHECK(w.Said(L"Out of movement"));
-    CHECK(w.Get(kHero).position.x < 11.0f);
+    CHECK(w.Get(kHero).position.x < 13.0f);
+    // And no further: it may not walk on.
+    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Block);
 
-    // Action and movement spent: the turn ends by itself, and the genlock's
-    // AI is told to choose.
+    // Its bar spent: the turn ends by itself, and the genlock's AI is told
+    // to choose.
     w.onPoke = [&](ObjectId id) { CHECK(w.Order(id, CommandType::Attack, Source::Script) == Verdict::Allow); };
     w.RunFor(500);
     CHECK(w.Current() == kGenlock);
@@ -82,7 +85,11 @@ TEST_CASE("a fight goes turn by turn: the party's orders, the AI's choices, roun
     w.Finish(kGenlock);
     w.Frame();
     w.Frame();
-    // Its command done, it chooses again (COMMAND_COMPLETE): a second attack is held.
+    // Its command done, it chooses again (COMMAND_COMPLETE): a second attack
+    // is let through, there being time for it, and with its bar spent a
+    // third is held.
+    CHECK(w.Order(kGenlock, CommandType::Attack, Source::Script) == Verdict::Allow);
+    w.Finish(kGenlock);
     CHECK(w.Order(kGenlock, CommandType::Attack, Source::Script) == Verdict::Block);
     w.RunFor(600);
 
@@ -125,17 +132,20 @@ TEST_CASE("a fight goes turn by turn: the party's orders, the AI's choices, roun
 
 TEST_CASE("the player's attack at something out of reach this turn is refused before a step", "[machine]")
 {
-    World w; // 9 m to move
+    World w; // 21 m to move
     w.StartFight();
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 12.0f) == Verdict::Block);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 30.0f) == Verdict::Block);
     w.Frame();
     CHECK(w.Said(L"Too far"));
-    CHECK(w.machine.View().actionsLeft == 1);
+    CHECK(w.machine.View().timeLeftMs == 4000);
     // Past the movement left by a little: refused too, since the walk is a
     // straight line and the path is never shorter (the third play test: 9.3
-    // m with 9.0 left, let through and cut short). Within it: let through.
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 9.3f) == Verdict::Block);
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 9.0f) == Verdict::Allow);
+    // m with 9.0 left, let through and cut short). Within it: taken. (With
+    // the whole bar walked its swing does not fit, and is kept for the next
+    // turn: test_time.cpp.)
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 21.3f) == Verdict::Block);
+    CHECK(w.machine.View().timeLeftMs == 4000);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 21.0f) == Verdict::Hold);
 }
 
 TEST_CASE("the hero is the one the player controls once the fight is over", "[machine]")
@@ -178,76 +188,6 @@ TEST_CASE("an AI's attack at something far away goes on and closes in", "[machin
     CHECK(w.machine.GetPhase() == Phase::Executing);
 }
 
-TEST_CASE("once out of movement, the player can only strike what is in reach", "[machine]")
-{
-    World w;
-    w.StartFight();
-    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Allow);
-    w.Frame();
-    w.Get(kHero).moving = true;
-    for (int i = 0; i < 12 && w.Get(kHero).moving; ++i)
-    {
-        w.Get(kHero).position.x += 1.0f;
-        w.Frame();
-    }
-    w.RunFor(500);
-    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 1.0f) == Verdict::Block);
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
-}
-
-TEST_CASE("stopped short on the way to an attack, a party member keeps its action", "[machine]")
-{
-    World w;
-    w.StartFight();
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
-    w.Frame();
-    w.Get(kHero).moving = true;
-    for (int i = 0; i < 15 && w.Get(kHero).moving; ++i)
-    {
-        w.Get(kHero).position.x += 1.0f;
-        w.Frame();
-    }
-    w.RunFor(500);
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.machine.View().actionsLeft == 1);
-    CHECK(w.machine.View().movementLeft == 0.0f);
-    // It may not walk, but may still attack what is in reach.
-    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Block);
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
-    // With both spent, the turn ends by itself.
-    w.Finish(kHero);
-    w.RunFor(500);
-    CHECK(w.Current() == kGenlock);
-}
-
-TEST_CASE("an action stopped short is given back once a turn, not twice", "[machine]")
-{
-    World w;
-    w.StartFight();
-    // Attacks whose walk the game layer could not tell (an order off the
-    // scripts' thread): each walks until it is stopped.
-    const auto walkUntilStopped = [&] {
-        w.Frame();
-        w.Get(kHero).moving = true;
-        for (int i = 0; i < 15 && w.Get(kHero).moving; ++i)
-        {
-            w.Get(kHero).position.x += 1.0f;
-            w.Frame();
-        }
-        w.RunFor(500);
-    };
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
-    walkUntilStopped();
-    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.machine.View().actionsLeft == 1); // given back
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
-    walkUntilStopped();
-    // Stopped short again: spent this time, and with nothing left the turn
-    // ends by itself.
-    CHECK(w.Current() == kGenlock);
-}
-
 TEST_CASE("a creature that joins the fight stops what it was doing", "[machine]")
 {
     World w;
@@ -276,14 +216,16 @@ TEST_CASE("an AI creature out of movement ends its turn", "[machine]")
     w.Frame();
     REQUIRE(w.Current() == kGenlock);
     w.applied.clear();
+    // Its bar walks 21 m, its swing's time gone to the walk.
     w.Get(kGenlock).moving = true;
-    for (int i = 0; i < 15 && w.Current() == kGenlock; ++i)
+    for (int i = 0; i < 25 && w.Current() == kGenlock; ++i)
     {
         w.Get(kGenlock).position.x += 1.0f;
         w.Frame();
     }
     CHECK(w.Current() == kCompanion);
     CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
+    CHECK(w.Get(kGenlock).position.x > 20.0f);
 }
 
 TEST_CASE("an AI creature that chooses nothing passes after ai_think_ms", "[machine]")
@@ -419,7 +361,13 @@ TEST_CASE("nobody's commands are limited in number: the player's are not, and an
     // Eight weapon switches of its script's, one as each ends: more than the
     // six the setting let through, and all of them are.
     int allowed = 0;
+    int told = 0;
     w.onPoke = [&](ObjectId id) {
+        if (++told > 1)
+        {
+            (void)w.Order(id, CommandType::Wait, Source::Script);
+            return;
+        }
         for (int i = 0; i < 8; ++i)
         {
             allowed += w.Order(id, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow ? 1 : 0;
@@ -432,8 +380,10 @@ TEST_CASE("nobody's commands are limited in number: the player's are not, and an
     CHECK(allowed == 8);
     CHECK_FALSE(std::ranges::any_of(
         w.log, [](const std::string &line) { return line.find("commands this turn") != std::string::npos; }));
-    // Its script queues no more, and its turn ends as it settles.
+    // Its script queues no more. Told again as it settles, nothing of its bar
+    // spent, it passes, and its turn ends.
     w.RunFor(1000);
+    CHECK(told == 2);
     CHECK(w.Current() == kCompanion);
 }
 
@@ -507,7 +457,8 @@ TEST_CASE("by default an order that queues nothing leaves the world still", "[ma
 TEST_CASE("an order the gate refuses does not run the world", "[machine]")
 {
     // Seen in play (2026-09-30): every click after the action was spent ran
-    // the world for half a second.
+    // the world for half a second. (A refused click here is one at something
+    // too far: with time left a second swing in reach is taken.)
     World w(WithOrderRun());
     w.StartFight();
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
@@ -518,9 +469,9 @@ TEST_CASE("an order the gate refuses does not run the world", "[machine]")
     REQUIRE(w.Current() == kHero);
     w.applied.clear();
     w.machine.OnPlayerOrder("attack");
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Block);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 30.0f) == Verdict::Block);
     w.RunFor(1000);
-    CHECK(w.Said(L"No action left"));
+    CHECK(w.Said(L"Too far"));
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
     CHECK(w.paused);
     CHECK_FALSE(w.Did(EffectKind::Unpause));
@@ -564,9 +515,9 @@ TEST_CASE("a conversation in the middle of a fight stands the gate aside, then t
     w.Frame();
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
     CHECK(w.Current() == kHero);
-    // The action it spent before the conversation stays spent, and the turn
+    // The time it spent before the conversation stays spent, and the turn
     // did not start twice.
-    CHECK(w.machine.View().actionsLeft == 0);
+    CHECK(w.machine.View().timeLeftMs == 2000);
     CHECK(std::ranges::count_if(w.applied, [](const Effect &e) {
               return e.kind == EffectKind::Signal && e.event == events::kTurnStart;
           }) == turnStarts);
@@ -619,59 +570,17 @@ TEST_CASE("an AI an effect holds as its turn comes is not told until it is let g
     CHECK(w.Current() == kGenlock);
 }
 
-TEST_CASE("an AI an effect holds a turn's worth loses its turn", "[machine][conditions]")
-{
-    // As built there is no bar to take the hold's time of: the turn waits,
-    // and is lost once the hold has run a turn's worth of seconds, what a
-    // round spends on effects (6 s).
-    World w;
-    w.StartFight();
-    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
-    CHECK(w.machine.OnEndTurn());
-    w.Frame();
-    w.Frame();
-    REQUIRE(w.Current() == kGenlock);
-    CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
-    w.applied.clear();
-    w.RunFor(5700);
-    CHECK(w.Current() == kGenlock);
-    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
-    w.RunFor(500);
-    CHECK(w.Current() != kGenlock);
-    CHECK(w.Said(L"Genlock loses the turn"));
-    CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
-    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock)); // the effect is the engine's
-}
-
-TEST_CASE("with effects on the game's clock, a hold's turn's worth is a turn's own seconds", "[machine][conditions]")
-{
-    // effect_seconds_per_round 0: no round's worth of effects' time to go by.
-    Settings s = Fixed();
-    s.effectSecondsPerRound = 0.0f;
-    s.secondsPerTurn = 3.0f;
-    World w(s);
-    w.StartFight();
-    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
-    CHECK(w.machine.OnEndTurn());
-    w.Frame();
-    w.Frame();
-    REQUIRE(w.Current() == kGenlock);
-    const std::int64_t before = w.agedMs;
-    w.RunFor(2700);
-    CHECK(w.Current() == kGenlock);
-    w.RunFor(500);
-    CHECK(w.Current() != kGenlock);
-    CHECK(w.Said(L"Genlock loses the turn"));
-    CHECK(w.agedMs == before); // effects' time is not the fight's to move
-}
-
 TEST_CASE("a stun that runs out as a hold's time runs has run out on the clock: it keeps the turn it owes",
           "[machine][conditions]")
 {
     // Effects' time run by a hold wears a stun off as a round's does. Taken
     // for a cure (a condition gone while effects' time stands still), the
     // turn it owed was given back: a stun shorter than the hold cost nothing.
-    World w;
+    // (Of the one clock everyone's effects are on with own clocks off: on
+    // its own clock a hold moves nobody else's.)
+    Settings s = Fixed();
+    s.ownClocks = false;
+    World w(s);
     w.StartFight();
     CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
     w.Get(kHurlock).condition = Condition::Disabled;
@@ -703,30 +612,6 @@ TEST_CASE("a stun that runs out as a hold's time runs has run out on the clock: 
     CHECK(w.Said(L"Hurlock loses the turn"));
     CHECK(std::ranges::none_of(
         w.log, [](const std::string &line) { return line.find("condition was taken off") != std::string::npos; }));
-}
-
-TEST_CASE("a hold is not stopped by max_action_ms: its bound is a turn's worth", "[machine][conditions]")
-{
-    // The limit on a creature's own command is not a hold's: stopped by it,
-    // the effect's command was cleared, which is the engine's to end.
-    Settings s = Fixed();
-    s.maxActionMs = 2000;
-    World w(s);
-    w.StartFight();
-    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
-    CHECK(w.machine.OnEndTurn());
-    w.Frame();
-    w.Frame();
-    REQUIRE(w.Current() == kGenlock);
-    w.applied.clear();
-    w.RunFor(5000);
-    CHECK(w.Current() == kGenlock);
-    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock));
-    CHECK(std::ranges::none_of(w.log,
-                               [](const std::string &line) { return line.find("still at a") != std::string::npos; }));
-    w.Finish(kGenlock);
-    w.RunFor(100);
-    CHECK(w.Did(EffectKind::PokeAi, kGenlock));
 }
 
 TEST_CASE("a menu over the fight holds everything as it is", "[machine]")
@@ -932,8 +817,9 @@ TEST_CASE("the view lists the turns to come, whose it is and what is left", "[ma
     CHECK(view.active);
     CHECK(view.playerTurn);
     CHECK(view.current == kHero);
-    CHECK(view.actionsLeft == 1);
-    CHECK(view.movementMax == 9.0f);
+    CHECK(view.timeMs == 4000);
+    CHECK(view.timeLeftMs == 4000);
+    CHECK(view.movementMax == 21.0f);
     REQUIRE(view.upcoming.size() == 4); // each combatant once
     CHECK(view.upcoming[0].id == kHero);
     CHECK(view.upcoming[0].current);
@@ -945,17 +831,18 @@ TEST_CASE("new settings apply from the next turn", "[machine]")
 {
     World w;
     w.StartFight();
-    CHECK(w.machine.View().movementMax == 9.0f);
-    Settings wider = Fixed();
-    wider.movementMeters = 14.0f;
-    w.machine.SetSettings(wider);
-    CHECK(w.machine.View().movementMax == 9.0f); // this turn's stands
+    CHECK(w.machine.View().movementMax == 21.0f);
+    Settings longer = Fixed();
+    longer.secondsPerTurn = 6.0f;
+    w.machine.SetSettings(longer);
+    CHECK(w.machine.View().movementMax == 21.0f); // this turn's stands
     w.onPoke = [&](ObjectId id) { CHECK(w.Order(id, CommandType::Wait, Source::Script) == Verdict::Block); };
     CHECK(w.machine.OnEndTurn());
     w.Frame();
     w.Frame();
     REQUIRE(w.Current() == kGenlock);
-    CHECK(w.machine.View().movementMax == 14.0f);
+    CHECK(w.machine.View().timeMs == 6000);
+    CHECK(w.machine.View().movementMax == 31.0f);
 }
 
 TEST_CASE("the view lists every turn to come, and the bar's row shows ten of them", "[machine]")
@@ -1082,22 +969,6 @@ TEST_CASE("script events and floating text can be turned off", "[machine]")
     w.StartFight();
     CHECK_FALSE(w.Did(EffectKind::Signal));
     CHECK_FALSE(w.Did(EffectKind::Floaty));
-}
-
-TEST_CASE("by default a party member's turn passes on as soon as its action is spent", "[machine]")
-{
-    // The user's choice after the first session in play (2026-09-30).
-    Settings s = Fixed();
-    s.endTurnWhenActionUsed = Settings{}.endTurnWhenActionUsed;
-    REQUIRE(s.endTurnWhenActionUsed);
-    World w(s);
-    w.StartFight();
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
-    w.RunFor(100);
-    w.Finish(kHero);
-    // The swing lands and the world settles; no end turn pressed.
-    w.RunFor(600);
-    CHECK(w.Current() == kGenlock);
 }
 
 TEST_CASE("an AI that chooses nothing has what it saw explained", "[machine]")
@@ -1237,7 +1108,7 @@ TEST_CASE("still at an effect's command after its condition was ended, a creatur
     w.RunFor(2500);
     CHECK(w.Current() == kGenlock);
     CHECK_FALSE(w.Said(L"Genlock loses the turn"));
-    // A turn's worth of it (6 s as built), and the turn is lost: not twelve.
+    // Its bar's worth of it, four seconds, and the turn is lost: not twelve.
     w.RunFor(3700);
     CHECK(w.Said(L"Genlock loses the turn"));
     CHECK(w.Current() != kGenlock);
@@ -1302,41 +1173,12 @@ TEST_CASE(
     CHECK(w.Said(L"Held"));
     CHECK(w.Current() == kCompanion); // no two seconds of the mod's: the hold is the engine's
     CHECK(w.Order(kCompanion, CommandType::Attack, Source::Player, 0.0f) == Verdict::Block);
-    w.RunFor(3200);
+    w.RunFor(1200);
     CHECK(w.Current() != kCompanion);
     CHECK(w.Said(L"Alistair loses the turn"));
     CHECK_FALSE(w.Did(EffectKind::ClearCommands, kCompanion)); // the effect is the engine's
     CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
-        return line.find("Alistair is held by an effect's command past a turn's 6.0 s: its turn is lost") !=
-               std::string::npos;
-    }));
-}
-
-TEST_CASE("a creature an effect lets go keeps its turn, however long it held", "[machine][conditions]")
-{
-    World w;
-    w.StartFight();
-    CHECK(w.machine.OnEndTurn());
-    w.Frame();
-    REQUIRE(w.Current() == kGenlock);
-    CHECK(w.Order(kCompanion, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
-    w.Finish(kGenlock);
-    for (int i = 0; i < 100 && w.Current() != kCompanion; ++i)
-    {
-        w.Frame();
-    }
-    REQUIRE(w.Current() == kCompanion);
-    // Four seconds on the ground and getting up: twice what it was once
-    // given before the turn was taken (issue 30).
-    w.RunFor(4000);
-    REQUIRE(w.Current() == kCompanion);
-    w.Finish(kCompanion); // up again
-    w.RunFor(1000);
-    CHECK(w.Current() == kCompanion);
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.Order(kCompanion, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
-    CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
-        return line.find("Alistair is free of the effect's command after ") != std::string::npos;
+        return line.find("Alistair is held by an effect's command past its bar (4.0") != std::string::npos;
     }));
 }
 
@@ -1405,7 +1247,7 @@ TEST_CASE("a creature stunned in its own turn loses the rest of it at once, and 
 
 namespace
 {
-constexpr std::int32_t kShieldBash = 617; // 20 s: two turns at 10 s a turn (Fixed's rate)
+constexpr std::int32_t kShieldBash = 617; // 20 s: five turns of its user's clock, at 4 s a turn
 constexpr std::int32_t kShieldWall = 12;  // sustained
 
 bool Cooled(const World &w, ObjectId id, std::int32_t ability, std::int32_t seconds)
@@ -1438,7 +1280,7 @@ void UntilHerosTurn(World &w)
 }
 } // namespace
 
-TEST_CASE("an ability's cooldown is held for its turns, then released at the start of its user's turn",
+TEST_CASE("an ability's cooldown is held once it has run, for its seconds of its user's clock, then released",
           "[machine][cooldowns]")
 {
     World w;
@@ -1450,17 +1292,20 @@ TEST_CASE("an ability's cooldown is held for its turns, then released at the sta
     w.RunFor(600);
     CHECK(Cooled(w, kHero, kShieldBash, TurnMachine::kCooldownHoldSeconds));
     w.applied.clear();
-    UntilHerosTurn(w); // one turn waited
+    // The rest of this turn, 2 s after the talent's own 2, and four turns
+    // more of 4 s: 18 s of its 20.
+    for (int turn = 0; turn < 5; ++turn)
+    {
+        UntilHerosTurn(w);
+    }
     CHECK_FALSE(Cooled(w, kHero, kShieldBash, 0));
-    UntilHerosTurn(w); // two: ready as the turn begins
+    UntilHerosTurn(w); // and the turn that brings the last 2 s
     CHECK(Cooled(w, kHero, kShieldBash, 0));
 }
 
 TEST_CASE("a sustained ability turned on costs nothing and keeps the turn", "[machine][cooldowns]")
 {
-    Settings s = Fixed();
-    s.endTurnWhenActionUsed = true;
-    World w(s);
+    World w;
     w.StartFight();
     CHECK(w.UseAbility(kHero, Source::Player, kShieldWall, 15.0f, true, false) == Verdict::Allow);
     w.RunFor(100);
@@ -1469,7 +1314,8 @@ TEST_CASE("a sustained ability turned on costs nothing and keeps the turn", "[ma
     CHECK(w.Current() == kHero);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
     CHECK_FALSE(Cooled(w, kHero, kShieldWall, TurnMachine::kCooldownHoldSeconds));
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow); // the action is still there
+    CHECK(w.machine.View().timeLeftMs == 4000); // nothing of the bar went to it
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
 }
 
 TEST_CASE("a sustained ability turned off waits for its user's next turn", "[machine][cooldowns]")
@@ -1491,7 +1337,7 @@ TEST_CASE("at the fight's end, cooldowns still held go back to seconds", "[machi
 {
     World w;
     w.StartFight();
-    CHECK(w.UseAbility(kHero, Source::Player, 90015, 60.0f) == Verdict::Allow); // Overwhelm: six turns
+    CHECK(w.UseAbility(kHero, Source::Player, 90015, 60.0f) == Verdict::Allow); // Overwhelm: a minute
     w.RunFor(100);
     w.Finish(kHero);
     w.RunFor(600);
@@ -1502,20 +1348,8 @@ TEST_CASE("at the fight's end, cooldowns still held go back to seconds", "[machi
     w.Frame();
     w.Frame();
     REQUIRE(w.machine.GetPhase() == Phase::Idle);
-    CHECK(Cooled(w, kHero, 90015, 60));
-}
-
-TEST_CASE("with cooldown_seconds_per_turn 0 the game's timers hold", "[machine][cooldowns]")
-{
-    Settings s = Fixed();
-    s.cooldownSecondsPerTurn = 0.0f;
-    World w(s);
-    w.StartFight();
-    CHECK(w.UseAbility(kHero, Source::Player, kShieldBash, 20.0f) == Verdict::Allow);
-    w.RunFor(100);
-    w.Finish(kHero);
-    w.RunFor(600);
-    CHECK(std::ranges::none_of(w.applied, [](const Effect &e) { return e.kind == EffectKind::Cooldown; }));
+    // What it has left: the rest of the turn it was used in, 2 s, has passed.
+    CHECK(Cooled(w, kHero, 90015, 58));
 }
 
 TEST_CASE("on the player's turn the character's own AI does not spend it", "[machine]")
@@ -1675,7 +1509,7 @@ TEST_CASE("a fight holds effects' time, spends a round's worth each round, and l
     REQUIRE(w.machine.Order().Round() == 2);
     w.Frame(); // the new round begins with the next turn
     w.Frame();
-    CHECK(w.agedMs == 6000);
+    CHECK(w.agedMs == 4000); // a turn's seconds a round
     CHECK(w.timeHeld);
     w.Get(kGenlock).down = true;
     w.Get(kHurlock).down = true;
@@ -1695,16 +1529,6 @@ TEST_CASE("a fight dropped by a load lets effects' time go", "[machine]")
     w.Frame();
     CHECK(w.machine.GetPhase() == Phase::Idle);
     CHECK_FALSE(w.timeHeld);
-}
-
-TEST_CASE("with effect_seconds_per_round 0 effects keep the game's clock", "[machine]")
-{
-    Settings s = Fixed();
-    s.effectSecondsPerRound = 0.0f;
-    World w(s);
-    w.StartFight();
-    CHECK_FALSE(w.timeHeld);
-    CHECK_FALSE(w.Did(EffectKind::HoldTime));
 }
 
 TEST_CASE("a fight's turns run at its speed, everyone's alike; a conversation and the rest at the game's own",
@@ -1928,23 +1752,23 @@ TEST_CASE("party control changed in a companion's turn hands the turn to whoever
     CHECK(w.machine.OnEndTurn());
 }
 
-TEST_CASE("a command that failed without acting gives its action back, once a turn", "[machine]")
+TEST_CASE("a command that failed without acting gives its action back: the acting creature's, and no move's",
+          "[machine]")
 {
     // The third play test: an attack the engine failed with an invalid path,
-    // its action spent all the same.
+    // its action spent all the same. (And each time one fails so:
+    // test_time.cpp.)
     World w;
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
-    REQUIRE(w.machine.View().actionsLeft == 0);
+    REQUIRE(w.machine.View().timeLeftMs == 2000);
     CHECK_FALSE(
         w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH")); // not its turn
     CHECK_FALSE(w.machine.OnCommandFailed(kHero, CommandType::MoveToLocation, -1, "COMMAND_FAILED_INVALID_PATH"));
+    CHECK(w.machine.View().timeLeftMs == 2000);
     CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH"));
-    CHECK(w.machine.View().actionsLeft == 1);
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
-    CHECK_FALSE(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH")); // once
-    CHECK(w.machine.View().actionsLeft == 0);
+    CHECK(w.machine.View().timeLeftMs == 4000);
 }
 
 TEST_CASE("a companion's AI turn let go by an effect selects the hero before its AI is told", "[machine][conditions]")
@@ -2106,7 +1930,7 @@ TEST_CASE("the state's last refusal is the player's, with its command and number
     w.StartFight();
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 30.0f) == Verdict::Block);
     CHECK(w.Order(kGenlock, CommandType::Wait, Source::Script) == Verdict::Block); // the AI's, not the player's
-    CHECK(w.machine.State().lastRefusal == "Too far (attack: 30.0 m to walk, 9.0 m left)");
+    CHECK(w.machine.State().lastRefusal == "Too far (attack: 30.0 m to walk, 21.0 m left)");
 }
 
 TEST_CASE("a hold taken off before its victim's turn gives that turn back", "[machine][conditions]")
@@ -2131,8 +1955,12 @@ TEST_CASE("a hold taken off before its victim's turn gives that turn back", "[ma
 
 TEST_CASE("a hold run out as a round ages effects keeps the turns it owes", "[machine][conditions]")
 {
+    // Of the one clock everyone's effects are on with own clocks off, which
+    // the rounds move: on its own clock a creature's hold ages as its own
+    // turns pass.
     Settings s = Fixed();
     s.conditionTurns = 2;
+    s.ownClocks = false;
     World w{s};
     w.Get(kGenlock).condition = Condition::Disabled;
     w.StartFight();
@@ -2197,54 +2025,6 @@ TEST_CASE("the game's speed is set for a turn before its camera moves", "[machin
     CHECK_FALSE(w.Did(EffectKind::GameSpeed));
 }
 
-namespace
-{
-void PlayARound(World &w)
-{
-    const int round = w.machine.Order().Round();
-    for (int i = 0; i < 4000 && w.machine.Order().Round() == round; ++i)
-    {
-        if (w.machine.GetPhase() == Phase::AwaitingOrder)
-        {
-            (void)w.machine.OnEndTurn();
-        }
-        w.Frame();
-    }
-    REQUIRE(w.machine.Order().Round() == round + 1);
-    w.Frame(); // the new round begins with the next turn
-    w.Frame();
-}
-} // namespace
-
-TEST_CASE("effects' time turned on mid-fight is held from the round's end, turned off let go", "[machine]")
-{
-    // The review's TB-2: a fight begun at 0 never took the setting up.
-    Settings s = Fixed();
-    s.effectSecondsPerRound = 0.0f;
-    World w(s);
-    w.StartFight();
-    REQUIRE_FALSE(w.timeHeld);
-    s.effectSecondsPerRound = 6.0f;
-    w.machine.SetSettings(s);
-    PlayARound(w);
-    CHECK(w.timeHeld);
-    CHECK(w.agedMs == 0); // that round ran on the game's clock
-    PlayARound(w);
-    CHECK(w.agedMs == 6000);
-    s.effectSecondsPerRound = 0.0f;
-    w.machine.SetSettings(s);
-    PlayARound(w);
-    CHECK_FALSE(w.timeHeld);
-    CHECK(w.agedMs == 6000);
-    s.effectSecondsPerRound = 6.0f;
-    w.machine.SetSettings(s);
-    PlayARound(w);
-    CHECK(w.timeHeld);
-    CHECK(w.agedMs == 6000);
-    PlayARound(w);
-    CHECK(w.agedMs == 12000);
-}
-
 TEST_CASE("an error in a frame stands the fight down: the game let go, no turns until the next fight", "[machine]")
 {
     // The review's TB-3: effects lost to an exception left the machine
@@ -2293,12 +2073,9 @@ TEST_CASE("an error in a frame stands the fight down: the game let go, no turns 
 
 TEST_CASE("standing down says the clock and the speed again, whatever the machine believes", "[machine]")
 {
-    // On the player's turn the machine has the speed at 1 and, with effects
-    // on the game's clock, nothing held: a lost batch may have left either
-    // otherwise.
-    Settings s = Fixed();
-    s.effectSecondsPerRound = 0.0f;
-    World w{s};
+    // On the player's turn the machine has the speed at 1: a lost batch may
+    // have left it otherwise, and the clock held or not.
+    World w;
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     w.timeHeld = true;
@@ -2328,7 +2105,7 @@ TEST_CASE("a talent its user ran out of movement before reaching is not held on 
     REQUIRE(w.Current() == kGenlock);
     w.applied.clear();
     w.Get(kGenlock).moving = true;
-    for (int i = 0; i < 15 && w.Current() == kGenlock; ++i)
+    for (int i = 0; i < 25 && w.Current() == kGenlock; ++i)
     {
         w.Get(kGenlock).position.x += 1.0f;
         w.Frame();
@@ -2347,7 +2124,7 @@ TEST_CASE("the player's talent cut short by movement is not held; the next one u
     CHECK(w.UseAbility(kHero, Source::Player, 617, 20.0f) == Verdict::Allow);
     w.applied.clear();
     w.Get(kHero).moving = true;
-    for (int i = 0; i < 15 && !w.Did(EffectKind::ClearCommands, kHero); ++i)
+    for (int i = 0; i < 25 && !w.Did(EffectKind::ClearCommands, kHero); ++i)
     {
         w.Get(kHero).position.x += 1.0f;
         w.Frame();
@@ -2355,8 +2132,9 @@ TEST_CASE("the player's talent cut short by movement is not held; the next one u
     REQUIRE(w.Did(EffectKind::ClearCommands, kHero));
     w.Get(kHero).moving = false;
     w.Frame();
-    REQUIRE(w.Current() == kHero); // the player's turn goes on, the action kept
-    // Another talent, in reach, runs: it alone is held.
+    // Her bar went to the walk, and the turn is over with it. On her next,
+    // another talent, in reach, runs: it alone is held.
+    UntilHerosTurn(w);
     CHECK(w.UseAbility(kHero, Source::Player, 618, 20.0f) == Verdict::Allow);
     w.RunFor(200);
     w.Finish(kHero);
@@ -2753,8 +2531,9 @@ TEST_CASE("the party runs from a fight: its enemies stand down as the game order
     // them: skipped, as one that has noticed nobody, its walk left to it.
     PassTurns(w, 1500);
     REQUIRE_FALSE(w.machine.Active());
-    CHECK(std::ranges::count_if(
-              w.log, [](const std::string &line) { return line.ends_with("Genlock's turn ends: unaware"); }) >= 1);
+    CHECK(std::ranges::count_if(w.log, [](const std::string &line) {
+              return line.find("Genlock's turn ends: unaware; nothing rolls over") != std::string::npos;
+          }) >= 1);
     CHECK(std::ranges::count_if(w.log, [](const std::string &line) {
               return line.ends_with("rounds: no enemy left in the fight, 2 having left it alive");
           }) == 1);
@@ -2828,7 +2607,7 @@ TEST_CASE("the fight holds what the game has in combat: out of turn, a script's 
     w.RunFor(100);
     CHECK(w.Current() == kHero);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.machine.View().actionsLeft == 1);
+    CHECK(w.machine.View().timeLeftMs == 4000);
 }
 
 // A creature that is not of the party and that the game does not have in
@@ -2841,7 +2620,6 @@ namespace
 Settings WithABar()
 {
     Settings s = Fixed();
-    s.turnClock = TurnClock::Time;
     s.secondsPerTurn = 4.0f;
     s.paceMps = 5.0f;
     s.freeStepMeters = 1.0f;
@@ -3260,12 +3038,14 @@ TEST_CASE("the game's repeat of an order just taken is refused without a word", 
     // and attacking. Her attack came a second time 49 ms after the first.
     // (Half a meter to its target: a swing where she stands. With more to
     // walk, a second standing still is an attack that cannot get there.)
+    // A swing that takes the whole of her bar: with time left the repeat
+    // would be one more swing, and let through.
     World w;
     std::vector<TurnEvent> events;
     w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
     w.StartFight();
     REQUIRE(w.Current() == kHero);
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.5f) == Verdict::Allow);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.5f, 4.0f) == Verdict::Allow);
     w.Frame();
     w.Frame();
     w.Frame(); // 48 ms
@@ -3286,13 +3066,20 @@ TEST_CASE("the game's repeat of an order just taken is refused without a word", 
     CHECK(std::ranges::count_if(events, [](const TurnEvent &e) { return e.kind == EventKind::Refused; }) == 1);
 }
 
-TEST_CASE("a held cooldown's sweep shows its turns: what is left over what it was held for", "[machine][cooldowns]")
+TEST_CASE("a held cooldown's sweep shows what is left of it over what it was held for", "[machine][cooldowns]")
 {
     // The user, 2026-09-30: with 2 of 3 turns left to wait, a third
-    // recovered. Fixed() has 10 s a turn: 30 s is three turns.
+    // recovered. 12 s is three turns of its user's clock at 4 s a turn, and
+    // the talent is the last thing of its turn (a swing before it): none of
+    // its 12 s has passed as that turn ends.
     World w;
     w.StartFight();
-    CHECK(w.UseAbility(kHero, Source::Player, kShieldBash, 30.0f) == Verdict::Allow);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
+    w.RunFor(100);
+    w.Finish(kHero);
+    w.RunFor(600);
+    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(w.UseAbility(kHero, Source::Player, kShieldBash, 12.0f) == Verdict::Allow);
     w.RunFor(100);
     w.Finish(kHero);
     w.RunFor(600);
@@ -3303,12 +3090,13 @@ TEST_CASE("a held cooldown's sweep shows its turns: what is left over what it wa
         });
     };
     CHECK(shown(3600, 3600)); // held: none of it recovered
+    UntilHerosTurn(w);        // her bar spent, that turn ended by itself
     w.applied.clear();
     UntilHerosTurn(w);
     CHECK(shown(2400, 3600)); // 2 of 3 left: a third recovered
     REQUIRE(w.machine.State().cooldowns.size() == 1);
-    CHECK(w.machine.State().cooldowns[0].turns == 2);
-    CHECK(w.machine.State().cooldowns[0].of == 3);
+    CHECK(w.machine.State().cooldowns[0].leftMs == 8000);
+    CHECK(w.machine.State().cooldowns[0].ofMs == 12000);
     w.applied.clear();
     UntilHerosTurn(w);
     CHECK(shown(1200, 3600));
@@ -3325,15 +3113,16 @@ TEST_CASE("a fight's end gives a held cooldown back in seconds, left and in all"
     w.RunFor(100);
     w.Finish(kHero);
     w.RunFor(600);
-    UntilHerosTurn(w); // 2 of 3 turns left
+    UntilHerosTurn(w); // 28 of its 30 s left: the rest of the turn it was used in has passed
     w.applied.clear();
     w.Get(kGenlock).down = true;
     w.Get(kHurlock).down = true;
     (void)w.machine.OnEndTurn();
     w.RunFor(500);
     REQUIRE_FALSE(w.machine.Active());
+    // And the turn she ended: 24 s left.
     CHECK(std::ranges::any_of(w.applied, [](const Effect &e) {
-        return e.kind == EffectKind::Cooldown && e.target == kHero && e.a == kShieldBash && e.b == 20 && e.c == 30;
+        return e.kind == EffectKind::Cooldown && e.target == kHero && e.a == kShieldBash && e.b == 24 && e.c == 30;
     }));
 }
 
@@ -3365,8 +3154,9 @@ TEST_CASE("an AI whose action failed without acting chooses again, once", "[mach
     w.Frame();
     CHECK(w.Current() == kGenlock); // its turn goes on
     CHECK(pokes == 2);              // told again: it chose again
-    // The second fails too: no third try, the turn ends.
-    CHECK_FALSE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    // The second fails too, and is given back too: no third try, the turn
+    // ends.
+    CHECK(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
     w.Finish(kGenlock);
     w.RunFor(1000);
     CHECK(w.Current() != kGenlock);
@@ -3404,59 +3194,31 @@ TEST_CASE("the same refusal again and again is one event a second", "[machine]")
     CHECK(events.size() == 4);
 }
 
-TEST_CASE("an AI told to choose again that only moves is not told a third time", "[machine]")
-{
-    // Its action is still unspent after the move: without the once, it
-    // would be told again after every step.
-    World w;
-    w.StartFight();
-    (void)w.machine.OnEndTurn(); // the hero passes
-    int pokes = 0;
-    w.onPoke = [&](ObjectId id) {
-        ++pokes;
-        const CommandType choice = pokes == 1 ? CommandType::Attack : CommandType::MoveToLocation;
-        CHECK(w.Order(id, choice, Source::Script) == Verdict::Allow);
-    };
-    for (int i = 0; i < 20 && w.Current() != kGenlock; ++i)
-    {
-        w.Frame();
-    }
-    REQUIRE(w.Current() == kGenlock);
-    w.Frame();
-    REQUIRE(pokes == 1);
-    CHECK(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
-    w.Finish(kGenlock);
-    w.Frame();
-    w.Frame();
-    w.Frame();
-    REQUIRE(pokes == 2); // it moves instead
-    w.RunFor(200);
-    w.Finish(kGenlock);
-    w.RunFor(2000);
-    CHECK(pokes == 2);
-    CHECK(w.Current() != kGenlock); // its turn ended
-}
-
 TEST_CASE("with the movement spent, a talent on something in reach is used, not stopped", "[machine]")
 {
     // The seventh play test: Eleanor, 0.0 m left, a soldier 2.0 m away
     // (reach 3.5): her Shield Bash was cleared 9 ms after it was let
     // through, "out of movement", the action gone and nothing struck.
+    // Her free meter and two seconds walked, 11 m, and the talent takes the
+    // two she has left: nothing more to walk as she uses it.
     World w;
     w.StartFight();
-    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Allow);
+    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player, 11.0f) == Verdict::Allow);
     w.Frame();
     w.Get(kHero).moving = true;
-    for (int i = 0; i < 12 && w.Get(kHero).moving; ++i)
+    for (int i = 0; i < 11 && w.Get(kHero).moving; ++i)
     {
         w.Get(kHero).position.x += 1.0f;
         w.Frame();
     }
+    w.Get(kHero).moving = false;
+    w.Finish(kHero);
     w.RunFor(500);
     REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
-    REQUIRE(w.machine.View().movementLeft == 0.0f);
+    REQUIRE(w.machine.View().timeLeftMs == 2000);
     w.applied.clear();
     CHECK(w.UseAbility(kHero, Source::Player, 617, 20.0f) == Verdict::Allow);
+    REQUIRE(w.machine.View().movementLeft == 0.0f);
     // It turns and steps into the blow: moving, a little.
     w.Get(kHero).moving = true;
     for (int i = 0; i < 10; ++i)
@@ -3487,46 +3249,17 @@ TEST_CASE("with the movement spent, an action that walks on is still stopped", "
     w.applied.clear();
     w.Get(kGenlock).moving = true;
     float walked = 0.0f;
-    for (int i = 0; i < 200 && !w.Did(EffectKind::ClearCommands, kGenlock); ++i)
+    for (int i = 0; i < 300 && !w.Did(EffectKind::ClearCommands, kGenlock); ++i)
     {
         w.Get(kGenlock).position.x += 0.1f;
         walked += 0.1f;
         w.Frame();
     }
     REQUIRE(w.Did(EffectKind::ClearCommands, kGenlock));
-    // Its 9 m, the overshoot, and no more than a frame or two.
-    CHECK(walked < 9.0f + TurnMachine::kOvershoot + 0.5f);
-}
-
-TEST_CASE("a door used costs no action and does not end the turn; an attack after it does", "[machine]")
-{
-    // The user, 2026-10-01: only combat actions (an attack, a spell, a
-    // potion) end the turn. Before, a door cost the action.
-    Settings s = Fixed();
-    s.endTurnWhenActionUsed = true;
-    World w(s);
-    w.StartFight();
-    REQUIRE(w.Current() == kHero);
-    CHECK(w.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
-    CHECK(w.machine.View().actionsLeft == 1);
-    w.RunFor(300);
-    w.Finish(kHero);
-    w.RunFor(2000);
-    CHECK(w.Current() == kHero); // still his turn
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    // And again: a chest after the door.
-    CHECK(w.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
-    w.RunFor(300);
-    w.Finish(kHero);
-    w.RunFor(1000);
-    REQUIRE(w.Current() == kHero);
-    // The combat action is still his, and it ends the turn.
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
-    CHECK(w.machine.View().actionsLeft == 0);
-    w.RunFor(300);
-    w.Finish(kHero);
-    w.RunFor(2000);
-    CHECK(w.Current() != kHero);
+    // Its 21 m (its swing's time gone to the walk), the overshoot, and no
+    // more than a frame or two.
+    CHECK(walked > 20.0f);
+    CHECK(walked < 21.0f + TurnMachine::kOvershoot + 0.5f);
 }
 
 TEST_CASE("a door is not for someone else's turn", "[machine]")
@@ -3553,22 +3286,37 @@ TEST_CASE("the walk to a door is movement: out of it, the walk is stopped", "[ma
         w.Frame();
     }
     REQUIRE(w.Did(EffectKind::ClearCommands, kHero));
-    CHECK(walked < 9.0f + TurnMachine::kOvershoot + 0.5f);
-    CHECK(w.machine.View().actionsLeft == 1); // nothing was spent but the walk
+    // The door's half second, and the 3.5 s left walk 17.5 m after the free
+    // meter.
+    CHECK(walked > 17.5f);
+    CHECK(walked < 18.5f + TurnMachine::kOvershoot + 0.5f);
 }
 
 TEST_CASE("an action whose own effect holds its creature gets that effect's time, out of the round's", "[machine]")
 {
     // The eighth play test: a giant spider's Overwhelm, an effect on the
     // spider and one on its prey, each ended by its time, with effects'
-    // time held: twelve seconds, then "took too long".
-    World w;
+    // time held: twelve seconds, then "took too long". (Of the one clock
+    // everyone's effects are on with own clocks off; test_time.cpp has each
+    // creature's own.)
+    Settings s = Fixed();
+    s.ownClocks = false;
+    World w(s);
     w.StartFight();
     (void)w.machine.OnEndTurn(); // the hero passes
     bool poked = false;
     w.onPoke = [&](ObjectId id) {
         poked = true;
-        CHECK(w.UseAbility(id, Source::Script, 90133, 60.0f) == Verdict::Allow);
+        // A talent of its whole bar, which covers the time its effect runs.
+        CommandRequest pounce;
+        pounce.object = id;
+        pounce.type = CommandType::UseAbility;
+        pounce.source = Source::Script;
+        pounce.inCombat = true;
+        pounce.ability = 90133;
+        pounce.cooldownSeconds = 60.0f;
+        pounce.actionSeconds = 4.0f;
+        CHECK(w.Queue(pounce) == Verdict::Allow);
     };
     for (int i = 0; i < 40 && !poked; ++i)
     {
@@ -3580,26 +3328,26 @@ TEST_CASE("an action whose own effect holds its creature gets that effect's time
     const std::int64_t before = w.agedMs;
     w.RunFor(200); // the leap
     // The pounce: an effect's command follows the talent's, and ends when
-    // four seconds of the effect's time have run.
+    // two seconds of the effect's time have run.
     REQUIRE(w.Current() == kGenlock);
     w.Get(kGenlock).busy = true;
     w.Get(kGenlock).current = CommandType::ExecuteEffect;
     int frames = 0;
     for (; frames < 2000 && w.Current() == kGenlock; ++frames)
     {
-        if (w.Get(kGenlock).busy && w.agedMs - before >= 4000)
+        if (w.Get(kGenlock).busy && w.agedMs - before >= 2000)
         {
             w.Finish(kGenlock);
         }
         w.Frame();
     }
     CHECK(w.Current() != kGenlock);
-    CHECK(frames * 16 < 6000); // about its four seconds, not max_action_ms
-    CHECK(w.agedMs - before >= 4000);
-    CHECK(w.agedMs - before < 4600);
+    CHECK(frames * 16 < 4000); // about its two seconds, not max_action_ms
+    CHECK(w.agedMs - before >= 2000);
+    CHECK(w.agedMs - before < 2600);
     CHECK(std::ranges::none_of(
         w.log, [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
-    // The round is still six seconds of effects' time in all.
+    // The round is still a turn's four seconds of effects' time in all.
     for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
     {
         if (w.machine.GetPhase() == Phase::AwaitingOrder)
@@ -3611,7 +3359,7 @@ TEST_CASE("an action whose own effect holds its creature gets that effect's time
     REQUIRE(w.machine.Order().Round() == 2);
     w.Frame();
     w.Frame();
-    CHECK(w.agedMs - before == 6000);
+    CHECK(w.agedMs - before == 4000);
 }
 
 TEST_CASE("held by an effect as its turn begins, effects' time runs with the hold and comes off the round's worth",
@@ -3625,6 +3373,7 @@ TEST_CASE("held by an effect as its turn begins, effects' time runs with the hol
     // step at a time, as it does with an action's own effect.
     Settings s = Fixed();
     s.partyControl = PartyControl::Manual;
+    s.ownClocks = false;
     World w{s};
     w.StartFight();
     CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
@@ -3660,7 +3409,7 @@ TEST_CASE("held by an effect as its turn begins, effects' time runs with the hol
     // (the hold taken for its creature's own action's effect as well, the
     // turn to face being a command of its own, ran effects' time twice).
     CHECK(heldFrames * 16 >= 1900);
-    // The round is still six seconds of effects' time in all.
+    // The round is still a turn's four seconds of effects' time in all.
     for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
     {
         if (w.machine.GetPhase() == Phase::AwaitingOrder)
@@ -3672,7 +3421,7 @@ TEST_CASE("held by an effect as its turn begins, effects' time runs with the hol
     REQUIRE(w.machine.Order().Round() == 2);
     w.Frame();
     w.Frame();
-    CHECK(w.agedMs - before == 6000);
+    CHECK(w.agedMs - before == 4000);
 }
 
 TEST_CASE("an action on its own effect's time may outlast max_action_ms, not three times it", "[machine]")
@@ -3748,7 +3497,7 @@ TEST_CASE("the player's attack with a shut door in the way is refused, with why"
     CHECK(w.Queue(attack) == Verdict::Block);
     w.Frame();
     CHECK(w.Said(L"A door is in the way"));
-    CHECK(w.machine.View().actionsLeft == 1);
+    CHECK(w.machine.View().timeLeftMs == 4000);
     REQUIRE(!events.empty());
     CHECK(events.back().kind == EventKind::Refused);
     CHECK(events.back().detail == "A door is in the way");
@@ -3785,15 +3534,16 @@ TEST_CASE("standing at a door's use without a step, a creature is stopped; the p
     w.RunFor(100);
     CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_PATH_ACTION_REQUIRED"));
     CHECK(w.Order(kHero, CommandType::UseObject, Source::Script) == Verdict::Allow);
+    const std::uint32_t before = w.machine.View().timeLeftMs;
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 2.0f) == Verdict::Allow);
-    REQUIRE(w.machine.View().actionsLeft == 0);
+    REQUIRE(w.machine.View().timeLeftMs == before - 2000);
     w.Get(kHero).current = CommandType::UseObject; // the door first, the attack behind it
     w.applied.clear();
     w.RunFor(2000);
     CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero)); // not yet
     w.RunFor(1000);
     CHECK(w.Did(EffectKind::ClearCommands, kHero));
-    CHECK(w.machine.View().actionsLeft == 1); // the attack never began
+    CHECK(w.machine.View().timeLeftMs == before); // the attack never began
     w.RunFor(2000);
     CHECK(w.Current() == kHero);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
@@ -3830,22 +3580,32 @@ TEST_CASE("a creature walking to a door, or swinging where it stands, is not tak
     CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
 }
 
-TEST_CASE("an AI standing at a move it does not take is stopped, and its turn ends", "[machine]")
+TEST_CASE("an AI standing at a move it does not take is stopped, and chooses again with its bar whole", "[machine]")
 {
     World w;
     w.StartFight();
     (void)w.machine.OnEndTurn();
-    w.onPoke = [&](ObjectId id) { CHECK(w.Order(id, CommandType::MoveToObject, Source::Script) == Verdict::Allow); };
+    int told = 0;
+    w.onPoke = [&](ObjectId id) {
+        if (++told == 1)
+        {
+            CHECK(w.Order(id, CommandType::MoveToObject, Source::Script) == Verdict::Allow);
+            return;
+        }
+        // Told again, nothing of its bar spent: this time it passes.
+        (void)w.Order(id, CommandType::Wait, Source::Script);
+    };
     for (int i = 0; i < 20 && w.Current() != kGenlock; ++i)
     {
         w.Frame();
     }
     REQUIRE(w.Current() == kGenlock);
     w.applied.clear();
-    w.RunFor(4000);
+    w.RunFor(2300);
+    CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock)); // not yet
+    w.RunFor(1700);
     CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
-    w.Finish(kGenlock);
-    w.RunFor(1500);
+    CHECK(told == 2);
     CHECK(w.Current() != kGenlock);
     CHECK(std::ranges::none_of(
         w.log, [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
@@ -3989,15 +3749,24 @@ TEST_CASE("the same seed gives the same initiative", "[machine]")
 
 namespace
 {
-// The user's turn: four seconds (cooldown_seconds_per_turn's default).
-Settings FourSecondTurns()
-{
-    Settings s = Fixed();
-    s.cooldownSecondsPerTurn = 4.0f;
-    return s;
-}
-
 constexpr std::int32_t kBlizzard = 13000;
+
+// An ability that takes `seconds`, as the game layer read it of the engine:
+// with less than that left of its user's bar it is kept for the next turn
+// (PayAction). A talent, not a spell that conjures, which the engine holds
+// itself (test_time.cpp).
+Verdict Use(World &w, ObjectId id, Source source, std::int32_t ability, float seconds)
+{
+    CommandRequest request;
+    request.object = id;
+    request.type = CommandType::UseAbility;
+    request.source = source;
+    request.inCombat = w.InCombat(id);
+    request.ability = ability;
+    request.cooldownSeconds = 20.0f;
+    request.actionSeconds = seconds;
+    return w.Queue(request);
+}
 
 bool Released(const World &w, ObjectId id)
 {
@@ -4026,76 +3795,55 @@ void UntilHeroAgain(World &w)
 }
 } // namespace
 
-TEST_CASE("instant, fast and normal are cast on the turn; slow charges one, ritual two", "[machine][charge]")
+TEST_CASE("an ability longer than what is left is kept on one turn and used at the start of the next, held on "
+          "cooldown only then",
+          "[machine][charge]")
 {
-    // The user's rule, 2026-10-01, a turn being 4 s.
-    const auto verdict = [](float conjureSeconds) {
-        World w(FourSecondTurns());
-        w.StartFight();
-        return w.Cast(kHero, Source::Player, kBlizzard, conjureSeconds);
-    };
-    CHECK(verdict(0.0f) == Verdict::Allow);
-    CHECK(verdict(1.0f) == Verdict::Allow);
-    CHECK(verdict(2.0f) == Verdict::Allow);
-    CHECK(verdict(4.0f) == Verdict::Hold);
-    CHECK(verdict(6.0f) == Verdict::Hold);
-    const auto turns = [](float conjureSeconds) {
-        World w(FourSecondTurns());
-        w.StartFight();
-        (void)w.Cast(kHero, Source::Player, kBlizzard, conjureSeconds);
-        const MachineState state = w.machine.State();
-        return state.charging.empty() ? 0 : state.charging.front().turns;
-    };
-    CHECK(turns(4.0f) == 1);
-    CHECK(turns(6.0f) == 2);
-    CHECK(turns(2.0f) == 0);
-}
-
-TEST_CASE("a slow spell is begun on one turn and cast at the start of the next, for nothing", "[machine][charge]")
-{
-    World w(FourSecondTurns());
+    World w;
     std::vector<TurnEvent> events;
     w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
     w.StartFight();
     REQUIRE(w.Current() == kHero);
-    CHECK(w.Cast(kHero, Source::Player, kBlizzard, 4.0f) == Verdict::Hold);
-    CHECK(w.machine.View().actionsLeft == 0);
+    // Five seconds of it on a bar of four: a second is owed.
+    CHECK(Use(w, kHero, Source::Player, kBlizzard, 5.0f) == Verdict::Hold);
+    CHECK(w.machine.View().timeLeftMs == 0);
     CHECK_FALSE(w.Get(kHero).busy); // not queued: kept
     CHECK(w.heldCasts.contains(kHero));
     w.Frame();
     w.Frame();
+    CHECK(w.Said(L"Lands next turn"));
+    w.RunFor(900);
     CHECK(w.Current() != kHero); // the turn is over: it does nothing else
-    CHECK(w.Said(L"Casting"));
     CHECK_FALSE(Released(w, kHero));
-    // No cooldown yet: it has not been cast.
+    // No cooldown yet: it has not been used.
     CHECK(std::ranges::none_of(w.applied, [](const Effect &e) { return e.kind == EffectKind::Cooldown; }));
     UntilHeroAgain(w);
-    // Cast as his turn begins.
+    // Used as his turn begins.
     CHECK(Released(w, kHero));
     REQUIRE(w.released.size() == 1);
     CHECK(w.released.front() == Verdict::Allow);
     CHECK(w.Get(kHero).busy);
-    CHECK(w.machine.View().actionsLeft == 1); // it cost this turn nothing
+    CHECK(w.machine.View().timeLeftMs == 3000); // the second it owed, and no more
     w.RunFor(300);
     w.Finish(kHero);
     w.RunFor(1500);
     // And his turn follows it: the player's to play.
     REQUIRE(w.Current() == kHero);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.machine.View().actionsLeft == 1);
+    CHECK(w.machine.View().timeLeftMs == 3000);
     CHECK(std::ranges::any_of(w.applied, [](const Effect &e) {
         return e.kind == EffectKind::Cooldown && e.target == kHero && e.a == kBlizzard;
-    })); // cast, it is on cooldown
+    })); // used, it is on cooldown
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
     const auto count = [&](EventKind kind) {
         return std::ranges::count_if(events, [&](const TurnEvent &e) { return e.kind == kind && e.who == kHero; });
     };
-    CHECK(count(EventKind::CastCharging) == 1);
-    CHECK(count(EventKind::CastLanded) == 1);
-    CHECK(count(EventKind::CastInterrupted) == 0);
+    CHECK(count(EventKind::ActionPending) == 1);
+    CHECK(count(EventKind::ActionLanded) == 1);
+    CHECK(count(EventKind::ActionDropped) == 0);
 }
 
-TEST_CASE("a turn opened by a kept cast is the player's though its own AI waits in a loop", "[machine][charge]")
+TEST_CASE("a turn opened by a kept action is the player's though its own AI waits in a loop", "[machine][charge]")
 {
     // Issue 10: Lyna's kept shot landed as her turn began and felled the
     // fight's last enemy. Not yet selected, she was a follower whose full AI
@@ -4103,10 +3851,10 @@ TEST_CASE("a turn opened by a kept cast is the player's though its own AI waits 
     // queued a wait of a second, and another as that one ended. Each was let
     // through, so the turn stood at executing for eleven minutes: never
     // handed over, never waiting on an order.
-    World w(FourSecondTurns());
+    World w;
     w.StartFight();
     REQUIRE(w.Current() == kHero);
-    REQUIRE(w.Cast(kHero, Source::Player, kBlizzard, 4.0f) == Verdict::Hold);
+    REQUIRE(Use(w, kHero, Source::Player, kBlizzard, 5.0f) == Verdict::Hold);
     w.Frame();
     w.Frame();
     UntilHeroAgain(w);
@@ -4141,15 +3889,18 @@ TEST_CASE("a turn opened by a kept cast is the player's though its own AI waits 
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
 }
 
-TEST_CASE("a ritual charges two turns and is cast on the third", "[machine][charge]")
+TEST_CASE("an action that owes more than a turn has that turn spent on it whole, and is used on the one after",
+          "[machine][charge]")
 {
-    World w(FourSecondTurns());
+    World w;
     w.StartFight();
-    CHECK(w.Cast(kHero, Source::Player, kBlizzard, 6.0f) == Verdict::Hold);
-    w.Frame();
-    w.Frame();
+    // Ten seconds of it on a bar of four: six are owed, a whole turn and half
+    // of the next.
+    CHECK(Use(w, kHero, Source::Player, kBlizzard, 10.0f) == Verdict::Hold);
+    w.RunFor(900);
     REQUIRE(w.Current() != kHero);
-    // The second turn: spent charging, nothing for the player to do.
+    w.applied.clear();
+    // The second turn: spent on it, nothing for the player to do.
     for (int i = 0; i < 8000 && w.machine.Order().Round() < 3; ++i)
     {
         if (w.machine.GetPhase() == Phase::AwaitingOrder)
@@ -4161,26 +3912,29 @@ TEST_CASE("a ritual charges two turns and is cast on the third", "[machine][char
     }
     REQUIRE(w.machine.Order().Round() == 3);
     CHECK_FALSE(Released(w, kHero)); // not on the second
+    CHECK(w.Said(L"Casting"));
     CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
-        return line.find("Hero's turn is spent charging ability 13000 (1 more)") != std::string::npos;
+        return line.find("round 2: Hero's turn is spent on its pending use ability (2.00 s more)") != std::string::npos;
     }));
-    // The third: cast.
+    // The third: used, with what its bar has left after the two seconds.
     for (int i = 0; i < 20 && !Released(w, kHero); ++i)
     {
         w.Frame();
     }
     CHECK(Released(w, kHero));
     CHECK(w.Current() == kHero);
+    CHECK(w.machine.View().timeLeftMs == 2000);
 }
 
-TEST_CASE("a caster held, fallen or gone loses its charge: nothing cast, nothing on cooldown", "[machine][charge]")
+TEST_CASE("one held, fallen or gone loses the action kept for it: nothing used, nothing on cooldown",
+          "[machine][charge]")
 {
-    const auto interrupted = [](const std::function<void(Creature &)> &how, const char *why) {
-        World w(FourSecondTurns());
+    const auto interrupted = [](const std::function<void(Creature &)> &how, const char *why, bool said) {
+        World w;
         std::vector<TurnEvent> events;
         w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
         w.StartFight();
-        REQUIRE(w.Cast(kHero, Source::Player, kBlizzard, 4.0f) == Verdict::Hold);
+        REQUIRE(Use(w, kHero, Source::Player, kBlizzard, 5.0f) == Verdict::Hold);
         w.Frame();
         w.Frame();
         how(w.Get(kHero));
@@ -4188,9 +3942,10 @@ TEST_CASE("a caster held, fallen or gone loses its charge: nothing cast, nothing
         CAPTURE(why);
         CHECK(w.machine.State().charging.empty());
         CHECK_FALSE(w.heldCasts.contains(kHero)); // the game layer forgets it
-        CHECK(w.Said(L"Action lost"));
+        // Said over one that is held; not over one that fell or is gone.
+        CHECK(w.Said(L"Action lost") == said);
         CHECK(std::ranges::count_if(events, [&](const TurnEvent &e) {
-                  return e.kind == EventKind::CastInterrupted && e.who == kHero && e.detail == why &&
+                  return e.kind == EventKind::ActionDropped && e.who == kHero && e.detail == why &&
                          e.value == kBlizzard;
               }) == 1);
         // Never cast after.
@@ -4206,14 +3961,14 @@ TEST_CASE("a caster held, fallen or gone loses its charge: nothing cast, nothing
         CHECK(std::ranges::none_of(w.applied,
                                    [](const Effect &e) { return e.kind == EffectKind::Cooldown && e.a == kBlizzard; }));
     };
-    interrupted([](Creature &c) { c.condition = Condition::Disabled; }, "held");
-    interrupted([](Creature &c) { c.down = true; }, "fell");
-    interrupted([](Creature &c) { c.exists = false; }, "gone");
+    interrupted([](Creature &c) { c.condition = Condition::Disabled; }, "held", true);
+    interrupted([](Creature &c) { c.down = true; }, "fell", false);
+    interrupted([](Creature &c) { c.exists = false; }, "gone", false);
 }
 
-TEST_CASE("an enemy's slow spell is said a turn ahead, cast on its next, and its turn follows", "[machine][charge]")
+TEST_CASE("an enemy's kept action is used as its next turn begins, and its turn follows", "[machine][charge]")
 {
-    World w(FourSecondTurns());
+    World w;
     w.StartFight();
     (void)w.machine.OnEndTurn();
     int pokes = 0; // the genlock's
@@ -4226,7 +3981,8 @@ TEST_CASE("an enemy's slow spell is said a turn ahead, cast on its next, and its
         ++pokes;
         if (pokes == 1)
         {
-            CHECK(w.Cast(id, Source::Script, kBlizzard, 4.0f) == Verdict::Hold);
+            // Six seconds of it on a bar of four: two are owed.
+            CHECK(Use(w, id, Source::Script, kBlizzard, 6.0f) == Verdict::Hold);
         }
         else
         {
@@ -4240,9 +3996,10 @@ TEST_CASE("an enemy's slow spell is said a turn ahead, cast on its next, and its
     REQUIRE(pokes == 1);
     w.Frame();
     w.Frame();
-    CHECK(w.Current() != kGenlock); // its turn ended on the charge
+    CHECK(w.Current() != kGenlock); // its turn ended on what it kept
     CHECK(w.machine.State().charging.size() == 1);
-    // Round 2: the genlock's turn begins with the cast, then its AI is told.
+    // Round 2: the genlock's turn begins with what it kept, then its AI is
+    // told, with the two seconds its bar has left.
     for (int i = 0; i < 4000 && !Released(w, kGenlock); ++i)
     {
         if (w.machine.GetPhase() == Phase::AwaitingOrder)
@@ -4252,30 +4009,37 @@ TEST_CASE("an enemy's slow spell is said a turn ahead, cast on its next, and its
         w.Frame();
     }
     REQUIRE(Released(w, kGenlock));
-    CHECK(pokes == 1); // not told while the cast is given
+    CHECK(pokes == 1); // not told while it is given
     w.RunFor(300);
     w.Finish(kGenlock);
     w.RunFor(1000);
-    CHECK(pokes == 2); // its turn after the cast
+    CHECK(pokes == 2); // its turn after it
 }
 
-TEST_CASE("an ability named in [turns] charge charges, whatever its conjuring time", "[machine][charge]")
+TEST_CASE("an ability named in [turns] charge costs its turns' worth of bar, whatever time the game takes for it",
+          "[machine][charge]")
 {
-    Settings s = FourSecondTurns();
-    s.charge = {{kBlizzard, 1}, {617, 0}};
+    Settings s = Fixed();
+    s.charge = {{kBlizzard, 2}, {617, 0}};
     World w(s);
     w.StartFight();
-    CHECK(w.Cast(kHero, Source::Player, kBlizzard, 1.0f) == Verdict::Hold); // fast, and made to charge
+    // A second of it by the game, and made to cost two turns: kept, a turn's
+    // worth owed.
+    CHECK(Use(w, kHero, Source::Player, kBlizzard, 1.0f) == Verdict::Hold);
+    REQUIRE(w.machine.State().charging.size() == 1);
+    CHECK(w.machine.State().charging.front().owedMs == 4000);
     World other(s);
     other.StartFight();
-    CHECK(other.Cast(kHero, Source::Player, 617, 6.0f) == Verdict::Allow); // a ritual, and made not to
+    // Six seconds of it by the game, and made to cost none.
+    CHECK(Use(other, kHero, Source::Player, 617, 6.0f) == Verdict::Allow);
+    CHECK(other.machine.View().timeLeftMs == 4000);
 }
 
-TEST_CASE("the fight over, a charge is lost", "[machine][charge]")
+TEST_CASE("the fight over, an action kept is lost", "[machine][charge]")
 {
-    World w(FourSecondTurns());
+    World w;
     w.StartFight();
-    REQUIRE(w.Cast(kHero, Source::Player, kBlizzard, 4.0f) == Verdict::Hold);
+    REQUIRE(Use(w, kHero, Source::Player, kBlizzard, 5.0f) == Verdict::Hold);
     w.Get(kGenlock).down = true;
     w.Get(kHurlock).down = true;
     w.RunFor(2000);
@@ -4284,11 +4048,12 @@ TEST_CASE("the fight over, a charge is lost", "[machine][charge]")
     CHECK_FALSE(w.heldCasts.contains(kHero));
 }
 
-TEST_CASE("an enemy that goes on by itself after its charged cast is not told its turn has come", "[machine][charge]")
+TEST_CASE("an enemy that goes on by itself after its kept action, its bar spent, is not told its turn has come",
+          "[machine][charge]")
 {
     // The twelfth play test: the spider's own attack followed its cast, its
     // action spent; told then, it chose nothing for a second and a half.
-    World w(FourSecondTurns());
+    World w;
     w.StartFight();
     (void)w.machine.OnEndTurn();
     int pokes = 0; // the genlock's
@@ -4301,7 +4066,8 @@ TEST_CASE("an enemy that goes on by itself after its charged cast is not told it
         ++pokes;
         if (pokes == 1)
         {
-            CHECK(w.Cast(id, Source::Script, kBlizzard, 4.0f) == Verdict::Hold);
+            // Six seconds of it on a bar of four: two are owed.
+            CHECK(Use(w, id, Source::Script, kBlizzard, 6.0f) == Verdict::Hold);
         }
     };
     for (int i = 0; i < 4000 && !Released(w, kGenlock); ++i)
@@ -4315,13 +4081,15 @@ TEST_CASE("an enemy that goes on by itself after its charged cast is not told it
     REQUIRE(Released(w, kGenlock));
     REQUIRE(pokes == 1);
     w.RunFor(300);
-    // The cast ends, and its own script attacks at once.
+    // What it kept ends, and its own script attacks at once: the two seconds
+    // its bar had left.
     w.Finish(kGenlock);
     CHECK(w.Order(kGenlock, CommandType::Attack, Source::Script) == Verdict::Allow);
+    CHECK(w.machine.View().timeLeftMs == 0);
     w.RunFor(300);
     w.Finish(kGenlock);
     w.RunFor(1200);
-    CHECK(pokes == 1);              // not told: it had acted
+    CHECK(pokes == 1);              // not told: it had nothing left to choose with
     CHECK(w.Current() != kGenlock); // and its turn is over, without the wait for a choice
     CHECK(std::ranges::none_of(w.log, [](const std::string &line) {
         return line.find("Genlock's turn ends: chose nothing") != std::string::npos;
@@ -4362,11 +4130,10 @@ TEST_CASE("held by an effect on the fight's first turn, a creature loses it at a
         w.Frame();
     }
     CHECK(w.Current() != kGenlock);
-    CHECK(frames * 16 >= 5900); // a turn's worth of the hold (6 s as built)
-    CHECK(frames * 16 < 7000);  // not max_action_ms' twelve seconds
+    CHECK(frames * 16 >= 3900); // a turn's worth of the hold: its bar's four seconds
+    CHECK(frames * 16 < 5000);  // not max_action_ms' twelve seconds
     CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
-        return line.find("Genlock is held by an effect's command past a turn's 6.0 s: its turn is lost") !=
-               std::string::npos;
+        return line.find("Genlock is held by an effect's command past its bar (4.0") != std::string::npos;
     }));
     CHECK(std::ranges::none_of(
         w.log, [](const std::string &line) { return line.find("took too long") != std::string::npos; }));

@@ -1,4 +1,4 @@
-// A turn as a bar of time (Settings::turnClock, dev/REBALANCE.md, "Current
+// A turn as a bar of time (dev/REBALANCE.md, "Current
 // specification"), driven through scripted fights in the stand-in for the
 // game (World.h): actions spending their own seconds, walking at a pace,
 // an action that does not fit kept for the next turn, rollover, Combat
@@ -28,7 +28,6 @@ namespace
 Settings Timed()
 {
     Settings s = Fixed();
-    s.turnClock = TurnClock::Time;
     s.secondsPerTurn = 4.0f;
     s.paceMps = 5.0f;
     s.freeStepMeters = 1.0f;
@@ -139,7 +138,6 @@ TEST_CASE("with time, a swing spends its seconds and the turn goes on until the 
     World w(Timed());
     w.StartFight();
     REQUIRE(w.Current() == kHero);
-    CHECK(w.machine.View().timed);
     CHECK(w.machine.View().timeMs == 4000);
     CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 1.5f, 0.0f) == Verdict::Allow);
     CHECK(w.machine.View().timeLeftMs == 2500);
@@ -1101,7 +1099,6 @@ void ToTheGenlocksTurn(World &w, int &told, std::function<void(ObjectId)> choose
 struct Endless
 {
     const char *what;
-    bool timedOnly; // of a turn a bar of time alone: as built an AI is not told to choose again
     std::function<void(World &, ObjectId)> told;
     std::function<void(World &, ObjectId, int)> frame;
 };
@@ -1131,29 +1128,27 @@ std::vector<Endless> EndlessTurns()
         // Told again with time left, and answering each telling with what
         // takes nothing of its bar (215 times in two minutes, tried with the
         // count gone and no limit).
-        {"a weapon set switched each time it is told", true, queue(CommandType::SwitchWeaponSets, Source::Script, true),
+        {"a weapon set switched each time it is told", queue(CommandType::SwitchWeaponSets, Source::Script, true),
          nothing},
-        {"a move over where it stands each time it is told", true,
-         queue(CommandType::MoveToLocation, Source::Script, true), nothing},
+        {"a move over where it stands each time it is told", queue(CommandType::MoveToLocation, Source::Script, true),
+         nothing},
         // It stands two and a half seconds at the walk, is stopped, and is
         // told again (39 times in two minutes).
-        {"a walk it cannot make each time it is told", true, queue(CommandType::MoveToLocation, Source::Script, false),
+        {"a walk it cannot make each time it is told", queue(CommandType::MoveToLocation, Source::Script, false),
          nothing},
         // Queued again by its script as each ends: nothing is told, nothing
         // stands and nothing fails.
-        {"a weapon set switched again as each ends", false, queue(CommandType::SwitchWeaponSets, Source::Script, false),
+        {"a weapon set switched again as each ends", queue(CommandType::SwitchWeaponSets, Source::Script, false),
          again(CommandType::SwitchWeaponSets, Source::Script)},
-        {"a move that ends where it began, again as each ends", false,
+        {"a move that ends where it began, again as each ends",
          queue(CommandType::MoveToLocation, Source::Script, false), again(CommandType::MoveToLocation, Source::Script)},
-        {"the engine's own weapon commands, one as each ends", false,
+        {"the engine's own weapon commands, one as each ends",
          queue(CommandType::SheatheWeapons, Source::Engine, false), again(CommandType::SheatheWeapons, Source::Engine)},
         // The engine failed attacks within 2 ms before issue 27 had the gate
         // refuse them unasked: no time runs between the two, each is given
         // back whole, and the turn never settles for the count of them to be
-        // looked at. (As built an action is given back once a turn, the
-        // second attack is refused, and what is left is the weapon set
-        // switched again and again, above.)
-        {"an attack the engine fails in the frame it was let through, and a weapon set switched, by turns", true,
+        // looked at.
+        {"an attack the engine fails in the frame it was let through, and a weapon set switched, by turns",
          queue(CommandType::SwitchWeaponSets, Source::Script, false),
          [](World &w, ObjectId id, int) {
              w.Finish(id);
@@ -1162,8 +1157,8 @@ std::vector<Endless> EndlessTurns()
              CHECK(w.Order(id, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow);
          }},
         // The engine's own stuck timer gives a walk up after a second, and
-        // its script queues the same (401 walks in 404 s as built, tried).
-        {"a walk the engine fails after its own second, queued again as each fails", false,
+        // its script queues the same.
+        {"a walk the engine fails after its own second, queued again as each fails",
          queue(CommandType::MoveToLocation, Source::Script, false),
          [](World &w, ObjectId id, int frame) {
              if (frame % 62 == 0)
@@ -1179,47 +1174,35 @@ std::vector<Endless> EndlessTurns()
 TEST_CASE("a turn an AI plays that would not end by itself is ended at max_turn_ms, whatever it is doing",
           "[time][machine][limit]")
 {
-    for (const TurnClock clock : {TurnClock::Time, TurnClock::Actions})
+    for (const Endless &endless : EndlessTurns())
     {
-        for (const Endless &endless : EndlessTurns())
+        CAPTURE(endless.what);
+        World w(Timed());
+        Turns turns(w);
+        int told = 0;
+        ToTheGenlocksTurn(w, told, [&](ObjectId id) { endless.told(w, id); });
+        w.applied.clear();
+        std::uint32_t ran = 0;
+        for (int frame = 1; ran < 60000 && w.Current() == kGenlock; ran += 16, ++frame)
         {
-            if (endless.timedOnly && clock != TurnClock::Time)
-            {
-                continue;
-            }
-            CAPTURE(endless.what, clock == TurnClock::Time);
-            Settings s = Timed();
-            s.turnClock = clock;
-            World w(s);
-            Turns turns(w);
-            int told = 0;
-            ToTheGenlocksTurn(w, told, [&](ObjectId id) { endless.told(w, id); });
-            w.applied.clear();
-            std::uint32_t ran = 0;
-            for (int frame = 1; ran < 60000 && w.Current() == kGenlock; ran += 16, ++frame)
-            {
-                endless.frame(w, kGenlock, frame);
-                w.Frame();
-            }
-            // Thirty seconds from when its turn began, which was within the
-            // 0.3 s before this count of them.
-            CHECK(ran > 29700 - 16);
-            CHECK(ran <= 30000 + 16);
-            CHECK(turns.ends[kGenlock] == std::vector<std::string>{"took too long"});
-            CHECK(Lines(w, "Genlock's turn is still going after 30000 ms, ") == 1);
-            // What it was at is stopped, and nothing of its bar is saved.
-            CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
-            CHECK_FALSE(w.Get(kGenlock).busy);
-            if (clock == TurnClock::Time)
-            {
-                CHECK(Logged(w, "Genlock's turn ends: took too long; nothing rolls over"));
-            }
-            // The fight goes on, and the next one's time is its own: the
-            // hurlock is told, and waits.
-            UntilTurnOf(w, kGenlock);
-            CHECK(turns.ends[kHurlock] == std::vector<std::string>{"waits"});
-            CHECK(Lines(w, "turn is still going after") == 1);
+            endless.frame(w, kGenlock, frame);
+            w.Frame();
         }
+        // Thirty seconds from when its turn began, which was within the
+        // 0.3 s before this count of them.
+        CHECK(ran > 29700 - 16);
+        CHECK(ran <= 30000 + 16);
+        CHECK(turns.ends[kGenlock] == std::vector<std::string>{"took too long"});
+        CHECK(Lines(w, "Genlock's turn is still going after 30000 ms, ") == 1);
+        // What it was at is stopped, and nothing of its bar is saved.
+        CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
+        CHECK_FALSE(w.Get(kGenlock).busy);
+        CHECK(Logged(w, "Genlock's turn ends: took too long; nothing rolls over"));
+        // The fight goes on, and the next one's time is its own: the
+        // hurlock is told, and waits.
+        UntilTurnOf(w, kGenlock);
+        CHECK(turns.ends[kHurlock] == std::vector<std::string>{"waits"});
+        CHECK(Lines(w, "turn is still going after") == 1);
     }
 }
 
@@ -1351,22 +1334,11 @@ TEST_CASE("with time, an action that failed without acting gives its time back",
     CHECK(w.machine.View().timeLeftMs == 2000);
     CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "no room in the melee ring"));
     CHECK(w.machine.View().timeLeftMs == 4000);
-    // And every time it fails so: with time nothing is charged for what
-    // did not happen (as built, once a turn: test_machine.cpp).
+    // And every time it fails so: nothing is charged for what did not
+    // happen.
     CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
     CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "no room in the melee ring"));
     CHECK(w.machine.View().timeLeftMs == 4000);
-}
-
-TEST_CASE("as built, a turn is still one action and its meters", "[time]")
-{
-    World w; // the default clock
-    w.StartFight();
-    REQUIRE(w.Current() == kHero);
-    CHECK_FALSE(w.machine.View().timed);
-    CHECK(w.machine.View().timeMs == 0);
-    CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 1.5f, 0.0f) == Verdict::Allow);
-    CHECK(w.machine.View().actionsLeft == 0);
 }
 
 TEST_CASE("an action's cost: its own seconds, or a stand-in by kind", "[time]")
@@ -1583,19 +1555,6 @@ TEST_CASE("with time, walking moves the clock too, and a turn lost moves it a wh
     CHECK(*left(kHero) <= 3010);
 }
 
-TEST_CASE("as built, a cooldown still counts its user's turns", "[time]")
-{
-    World w; // one action and meters
-    w.StartFight();
-    REQUIRE(w.Current() == kHero);
-    CHECK(w.UseAbility(kHero, Source::Player, 617, 20.0f) == Verdict::Allow);
-    Done(w, kHero);
-    const auto cooldowns = w.machine.State().cooldowns;
-    REQUIRE(cooldowns.size() == 1);
-    CHECK(cooldowns.front().turns == 2);
-    CHECK(cooldowns.front().ofMs == 0);
-}
-
 namespace
 {
 // A hold of so many seconds on a creature, as the game layer reads it.
@@ -1783,19 +1742,19 @@ TEST_CASE("with time, the view says a turn is a bar of time between two turns to
     World w(Timed());
     w.StartFight();
     REQUIRE(w.Current() == kHero);
-    // Between the hero's turn and the genlock's the budget is reset: the
-    // view still says the fight is on the bar, by the setting (by the
-    // budget, the game's bar went back to experience for a third of a
-    // second: play test 27).
+    // Between the hero's turn and the genlock's the budget is reset, and
+    // there is no bar: the view still says how long a turn's is, by the
+    // setting (by the budget, the game's bar went back to experience for a
+    // third of a second: play test 27).
     (void)w.machine.OnEndTurn();
     bool every = true;
     for (int i = 0; i < 40; ++i)
     {
         w.Frame();
-        every = every && w.machine.View().timed;
+        every = every && w.machine.View().turnMs == 4000;
     }
     CHECK(every);
-    CHECK_FALSE(World{}.machine.View().timed);
+    CHECK(World{}.machine.View().turnMs == 0); // no fight, no turn
 }
 
 TEST_CASE("with time, the walk to a kept attack's target has a little slack and stops without a word", "[time]")
@@ -1925,6 +1884,84 @@ TEST_CASE("with time, a walk longer than the whole bar is stopped, and its actio
     w.RunFor(100);
     CHECK(w.Current() != kGenlock); // out of movement: its turn is over
     CHECK(w.machine.State().charging.empty());
+}
+
+// Stopped where its bar's walk ends on the way to an action, a creature has
+// that action's time back once a turn (TrackMovement, budget_.refunded). On
+// the bar the time given back is a second action's, let through while the
+// first one's had already gone to its walk ("an action whose walk runs past
+// the bar is charged when its creature gets there", above; onArrivalMs): the
+// first is never taken, and the second, charged as it was let through, is
+// what the stop finds to give back. The random fights have it of an AI, whose
+// turn ends at the stop (test_fights.cpp's "[fight-seed]" with TB_SEED 62, 72
+// and 75, run 2026-10-05; in 62: "c768 is out of movement (8.6 of 18.3 m);
+// the action it was moving for is kept"). A turn the player plays goes on,
+// and the same two orders again in it come to a second stop, which gives
+// nothing back. TrackMovement has why: "Every later try to reach something
+// takes a step before it is stopped, so a second refund would let it creep on
+// a frame at a time".
+// (Until issue 50 the case for the limit was the action clock's, one action a
+// turn; on the bar no scripted case came to a second stop.)
+TEST_CASE("with time, an action is given back at a walk stopped past the bar once a turn, and not at a second stop",
+          "[time]")
+{
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    const auto pastTheBar = [&] { return Lines(w, "Hero's walk runs past its bar"); };
+    const auto stopped = [&] { return Lines(w, "Hero is out of movement"); };
+    const auto kept = [&] { return Lines(w, "the action it was moving for is kept"); };
+    // Half a meter a frame until `seen`, and still walking then: Walk()
+    // stands its creature as it ends, and one that stands at its attack has
+    // got there, the time kept for its arrival taken (ChargeOnArrival).
+    const auto walkUntil = [&](const auto &seen) {
+        w.Get(kHero).moving = true;
+        for (int i = 0; i < 100 && !seen(); ++i)
+        {
+            w.Get(kHero).position.x += 0.5f;
+            w.Frame();
+        }
+        REQUIRE(seen());
+    };
+    // A swing of 3 s at one whose path the gate could not tell: a second is
+    // left, 6 m with the free one, and the walk is longer. The swing's time
+    // goes to the walk.
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 3.0f) == Verdict::Allow);
+    REQUIRE(w.machine.View().timeLeftMs == 1000);
+    w.Frame();
+    walkUntil([&] { return pastTheBar() == 1; });
+    REQUIRE(w.Get(kHero).busy);
+    REQUIRE(stopped() == 0);
+    // Sent at another on the way, a swing of a second, charged as it is let
+    // through. That walk too is longer than what is left: stopped, and the
+    // second it was charged is back in the bar.
+    REQUIRE(w.machine.View().timeLeftMs > 1000);
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 1.0f) == Verdict::Allow);
+    walkUntil([&] { return stopped() == 1; });
+    CHECK_FALSE(w.Get(kHero).busy);
+    CHECK(kept() == 1);
+    CHECK(w.machine.View().timeLeftMs == 1000);
+    w.RunFor(600);
+    REQUIRE(w.Current() == kHero);
+    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+    // The same again with what was given back: a swing whose time goes to
+    // its walk, and another let through on the way, 0.3 s of the bar.
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 0.9f) == Verdict::Allow);
+    w.Frame();
+    walkUntil([&] { return pastTheBar() == 2; });
+    REQUIRE(w.Get(kHero).busy);
+    REQUIRE(stopped() == 1);
+    REQUIRE(w.machine.View().timeLeftMs > 300);
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 0.3f) == Verdict::Allow);
+    walkUntil([&] { return stopped() == 2; });
+    // Stopped as before, and this time nothing comes back: the 0.3 s stay
+    // spent, the bar is empty, and the turn is over as the world settles.
+    CHECK_FALSE(w.Get(kHero).busy);
+    CHECK(kept() == 1);
+    CHECK(w.machine.View().timeLeftMs == 0);
+    w.RunFor(600);
+    CHECK(w.Current() != kHero);
+    CHECK(Logged(w, "Hero's turn ends: nothing left to spend"));
 }
 
 TEST_CASE("without the engine's conjuring, a blow over the threshold interrupts a pending spell, and nothing else",
@@ -2908,28 +2945,6 @@ TEST_CASE("a held creature's AI's wait takes nothing and ends nothing: the hold 
         CHECK(Logged(w, "Genlock's turn ends: waits; 0.9"));
         CHECK(w.Current() != kGenlock);
     }
-    SECTION("as built, where a wait is a pass: it does not pass the turn of one held")
-    {
-        Settings s = Timed();
-        s.turnClock = TurnClock::Actions;
-        World w(s);
-        int pokes = 0;
-        w.onPoke = [&](ObjectId) { ++pokes; };
-        w.StartFight();
-        REQUIRE(w.Current() == kHero);
-        REQUIRE(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
-        UntilTurnOf(w, kGenlock);
-        w.RunFor(500);
-        CHECK(w.Wait(kGenlock, 2.0f) == Verdict::Block);
-        w.RunFor(500);
-        CHECK(w.Current() == kGenlock);
-        w.Finish(kGenlock);
-        w.RunFor(100);
-        // Let go, the turn is its own, whole: its AI is told, not passed over.
-        CHECK(w.Current() == kGenlock);
-        CHECK(pokes == 1);
-        CHECK(w.machine.GetPhase() == Phase::AiThinking);
-    }
 }
 
 // Where a hold (issue 30) meets a hostile that has noticed nobody to fight
@@ -3390,6 +3405,69 @@ TEST_CASE("an AI whose actions were given back twice in a turn has nothing it ca
     CHECK(ends.front() == "nothing it can get to");
 }
 
+// An AI whose action came to nothing is told to choose again at once, its
+// action given back, once a turn (StepSettling, budget_.retried). What it
+// does then is a command of its turn like any: as that ends it is told as
+// any AI with time left is, after the follow-up time (ai_follow_up_ms) and
+// on a look at everyone taken with that step, and not "its action given
+// back" again, at once, after everything it does for the rest of the turn.
+// (Until issue 50, 2026-10-05, the case for this was the action clock's,
+// where the action given back was the turn's one; on the bar every scripted
+// case ended at the second failure, kGivenBackEnough.)
+TEST_CASE("an AI whose action was given back is told so at once, once: what it does next is followed as any command",
+          "[time]")
+{
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId id) {
+        switch (++pokes)
+        {
+        case 1:
+            (void)Act(w, id, CommandType::Attack, Source::Script, 1.5f, 0.0f);
+            break;
+        case 2:
+            // No room at its target: a move, which is what the game's AI
+            // answers a failure with (the comment at NoAttackToMake, of
+            // ai_main_h_2.nss's AI_ExecuteAttack: "a move closer and the
+            // same target again").
+            CHECK(w.Order(id, CommandType::MoveToLocation, Source::Script, 3.0f) == Verdict::Allow);
+            break;
+        default:
+            (void)w.Order(id, CommandType::Wait, Source::Script);
+            break;
+        }
+    };
+    const auto givenBack = [&] { return Lines(w, "Genlock chooses again, its action given back"); };
+    const auto asAny = [&] { return Lines(w, "Genlock chooses again: "); };
+    w.StartFight();
+    (void)w.machine.OnEndTurn();
+    w.RunFor(200);
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(pokes == 1);
+    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    w.Finish(kGenlock);
+    // Told at once: within the frames its command's end takes to be seen,
+    // not after the follow-up time.
+    w.RunFor(100);
+    REQUIRE(pokes == 2);
+    REQUIRE(givenBack() == 1);
+    REQUIRE(asAny() == 0);
+    REQUIRE(w.Get(kGenlock).busy);
+    // Its walk, 3 m, and its end. Not told at once this time: its action is
+    // not given back twice for one failure.
+    Walk(w, kGenlock, 3.0f);
+    w.Finish(kGenlock);
+    w.RunFor(300);
+    CHECK(pokes == 2);
+    CHECK(givenBack() == 1);
+    CHECK(w.Current() == kGenlock);
+    // Told as any with time left, the follow-up time over.
+    w.RunFor(400);
+    CHECK(pokes == 3);
+    CHECK(givenBack() == 1);
+    CHECK(asAny() == 1);
+}
+
 TEST_CASE("a party member's lost turn is said in gold, an enemy's in grey", "[time]")
 {
     for (const ObjectId who : {kCompanion, kGenlock})
@@ -3506,31 +3584,28 @@ TEST_CASE("with own clocks, a bigger bar moves its clock by its share, and a los
     CHECK(w.agedOwn[kGenlock] == 4000);
 }
 
-TEST_CASE("with own clocks off, or with actions, everyone's effects age together as each round begins", "[time]")
+TEST_CASE("with own clocks off, everyone's effects age together as each round begins", "[time]")
 {
     Settings off = Timed();
     off.ownClocks = false;
-    for (const Settings &settings : {off, Fixed()})
+    World w(off);
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.onOwnClock.empty());
+    CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
+    Done(w, kHero);
+    for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
     {
-        World w(settings);
-        w.StartFight();
-        REQUIRE(w.Current() == kHero);
-        CHECK(w.onOwnClock.empty());
-        CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
-        Done(w, kHero);
-        for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
         {
-            if (w.machine.GetPhase() == Phase::AwaitingOrder)
-            {
-                (void)w.machine.OnEndTurn();
-            }
-            w.Frame();
+            (void)w.machine.OnEndTurn();
         }
-        REQUIRE(w.machine.Order().Round() == 2);
-        w.RunFor(100);
-        CHECK(w.agedOwn.empty());
-        CHECK(w.agedMs > 0);
+        w.Frame();
     }
+    REQUIRE(w.machine.Order().Round() == 2);
+    w.RunFor(100);
+    CHECK(w.agedOwn.empty());
+    CHECK(w.agedMs > 0);
 }
 
 TEST_CASE("with own clocks, a turn put off moves nothing until it is taken", "[time]")
@@ -4017,17 +4092,6 @@ TEST_CASE("with time, a door used with no time left is owed of the next turn", "
     CHECK(w.machine.State().charging.front().owedMs == 300);
 }
 
-TEST_CASE("using an object costs nothing as built, a turn one action and its meters", "[machine]")
-{
-    World w; // Fixed(): actions
-    w.StartFight();
-    CHECK(w.Order(kHero, CommandType::UseObject, Source::Player) == Verdict::Allow);
-    w.Finish(kHero);
-    w.RunFor(600);
-    CHECK(w.Current() == kHero);
-    CHECK(w.machine.State().charging.empty());
-}
-
 TEST_CASE("a creature that falls while it owes time held owes nothing when it is up again", "[time]")
 {
     // Play test 34: fallen in an ogre's grab, up again, Lyna then lost four
@@ -4162,4 +4226,38 @@ TEST_CASE("with own clocks, a turn's end with nothing held for its creature goes
     w.RunFor(64);
     CHECK(w.machine.GetPhase() != Phase::TurnStart);
     CHECK(w.Current() == kGenlock);
+}
+
+// Shifting its feet to strike what is in reach is not walking (kShuffle). The
+// case for it was the action clock's, where a blow could be struck with the
+// meters spent; on the bar it shows where the blow took the last of the time:
+// nothing is left to walk, and the half meter is past what the bar walks. It
+// is not stopped, and its time is not turned into a walk's (issue 50).
+TEST_CASE("with time, a blow that took the last of the bar is struck with a shift of the feet, not taken for a walk",
+          "[time]")
+{
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    REQUIRE(Act(w, kHero, CommandType::MoveToLocation, Source::Player, 0.0f) == Verdict::Allow);
+    // A frame before the walk: the first frame a turn is at a command is
+    // where its walk is measured from (TrackMovement: lastPosition_ is none
+    // until then), and a step taken in that frame is not counted. Without it
+    // half the free meter was left, the shift was walked on that, and the
+    // case passed whatever kShuffle was (the mutant "a creature in reach is
+    // stopped for shifting its feet" survived it, 2026-10-05).
+    w.Frame();
+    Walk(w, kHero, 1.0f); // the free meter
+    Done(w, kHero);
+    REQUIRE(w.Current() == kHero);
+    REQUIRE(w.machine.View().timeLeftMs == 4000);
+    REQUIRE(w.machine.View().movementLeft == 20.0f); // the free meter is walked, all of it
+    REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 4.0f) == Verdict::Allow);
+    REQUIRE(w.machine.View().timeLeftMs == 0);
+    REQUIRE(w.machine.View().movementLeft == 0.0f);
+    Walk(w, kHero, 0.5f);
+    CHECK(w.Current() == kHero);
+    CHECK(w.machine.View().timeLeftMs == 0);
+    CHECK(Lines(w, "runs past its bar") == 0);
+    CHECK(Lines(w, "out of movement") == 0);
 }

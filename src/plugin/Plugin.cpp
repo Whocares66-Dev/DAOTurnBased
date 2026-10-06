@@ -879,12 +879,13 @@ void LookForEluvian()
             "turnbased.state",
             R"({"description": "The turn-based combat mod's fight now. Top: active, phase (awaiting order, AI )"
             R"(thinking, executing, settling, turn start, idle...), round, world_ms; current {id, name, side, yours} )"
-            R"(of whose turn it is (null between turns; yours when the player plays it); actions_left, )"
-            R"(movement_left, movement_max; speed (the game's, as the mod set it) and speed_took; held_by_effect; )"
-            R"(last_refusal. order: the turns to come, current first, each {id, name, side, rank, health, energy, )"
-            R"(mana, down, current, yours, round, and for a party member auto: its tactics play its turns, from its )"
-            R"(next one (turnbased_auto chooses)}. held: conditions holding creatures {id, name, condition, )"
-            R"(turns_owed, on_clock}. cooldowns: abilities held for turns {id, ability, turns}. Ids are 0x... )"
+            R"(of whose turn it is (null between turns; yours when the player plays it); time_left_ms of its bar of )"
+            R"(time_ms, movement_left, movement_max; speed (the game's, as the mod set it) and speed_took; )"
+            R"(held_by_effect; last_refusal. order: the turns to come, current first, each {id, name, side, rank, )"
+            R"(health, energy, mana, down, current, yours, round, and for a party member auto: its tactics play its )"
+            R"(turns, from its next one (turnbased_auto chooses)}. held: conditions holding creatures {id, name, )"
+            R"(condition, on_clock, owed_ms}. cooldowns: abilities held on their users' clocks {id, ability, )"
+            R"(left_ms, of_ms}. charging: actions begun and not yet paid for {id, ability, owed_ms}. Ids are 0x... )"
             R"(strings."})",
             &InspectState, nullptr, ELUVIAN_READ_ONLY),
         "turnbased.state");
@@ -1054,10 +1055,9 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     spdlog::info("turnbased {} on DAOLib {}", TB_VERSION_STRING, DAO_VERSION_STRING);
 
     const tb::Settings settings = tb::game::LoadSettings();
-    spdlog::info("settings from {}: turn-based {}, movement {} m ({}), party {}, toggle key {}",
-                 tb::game::SettingsPath().string(), settings.enabled ? "on" : "off", settings.movementMeters,
-                 settings.movementRule == tb::MovementRule::Speed ? "times speed" : "constant",
-                 settings.partyControl == tb::PartyControl::Manual ? "manual" : "tactics",
+    spdlog::info("settings from {}: turn-based {}, a turn {} s at {} m a second, party {}, toggle key {}",
+                 tb::game::SettingsPath().string(), settings.enabled ? "on" : "off", settings.secondsPerTurn,
+                 settings.paceMps, settings.partyControl == tb::PartyControl::Manual ? "manual" : "tactics",
                  tb::FormatKeyChord(settings.toggleKey));
 
     const std::uint64_t seed = GetTickCount64() ^ (static_cast<std::uint64_t>(GetCurrentProcessId()) << 32);

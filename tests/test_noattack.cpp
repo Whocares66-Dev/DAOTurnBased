@@ -48,7 +48,6 @@ constexpr const char *kNoPath = "COMMAND_FAILED_INVALID_PATH";
 Settings Timed()
 {
     Settings s = Fixed();
-    s.turnClock = TurnClock::Time;
     s.secondsPerTurn = 4.0f;
     s.paceMps = 5.0f;
     s.freeStepMeters = 1.0f;
@@ -131,50 +130,45 @@ TEST_CASE("the player's attack on a target with no place left at it is refused b
     // The caverns above Haven: dragonlings round one party member, every
     // place on the ring taken. Let through "its walk not known", the attack
     // was failed by the engine within 2 ms and given back.
-    for (const Settings &settings : {Fixed(), Timed()})
-    {
-        World w(settings);
-        std::vector<TurnEvent> events;
-        w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
-        w.StartFight();
-        REQUIRE(w.Current() == kHero);
-        const TurnView before = w.machine.View();
-        CHECK(w.Attack(kHero, kGenlock, Source::Player, NoAttack::NoPlace) == Verdict::Block);
-        CHECK_FALSE(w.Get(kHero).busy);
-        w.Frame();
-        // Over the character, in grey, as "Too far" is.
-        const auto floaty = std::ranges::find_if(w.applied, [](const Effect &e) {
-            return e.kind == EffectKind::Floaty && e.text == L"No room at the target";
-        });
-        REQUIRE(floaty != w.applied.end());
-        CHECK(floaty->target == kHero);
-        CHECK(floaty->colour == kGrey);
-        // On the bar's caption, as an action given back is; refused, not
-        // given back: nothing was taken.
-        CHECK(w.machine.View().notice == L"No room at the target: Hero's attack is refused");
-        // And for a tool that drives the game: the refusal's event, the state.
-        REQUIRE(!events.empty());
-        CHECK(events.back().kind == EventKind::Refused);
-        CHECK(events.back().who == kHero);
-        CHECK(events.back().detail == "No room at the target");
-        CHECK(events.back().command == "attack");
-        CHECK(events.back().note == "the engine has no place at its target for it");
-        CHECK(w.machine.State().lastRefusal ==
-              "No room at the target (attack: the engine has no place at its target for it)");
-        CHECK(Logged(w, "Hero: attack on Genlock refused, the engine has no place at its target for it"));
-        // Nothing spent, and the turn still waits.
-        const TurnView after = w.machine.View();
-        CHECK(after.actionsLeft == before.actionsLeft);
-        CHECK(after.timeLeftMs == before.timeLeftMs);
-        CHECK(after.movementLeft == before.movementLeft);
-        CHECK(w.Current() == kHero);
-        CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-        CHECK(std::ranges::none_of(events, [](const TurnEvent &e) { return e.kind == EventKind::ActionGivenBack; }));
-        // A place free again, the same order is taken: each order is put to
-        // the engine as it comes. The caption's line goes with it.
-        CHECK(w.Attack(kHero, kGenlock, Source::Player) == Verdict::Allow);
-        CHECK(w.machine.View().notice.empty());
-    }
+    World w(Timed());
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    const TurnView before = w.machine.View();
+    CHECK(w.Attack(kHero, kGenlock, Source::Player, NoAttack::NoPlace) == Verdict::Block);
+    CHECK_FALSE(w.Get(kHero).busy);
+    w.Frame();
+    // Over the character, in grey, as "Too far" is.
+    const auto floaty = std::ranges::find_if(
+        w.applied, [](const Effect &e) { return e.kind == EffectKind::Floaty && e.text == L"No room at the target"; });
+    REQUIRE(floaty != w.applied.end());
+    CHECK(floaty->target == kHero);
+    CHECK(floaty->colour == kGrey);
+    // On the bar's caption, as an action given back is; refused, not
+    // given back: nothing was taken.
+    CHECK(w.machine.View().notice == L"No room at the target: Hero's attack is refused");
+    // And for a tool that drives the game: the refusal's event, the state.
+    REQUIRE(!events.empty());
+    CHECK(events.back().kind == EventKind::Refused);
+    CHECK(events.back().who == kHero);
+    CHECK(events.back().detail == "No room at the target");
+    CHECK(events.back().command == "attack");
+    CHECK(events.back().note == "the engine has no place at its target for it");
+    CHECK(w.machine.State().lastRefusal ==
+          "No room at the target (attack: the engine has no place at its target for it)");
+    CHECK(Logged(w, "Hero: attack on Genlock refused, the engine has no place at its target for it"));
+    // Nothing spent, and the turn still waits.
+    const TurnView after = w.machine.View();
+    CHECK(after.timeLeftMs == before.timeLeftMs);
+    CHECK(after.movementLeft == before.movementLeft);
+    CHECK(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK(std::ranges::none_of(events, [](const TurnEvent &e) { return e.kind == EventKind::ActionGivenBack; }));
+    // A place free again, the same order is taken: each order is put to
+    // the engine as it comes. The caption's line goes with it.
+    CHECK(w.Attack(kHero, kGenlock, Source::Player) == Verdict::Allow);
+    CHECK(w.machine.View().notice.empty());
 }
 
 TEST_CASE("the player's attack with no path to its target is refused as no way through, a shot with no line to be "
@@ -232,45 +226,42 @@ TEST_CASE("an AI's attack the engine has no way to make is given back before a s
     // again", with nothing let through and no failure of the engine's.
     for (const NoAttack none : {NoAttack::NoPlace, NoAttack::NoPath, NoAttack::NoLine})
     {
-        for (const Settings &settings : {Fixed(), Timed()})
-        {
-            World w(settings);
-            std::vector<TurnEvent> events;
-            w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
-            std::vector<Verdict> answers;
-            w.onPoke = [&](ObjectId) {
-                // Its first choice is the hero, whom the engine has no
-                // attack for; told again, Alistair, in reach.
-                answers.push_back(answers.empty() ? Swing(w, kHero, none) : Swing(w, kCompanion));
-            };
-            ToGenlock(w);
-            // Told again within a few frames, not when its thinking time
-            // (ai_think_ms, a second and a half) has run out.
-            w.RunFor(100);
-            REQUIRE(answers.size() == 2);
-            CHECK(answers[0] == Verdict::Block);
-            CHECK(answers[1] == Verdict::Allow);
-            CHECK(w.Current() == kGenlock);
-            CHECK(w.Get(kGenlock).current == CommandType::Attack);
-            const std::string why = none == NoAttack::NoPlace  ? "the engine has no place at its target for it"
-                                    : none == NoAttack::NoPath ? "the engine finds no path to its target"
-                                                               : "the engine finds no line of sight to its target on "
-                                                                 "the way to it";
-            CHECK(Logged(w, "Genlock's attack on Hero is given back before a step (" + why + ")"));
-            CHECK(Logged(w, "Genlock chooses again, its action given back"));
-            CHECK_FALSE(Logged(w, "chose nothing"));
-            const auto given = std::ranges::find_if(
-                events, [](const TurnEvent &e) { return e.kind == EventKind::ActionGivenBack && e.who == kGenlock; });
-            REQUIRE(given != events.end());
-            CHECK(given->detail == why);
-            CHECK(given->command == "attack");
-            CHECK(given->note == "Hero");
-            // Not said to the player: it is not the player's.
-            CHECK_FALSE(w.Said(L"No room at the target"));
-            CHECK_FALSE(w.Said(L"No way through"));
-            CHECK_FALSE(w.Said(L"No line of sight"));
-            CHECK(w.machine.View().notice.empty());
-        }
+        World w(Timed());
+        std::vector<TurnEvent> events;
+        w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+        std::vector<Verdict> answers;
+        w.onPoke = [&](ObjectId) {
+            // Its first choice is the hero, whom the engine has no
+            // attack for; told again, Alistair, in reach.
+            answers.push_back(answers.empty() ? Swing(w, kHero, none) : Swing(w, kCompanion));
+        };
+        ToGenlock(w);
+        // Told again within a few frames, not when its thinking time
+        // (ai_think_ms, a second and a half) has run out.
+        w.RunFor(100);
+        REQUIRE(answers.size() == 2);
+        CHECK(answers[0] == Verdict::Block);
+        CHECK(answers[1] == Verdict::Allow);
+        CHECK(w.Current() == kGenlock);
+        CHECK(w.Get(kGenlock).current == CommandType::Attack);
+        const std::string why = none == NoAttack::NoPlace  ? "the engine has no place at its target for it"
+                                : none == NoAttack::NoPath ? "the engine finds no path to its target"
+                                                           : "the engine finds no line of sight to its target on "
+                                                             "the way to it";
+        CHECK(Logged(w, "Genlock's attack on Hero is given back before a step (" + why + ")"));
+        CHECK(Logged(w, "Genlock chooses again, its action given back"));
+        CHECK_FALSE(Logged(w, "chose nothing"));
+        const auto given = std::ranges::find_if(
+            events, [](const TurnEvent &e) { return e.kind == EventKind::ActionGivenBack && e.who == kGenlock; });
+        REQUIRE(given != events.end());
+        CHECK(given->detail == why);
+        CHECK(given->command == "attack");
+        CHECK(given->note == "Hero");
+        // Not said to the player: it is not the player's.
+        CHECK_FALSE(w.Said(L"No room at the target"));
+        CHECK_FALSE(w.Said(L"No way through"));
+        CHECK_FALSE(w.Said(L"No line of sight"));
+        CHECK(w.machine.View().notice.empty());
     }
 }
 
@@ -279,57 +270,51 @@ TEST_CASE("every attack is put to the engine afresh: a target it refused is let 
 {
     // The engine's no is for where the two stood when it was asked. Nothing
     // of it is kept: the same target a frame on, the ring with a place now.
-    for (const Settings &settings : {Fixed(), Timed()})
-    {
-        World w(settings);
-        std::vector<Verdict> answers;
-        w.onPoke = [&](ObjectId) {
-            answers.push_back(Swing(w, kHero, answers.empty() ? NoAttack::NoPlace : NoAttack::None));
-        };
-        ToGenlock(w);
-        w.RunFor(100);
-        REQUIRE(answers.size() == 2);
-        CHECK(answers[0] == Verdict::Block);
-        CHECK(answers[1] == Verdict::Allow);
-        CHECK(w.Current() == kGenlock);
-        CHECK(w.Get(kGenlock).current == CommandType::Attack);
-        CHECK(Lines(w, "is given back before a step") == 1);
-        CHECK_FALSE(Logged(w, "ruled out"));
-    }
+    World w(Timed());
+    std::vector<Verdict> answers;
+    w.onPoke = [&](ObjectId) {
+        answers.push_back(Swing(w, kHero, answers.empty() ? NoAttack::NoPlace : NoAttack::None));
+    };
+    ToGenlock(w);
+    w.RunFor(100);
+    REQUIRE(answers.size() == 2);
+    CHECK(answers[0] == Verdict::Block);
+    CHECK(answers[1] == Verdict::Allow);
+    CHECK(w.Current() == kGenlock);
+    CHECK(w.Get(kGenlock).current == CommandType::Attack);
+    CHECK(Lines(w, "is given back before a step") == 1);
+    CHECK_FALSE(Logged(w, "ruled out"));
 }
 
 TEST_CASE("an AI the engine refuses twice in a turn has nothing it can get to: its turn ends", "[noattack]")
 {
-    for (const Settings &settings : {Fixed(), Timed()})
-    {
-        World w(settings);
-        std::vector<std::string> ends;
-        KeepEnds(w, ends);
-        std::vector<Verdict> answers;
-        w.onPoke = [&](ObjectId id) {
-            if (id == kGenlock)
-            {
-                // Its script names the same target each time it is asked,
-                // and each time the engine has no place there.
-                answers.push_back(Swing(w, kHero, NoAttack::NoPlace));
-            }
-        };
-        ToGenlock(w);
-        w.RunFor(200);
-        REQUIRE(answers.size() == 2);
-        CHECK(answers[0] == Verdict::Block);
-        CHECK(answers[1] == Verdict::Block);
-        CHECK_FALSE(w.Get(kGenlock).busy);
-        CHECK(Lines(w, "Genlock's attack on Hero is given back before a step (the engine has no place at its target "
-                       "for it)") == 2);
-        // Over at the second, with nothing started: not at the cap on a
-        // turn's commands, nor after its thinking time.
-        CHECK(w.Current() != kGenlock);
-        REQUIRE(ends.size() == 1);
-        CHECK(ends.front() == "nothing it can get to");
-        CHECK_FALSE(Logged(w, "commands this turn"));
-        CHECK_FALSE(Logged(w, "chose nothing"));
-    }
+    World w(Timed());
+    std::vector<std::string> ends;
+    KeepEnds(w, ends);
+    std::vector<Verdict> answers;
+    w.onPoke = [&](ObjectId id) {
+        if (id == kGenlock)
+        {
+            // Its script names the same target each time it is asked,
+            // and each time the engine has no place there.
+            answers.push_back(Swing(w, kHero, NoAttack::NoPlace));
+        }
+    };
+    ToGenlock(w);
+    w.RunFor(200);
+    REQUIRE(answers.size() == 2);
+    CHECK(answers[0] == Verdict::Block);
+    CHECK(answers[1] == Verdict::Block);
+    CHECK_FALSE(w.Get(kGenlock).busy);
+    CHECK(Lines(w, "Genlock's attack on Hero is given back before a step (the engine has no place at its target "
+                   "for it)") == 2);
+    // Over at the second, with nothing started: not at the cap on a
+    // turn's commands, nor after its thinking time.
+    CHECK(w.Current() != kGenlock);
+    REQUIRE(ends.size() == 1);
+    CHECK(ends.front() == "nothing it can get to");
+    CHECK_FALSE(Logged(w, "commands this turn"));
+    CHECK_FALSE(Logged(w, "chose nothing"));
 }
 
 TEST_CASE("an attack failed at the blow, its script moves closer, and the same target is let through again and lands",

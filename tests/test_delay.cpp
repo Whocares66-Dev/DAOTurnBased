@@ -62,7 +62,6 @@ int TurnStartsToldOf(const World &w, ObjectId id)
 Settings Timed()
 {
     Settings s = Fixed();
-    s.turnClock = TurnClock::Time;
     s.secondsPerTurn = 4.0f;
     s.paceMps = 5.0f;
     s.freeStepMeters = 1.0f;
@@ -94,8 +93,9 @@ TEST_CASE("a party member puts its turn off to the round's end, and takes it who
     UntilOrderOf(w, kHero);
     CHECK(w.machine.Order().Round() == 1);
     const TurnView late = w.machine.View();
-    CHECK(late.actionsLeft == 1);
-    CHECK(late.movementLeft == 9.0f);
+    CHECK(late.timeLeftMs == late.timeMs);
+    CHECK(late.timeMs == 4000);
+    CHECK(late.movementLeft == 21.0f);
     // Once a round: she is last, and has waited already.
     CHECK_FALSE(late.canDelay);
     CHECK_FALSE(w.machine.OnDelay());
@@ -158,6 +158,26 @@ TEST_CASE("a turn is not put off once anything of it is spent", "[delay]")
         w.RunFor(100);
         CHECK_FALSE(w.machine.OnDelay());
     }
+    // A command that takes nothing of the bar is a command of the turn all
+    // the same: a mode switched on, which is free, and the turn is no longer
+    // one to put off whole. (Until issue 50 the case for this was the action
+    // clock's, where an action spent the action and no time: on the bar
+    // every action moves the clock, and only what is free shows the rule.)
+    SECTION("after a command that cost nothing")
+    {
+        World w;
+        w.StartFight();
+        const std::uint32_t whole = w.machine.View().timeLeftMs;
+        REQUIRE(w.UseAbility(kHero, Source::Player, 604, 0.0f, true, false) == Verdict::Allow);
+        w.RunFor(100);
+        w.Finish(kHero);
+        w.RunFor(600);
+        REQUIRE(w.Current() == kHero);
+        REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
+        REQUIRE(w.machine.View().timeLeftMs == whole);
+        CHECK_FALSE(w.machine.CanDelay());
+        CHECK_FALSE(w.machine.OnDelay());
+    }
 }
 
 TEST_CASE("nobody to wait for, an AI's turn, the setting off: no delay", "[delay]")
@@ -203,33 +223,39 @@ TEST_CASE("nobody to wait for, an AI's turn, the setting off: no delay", "[delay
 
 TEST_CASE("a turn put off is one turn: the scripts are told once, and a cooldown counts it once", "[delay]")
 {
-    constexpr std::int32_t kShieldBash = 617; // 20 s: two turns at Fixed's 10 s a turn
+    constexpr std::int32_t kShieldBash = 617; // 20 s of its user's own clock, 4 s of it a turn
     World w;
     w.StartFight();
     REQUIRE(w.UseAbility(kHero, Source::Player, kShieldBash, 20.0f) == Verdict::Allow);
     w.RunFor(100);
     w.Finish(kHero);
     w.RunFor(600);
-    const auto released = [&] {
-        return std::ranges::any_of(w.applied, [&](const Effect &e) {
-            return e.kind == EffectKind::Cooldown && e.target == kHero && e.a == kShieldBash && e.b == 0;
-        });
+    const auto cooling = [&]() -> std::uint32_t {
+        for (const CooldownView &c : w.machine.State().cooldowns)
+        {
+            if (c.id == kHero && c.ability == kShieldBash)
+            {
+                return c.leftMs;
+            }
+        }
+        return 0;
     };
-    // Round 2: one of her turns waited as it begins; she puts it off, and it
-    // comes again at the round's end.
+    // Round 2: she puts her turn off, and it comes again at the round's end.
     NextOrderOf(w, kHero);
     REQUIRE(w.machine.Order().Round() == 2);
     const int told = TurnStartsToldOf(w, kHero);
+    const std::uint32_t left = cooling();
+    REQUIRE(left > 4000);
     REQUIRE(w.machine.OnDelay());
     w.RunFor(50);
     UntilOrderOf(w, kHero);
     REQUIRE(w.machine.Order().Round() == 2);
     CHECK(TurnStartsToldOf(w, kHero) == told); // not told again
-    CHECK_FALSE(released());                   // nor counted again: still one turn waited
-    // Round 3: the second turn waited, ready as it begins.
+    CHECK(cooling() == left);                  // nor counted again: the turn has not passed yet
+    // Round 3: that one turn has passed, once.
     NextOrderOf(w, kHero);
     REQUIRE(w.machine.Order().Round() == 3);
-    CHECK(released());
+    CHECK(cooling() == left - 4000);
     CHECK(TurnStartsToldOf(w, kHero) == told + 1);
 }
 
@@ -343,13 +369,13 @@ TEST_CASE("the bar's string and the state say whether the turn may be put off", 
         }
         return last;
     };
-    REQUIRE(head().size() == 20);
-    CHECK(head()[13] == L"1"); // to be had
+    REQUIRE(head().size() == 18);
+    CHECK(head()[11] == L"1"); // to be had
     CHECK(waits() == std::vector<std::wstring>{L"0", L"0", L"0", L"0"});
     CHECK(ToJson(w.machine.State()).find(R"("can_delay":true)") != std::string::npos);
     REQUIRE(w.machine.OnDelay());
     w.RunFor(50);
-    CHECK(head()[13] == L"0"); // the genlock's turn: not offered
+    CHECK(head()[11] == L"0"); // the genlock's turn: not offered
     CHECK(ToJson(w.machine.State()).find(R"("can_delay":false)") != std::string::npos);
     // The hero's card is last in the round, and says she waits.
     CHECK(w.machine.View().upcoming.back().id == kHero);
@@ -357,7 +383,7 @@ TEST_CASE("the bar's string and the state say whether the turn may be put off", 
     // Her turn come, offered and not to be had: the button keeps its place,
     // greyed. And she waits no longer.
     UntilOrderOf(w, kHero);
-    CHECK(head()[13] == L"2");
+    CHECK(head()[11] == L"2");
     CHECK(w.machine.View().delayOffered);
     CHECK(waits().front() == L"0");
     CHECK(std::ranges::none_of(w.machine.View().upcoming, &CardView::waits));

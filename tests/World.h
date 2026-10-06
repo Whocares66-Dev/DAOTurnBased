@@ -141,22 +141,19 @@ inline Settings Fixed()
     Settings s;
     s.initiativeDie = 1;
     s.initiativePerDexterity = 1.0f;
-    // The scripted cases walk after an action; one of their own has the
-    // default, which ends the turn there.
-    s.endTurnWhenActionUsed = false;
-    // And hold the world still while the player chooses, which they check;
-    // one of their own has the default, the world idling on.
+    // The scripted cases hold the world still while the player chooses,
+    // which they check; one of their own has the default, the world idling
+    // on.
     s.pauseOnPlayerTurn = true;
-    // And the cooldowns' first rate, the numbers they were written with
-    // (Shield Bash's 20 s two turns); the default is a test of its own.
-    s.cooldownSecondsPerTurn = 10.0f;
-    // And a turn of one action and meters, which they were written for; a
-    // turn as a bar of time has its own cases (test_time.cpp), which set it.
-    s.turnClock = TurnClock::Actions;
     // Their actions are ended as soon as they are begun, to get on with the
-    // case: with time that reads as an action that did not play, whose time
-    // is given back. A case of its own has that rule on (test_time.cpp).
+    // case: that reads as an action that did not play, whose time is given
+    // back. A case of its own has that rule on (test_time.cpp).
     s.giveBackUnplayed = false;
+    // A turn of 4 s walked at 5 m a second, for round numbers, with a meter
+    // free: 21 m in a whole turn.
+    s.secondsPerTurn = 4.0f;
+    s.paceMps = 5.0f;
+    s.freeStepMeters = 1.0f;
     return s;
 }
 
@@ -318,7 +315,8 @@ class World
 
     // An ability used: its cooldown in seconds, and whether it is a
     // sustained one and on (so that this turns it off).
-    // An ability with a conjuring time: a turn's worth or more charges.
+    // An ability with a conjuring time, which it costs of the bar: what does
+    // not fit what is left is kept.
     Verdict Cast(ObjectId id, Source source, std::int32_t ability, float conjureSeconds, float cooldownSeconds = 20.0f)
     {
         CommandRequest request;

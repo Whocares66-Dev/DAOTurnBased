@@ -1,9 +1,8 @@
-"""A fight played with a turn a bar of time, with no hands on the game.
+"""A fight played in turns, with no hands on the game.
 
 Through Eluvian, the development bench's MCP server (the sibling checkout
 ..\\DAOEluvianMCP), as tools/sweep.py does: its bridge claims and launches
-the game into a save, and its tools are called over HTTP in the game. The
-mod is set to `[turns] clock = time` for the run and put back after.
+the game into a save, and its tools are called over HTTP in the game.
 
 What it plays is a scenario by name, each a small script over the same
 helpers: the player's orders go through Eluvian's `order` (the engine's own
@@ -57,17 +56,6 @@ def documents() -> Path:
     return Path(winreg.ExpandEnvironmentStrings(value))
 
 
-def clock_in_file() -> str:
-    """The turn's clock as turnbased.ini has it; the default where it has none."""
-    ini = documents() / "BioWare" / "Dragon Age" / "daolib" / "turnbased.ini"
-    if ini.exists():
-        for line in ini.read_text(encoding="utf-8", errors="replace").splitlines():
-            key, _, value = line.partition("=")
-            if key.strip() == "clock" and value.strip() in ("time", "actions"):
-                return value.strip()
-    return "time"
-
-
 def stamp() -> str:
     return time.strftime("%H:%M:%S")
 
@@ -78,9 +66,7 @@ class Game:
     def __init__(self, eluvian: Path, owner: str) -> None:
         self.bridge_script = eluvian / "tools" / "eluvian_bridge.py"
         self.owner = owner
-        self.clock = (
-            "time"  # what the run plays by: time, actions, or off (the mod off)
-        )
+        self.off = False  # the mod off for the run (--off): the game's real time
 
     def bridge(self, tool: str, arguments: dict | None = None) -> dict:
         done = subprocess.run(
@@ -219,9 +205,6 @@ SHOWN = (
     "turn_ended",
     "turn_lost",
     "refused",
-    "cast_charging",
-    "cast_landed",
-    "cast_interrupted",
     "action_pending",
     "action_landed",
     "action_dropped",
@@ -588,14 +571,14 @@ def party_health(game: Game) -> dict[str, float]:
 
 
 def scenario_duel(game: Game) -> None:
-    """The same fight for each way of fighting, measured: the party against six spiders.
+    """The same fight in turns and in the game's real time, measured: the party against six spiders.
 
     Every party member attacks the nearest hostile whenever it may, nobody is
     healed, and the fight is run to its end: how long it took on the clock,
-    in rounds, and what it cost the party. With `--clock off` the mod is off
-    and the fight is the game's own real time, the same orders given.
+    in rounds, and what it cost the party. With `--off` the mod is off and
+    the fight is the game's own real time, the same orders given.
     """
-    cursor = begin_spiders(game, wait=game.clock != "off")
+    cursor = begin_spiders(game, wait=not game.off)
     for template, dx, dy in DUEL_EXTRA:
         game.tool(
             "stage", {"action": "spawn", "template": template, "point": [5 + dx, dy, 0]}
@@ -627,19 +610,10 @@ def scenario_duel(game: Game) -> None:
                 targets = game.hostiles(who)
                 if targets:
                     target = min(targets, key=lambda c: c.get("distance", 99.0))
-                    before = state.get("time_left_ms", 0)
                     game.tool(
                         "order", {"action": "attack", "id": who, "target": target["id"]}
                     )
-                    after = settle(game, who)
-                    still = (after.get("current") or {}).get("id") == who
-                    # As built, one that is refused or spends nothing ends the turn.
-                    if (
-                        still
-                        and after.get("time_left_ms", 0) == before
-                        and not after.get("timed")
-                    ):
-                        game.tool("turnbased_end_turn", {})
+                    settle(game, who)
                 else:
                     game.tool("turnbased_end_turn", {})
             else:
@@ -1227,7 +1201,7 @@ DIRTY_FIGHTING = 603  # ABI_base
 def scenario_conjure(game: Game) -> None:
     """Three casts in the game's own real time, for DAOLib's conjure probe.
 
-    Run with `--clock off`: the mod keeps a spell it has not been paid for in
+    Run with `--off`: the mod keeps a spell it has not been paid for in
     its gate, so with it on the engine never conjures it. DAOLib's probe
     (its probe.log's `conjure:` lines) logs each sub-action of the command as
     it runs: which is the conjure, its times, IsConjuring, the mana. Wanted
@@ -1878,10 +1852,9 @@ def main() -> int:
     parser.add_argument("--owner", default="turn-based-agent")
     parser.add_argument("--eluvian", type=Path, default=ROOT.parent / "DAOEluvianMCP")
     parser.add_argument(
-        "--clock",
-        default="time",
-        choices=["time", "actions", "off"],
-        help="a bar of time, one action and meters, or the mod off: the game's real time",
+        "--off",
+        action="store_true",
+        help="the mod off for the run: the game's real time",
     )
     parser.add_argument(
         "--set",
@@ -1906,7 +1879,7 @@ def main() -> int:
                 eluvian = parent / "DAOEluvianMCP"
                 break
     game = Game(eluvian, args.owner)
-    game.clock = args.clock
+    game.off = args.off
 
     claim = game.bridge(
         "game_claim",
@@ -1940,15 +1913,9 @@ def main() -> int:
             return 2
         launched = True
         print(f"{stamp()} launched into {SAVE}")
-        if args.clock == "off":
+        if args.off:
             game.setting("turnbased", "enabled", "false")
             put_back.append(("turnbased", "enabled", "true"))
-        else:
-            # Put back as the file had it: the run is not what sets the
-            # player's own choice (a run used to leave `actions` behind).
-            before = clock_in_file()
-            game.setting("turns", "clock", args.clock)
-            put_back.append(("turns", "clock", before))
         for item in args.set:
             name, _, value = item.partition("=")
             section, _, key = name.partition(".")
@@ -1963,7 +1930,9 @@ def main() -> int:
         log = documents() / "BioWare" / "Dragon Age" / "daolib" / "turnbased.log"
         out = (
             args.log
-            or ROOT / "build" / f"timeplay-{args.scenario}-{args.clock}-turnbased.log"
+            or ROOT
+            / "build"
+            / f"timeplay-{args.scenario}-{'off' if args.off else 'time'}-turnbased.log"
         )
         if log.exists():
             out.parent.mkdir(parents=True, exist_ok=True)

@@ -12,20 +12,18 @@
 //      own running;
 //   3. the game is paused exactly when a turn waits on the player or between
 //      turns, and runs otherwise;
-//   4. nobody walks further in a turn than its movement, give or take the
-//      frame it is stopped in (with a turn a bar of time, than the bar would
-//      walk as the turn began, and the more a haste put on it in the turn
-//      lets the rest of it walk: 19);
-//   5. nobody spends two actions in a turn, unless stopped short of the first
-//      and given it back (with time: no action begins with no time left);
+//   4. nobody walks further in a turn than its bar would walk as the turn
+//      began, and the more a haste put on it in the turn lets the rest of it
+//      walk (19), give or take the frame it is stopped in;
+//   5. no action begins with no time left on its turn's bar;
 //   6. each combatant starts at most one turn a round;
 //   7. an AI's turn ends, and a fight ends when no enemy is left fighting;
 //   8. every effect names who it is for, the AI is told to choose only on its
 //      own turn, and only party members are selected;
 //   9. the current combatant's wait is never let through, and a wait takes its
-//      own length of the bar or nothing: only an AI's on its own turn, with a
-//      turn a bar of time, and only one that fits what is left (issue 31);
-//  10. with a turn a bar of time, a turn begins with time rolled over only
+//      own length of the bar or nothing: only an AI's on its own turn, and
+//      only one that fits what is left (issue 31);
+//  10. a turn begins with time rolled over only
 //      if its creature's last turn was ended by its actor: the player's End,
 //      an AI that was done or waited (issue 29). A turn skipped, lost or
 //      ended for its creature rolls nothing over, and every turn ends for a
@@ -67,13 +65,15 @@
 //      is ever chosen for the hero, whose turns are the player's (issue 46);
 //  19. a turn's meters are made of its creature's pace: its build's times
 //      every Haste, salve and slow on it, whether put on before the fight or
-//      in the middle of it, in its own turn or in another's. With time the
-//      bar walks at the pace its creature had at the machine's last look at
-//      everyone, as the turn begins and in every frame of it after, and a
-//      change in the turn is said once, never as built. As built the turn
-//      has the meters of its pace as it began, and 4 holds against them to
-//      the turn's end, whatever is put on its creature or ends in it (issue
-//      49).
+//      in the middle of it, in its own turn or in another's. The bar walks
+//      at the pace its creature had at the machine's last look at everyone,
+//      as the turn begins and in every frame of it after, and a change in
+//      the turn is said once (issue 49).
+//
+// The promises were checked on two clocks until issue 50 (2026-10-05): the
+// bar of time, and one action and an allowance of meters a turn, which is
+// gone. Where a comment below still says "with time" or "as built" of a
+// figure or a seed, the first is the bar's and the second was the other's.
 //
 // The arena is World.h's stand-in with the creatures made to act. An AI
 // chooses when told to and whenever its command ends, as COMMAND_COMPLETE
@@ -250,12 +250,11 @@ class Arena
     // then in it, in a turn or between two. A choice of the test's too, on a
     // stream of its own: with none made, who plays a turn is the setting's
     // word, as it was.
-    Arena(std::uint64_t seed, Coverage &coverage, TurnClock clock = TurnClock::Actions, bool strays = false,
-          bool choices = false)
+    Arena(std::uint64_t seed, Coverage &coverage, bool strays = false, bool choices = false)
         : rng_(seed), reach_(seed ^ 0x22EAC4ull), waits_(seed ^ 0x3A175ull), notice_(seed ^ 0x29A11ull),
           asks_(seed ^ 0x45C5ull), burrows_(seed ^ 0x44B0ull), chooses_(seed ^ 0x46C4ull), paces_(seed ^ 0x49FA57ull),
-          settings_(RandomSettings(rng_, clock)), world_(settings_, RandomFight(rng_, clock), seed),
-          coverage_(coverage), runners_(strays), choices_(choices)
+          settings_(RandomSettings(rng_)), world_(settings_, RandomFight(rng_), seed), coverage_(coverage),
+          runners_(strays), choices_(choices)
     {
         // The engine's perception says of these that they perceive nobody
         // to fight; the party perceives them.
@@ -393,10 +392,7 @@ class Arena
             {
                 ++coverage_.heldByEffect;
                 // Lost only once the hold has outlasted the bar (13).
-                if (settings_.turnClock == TurnClock::Time)
-                {
-                    Must(world_.machine.View().timeLeftMs == 0, "a turn lost to a hold with time left on its bar");
-                }
+                Must(world_.machine.View().timeLeftMs == 0, "a turn lost to a hold with time left on its bar");
             }
             // A hold let go within the turn (13): with time, what it ran is
             // gone from the bar, whatever else the turn paid as it began (the
@@ -406,7 +402,7 @@ class Arena
             if (line.find(" is free of the effect's command after ") != std::string_view::npos)
             {
                 ++coverage_.heldFreed;
-                if (settings_.turnClock == TurnClock::Time && std::exchange(heldPaidDue_, false))
+                if (std::exchange(heldPaidDue_, false))
                 {
                     const TurnView view = world_.machine.View();
                     const auto ran = static_cast<std::uint32_t>(
@@ -433,16 +429,8 @@ class Arena
                     const Creature &c = world_.Get(world_.Current());
                     const TurnView view = world_.machine.View();
                     const float pace = Pace(c.speed, c.movement);
-                    if (settings_.turnClock == TurnClock::Time)
-                    {
-                        Must(std::abs(view.paceMps - settings_.paceMps * pace) < 0.001f,
-                             "a turn's bar does not walk at its creature's pace as the turn began");
-                    }
-                    else
-                    {
-                        Must(std::abs(view.movementMax - MovementBudget(settings_, pace, c.dexterity)) < 0.001f,
-                             "a turn's meters are not those of its creature's pace as the turn began");
-                    }
+                    Must(std::abs(view.paceMps - settings_.paceMps * pace) < 0.001f,
+                         "a turn's bar does not walk at its creature's pace as the turn began");
                     turnPace_ = pace;
                     const float rate = MovementRate(c.movement);
                     coverage_.pacedTurns += rate != 1.0f ? 1 : 0;
@@ -465,7 +453,6 @@ class Arena
             if (line.find(" a person's pace from now in this turn ") != std::string_view::npos)
             {
                 FollowTurn();
-                Must(settings_.turnClock == TurnClock::Time, "a turn's pace changed in the middle of it, as built");
                 const Creature &c = world_.Get(world_.Current());
                 const float pace = Pace(c.speed, c.movement);
                 Must(std::abs(world_.machine.View().paceMps - settings_.paceMps * pace) < 0.001f,
@@ -593,6 +580,7 @@ class Arena
         {
             Tick();
             grabbedBefore_ = world_.machine.OwnEffectTarget();
+            currentBefore_ = world_.Current();
             const int looks = world_.statusReads;
             world_.Frame(kFrameMs);
             // A look at everyone the machine took up with this frame (not a
@@ -622,14 +610,19 @@ class Arena
     bool echo = false; // every line the machine logs, to the standard output
 
   private:
-    static Settings RandomSettings(Rng &rng, TurnClock clock)
+    // (Five draws are kept from when a fight could be of one action and
+    // meters a turn, issue 50: three for its movement's rule, meters and
+    // Dexterity, one for ending a turn as its action was used, one for
+    // effects' seconds a round. A fight on the bar took them and used none,
+    // so with them drawn still every fight is draw for draw the one it was.)
+    static Settings RandomSettings(Rng &rng)
     {
         Settings s;
-        s.movementRule = Chance(rng, 0.5) ? MovementRule::Speed : MovementRule::Constant;
-        s.movementMeters = Between(rng, 4.0f, 12.0f);
-        s.movementPerDexterity = Chance(rng, 0.3) ? 0.1f : 0.0f;
+        (void)Chance(rng, 0.5);
+        (void)Between(rng, 4.0f, 12.0f);
+        (void)Chance(rng, 0.3);
         s.partyControl = Chance(rng, 0.3) ? PartyControl::Tactics : PartyControl::Manual;
-        s.endTurnWhenActionUsed = Chance(rng, 0.3);
+        (void)Chance(rng, 0.3);
         s.roundMinSeconds = Chance(rng, 0.3) ? Between(rng, 1.0f, 6.0f) : 0.0f;
         s.settleMs = static_cast<int>(Between(rng, 0.0f, 800.0f));
         s.aiThinkMs = static_cast<int>(Between(rng, 200.0f, 2000.0f));
@@ -646,30 +639,25 @@ class Arena
         s.cameraFollow = Chance(rng, 0.2);
         s.orderRunMs = Chance(rng, 0.5) ? 500 : 0;
         s.pauseOnPlayerTurn = Chance(rng, 0.5);
-        s.effectSecondsPerRound = Chance(rng, 0.2) ? 0.0f : 6.0f;
+        (void)Chance(rng, 0.2);
         s.conditionTurns = Chance(rng, 0.2) ? 0 : (Chance(rng, 0.7) ? 1 : 2);
         // Faster only: the arena's bounds on how long a turn may take are
         // in real milliseconds, and a slower game stretches every one of
         // the machine's waits past them.
         s.fightSpeed = Chance(rng, 0.3) ? 2.0f : 1.0f;
-        // Drawn after the rest, so that a fight as built is the one it was.
-        s.turnClock = clock;
-        if (clock == TurnClock::Time)
+        s.secondsPerTurn = Chance(rng, 0.7) ? 4.0f : Between(rng, 2.0f, 6.0f);
+        s.freeStepMeters = Chance(rng, 0.8) ? 1.0f : Between(rng, 0.0f, 2.0f);
+        s.paceMps = kRunSpeed;
+        // (A draw kept from when a fight had two speeds, so that the fights
+        // after it are the ones they were.)
+        if (Chance(rng, 0.3))
         {
-            s.secondsPerTurn = Chance(rng, 0.7) ? 4.0f : Between(rng, 2.0f, 6.0f);
-            s.freeStepMeters = Chance(rng, 0.8) ? 1.0f : Between(rng, 0.0f, 2.0f);
-            s.paceMps = kRunSpeed;
-            // (A draw kept from when a fight had two speeds, so that the
-            // fights after it are the ones they were.)
-            if (Chance(rng, 0.3))
-            {
-                s.fightSpeed = 2.0f;
-            }
+            s.fightSpeed = 2.0f;
         }
         return s;
     }
 
-    static std::vector<Creature> RandomFight(Rng &rng, TurnClock clock)
+    static std::vector<Creature> RandomFight(Rng &rng)
     {
         std::vector<Creature> fight;
         const auto add = [&](ObjectId id, Side side, bool hero) {
@@ -695,13 +683,10 @@ class Arena
             add(0x300 + static_cast<ObjectId>(i), Side::Ally, false);
         }
         // Combat Tactics: a party member's own, an enemy's by its rank.
-        if (clock == TurnClock::Time)
+        for (Creature &c : fight)
         {
-            for (Creature &c : fight)
-            {
-                c.tactics = static_cast<int>(rng.Next() % 5);
-                c.rank = 1 + static_cast<int>(rng.Next() % 5);
-            }
+            c.tactics = static_cast<int>(rng.Next() % 5);
+            c.rank = 1 + static_cast<int>(rng.Next() % 5);
         }
         return fight;
     }
@@ -818,8 +803,6 @@ class Arena
         {
             turn_ = key;
             walked_ = 0.0f;
-            actions_ = 0;
-            clears_ = 0;
             interruptions_ = 0;
             turnRunMs_ = 0;
             turnFromMs_.reset();  // set as the machine begins the turn (onLog)
@@ -865,18 +848,17 @@ class Arena
                           source == Source::Player && Chance(rng_, 0.7);
         const float walk = type == CommandType::Attack ? approach : path;
         const float left = told && active ? world_.machine.View().movementLeft : 0.0f;
-        // With time, an attack's swing: a weapon's, or the machine's stand-in.
-        // Now and then one longer than a turn (a ritual's conjuring), and an
-        // item used, which is not kept but owes what does not fit.
-        const bool timed = settings_.turnClock == TurnClock::Time;
+        // An attack's swing: a weapon's, or the machine's stand-in. Now and
+        // then one longer than a turn (a ritual's conjuring), and an item
+        // used, which is not kept but owes what does not fit.
         float seconds = 0.0f;
         bool item = false;
-        if (timed && type == CommandType::Attack)
+        if (type == CommandType::Attack)
         {
             seconds = Chance(rng_, 0.08) ? Between(rng_, 4.0f, 10.0f)
                                          : (Chance(rng_, 0.7) ? Between(rng_, 1.0f, 2.6f) : 0.0f);
         }
-        else if (timed && type == CommandType::UseAbility && !sustained && Chance(rng_, 0.25))
+        else if (type == CommandType::UseAbility && !sustained && Chance(rng_, 0.25))
         {
             item = true;
             seconds = Between(rng_, 1.0f, 6.0f);
@@ -884,7 +866,7 @@ class Arena
         // A spell that conjures (Settings::engineConjure): one longer than
         // what is left goes to the engine at once, held in its conjure.
         bool conjures = false;
-        if (timed && !item && type == CommandType::UseAbility && !sustained && Chance(rng_, 0.5))
+        if (!item && type == CommandType::UseAbility && !sustained && Chance(rng_, 0.5))
         {
             conjures = true;
             seconds = Between(rng_, 2.5f, 7.0f);
@@ -892,7 +874,7 @@ class Arena
         // An ability aimed at an opponent whose own effect holds its creature
         // and its target after it (an ogre's grab, a spider's Overwhelm).
         ObjectId grabbed = kNoObject;
-        if (timed && !item && !conjures && type == CommandType::UseAbility && !sustained && Chance(rng_, 0.2))
+        if (!item && !conjures && type == CommandType::UseAbility && !sustained && Chance(rng_, 0.2))
         {
             const Creature &self = world_.Get(id);
             const auto opponents = Living(self.side == Side::Enemy
@@ -925,9 +907,7 @@ class Arena
         spell.actionSeconds = seconds;
         // A wait's length, the command's own as the game layer reads it: the
         // AI's two (AI_DO_NOTHING_DELAY, 2 s, and its quick one, 1 s), and
-        // now and then none read. Drawn on a stream of its own, so that a
-        // fight of one action a turn, where a wait is a pass whatever its
-        // length, is the fight it was before a wait had one (issue 31).
+        // now and then none read. Drawn on a stream of its own (issue 31).
         const float wait = type != CommandType::Wait ? 0.0f
                            : Chance(waits_, 0.15)    ? 0.0f
                            : Chance(waits_, 0.7)     ? 2.0f
@@ -944,13 +924,13 @@ class Arena
         if (type == CommandType::Wait && active)
         {
             // A wait takes its own length of its creature's bar, or nothing:
-            // only an AI's on its own turn, with time, and only one that
-            // fits what was left. Paid for or not, it is never let through.
+            // only an AI's on its own turn, and only one that fits what was
+            // left. Paid for or not, it is never let through.
             const std::uint32_t after = world_.machine.View().timeLeftMs;
             const auto waitMs = static_cast<std::uint32_t>(std::lround(wait * 1000.0f));
             const bool paid = after != timeLeft;
-            Must(!paid || (timed && id == current && !PlayerControls(id)),
-                 "a wait paid for that is not an AI's on its own turn, with time");
+            Must(!paid || (id == current && !PlayerControls(id)),
+                 "a wait paid for that is not an AI's on its own turn");
             Must(!paid || (waitMs > 0 && waitMs <= timeLeft && after == timeLeft - waitMs),
                  "a wait took other than its own length of the bar");
             Must(id != current || verdict == Verdict::Block, "the current combatant's wait let through");
@@ -993,7 +973,7 @@ class Arena
         }
         if (verdict == Verdict::Conjure)
         {
-            Must(active && timed && conjures, "a spell given to the engine to conjure with no time to pay");
+            Must(active && conjures, "a spell given to the engine to conjure that was none");
             Must(id == current, "a spell given to the engine to conjure out of turn");
             ++coverage_.conjured;
             Task task{CommandType::UseAbility};
@@ -1009,14 +989,9 @@ class Arena
         {
             return;
         }
-        if (active && kind == CommandKind::Action && timed)
+        if (active && kind == CommandKind::Action)
         {
             Must(id != current || timeLeft > 0, "an action let through with no time left");
-        }
-        else if (active && kind == CommandKind::Action && !gamesOwn)
-        {
-            ++actions_;
-            Must(actions_ <= 1 + clears_, "a second action in one turn");
         }
         Task task{item ? CommandType::UseItem : type};
         switch (type)
@@ -1219,7 +1194,7 @@ class Arena
             break;
         case EffectKind::OwnClock:
             Must(timeHeld_, "a creature put on its own clock while effects' time runs anyway");
-            Must(settings_.turnClock == TurnClock::Time && settings_.ownClocks, "own clocks with own clocks off");
+            Must(settings_.ownClocks, "own clocks with own clocks off");
             if (e.a != 0)
             {
                 ownClock_.insert(e.target);
@@ -1240,8 +1215,7 @@ class Arena
                 // A creature's own clock: only one put on its own, only in
                 // its own turn (this frame's, or one that opened or closed
                 // in it), and by something.
-                Must(settings_.turnClock == TurnClock::Time && settings_.ownClocks,
-                     "a creature's own clock moved with own clocks off");
+                Must(settings_.ownClocks, "a creature's own clock moved with own clocks off");
                 Must(ownClock_.contains(e.target), "a creature's own clock moved though it was never put on one");
                 // (Or the target of the acting creature's own effect: a grab
                 // holds both, and both clocks move by its steps. As the
@@ -1267,12 +1241,8 @@ class Arena
             }
             // A round's worth, or a step of an action's own effect, or the
             // round's worth less those.
-            // With time, a round is a turn's seconds.
-            Must(e.b > 0 && e.b <= static_cast<std::int32_t>((settings_.turnClock == TurnClock::Time
-                                                                  ? settings_.secondsPerTurn
-                                                                  : settings_.effectSecondsPerRound) *
-                                                             1000.0f),
-                 "a round aged wrong");
+            // A round is a turn's seconds.
+            Must(e.b > 0 && e.b <= static_cast<std::int32_t>(settings_.secondsPerTurn * 1000.0f), "a round aged wrong");
             ++coverage_.roundsAged;
             // A round's worth off every condition's own timer; not one on a
             // creature on a clock of its own, which the shared clock passes
@@ -1295,9 +1265,17 @@ class Arena
             // (the long run with combatants out of reach, seed 206 with
             // time, 2026-10-04: the check went by the turn-start signal
             // alone, which comes a few effects later in the same step).
+            // Or the one whose turn it was as this frame began: a turn put
+            // off and taken later (Delay) is told once, the first time, so
+            // the last told is by then the one whose turn came between; and
+            // a cooldown that runs out with the rest of that turn's seconds,
+            // as it ends, lifts in the step that begins the next turn (the
+            // long run with the party's tactics chosen, seed 39, 2026-10-05:
+            // the lot's first two hundred and fifty fights on the bar with
+            // nobody unaware, issue 50).
             if (e.b == 0)
             {
-                Must(e.target == lastTurnStart_ || e.target == world_.Current(),
+                Must(e.target == lastTurnStart_ || e.target == world_.Current() || e.target == currentBefore_,
                      "a cooldown released out of its user's turn");
                 ++coverage_.cooldownsReleased;
             }
@@ -1337,10 +1315,6 @@ class Arena
             if (e.kind == EffectKind::ClearCommands)
             {
                 tasks_.erase(e.target);
-                if (e.target == world_.Current() && world_.machine.Active())
-                {
-                    ++clears_;
-                }
             }
             if (e.kind == EffectKind::Floaty && e.text == L"Out of movement")
             {
@@ -1407,8 +1381,9 @@ class Arena
     // fights with strays, on a stream of its own: the others are draw for
     // draw the fights they were. The game's own potencies (the scripts'
     // constants): a Swift Salve 1.2, Haste 1.3; grease 0.5, a caltrop trap
-    // 0.6, Winter's Grasp 0.8. At most two of a kind on one creature, which
-    // keeps every pace one the as-built rule takes for a pace (MovementBudget).
+    // 0.6, Winter's Grasp 0.8. At most two of a kind on one creature (which
+    // kept every pace one the meters of the action clock took for a pace,
+    // until issue 50: the draws are as they were).
     void Pacing()
     {
         if (!runners_ || !world_.machine.Active() || !Chance(paces_, 0.003))
@@ -1771,9 +1746,7 @@ class Arena
             // takes of the bar as it runs; as built what a round spends on
             // effects, or a turn's seconds with effects on the game's clock.
             // Of the machine's clock, which runs at the fight's speed.
-            const float worth = settings_.turnClock == TurnClock::Time || !(settings_.effectSecondsPerRound > 0.0f)
-                                    ? settings_.secondsPerTurn
-                                    : settings_.effectSecondsPerRound;
+            const float worth = settings_.secondsPerTurn;
             const auto bound = static_cast<std::uint32_t>(worth * 1000.0f / settings_.fightSpeed) + kHoldSlackMs;
             Must(!(turn && heldAtStart_ && stillHeld && turnRunMs_ - turnBeganAtMs_ > bound),
                  "a turn waited past a turn's worth on an effect no condition named");
@@ -1927,12 +1900,11 @@ class Arena
                     found->second.held = true;
                 }
                 conditionLeftMs_[id] = static_cast<std::int32_t>(Between(rng_, 2000.0f, 10000.0f));
-                // With time, the game layer reads its seconds, most times.
+                // The game layer reads its seconds, most times.
                 world_.Get(id).conditionSeconds =
-                    settings_.turnClock == TurnClock::Time && Chance(rng_, 0.7)
-                        ? (Chance(rng_, 0.5) ? Between(rng_, 0.5f, 3.9f)
-                                             : static_cast<float>(conditionLeftMs_[id]) / 1000.0f)
-                        : 0.0f;
+                    Chance(rng_, 0.7) ? (Chance(rng_, 0.5) ? Between(rng_, 0.5f, 3.9f)
+                                                           : static_cast<float>(conditionLeftMs_[id]) / 1000.0f)
+                                      : 0.0f;
                 if (world_.Get(id).conditionSeconds > 0.0f && world_.Get(id).condition == Condition::Disabled)
                 {
                     secondsKnown_.insert(id);
@@ -2387,9 +2359,6 @@ class Arena
         case EventKind::TurnHandedOver:
         case EventKind::ConditionExpired:
         case EventKind::ActionGivenBack:
-        case EventKind::CastCharging:
-        case EventKind::CastLanded:
-        case EventKind::CastInterrupted:
         case EventKind::ActionPending:
         case EventKind::ActionLanded:
         case EventKind::ActionDropped:
@@ -2424,8 +2393,7 @@ class Arena
         {
             Must(!timeHeld_, "effects' time left held with no fight on");
         }
-        else if ((settings_.effectSecondsPerRound > 0.0f || settings_.turnClock == TurnClock::Time) &&
-                 phase != Phase::Starting && !(phase == Phase::Suspended && world_.machine.Order().Round() == 0))
+        else if (phase != Phase::Starting && !(phase == Phase::Suspended && world_.machine.Order().Round() == 0))
         {
             Must(timeHeld_, "effects' time running in a fight");
         }
@@ -2521,19 +2489,12 @@ class Arena
                 const bool playing = phase == Phase::AwaitingOrder || phase == Phase::Dispatching ||
                                      phase == Phase::AiThinking || phase == Phase::Executing ||
                                      phase == Phase::Settling;
-                if (const auto looked = looked_.find(current);
-                    settings_.turnClock == TurnClock::Time && turnPace_ && playing && looked != looked_.end())
+                if (const auto looked = looked_.find(current); turnPace_ && playing && looked != looked_.end())
                 {
                     Must(std::abs(world_.machine.View().paceMps - settings_.paceMps * looked->second) < 0.001f,
                          "a turn's bar does not walk at its creature's pace as the machine last looked at it");
                 }
-                // As built, the meters of its pace as the turn began (19):
-                // what is put on it or ends within the turn is the next
-                // turn's. (Its build's, in a turn the machine began no
-                // budget for.)
-                const float budget = settings_.turnClock == TurnClock::Time
-                                         ? turnMeters_
-                                         : MovementBudget(settings_, turnPace_.value_or(c.speed), c.dexterity);
+                const float budget = turnMeters_;
                 // Past the budget by the overshoot and the frame the cut is
                 // seen in, and the turn's first step, which the machine
                 // measures from. Then two tries to reach something, each a
@@ -2644,6 +2605,7 @@ class Arena
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
     std::set<ObjectId> secondsKnown_;             // held with seconds the machine could read, and not yet ended by it
     ObjectId lastTurnStart_ = kNoObject;          // whose turn began last (its event)
+    ObjectId currentBefore_ = kNoObject;          // whose turn it was as the frame began
     bool timeHeld_ = false;                       // effects' time, as the machine left it
     std::unordered_set<ObjectId> ownClock_;       // creatures put on their own clocks
     std::unordered_set<ObjectId> turnsThisFrame_; // whose turn opened or closed in this frame
@@ -2663,8 +2625,6 @@ class Arena
     // Each creature's pace as it was at the last look at everyone the
     // machine took up (19).
     std::unordered_map<ObjectId, float> looked_;
-    int actions_ = 0;
-    int clears_ = 0;
     int interruptions_ = 0; // conversations during this turn
     std::uint32_t turnRunMs_ = 0;
     std::uint32_t heldInTurnMs_ = 0; // the current creature held by a condition, running
@@ -2719,8 +2679,7 @@ namespace
 {
 
 // Plays fights from seed 1 up, and says what they reached.
-Coverage PlayFights(std::uint64_t count, TurnClock clock = TurnClock::Actions, bool strays = false,
-                    bool choices = false)
+Coverage PlayFights(std::uint64_t count, bool strays = false, bool choices = false)
 {
     Coverage coverage;
     for (std::uint64_t seed = 1; seed <= count; ++seed)
@@ -2728,7 +2687,7 @@ Coverage PlayFights(std::uint64_t count, TurnClock clock = TurnClock::Actions, b
         CAPTURE(seed);
         CAPTURE(strays);
         CAPTURE(choices);
-        Arena arena{seed, coverage, clock, strays, choices};
+        Arena arena{seed, coverage, strays, choices};
         arena.Play();
     }
     return coverage;
@@ -2736,70 +2695,45 @@ Coverage PlayFights(std::uint64_t count, TurnClock clock = TurnClock::Actions, b
 
 } // namespace
 
+// Eighty fights, some hours of play, in seconds: enough to reach every state
+// below with every build. (Until issue 50 there were two such lots, eighty of
+// one action and meters a turn and these eighty on the bar; the first went
+// with its clock, and the states it had floors for and this had not have
+// them here, at what these fights reach.)
 TEST_CASE("random fights keep every promise the design makes", "[fights]")
 {
-    // Eighty fights, about three and a half hours of play, in seconds: enough
-    // to reach every state below with every build.
     const Coverage coverage = PlayFights(80);
-    // What they reached, each floor about a third of what seeds 1-80 reach
-    // (2026-09-30, after the reach check made fights shorter), so a change to the arena that stops reaching a state
-    // fails here rather than passing by never getting there.
-    CHECK(coverage.fights == 80);
-    CHECK(coverage.turns > 700);
-    CHECK(coverage.rounds > 150);
-    CHECK(coverage.blockedOutOfTurn > 5000);
-    CHECK(coverage.movementCuts > 130);
-    CHECK(coverage.dispatches > 25);
-    CHECK(coverage.menus > 120);
-    CHECK(coverage.interludes > 65);
-    CHECK(coverage.joiners > 40);
-    CHECK(coverage.partyWipes > 7);
-    CHECK(coverage.refunds > 85);
-    CHECK(coverage.timeouts > 30);
-    // Turns lost to an effect no condition named (2026-09-30: 17, each one
-    // found so, after two seconds; 2026-10-04: 8, those that held a turn's
-    // worth), and holds that let go before, the turn going on (153).
-    CHECK(coverage.heldByEffect > 2);
-    CHECK(coverage.heldFreed > 45);
-    // The game's speed set for an AI's turn and back (2026-09-30: 398).
-    CHECK(coverage.speedChanges > 150);
-    CHECK(coverage.bledOut > 60);
-    CHECK(coverage.vanished > 25);
-    CHECK(coverage.tooFar > 30);
-    // Conditions in turns (2026-09-30, before a pin was one: 803 landed,
-    // 200 turns lost, 136 conditions ended by the machine).
-    CHECK(coverage.stunned > 260);
-    CHECK(coverage.lostTurns > 65);
-    CHECK(coverage.lostOnClock > 5);
-    CHECK(coverage.conditionsEnded > 45);
-    // Cooldowns in turns (2026-09-30: 142 held, 68 released on their
-    // users' turns).
-    CHECK(coverage.cooldownsHeld > 45);
-    CHECK(coverage.cooldownsReleased > 22);
-    // (2026-10-02: 88 turns put off, 74 of them taken; the rest fell or were held first.)
-    CHECK(coverage.delays > 40);
-    CHECK(coverage.delayedTurns > 30);
-    // With one action a turn a wait is a pass, whatever its length (issue 31).
-    CHECK(coverage.waitsPaid == 0);
-    CHECK(coverage.waitsTooLong == 0);
-    // A turn an AI played ended at max_turn_ms (issue 38, 2026-10-04: 43, in
-    // the three fights of ten where it has three seconds).
-    CHECK(coverage.turnLimits > 14);
-}
-
-// With a turn a bar of time (Settings::turnClock), the same fights' kinds
-// with their own draws: the promises, 4 and 5 as time has them, and what
-// time adds reached.
-TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fights]")
-{
-    const Coverage coverage = PlayFights(80, TurnClock::Time);
     // Each floor about a third of what seeds 1-80 reach (2026-10-02: 3417
     // turns, 722 rounds, 778 kept, 519 landed, 68 whole turns, 19 owed, 74
     // told to choose again, 1627 rollovers, 267 cuts, 166 refunds, 19 too
-    // far, 455 lost turns, 118 cooldowns).
+    // far, 455 lost turns, 118 cooldowns), so a change to the arena that
+    // stops reaching a state fails here rather than passing by never getting
+    // there.
     CHECK(coverage.fights == 80);
     CHECK(coverage.turns > 1100);
     CHECK(coverage.rounds > 240);
+    // What the lot of one action and meters a turn had floors for and this
+    // had not, at what these eighty reach (2026-10-05: 18,639 commands
+    // turned away out of turn; 99 dispatches, 443 menus, 220 conversations,
+    // 147 joiners, 36 fights the party lost, 158 actions stopped at
+    // max_action_ms; the fight's speed set 294 times; 249 bled out, 83 gone
+    // from the world; 876 conditions landed, 62 turns lost to one on the
+    // game's clock, 337 conditions ended by the machine; 35 cooldowns
+    // released within the fight of 98 held).
+    CHECK(coverage.blockedOutOfTurn > 6000);
+    CHECK(coverage.dispatches > 33);
+    CHECK(coverage.menus > 145);
+    CHECK(coverage.interludes > 70);
+    CHECK(coverage.joiners > 49);
+    CHECK(coverage.partyWipes > 12);
+    CHECK(coverage.timeouts > 50);
+    CHECK(coverage.speedChanges > 95);
+    CHECK(coverage.bledOut > 80);
+    CHECK(coverage.vanished > 27);
+    CHECK(coverage.stunned > 290);
+    CHECK(coverage.lostOnClock > 20);
+    CHECK(coverage.conditionsEnded > 110);
+    CHECK(coverage.cooldownsReleased > 11);
     CHECK(coverage.kept > 250);
     CHECK(coverage.landed > 170);
     // Spells the engine conjured, held: some let complete as their time was
@@ -2875,13 +2809,13 @@ TEST_CASE("random fights with a turn a bar of time keep the promises too", "[fig
 // for a while, anyone of it (issue 44); and now and then Haste, a salve or a
 // slow is put on one of the fight, or ends (issue 49). Promises 10 to 12, 15
 // to 17 and 19 are checked in every fight; here they have something to hold
-// against. Twenty-five fights a clock.
+// against. Twenty-five fights. (Where two figures stand side by side in what
+// follows, the first is of the twenty-five there were with one action and
+// meters a turn, until issue 50, and the second of these.)
 TEST_CASE("random fights with hostiles unaware and combatants out of reach keep the promises", "[fights]")
 {
-    for (const TurnClock clock : {TurnClock::Actions, TurnClock::Time})
     {
-        CAPTURE(clock == TurnClock::Time);
-        const Coverage coverage = PlayFights(25, clock, true);
+        const Coverage coverage = PlayFights(25, true);
         CHECK(coverage.fights == 25);
         // Each floor about a third of what seeds 1-25 reach (2026-10-04, as
         // built and with time: 53 and 47 turns skipped as unaware, 57 and 70
@@ -2906,7 +2840,7 @@ TEST_CASE("random fights with hostiles unaware and combatants out of reach keep 
         // built, 32 with time; 23 and 29 since issue 43; 10 and 30 since
         // issue 44, whose creatures out of the world shorten the others'
         // rounds).
-        CHECK(coverage.turnLimits > (clock == TurnClock::Time ? 10 : 3));
+        CHECK(coverage.turnLimits > 10);
         // What the fight holds and what it lets go (1, 15). The commands let
         // through out of turn as the game's own, their creatures not in
         // combat by the game's word: hostiles that have not noticed, and
@@ -2966,26 +2900,16 @@ TEST_CASE("random fights with hostiles unaware and combatants out of reach keep 
         CHECK(coverage.pacedTurns > 125);
         CHECK(coverage.hastedTurns > 53);
         CHECK(coverage.pacedTurns - coverage.hastedTurns > 60); // and the slower
-        if (clock == TurnClock::Time)
-        {
-            CHECK(coverage.pacedInTurn > 34);
-            CHECK(coverage.hastedInTurn > 17);
-            CHECK(coverage.pacedInTurn - coverage.hastedInTurn > 16); // and to a slower one
-        }
-        else
-        {
-            CHECK(coverage.pacedInTurn == 0); // one pace a turn
-        }
-        // And with time, what rolls over where so many turns are not their
-        // actors' to end (272 turns rolled time over, 162 left time that was
-        // not saved; 233 and 182 with issue 30's holds and a limit on an AI's
-        // turn where a cap on its commands was, issue 38; 155 and 165 since
-        // issue 43; 230 and 279 since issue 44; 247 and 241 since issue 49).
-        if (clock == TurnClock::Time)
-        {
-            CHECK(coverage.rolledOver > 90);
-            CHECK(coverage.forfeited > 54);
-        }
+        CHECK(coverage.pacedInTurn > 34);
+        CHECK(coverage.hastedInTurn > 17);
+        CHECK(coverage.pacedInTurn - coverage.hastedInTurn > 16); // and to a slower one
+        // And what rolls over where so many turns are not their actors' to
+        // end (272 turns rolled time over, 162 left time that was not saved;
+        // 233 and 182 with issue 30's holds and a limit on an AI's turn where
+        // a cap on its commands was, issue 38; 155 and 165 since issue 43;
+        // 230 and 279 since issue 44; 247 and 241 since issue 49).
+        CHECK(coverage.rolledOver > 90);
+        CHECK(coverage.forfeited > 54);
     }
 }
 
@@ -2993,21 +2917,19 @@ TEST_CASE("random fights with hostiles unaware and combatants out of reach keep 
 // (issue 46): for about half of the party before the fight, the hero asked
 // for among them, and for anyone of it every few seconds in it, in a turn or
 // between two, under a menu or in a conversation. Promise 18 is checked in
-// every fight; here it has something to hold against. Thirty fights a clock.
+// every fight; here it has something to hold against. Thirty fights.
 TEST_CASE("random fights with the party's tactics chosen and changed in them keep the promises", "[fights]")
 {
-    for (const TurnClock clock : {TurnClock::Actions, TurnClock::Time})
     {
-        CAPTURE(clock == TurnClock::Time);
-        const Coverage coverage = PlayFights(30, clock, false, true);
+        const Coverage coverage = PlayFights(30, false, true);
         CHECK(coverage.fights == 30);
-        // Each floor about a third of what seeds 1-30 reach (2026-10-05, as
-        // built and with time: 536 and 545 choices made for companions, 148
-        // and 142 of their turns begun by a choice where the setting said
-        // otherwise, 65 and 60 choices made in a companion's own turn that
-        // would have changed who played it, 351 and 350 asked for the hero
-        // and refused; among 95 and 93 conversations and 26 and 15 turns put
-        // off and taken).
+        // Each floor about a third of what seeds 1-30 reach (2026-10-05: 545
+        // choices made for companions, 142 of their turns begun by a choice
+        // where the setting said otherwise, 60 choices made in a companion's
+        // own turn that would have changed who played it, 350 asked for the
+        // hero and refused; among 93 conversations and 15 turns put off and
+        // taken. There were thirty more with one action and meters a turn,
+        // until issue 50: 536, 148, 65 and 351, among 95 and 26).
         CHECK(coverage.choices > 180);
         CHECK(coverage.chosenTurns > 45);
         CHECK(coverage.chosenInTurn > 20);
@@ -3018,7 +2940,7 @@ TEST_CASE("random fights with the party's tactics chosen and changed in them kee
 }
 
 // One fight by its seed, every line the machine logs printed: a failure's
-// replay. `set TB_SEED=63& set TB_CLOCK=time& tb_tests "[fight-seed]"`; with
+// replay. `set TB_SEED=63& tb_tests "[fight-seed]"`; with
 // `set TB_STRAYS=1` too for one of the fights with hostiles unaware and
 // combatants out of reach, and `set TB_CHOICES=1` for one in which the player
 // chooses whose tactics play its turns.
@@ -3032,32 +2954,35 @@ TEST_CASE("one random fight, by the seed in TB_SEED", "[.][fight-seed]")
     const std::string seed = env("TB_SEED");
     REQUIRE_FALSE(seed.empty());
     Coverage coverage;
-    Arena arena{std::strtoull(seed.c_str(), nullptr, 10), coverage,
-                env("TB_CLOCK") == "time" ? TurnClock::Time : TurnClock::Actions, !env("TB_STRAYS").empty(),
+    Arena arena{std::strtoull(seed.c_str(), nullptr, 10), coverage, !env("TB_STRAYS").empty(),
                 !env("TB_CHOICES").empty()};
     arena.echo = true;
     arena.Play();
 }
 
-// A thousand more, for a change to the machine: `tb_tests "[fights-long]"`.
-// And five hundred a clock with hostiles unaware and combatants out of reach.
-TEST_CASE("a thousand random fights keep them too", "[.][fights-long]")
+// Two thousand more, for a change to the machine: `tb_tests "[fights-long]"`.
+// One lot of each kind: a thousand; five hundred with hostiles unaware and
+// combatants out of reach; and two hundred and fifty with the party's tactics
+// chosen and changed in them (18), then as many of those among hostiles
+// unaware and combatants out of reach as well, and so among Haste and slows
+// that come and go (19): a companion's turn begun as its tactics' or as the
+// player's, at a pace its effects have changed, is only there.
+//
+// Until issue 50 it was 3,500: a thousand, five hundred of the second kind
+// and two hundred and fifty of the third with one action and meters a turn,
+// 1,750 fights that went with that clock, beside the first, second and last
+// lots here. Those three are draw for draw the fights they were. The third
+// lot here stands where the other clock's stood, the tactics chosen with
+// nobody unaware: of its fights only seeds 1 to 30 had been played on the bar
+// before (the short run's), so 220 of them are new.
+TEST_CASE("two thousand random fights keep them too", "[.][fights-long]")
 {
     const Coverage coverage = PlayFights(1000);
     CHECK(coverage.fights == 1000);
-    const Coverage timed = PlayFights(1000, TurnClock::Time);
-    CHECK(timed.fights == 1000);
-    const Coverage strays = PlayFights(500, TurnClock::Actions, true);
+    const Coverage strays = PlayFights(500, true);
     CHECK(strays.fights == 500);
-    const Coverage timedStrays = PlayFights(500, TurnClock::Time, true);
-    CHECK(timedStrays.fights == 500);
-    // And two hundred and fifty a clock with the party's tactics chosen and
-    // changed in them (18), the second lot among hostiles unaware and
-    // combatants out of reach as well, and so among Haste and slows that
-    // come and go (19): a companion's turn begun as its tactics' or as the
-    // player's, at a pace its effects have changed, is only there.
-    const Coverage chosen = PlayFights(250, TurnClock::Actions, false, true);
+    const Coverage chosen = PlayFights(250, false, true);
     CHECK(chosen.fights == 250);
-    const Coverage timedChosen = PlayFights(250, TurnClock::Time, true, true);
-    CHECK(timedChosen.fights == 250);
+    const Coverage chosenStrays = PlayFights(250, true, true);
+    CHECK(chosenStrays.fights == 250);
 }

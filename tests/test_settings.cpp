@@ -20,10 +20,10 @@ TEST_CASE("the default file parses to the defaults, with nothing to warn of", "[
     CHECK(parsed.settings.enabled == defaults.enabled);
     CHECK(parsed.settings.initiativeDie == defaults.initiativeDie);
     CHECK(parsed.settings.initiativePerDexterity == defaults.initiativePerDexterity);
-    CHECK(parsed.settings.movementRule == defaults.movementRule);
-    CHECK(parsed.settings.movementMeters == defaults.movementMeters);
-    CHECK(parsed.settings.movementMin == defaults.movementMin);
-    CHECK(parsed.settings.movementMax == defaults.movementMax);
+    CHECK(parsed.settings.secondsPerTurn == defaults.secondsPerTurn);
+    CHECK(parsed.settings.freeStepMeters == defaults.freeStepMeters);
+    CHECK(parsed.settings.paceMps == defaults.paceMps);
+    CHECK(parsed.settings.conditionTurns == defaults.conditionTurns);
     CHECK(parsed.settings.partyControl == defaults.partyControl);
     CHECK(parsed.settings.settleMs == defaults.settleMs);
     CHECK(parsed.settings.aiThinkMs == defaults.aiThinkMs);
@@ -47,17 +47,17 @@ TEST_CASE("values are read by section, with comments and case ignored", "[settin
 {
     const auto parsed = ParseSettings("[TurnBased]\r\n"
                                       "Enabled = off   ; the player's own note\r\n"
-                                      "[movement]\r\n"
-                                      "rule = Constant\r\n"
-                                      "meters = 12.5\r\n"
+                                      "[Movement]\r\n"
+                                      "Path_Check = No\r\n"
                                       "[turns]\r\n"
-                                      "party = tactics\r\n"
+                                      "party = Tactics\r\n"
+                                      "pace = 12.5\r\n"
                                       "[keys]\r\n"
                                       "toggle = F9\r\n");
     CHECK(parsed.warnings.empty());
     CHECK_FALSE(parsed.settings.enabled);
-    CHECK(parsed.settings.movementRule == tb::MovementRule::Constant);
-    CHECK(parsed.settings.movementMeters == 12.5f);
+    CHECK_FALSE(parsed.settings.pathCheck);
+    CHECK(parsed.settings.paceMps == 12.5f);
     CHECK(parsed.settings.partyControl == tb::PartyControl::Tactics);
     CHECK(parsed.settings.toggleKey.key == 0x78);
 }
@@ -69,13 +69,11 @@ TEST_CASE("a bad value keeps the default and says so; out of range is clamped", 
                                       "[turns]\n"
                                       "settle_ms = 999999\n"
                                       "nonsense = 1\n"
-                                      "[movement]\n"
-                                      "min = 30\n"
-                                      "max = 10\n"
+                                      "pace = 0.1\n"
                                       "just words\n");
     CHECK(parsed.settings.initiativeDie == Settings{}.initiativeDie);
     CHECK(parsed.settings.settleMs == 5000);
-    CHECK(parsed.settings.movementMin == 10.0f);
+    CHECK(parsed.settings.paceMps == 0.5f);
     CHECK(parsed.warnings.size() == 5);
 }
 
@@ -85,24 +83,20 @@ TEST_CASE("each kind of value says what it wanted, and the default stands", "[se
                                       "enabled = maybe\n"
                                       "[initiative]\n"
                                       "per_dexterity = lots\n"
-                                      "[movement]\n"
-                                      "rule = teleport\n"
                                       "[turns]\n"
                                       "party = anarchy\n"
                                       "ai_poke = gently\n"
                                       "[keys]\n"
                                       "toggle = Hyper+Q\n");
     const Settings defaults;
-    REQUIRE(parsed.warnings.size() == 6);
+    REQUIRE(parsed.warnings.size() == 5);
     CHECK(parsed.warnings[0].find("not true or false") != std::string::npos);
     CHECK(parsed.warnings[1].find("not a number") != std::string::npos);
-    CHECK(parsed.warnings[2].find("not speed or constant") != std::string::npos);
-    CHECK(parsed.warnings[3].find("not manual or tactics") != std::string::npos);
-    CHECK(parsed.warnings[4].find("not command_complete or kickstart") != std::string::npos);
-    CHECK(parsed.warnings[5].find("not a key") != std::string::npos);
+    CHECK(parsed.warnings[2].find("not manual or tactics") != std::string::npos);
+    CHECK(parsed.warnings[3].find("not command_complete or kickstart") != std::string::npos);
+    CHECK(parsed.warnings[4].find("not a key") != std::string::npos);
     CHECK(parsed.settings.enabled == defaults.enabled);
     CHECK(parsed.settings.initiativePerDexterity == defaults.initiativePerDexterity);
-    CHECK(parsed.settings.movementRule == defaults.movementRule);
     CHECK(parsed.settings.partyControl == defaults.partyControl);
     CHECK(parsed.settings.aiPoke == defaults.aiPoke);
     CHECK(parsed.settings.toggleKey == defaults.toggleKey);
@@ -110,11 +104,9 @@ TEST_CASE("each kind of value says what it wanted, and the default stands", "[se
 
 TEST_CASE("the other choices of each enumerated setting read", "[settings]")
 {
-    const auto parsed =
-        ParseSettings("[turns]\nai_poke = Kickstart\n[movement]\nrule = speed\n[turns]\nparty = manual\n");
+    const auto parsed = ParseSettings("[turns]\nai_poke = Kickstart\n[turns]\nparty = manual\n");
     CHECK(parsed.warnings.empty());
     CHECK(parsed.settings.aiPoke == tb::AiPoke::Kickstart);
-    CHECK(parsed.settings.movementRule == tb::MovementRule::Speed);
     CHECK(parsed.settings.partyControl == tb::PartyControl::Manual);
 }
 
@@ -142,11 +134,11 @@ TEST_CASE("a file from an older build gets the settings it lacks, with their com
     const std::string whole = tb::WithMissingSettings(older);
     const auto parsed = tb::ParseSettings(whole);
     CHECK(parsed.warnings.empty());
-    CHECK_FALSE(parsed.settings.enabled);                                                 // the player's
-    CHECK(parsed.settings.settleMs == 250);                                               // the player's
-    CHECK(parsed.settings.effectSecondsPerRound == tb::Settings{}.effectSecondsPerRound); // added
-    CHECK(whole.find("effect_seconds_per_round = ") != std::string::npos);
-    CHECK(whole.find("; Effects and regeneration count rounds") != std::string::npos); // with its comment
+    CHECK_FALSE(parsed.settings.enabled);                                   // the player's
+    CHECK(parsed.settings.settleMs == 250);                                 // the player's
+    CHECK(parsed.settings.secondsPerTurn == tb::Settings{}.secondsPerTurn); // added
+    CHECK(whole.find("seconds_per_turn = ") != std::string::npos);
+    CHECK(whole.find("; What a turn is: a bar of time this many seconds long") != std::string::npos); // its comment
     // Added once: a whole file is left as it is.
     CHECK(tb::WithMissingSettings(whole) == whole);
     CHECK(tb::WithMissingSettings(tb::DefaultSettingsFile()) == tb::DefaultSettingsFile());
@@ -162,14 +154,6 @@ TEST_CASE("a setting the player commented out is left commented out", "[settings
     // The player's choice: not added back.
     CHECK(whole == text);
     CHECK(tb::WithMissingSettings(whole) == whole);
-}
-
-TEST_CASE("cooldowns count four seconds a turn by default", "[settings]")
-{
-    // The user (2026-09-30): a hold's share of the time about what it is in
-    // real time; at 10 the archers' stun came back every other turn.
-    CHECK(tb::Settings{}.cooldownSecondsPerTurn == 4.0f);
-    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.cooldownSecondsPerTurn == 4.0f);
 }
 
 TEST_CASE("[turns] charge is a list of an ability and its turns", "[settings]")
@@ -208,30 +192,71 @@ TEST_CASE("the preview's path is marked on the ground by default, and can be a l
     CHECK(line.warnings.empty());
 }
 
-TEST_CASE("a turn is a bar of time by default; one action and meters, and time's numbers, are read", "[settings]")
+TEST_CASE("a turn is a bar of time, four seconds by default, and its numbers are read", "[settings]")
 {
     const tb::Settings defaults;
-    CHECK(defaults.turnClock == tb::TurnClock::Time);
     CHECK(defaults.secondsPerTurn == 4.0f);
     CHECK(defaults.freeStepMeters == 1.0f);
     CHECK(defaults.enemyTactics == std::array<int, 5>{0, 0, 2, 4, 6});
-    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.turnClock == tb::TurnClock::Time);
-    CHECK(tb::ParseSettings("[turns]\nclock = actions\n").settings.turnClock == tb::TurnClock::Actions);
-    const tb::ParsedSettings timed = tb::ParseSettings("[turns]\nclock = time\nseconds_per_turn = 5\nfree_step = 0.5\n"
+    const tb::ParsedSettings timed = tb::ParseSettings("[turns]\nseconds_per_turn = 5\nfree_step = 0.5\n"
                                                        "pace = 5\nenemy_tactics = 0, 1, 2, 3, 4\n");
     CHECK(timed.warnings.empty());
-    CHECK(timed.settings.turnClock == tb::TurnClock::Time);
     CHECK(timed.settings.secondsPerTurn == 5.0f);
     CHECK(timed.settings.freeStepMeters == 0.5f);
     CHECK(timed.settings.paceMps == 5.0f);
     CHECK(timed.settings.enemyTactics == std::array<int, 5>{0, 1, 2, 3, 4});
 }
 
-TEST_CASE("bad clocks and rank lists are refused, the defaults kept", "[settings]")
+// The clock of one action and meters a turn is gone (issue 50), and its
+// settings with it, with nothing put in their place (the user: "No need to
+// maintain backward compatibility, this is not released yet"). A file
+// written before then still has them: each is a key the mod does not know,
+// said so by its line and name, and the rest of the file is read. The two
+// keys retired before it had a notice each, which went the same way.
+TEST_CASE("a file that still has the action clock's settings is told of each as unknown, and plays on the bar",
+          "[settings]")
 {
-    const tb::ParsedSettings bad = tb::ParseSettings("[turns]\nclock = points\nenemy_tactics = 0, 0, 2\n");
-    CHECK(bad.warnings.size() == 2);
-    CHECK(bad.settings.turnClock == tb::TurnClock::Time);
+    const tb::ParsedSettings old = tb::ParseSettings("[movement]\n"
+                                                     "rule = constant\n"
+                                                     "meters = 12\n"
+                                                     "per_dexterity = 0.1\n"
+                                                     "min = 3\n"
+                                                     "max = 20\n"
+                                                     "path_check = false\n"
+                                                     "[turns]\n"
+                                                     "clock = actions\n"
+                                                     "end_turn_when_action_used = false\n"
+                                                     "cooldown_seconds_per_turn = 6\n"
+                                                     "effect_seconds_per_round = 6\n"
+                                                     "max_commands_per_turn = 6\n"
+                                                     "ai_turn_speed = 2\n"
+                                                     "seconds_per_turn = 5\n");
+    REQUIRE(old.warnings.size() == 11);
+    CHECK(old.warnings[0] == "line 2: unknown setting [movement] rule");
+    CHECK(old.warnings[4] == "line 6: unknown setting [movement] max");
+    CHECK(old.warnings[5] == "line 9: unknown setting [turns] clock");
+    CHECK(old.warnings[6] == "line 10: unknown setting [turns] end_turn_when_action_used");
+    CHECK(old.warnings[7] == "line 11: unknown setting [turns] cooldown_seconds_per_turn");
+    CHECK(old.warnings[8] == "line 12: unknown setting [turns] effect_seconds_per_round");
+    CHECK(old.warnings[9] == "line 13: unknown setting [turns] max_commands_per_turn");
+    CHECK(old.warnings[10] == "line 14: unknown setting [turns] ai_turn_speed");
+    // What the bar reads of that file is read.
+    CHECK_FALSE(old.settings.pathCheck);
+    CHECK(old.settings.secondsPerTurn == 5.0f);
+    // And the file the mod writes names none of them.
+    const std::string written = tb::DefaultSettingsFile();
+    for (const char *gone : {"\nrule =", "\nmeters =", "\nmin =", "\nmax =", "\nclock =", "end_turn_when_action_used",
+                             "cooldown_seconds_per_turn", "effect_seconds_per_round"})
+    {
+        CAPTURE(gone);
+        CHECK(written.find(gone) == std::string::npos);
+    }
+}
+
+TEST_CASE("bad rank lists are refused, the defaults kept", "[settings]")
+{
+    const tb::ParsedSettings bad = tb::ParseSettings("[turns]\nenemy_tactics = 0, 0, 2\n");
+    CHECK(bad.warnings.size() == 1);
     CHECK(bad.settings.enemyTactics == std::array<int, 5>{0, 0, 2, 4, 6});
     CHECK(tb::ParseSettings("[turns]\nenemy_tactics = 0, 0, 2, 4, 9\n").warnings.size() == 1);
     CHECK(tb::ParseSettings("[turns]\nenemy_tactics = 0, 0, 2, 4, 4, 4\n").warnings.size() == 1);
@@ -294,7 +319,7 @@ TEST_CASE("the scripts' timers of a second or more count rounds unless the file 
     // An older file gets it, with its comment.
     const std::string whole = tb::WithMissingSettings("[turns]\nsettle_ms = 250\n");
     CHECK(whole.find("script_timers_from = 1") != std::string::npos);
-    CHECK(whole.find("; The scripts' own timers count rounds too") != std::string::npos);
+    CHECK(whole.find("; The scripts' own timers count rounds") != std::string::npos);
 }
 
 TEST_CASE("the toggle has no key until the file names one", "[settings]")
@@ -337,31 +362,6 @@ TEST_CASE("Delay has no key until the file names one", "[settings]")
     const tb::ParsedSettings bad = tb::ParseSettings("[keys]\ndelay = Sometime\n");
     CHECK(bad.warnings.size() == 1);
     CHECK(bad.settings.delayKey.key == 0);
-}
-
-TEST_CASE("a fight has one speed; the setting that sped an AI's turns alone is gone, and a file that has it is told",
-          "[settings]")
-{
-    CHECK(tb::Settings{}.fightSpeed == 1.0f);
-    const tb::ParsedSettings both = tb::ParseSettings("[turns]\nspeed = 2\nai_turn_speed = 3\n");
-    CHECK(both.settings.fightSpeed == 2.0f);
-    REQUIRE(both.warnings.size() == 1);
-    CHECK(both.warnings.front().find("speed") != std::string::npos);
-    CHECK(tb::DefaultSettingsFile().find("ai_turn_speed") == std::string::npos);
-}
-
-TEST_CASE("the cap on an AI's commands is gone, and a file that still has it is told", "[settings]")
-{
-    // Issue 38 (the user, 2026-10-04: "let's get rid of the cap"): what
-    // bounds an AI's turn is its time, and max_turn_ms the turn's own.
-    const tb::ParsedSettings old = tb::ParseSettings("[turns]\nmax_commands_per_turn = 6\nmax_action_ms = 9000\n");
-    REQUIRE(old.warnings.size() == 1);
-    CHECK(old.warnings.front().find("max_commands_per_turn") != std::string::npos);
-    CHECK(old.warnings.front().find("no longer a setting") != std::string::npos);
-    CHECK(old.warnings.front().find("max_turn_ms") != std::string::npos);
-    CHECK(old.settings.maxActionMs == 9000); // the rest of the file is read as ever
-    CHECK(tb::DefaultSettingsFile().find("max_commands_per_turn") == std::string::npos);
-    CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).warnings.empty());
 }
 
 TEST_CASE("a turn an AI plays has a time limit of its own setting: thirty seconds unless the file says", "[settings]")

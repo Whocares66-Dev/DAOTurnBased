@@ -27,7 +27,6 @@ namespace
 Settings Timed()
 {
     Settings s = Fixed();
-    s.turnClock = TurnClock::Time;
     s.secondsPerTurn = 4.0f;
     s.paceMps = 5.0f;
     s.freeStepMeters = 1.0f;

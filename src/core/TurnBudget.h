@@ -1,18 +1,17 @@
-// What a turn has to spend, and what it has spent. Two kinds:
+// What a turn has to spend, and what it has spent: a bar of time
+// (dev/REBALANCE.md, "Current specification"). Everything spends the same
+// bar, an action its own time and walking its distance at the creature's
+// pace, with about a meter a turn free. An action longer than what is left is
+// begun and its rest is owed to the next turn (Overflow); TurnTime keeps the
+// bar and the creature's clock apart.
 //
-// - One action and meters of movement (dev/DESIGN.md, as built): an attack,
-//   an ability or an item spends the action, walking spends meters.
-// - A bar of time (dev/REBALANCE.md, "Current specification": `[turns]
-//   clock = time`): everything spends the same bar, an action its own time
-//   and walking its distance at the creature's pace, with about a meter a
-//   turn free. An action longer than what is left is begun and its rest is
-//   owed to the next turn (Overflow); TurnTime keeps the bar and the
-//   creature's clock apart.
+// A turn that is passed over (lost to a hold, spent on a pending action, its
+// creature out of the world) has no bar: a budget made of nothing, with
+// nothing to spend, to walk or to roll over.
 //
-// The machine asks it the same questions either way: is there an action
-// left, how far can it walk, has it walked past what it had. So the rules
-// that do not care which kind it is (who may act, when a walk is stopped,
-// what a turn shows) are written once.
+// Until issue 50 (2026-10-05) there was a second kind, the one the mod first
+// played with: one action and an allowance of meters, `[turns] clock =
+// actions`. The time bar replaced it in play, and it went.
 #pragma once
 
 #include "core/TurnTime.h"
@@ -25,37 +24,36 @@ namespace tb
 class TurnBudget
 {
   public:
-    // As built: `actions` actions (one) and `meters` of movement.
-    [[nodiscard]] static TurnBudget Actions(int actions, float meters);
+    // No bar: a turn passed over.
+    TurnBudget() = default;
     // A bar of time: `time` (its length, Combat Tactics' time and what
     // rolled over), walking at `paceMps` meters a second after the first
     // `freeMeters`.
     [[nodiscard]] static TurnBudget Time(const TurnTime &time, float paceMps, float freeMeters);
 
-    [[nodiscard]] bool Timed() const
+    [[nodiscard]] bool HasBar() const
     {
-        return timed_;
+        return bar_;
     }
 
-    // Actions: one, or none. With time, there is one while any time is
-    // left: an action that does not fit is begun and finished next turn.
-    [[nodiscard]] int ActionsLeft() const;
-    // Spends an action: as built one of them; with time `costMs` of the
-    // bar, and answers what did not fit, owed to the next turn.
+    // Whether any time is left: an action may begin while there is, and one
+    // that does not fit is begun and finished next turn.
+    [[nodiscard]] bool TimeLeft() const;
+    // Spends an action's time: `costMs` of the bar, and answers what did not
+    // fit, owed to the next turn.
     [[nodiscard]] std::uint32_t SpendAction(std::uint32_t costMs);
-    // An action that never ran is given back: as built the action; with
-    // time what it was charged this turn.
+    // An action that never ran is given back what it was charged this turn.
     void GiveActionBack(std::uint32_t chargedMs);
-    // Nothing more to act with this turn (a held turn, a charge begun, an
-    // action kept for the next): with time, nothing more to walk either.
+    // Nothing more to act with this turn (a held turn, an action kept for
+    // the next), and nothing more to walk either.
     void SpendAllActions();
-    // With time: the bar and the free meter spent, and the meters paid for
-    // kept: an action is kept for the next turn, and its creature walks to
-    // where it can do it.
+    // The bar and the free meter spent, and the meters paid for kept: an
+    // action is kept for the next turn, and its creature walks to where it
+    // can do it.
     void Pend();
 
-    // Movement, in meters: with time, what the time left (and the free
-    // meter) would walk at the creature's pace.
+    // Movement, in meters: what the time left (and the free meter) would
+    // walk at the creature's pace.
     [[nodiscard]] float MovementLeft() const;
     [[nodiscard]] float MovementMax() const;
     [[nodiscard]] float Walked() const
@@ -66,67 +64,60 @@ class TurnBudget
     // a little way past, kOvershoot).
     [[nodiscard]] float Overwalked() const;
     void Walk(float meters);
-    // With time: the meters walked past the bar are paid now, out of time
-    // given back since (an action's, taken on arriving instead).
+    // The meters walked past the bar are paid now, out of time given back
+    // since (an action's, taken on arriving instead).
     void SettleOverwalk();
-    // With time: what walking `meters` from here would cost of the bar, after
-    // the meters already paid for and the free meter. Nothing as built.
+    // What walking `meters` from here would cost of the bar, after the
+    // meters already paid for and the free meter.
     [[nodiscard]] std::uint32_t WalkCostMs(float meters) const;
-    // With time: pays now for a walk about to be taken (an attack's walk to
-    // its target, paid as the attack is let through so that its swing
-    // cannot leave its walk short), and lets that many meters be walked
-    // without paying again. Meters paid for and not walked stay walkable
-    // this turn. Nothing as built.
+    // Pays now for a walk about to be taken (an attack's walk to its target,
+    // paid as the attack is let through so that its swing cannot leave its
+    // walk short), and lets that many meters be walked without paying again.
+    // Meters paid for and not walked stay walkable this turn.
     void Prepay(float meters);
     // Meters to walk without paying: a pending attack's walk, paid for in
     // what it owed, as it lands.
     void Credit(float meters);
 
-    // With time: the pace walked at, and the meters that cost nothing (the
-    // free meter left, and meters paid for). Zeros as built.
+    // The pace walked at, and the meters that cost nothing (the free meter
+    // left, and meters paid for). Zeros with no bar.
     [[nodiscard]] float PaceMps() const
     {
-        return timed_ ? pace_ : 0.0f;
+        return bar_ ? pace_ : 0.0f;
     }
-    // With time: the pace from here on, its creature hasted or slowed in the
-    // middle of its turn (issue 49). What is left to walk is the time left
-    // at the new pace; the time already spent stays spent, and meters paid
-    // for and not yet walked stay paid for, whatever they would cost now.
-    // What is no pace (nothing, a negative, not a number) is not taken.
-    // Nothing as built.
+    // The pace from here on, its creature hasted or slowed in the middle of
+    // its turn (issue 49). What is left to walk is the time left at the new
+    // pace; the time already spent stays spent, and meters paid for and not
+    // yet walked stay paid for, whatever they would cost now. What is no
+    // pace (nothing, a negative, not a number) is not taken.
     void SetPace(float paceMps);
     [[nodiscard]] float PaidMeters() const;
 
-    // With time: a hold takes `clockMs` of the creature's clock, and with
-    // it that share of the bar (a 2 s stun half a 4 s turn's, whatever the
-    // bar holds). Answers the clock it took. Nothing as built.
+    // A hold takes `clockMs` of the creature's clock, and with it that share
+    // of the bar (a 2 s stun half a 4 s turn's, whatever the bar holds).
+    // Answers the clock it took.
     std::uint32_t HoldClock(std::uint32_t clockMs);
 
-    // With time: how far the creature's own clock has moved this turn, of
-    // the turn's seconds: by its share of the bar spent (TurnTime). 0 as
-    // built.
+    // How far the creature's own clock has moved this turn, of the turn's
+    // seconds: by its share of the bar spent (TurnTime).
     [[nodiscard]] std::uint32_t ClockElapsedMs() const;
 
-    // The bar, with time; zeros as built.
+    // The bar; zeros with none.
     [[nodiscard]] std::uint32_t CapacityMs() const;
     [[nodiscard]] std::uint32_t CapacityLeftMs() const;
-    // The turn's end: what rolls over, up to `rolloverCapMs`, with time.
+    // The turn's end: what rolls over, up to `rolloverCapMs`.
     [[nodiscard]] std::uint32_t Finish(std::uint32_t rolloverCapMs);
 
   private:
-    TurnBudget() = default;
-
-    bool timed_ = false;
-    int actions_ = 0;
-    float movementMax_ = 0; // as built
-    TurnTime time_{};       // with time
-    float pace_ = 1.0f;     // meters a second
-    float free_ = 0;        // meters walked without time, with time
-    float walked_ = 0;      // meters walked this turn
-    float freeWalked_ = 0;  // of which free
-    float owedMeters_ = 0;  // walked and not yet paid: less than a millisecond's worth
-    float overwalked_ = 0;  // walked past the time left
-    float credit_ = 0;      // meters paid for and not yet walked
+    bool bar_ = false;
+    TurnTime time_{};
+    float pace_ = 1.0f;    // meters a second
+    float free_ = 0;       // meters walked without time
+    float walked_ = 0;     // meters walked this turn
+    float freeWalked_ = 0; // of which free
+    float owedMeters_ = 0; // walked and not yet paid: less than a millisecond's worth
+    float overwalked_ = 0; // walked past the time left
+    float credit_ = 0;     // meters paid for and not yet walked
 };
 
 } // namespace tb

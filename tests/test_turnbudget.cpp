@@ -1,5 +1,5 @@
-// A turn's budget: one action and meters as built, or a bar of time that
-// actions and walking both spend (dev/REBALANCE.md).
+// A turn's budget: a bar of time that actions and walking both spend
+// (dev/REBALANCE.md), or none, in a turn passed over.
 #include "core/TurnBudget.h"
 
 #include <catch2/catch_approx.hpp>
@@ -11,43 +11,21 @@ using Catch::Approx;
 using tb::TurnBudget;
 using tb::TurnTime;
 
-TEST_CASE("as built, a turn has one action and its meters", "[turnbudget]")
-{
-    TurnBudget budget = TurnBudget::Actions(1, 9.0f);
-    CHECK_FALSE(budget.Timed());
-    CHECK(budget.ActionsLeft() == 1);
-    CHECK(budget.MovementLeft() == Approx(9.0f));
-    CHECK(budget.SpendAction(1900) == 0); // no time owed as built
-    CHECK(budget.ActionsLeft() == 0);
-    budget.GiveActionBack(1900);
-    CHECK(budget.ActionsLeft() == 1);
-    budget.Walk(4.0f);
-    CHECK(budget.MovementLeft() == Approx(5.0f));
-    CHECK(budget.Overwalked() == 0.0f);
-    budget.Walk(5.5f);
-    CHECK(budget.MovementLeft() == 0.0f);
-    CHECK(budget.Overwalked() == Approx(0.5f));
-    CHECK(budget.MovementMax() == Approx(9.0f));
-    budget.SpendAllActions();
-    CHECK(budget.ActionsLeft() == 0);
-    CHECK(budget.CapacityMs() == 0);
-}
-
 TEST_CASE("with time, an action spends its own time and the turn goes on", "[turnbudget]")
 {
     TurnBudget budget = TurnBudget::Time(TurnTime(4000), 4.66f, 1.0f);
-    CHECK(budget.Timed());
+    CHECK(budget.HasBar());
     CHECK(budget.CapacityMs() == 4000);
-    CHECK(budget.ActionsLeft() == 1);
+    CHECK(budget.TimeLeft());
     CHECK(budget.SpendAction(1500) == 0); // a dagger's swing
     CHECK(budget.CapacityLeftMs() == 2500);
-    CHECK(budget.ActionsLeft() == 1); // time left: another may begin
+    CHECK(budget.TimeLeft()); // time left: another may begin
     CHECK(budget.SpendAction(1500) == 0);
     CHECK(budget.CapacityLeftMs() == 1000);
     // The third does not fit: begun, and what is left of it is owed.
     CHECK(budget.SpendAction(1500) == 500);
     CHECK(budget.CapacityLeftMs() == 0);
-    CHECK(budget.ActionsLeft() == 0);
+    CHECK_FALSE(budget.TimeLeft());
 }
 
 TEST_CASE("with time, walking is free for a meter and then costs time at the pace", "[turnbudget]")
@@ -89,7 +67,7 @@ TEST_CASE("with time, a walk past the time left is overwalked", "[turnbudget]")
     CHECK(budget.Overwalked() == Approx(0.0f).margin(0.01f));
     budget.Walk(0.6f);
     CHECK(budget.Overwalked() == Approx(0.6f).margin(0.01f));
-    CHECK(budget.ActionsLeft() == 0);
+    CHECK_FALSE(budget.TimeLeft());
 }
 
 TEST_CASE("with time, an action that never ran has its time back", "[turnbudget]")
@@ -203,7 +181,7 @@ TEST_CASE("with time, meters paid for stay paid for whatever the pace comes to",
     CHECK(budget.MovementLeft() == Approx(7.5f));
 }
 
-TEST_CASE("what is no pace is not taken for one within a turn, and as built nothing is", "[turnbudget]")
+TEST_CASE("what is no pace is not taken for one within a turn, and with no bar nothing is", "[turnbudget]")
 {
     TurnBudget budget = TurnBudget::Time(TurnTime(4000), 5.0f, 0.0f);
     budget.SetPace(0.0f);
@@ -215,10 +193,12 @@ TEST_CASE("what is no pace is not taken for one within a turn, and as built noth
     budget.SetPace(std::numeric_limits<float>::infinity());
     CHECK(budget.PaceMps() == 5.0f);
     CHECK(budget.MovementLeft() == Approx(20.0f));
-    TurnBudget built = TurnBudget::Actions(1, 9.0f);
-    built.SetPace(6.0f);
-    CHECK(built.PaceMps() == 0.0f);
-    CHECK(built.MovementLeft() == Approx(9.0f));
+    // A turn passed over has no bar, and so no pace to change.
+    TurnBudget none;
+    CHECK_FALSE(none.HasBar());
+    none.SetPace(6.0f);
+    CHECK(none.PaceMps() == 0.0f);
+    CHECK(none.MovementLeft() == 0.0f);
 }
 
 TEST_CASE("a pending attack's walk is credited as it lands", "[turnbudget]")
@@ -228,8 +208,10 @@ TEST_CASE("a pending attack's walk is credited as it lands", "[turnbudget]")
     budget.Walk(4.0f);
     CHECK(budget.CapacityLeftMs() == 4000);
     CHECK(budget.MovementLeft() == Approx(21.0f));
-    TurnBudget built = TurnBudget::Actions(1, 9.0f);
-    CHECK(built.WalkCostMs(5.0f) == 0);
-    built.Prepay(5.0f); // as built, a walk is paid as it is walked
-    CHECK(built.MovementLeft() == Approx(9.0f));
+    // With no bar there is nothing to pay a walk out of, nor to walk.
+    TurnBudget none;
+    CHECK(none.WalkCostMs(5.0f) == 0);
+    none.Prepay(5.0f);
+    none.Credit(4.0f);
+    CHECK(none.MovementLeft() == 0.0f);
 }

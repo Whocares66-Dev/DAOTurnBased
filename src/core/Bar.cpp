@@ -55,13 +55,11 @@ std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits, cons
     Field(out, static_cast<long long>(view.round));
     Field(out, static_cast<long long>(view.current));
     Field(out, view.playerTurn);
-    Field(out, static_cast<long long>(view.actionsLeft));
     Meters(out, view.movementLeft);
     Meters(out, view.movementMax);
-    // With a turn a bar of time: whether it is, and the bar and what is left
-    // of it, in seconds (version 4), and a turn's own seconds, past which
-    // the bar is Combat Tactics' and what rolled over (version 5).
-    Field(out, view.timed);
+    // The bar of time and what is left of it, in seconds (version 4), and a
+    // turn's own seconds, past which the bar is Combat Tactics' and what
+    // rolled over (version 5).
     Meters(out, static_cast<float>(view.timeLeftMs) / 1000.0f);
     Meters(out, static_cast<float>(view.timeMs) / 1000.0f);
     Meters(out, static_cast<float>(view.turnMs) / 1000.0f);

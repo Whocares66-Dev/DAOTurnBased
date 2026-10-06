@@ -19,7 +19,7 @@
 // Outside the game there is no plugin to ask, and it draws a sample fight,
 // so the look can be checked in any Flash player.
 
-var BAR_VERSION = 10;
+var BAR_VERSION = 11;
 var CARD = String.fromCharCode(30);
 var FIELD = String.fromCharCode(31);
 
@@ -113,8 +113,8 @@ var RANK_WORDS = ["", "", "", "a lieutenant", "a boss", "an elite boss"];
 // Flash player on its own, ExternalInterface is not available, or the
 // player is told to show the sample (the parameter sample=1, as
 // tools/snapshot.ps1 passes it).
-var inGame = flash.external.ExternalInterface.available && _root.sample != "1" && _root.sample != "time" &&
-             _root.sample != "many" && _root.sample != "more";
+var inGame = flash.external.ExternalInterface.available && _root.sample != "1" && _root.sample != "many" &&
+             _root.sample != "more";
 var lastView = null;
 var lastCards = null;
 var ticks = 0;
@@ -135,21 +135,19 @@ function sampleView()
 {
     // Each combatant once, the current first: the rest of round 2, then
     // round 3's up to the current (core/TurnOrder.h, Upcoming).
-    // With a turn a bar of time (sample=time): 3.1 s left of a bar of 5.5, a
-    // turn being 4.
-    var timed = _root.sample == "time" || _root.sample == "many" || _root.sample == "more" || _root.time == "1";
-    var head = timed ? [BAR_VERSION, 1, 2, 257, 1, 1, "14.4", "14.4", 1, "3.1", "5.5", "4.0", "0.0", 2, "1.0", 0]
-                     : [BAR_VERSION, 1, 2, 257, 1, 1, "9.0", "9.0", 0, "0.0", "0.0", "4.0", "0.0", 1, "0.0", 0];
+    // 3.1 s left of a bar of 5.5, a turn being 4. (Until issue 50 this was
+    // sample=time, and sample=1 a fight of one action and nine meters a turn,
+    // with no bar: that clock is gone, and its sample with it.)
+    var head = [BAR_VERSION, 1, 2, 257, 1, "14.4", "14.4", "3.1", "5.5", "4.0", "0.0", 2, "1.0", 0];
     if (_root.turn == "ai")
     {
         // Somebody else's turn (the parameter turn=ai): no End, no Delay.
         head[4] = 0;
-        head[13] = 0;
+        head[11] = 0;
     }
     var cards = [
         [257, 0, 0, 65, 0, 1, 1, 2, "Alistair", "gen00fl_alistair", "gui_portrait_09", 90, 0, "0.0"],
-        [513, 2, 2, 40, 0, 0, 0, 2, "Genlock", "g", "", 100, 0, timed ? "1.6" : "0.0", 0, timed ? 617 : -1,
-         timed ? "ico_shield_bash" : "", timed ? "Shield Bash" : ""],
+        [513, 2, 2, 40, 0, 0, 0, 2, "Genlock", "g", "", 100, 0, "1.6", 0, 617, "ico_shield_bash", "Shield Bash"],
         [258, 0, 0, 0, 1, 0, 1, 2, "Morrigan", "gen00fl_morrigan", "gui_portrait_49", 30, 1],
         [768, 1, 2, 90, 0, 0, 0, 2, "Soldier", "s", "gui_portrait_09", 80, 0, "0.0", 1],
         [514, 2, 3, 100, 0, 0, 0, 2, "Genlock Alpha", "a", "gui_portrait_49", 45, 0],
@@ -245,13 +243,15 @@ function parse(text)
     // The cards are every turn to come; the row is those the bar shows, a
     // row's worth from `before` on (version 9). The rest are read for what
     // is said of a creature with no card just now.
-    var before = Number(head[16]);
-    var shown = Number(head[17]);
+    // (Version 11, issue 50: the head without the actions left and whether
+    // the turn is a bar of time, which it always is.)
+    var before = Number(head[14]);
+    var shown = Number(head[15]);
     return {version: Number(head[0]), active: head[1] == "1", round: Number(head[2]), current: head[3],
-            playerTurn: head[4] == "1", actions: Number(head[5]), movementLeft: head[6], movementMax: head[7],
-            timed: head[8] == "1", timeLeft: head[9], time: head[10], turn: head[11], paid: Number(head[12]),
-            delay: Number(head[13]), rolled: Number(head[14]), paused: head[15] == "1", before: before, shown: shown,
-            after: Number(head[18]), notice: head[19] == undefined ? "" : head[19], cards: cards,
+            playerTurn: head[4] == "1", movementLeft: head[5], movementMax: head[6], timeLeft: head[7],
+            time: head[8], turn: head[9], paid: Number(head[10]), delay: Number(head[11]),
+            rolled: Number(head[12]), paused: head[13] == "1", before: before, shown: shown,
+            after: Number(head[16]), notice: head[17] == undefined ? "" : head[17], cards: cards,
             row: cards.slice(before, before + shown),
             rowText: records.slice(1 + before, 1 + before + shown).join(CARD)};
 }
@@ -871,11 +871,10 @@ function build(state)
     // as the row is moved.
     var rim = scrolls ? ARROW_GAP + ARROW_W + 6 : 16;
     panel(bar.createEmptyMovieClip("plate", 3), -rim, TOP - 14, width + 2 * rim, CARD_H + 34, 10);
-    // With a turn a bar of time, on the player's turn: the bar, and the
-    // caption under it.
+    // On the player's turn: the bar of its time, and the caption under it.
     var captionTop = TOP + CARD_H + 20;
     var barMiddle = width / 2;
-    if (state.timed && state.playerTurn)
+    if (state.playerTurn)
     {
         // Clear of "waits" under a card and of the current card's frame:
         // eight pixels higher the tip of the arrow the party's cards then
@@ -898,8 +897,8 @@ function build(state)
     strip._visible = false;
 }
 
-// With a turn a bar of time: the bar, the mod's own, under the medallions on
-// the player's turn. It is made of the game's experience bar's art (its dark
+// A turn's bar of time, the mod's own, under the medallions on the player's
+// turn. It is made of the game's experience bar's art (its dark
 // ground, CharacterRecord_I114, and its gold fill, _I117, a strip stretched
 // from the left; quickbar.gfx, read 2026-10-02), a fifth wider and half as
 // tall again, with a tick of its own at every second and a longer one where
@@ -1112,9 +1111,8 @@ function centreWord(field, top, height)
     field._y = top + (height - field.textHeight) / 2 - 2 - field.textHeight / 6;
 }
 
-// On the player's turn, the movement left, or with a turn a bar of time
-// (core: TurnBudget) the time left and how far it would walk; nothing on
-// anyone else's.
+// On the player's turn, the time left of its bar (core: TurnBudget) and how
+// far it would walk; nothing on anyone else's.
 // The creature under the cursor has an action pending: when it lands, in
 // its own time (the same words as its card's, under the pointer).
 function pendingOf(state)
@@ -1160,56 +1158,51 @@ function describe(state)
     {
         return "";
     }
-    if (state.timed)
+    var pending = pendingOf(state);
+    // What the cursor is on would cost, when the preview says; else what is
+    // left.
+    if (timeCost > 0)
     {
-        var pending = pendingOf(state);
-        // What the cursor is on would cost, when the preview says; else what
-        // is left.
-        if (timeCost > 0)
-        {
-            var after = Math.max(0, Number(state.timeLeft) - timeCost);
-            // The cost alone: with the creature's pending action after it
-            // the line was two thoughts and a third of the screen wide
-            // (play test 28). That is said when no order is priced.
-            return timeSpills ? "Costs " + tenths(timeCost) + " s: lands next turn"
-                              : "Costs " + tenths(timeCost) + " s, leaving " + tenths(after) + " s";
-        }
-        if (pending.length > 0)
-        {
-            return pending;
-        }
-        // Nothing left. With an action of its own pending, its walk is under
-        // way and the turn about to pass: no word. Else the turn waits, and
-        // says what can still be done: with 0.01 s left the bar stood dark
-        // and silent for half a minute (play test 29).
-        if (!(Number(state.timeLeft) > 0))
-        {
-            for (var mine = 0; mine < state.cards.length; mine++)
-            {
-                if (state.cards[mine].current && state.cards[mine].owed > 0)
-                {
-                    return "";
-                }
-            }
-            return "No time left: an action begun now lands next turn";
-        }
-        // A turn that began by paying for an action begun the turn before
-        // says so, while nothing else has been spent.
-        var paid = state.paid > 0 && Math.abs(Number(state.time) - state.paid - Number(state.timeLeft)) < 0.05;
-        // And one longer than a turn by what rolled over says that, while it
-        // is whole: a turn ended early gave the next 5.0 s with no word of
-        // why (play test 28).
-        var saved = state.rolled > 0 && Math.abs(Number(state.time) - Number(state.timeLeft)) < 0.05;
-        // The note stands with the seconds it is about, before the walk (the
-        // user, 2026-10-03, of "4.3 s left, 20.9 m to walk (0.3 s saved from
-        // last turn)": 'Should say "4.3 s left (0.3 s rollover); 20.9 m to
-        // walk"').
-        var note = paid ? tenths(state.paid) + " s paid for last turn's action"
-                        : saved ? tenths(state.rolled) + " s rollover" : "";
-        return note.length > 0 ? state.timeLeft + " s left (" + note + "); " + state.movementLeft + " m to walk"
-                               : state.timeLeft + " s left, " + state.movementLeft + " m to walk";
+        var after = Math.max(0, Number(state.timeLeft) - timeCost);
+        // The cost alone: with the creature's pending action after it the
+        // line was two thoughts and a third of the screen wide (play test
+        // 28). That is said when no order is priced.
+        return timeSpills ? "Costs " + tenths(timeCost) + " s: lands next turn"
+                          : "Costs " + tenths(timeCost) + " s, leaving " + tenths(after) + " s";
     }
-    return state.movementLeft + " of " + state.movementMax + " m to move";
+    if (pending.length > 0)
+    {
+        return pending;
+    }
+    // Nothing left. With an action of its own pending, its walk is under way
+    // and the turn about to pass: no word. Else the turn waits, and says
+    // what can still be done: with 0.01 s left the bar stood dark and silent
+    // for half a minute (play test 29).
+    if (!(Number(state.timeLeft) > 0))
+    {
+        for (var mine = 0; mine < state.cards.length; mine++)
+        {
+            if (state.cards[mine].current && state.cards[mine].owed > 0)
+            {
+                return "";
+            }
+        }
+        return "No time left: an action begun now lands next turn";
+    }
+    // A turn that began by paying for an action begun the turn before says
+    // so, while nothing else has been spent.
+    var paid = state.paid > 0 && Math.abs(Number(state.time) - state.paid - Number(state.timeLeft)) < 0.05;
+    // And one longer than a turn by what rolled over says that, while it is
+    // whole: a turn ended early gave the next 5.0 s with no word of why
+    // (play test 28).
+    var saved = state.rolled > 0 && Math.abs(Number(state.time) - Number(state.timeLeft)) < 0.05;
+    // The note stands with the seconds it is about, before the walk (the
+    // user, 2026-10-03, of "4.3 s left, 20.9 m to walk (0.3 s saved from last
+    // turn)": 'Should say "4.3 s left (0.3 s rollover); 20.9 m to walk"').
+    var note = paid ? tenths(state.paid) + " s paid for last turn's action"
+                    : saved ? tenths(state.rolled) + " s rollover" : "";
+    return note.length > 0 ? state.timeLeft + " s left (" + note + "); " + state.movementLeft + " m to walk"
+                           : state.timeLeft + " s left, " + state.movementLeft + " m to walk";
 }
 
 // Outside the game: a dark, uneven backdrop like a scene's, so the bar's
@@ -1258,8 +1251,8 @@ function draw(view)
     // or which arrows there are and what they count. Not for a card the row
     // does not show: every turn to come is in the string, and a blow on one
     // out of sight would load the row's portraits again.
-    var cards = state.rowText + (state.playerTurn ? "+" : "-") + state.delay + (state.timed ? "t" : "") +
-                state.round + "<" + state.before + ">" + state.after;
+    var cards = state.rowText + (state.playerTurn ? "+" : "-") + state.delay + state.round + "<" + state.before +
+                ">" + state.after;
     if (cards != lastCards)
     {
         lastCards = cards;
@@ -1298,11 +1291,8 @@ function samplePreview()
 {
     // Too far, which shows the most: in reach the line ends in the game's
     // own marker, which is the world's and not this movie's to draw.
-    // With a turn a bar of time (sample=time): what the order would cost,
-    // and that it fits.
-    var timed = _root.sample == "time" || _root.sample == "many" || _root.sample == "more" || _root.time == "1";
-    var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 2, "13.6", "6.5", 1, timed ? "1.9" : "0.0", 0, timed ? 513 : 0]
-                   .join(FIELD);
+    // And what the order would cost of the bar, and that it fits.
+    var head = [PREVIEW_VERSION, STAGE_W, STAGE_H, 2, "13.6", "6.5", 1, "1.9", 0, 513].join(FIELD);
     var reach = [300, 262, 470, 250, 560, 214, 640, 200].join(FIELD);
     var beyond = [640, 200, 720, 186, 800, 204, 900, 196].join(FIELD);
     return head + CARD + reach + CARD + beyond + CARD + sampleRing(640, 200, 15).join(FIELD) + CARD +

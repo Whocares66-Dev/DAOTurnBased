@@ -68,9 +68,9 @@ std::string ToJson(const MachineState &state)
         Text(out, Utf8(current->name));
         out += std::format(R"(,"side":"{}","yours":{}}})", Name(current->side), Bool(current->yours));
     }
-    out += std::format(R"(,"player_turn":{},"actions_left":{},"movement_left":{:.1f},"movement_max":{:.1f})",
-                       Bool(view.playerTurn), view.actionsLeft, view.movementLeft, view.movementMax);
-    out += std::format(R"(,"timed":{},"time_left_ms":{},"time_ms":{})", Bool(view.timed), view.timeLeftMs, view.timeMs);
+    out += std::format(R"(,"player_turn":{},"movement_left":{:.1f},"movement_max":{:.1f})", Bool(view.playerTurn),
+                       view.movementLeft, view.movementMax);
+    out += std::format(R"(,"time_left_ms":{},"time_ms":{})", view.timeLeftMs, view.timeMs);
     out += std::format(R"(,"can_delay":{},"rolled_ms":{},"player_paused":{})", Bool(view.canDelay), view.rolledMs,
                        Bool(state.playerPaused));
     out += std::format(R"(,"speed":{:.2f},"speed_took":{},"held_by_effect":{},"last_refusal":)", state.speed,
@@ -111,8 +111,8 @@ std::string ToJson(const MachineState &state)
         Id(out, held.id);
         out += R"(,"name":)";
         Text(out, Utf8(held.name));
-        out += std::format(R"(,"condition":"{}","turns_owed":{},"on_clock":{},"owed_ms":{}}})",
-                           ConditionName(held.seen), held.turnsOwed, Bool(held.onClock), held.owedMs);
+        out += std::format(R"(,"condition":"{}","on_clock":{},"owed_ms":{}}})", ConditionName(held.seen),
+                           Bool(held.onClock), held.owedMs);
     }
     out += R"(],"cooldowns":[)";
     for (std::size_t i = 0; i < state.cooldowns.size(); ++i)
@@ -120,8 +120,8 @@ std::string ToJson(const MachineState &state)
         const CooldownView &cooldown = state.cooldowns[i];
         out += i == 0 ? R"({"id":)" : R"(,{"id":)";
         Id(out, cooldown.id);
-        out += std::format(R"(,"ability":{},"turns":{},"of":{},"left_ms":{},"of_ms":{}}})", cooldown.ability,
-                           cooldown.turns, cooldown.of, cooldown.leftMs, cooldown.ofMs);
+        out +=
+            std::format(R"(,"ability":{},"left_ms":{},"of_ms":{}}})", cooldown.ability, cooldown.leftMs, cooldown.ofMs);
     }
     out += R"(],"charging":[)";
     for (std::size_t i = 0; i < state.charging.size(); ++i)
@@ -129,7 +129,7 @@ std::string ToJson(const MachineState &state)
         const ChargeView &charge = state.charging[i];
         out += i == 0 ? R"({"id":)" : R"(,{"id":)";
         Id(out, charge.id);
-        out += std::format(R"(,"ability":{},"turns":{},"owedMs":{}}})", charge.ability, charge.turns, charge.owedMs);
+        out += std::format(R"(,"ability":{},"owed_ms":{}}})", charge.ability, charge.owedMs);
     }
     out += "]}";
     return out;

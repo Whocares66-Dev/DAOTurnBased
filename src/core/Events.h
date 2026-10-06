@@ -38,11 +38,10 @@ enum class EventKind : std::uint8_t
     SettingsChanged,    // the settings were set anew (a reload, a tool)
     ConditionExpired,   // who: a hold ran out by itself, the machine not ending it
     ActionGivenBack,    // who: its command failed without acting; detail: how; command
-    CastCharging,       // who: a slow cast begun or a turn spent on it; value: the ability; detail: turns still to go
-    CastLanded,         // who: the charged cast is cast, at its turn's start; value: the ability
-    CastInterrupted,    // who: the charge is lost; value: the ability; detail: why
-    // With a turn a bar of time (Settings::turnClock): an action that did
-    // not fit what was left of its creature's bar.
+    // An action that did not fit what was left of its creature's bar. (Until
+    // issue 50 a cast that charged by turns, with one action a turn, had three
+    // events of its own before these: cast_charging, cast_landed and
+    // cast_interrupted, gone with that clock.)
     ActionPending, // who: begun, or a turn spent on it; detail: the time it still owes; command; value: its ability
     // (detail "turned on another", note whom: an attack given at the nearest
     // enemy in reach, its own target fallen.)
@@ -57,7 +56,7 @@ enum class EventKind : std::uint8_t
     // an action or a walk has played out and the turn goes on. What a
     // script playing the turn waits for, in place of reading the state
     // several times a second until its phase says so (issue 7).
-    AwaitingOrder, // who; detail: why it waits now; value: ms of its bar left (actions left without time); note: meters
+    AwaitingOrder, // who; detail: why it waits now; value: ms of its bar left; note: meters
 };
 
 // snake_case, as the bus's topics take it: "turn_started".

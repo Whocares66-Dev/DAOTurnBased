@@ -102,32 +102,6 @@ TEST_CASE("the same seed rolls the same fight", "[rules]")
     }
 }
 
-TEST_CASE("movement is meters, times speed under the speed rule, clamped", "[rules]")
-{
-    Settings settings;
-    settings.movementMeters = 9.0f;
-    settings.movementMin = 3.0f;
-    settings.movementMax = 20.0f;
-
-    settings.movementRule = tb::MovementRule::Speed;
-    CHECK(tb::MovementBudget(settings, 1.0f, 10.0f) == Approx(9.0f));
-    CHECK(tb::MovementBudget(settings, 1.3f, 10.0f) == Approx(11.7f)); // hasted
-    CHECK(tb::MovementBudget(settings, 0.2f, 10.0f) == Approx(3.0f));  // slowed to the floor
-    // Not a multiplier: read as normal.
-    CHECK(tb::MovementBudget(settings, 0.0f, 10.0f) == Approx(9.0f));
-    CHECK(tb::MovementBudget(settings, 100.0f, 10.0f) == Approx(9.0f));
-    CHECK(tb::MovementBudget(settings, std::numeric_limits<float>::quiet_NaN(), 10.0f) == Approx(9.0f));
-
-    settings.movementRule = tb::MovementRule::Constant;
-    CHECK(tb::MovementBudget(settings, 1.3f, 10.0f) == Approx(9.0f));
-
-    settings.movementPerDexterity = 0.1f;
-    CHECK(tb::MovementBudget(settings, 1.0f, 30.0f) == Approx(11.0f));
-    CHECK(tb::MovementBudget(settings, 1.0f, 5.0f) == Approx(9.0f)); // low Dexterity takes nothing away
-    settings.movementPerDexterity = 1.0f;
-    CHECK(tb::MovementBudget(settings, 1.0f, 40.0f) == Approx(20.0f));
-}
-
 TEST_CASE("a creature's pace is its appearance's combat speed against a person's", "[rules]")
 {
     // apr_base's Game_CbtSpeed, read 2026-09-30.
@@ -138,14 +112,6 @@ TEST_CASE("a creature's pace is its appearance's combat speed against a person's
     CHECK(tb::SpeedFactor(0.0f) == Approx(1.0f));
     CHECK(tb::SpeedFactor(-1.0f) == Approx(1.0f));
     CHECK(tb::SpeedFactor(std::numeric_limits<float>::quiet_NaN()) == Approx(1.0f));
-
-    tb::Settings settings;
-    settings.movementRule = tb::MovementRule::Speed;
-    CHECK(tb::MovementBudget(settings, tb::SpeedFactor(7.35f), 10.0f) == Approx(14.2f).epsilon(0.01));
-    CHECK(tb::MovementBudget(settings, tb::SpeedFactor(3.914f), 10.0f) == Approx(7.56f).epsilon(0.01));
-    // The flanking angle the mod once read as a speed would have been 60
-    // times a person's: not a multiplier, so a person's pace.
-    CHECK(tb::MovementBudget(settings, 60.0f, 10.0f) == Approx(9.0f));
 }
 
 namespace
@@ -540,12 +506,6 @@ TEST_CASE("haste and slows multiply a creature's pace", "[rules]")
     CHECK_FALSE(tb::IsMovementRate(0.0f));
     CHECK_FALSE(tb::IsMovementRate(-1.0f));
     CHECK_FALSE(tb::IsMovementRate(std::numeric_limits<float>::infinity()));
-
-    tb::Settings settings;
-    settings.movementRule = tb::MovementRule::Speed;
-    // A hasted person: 13.5 m; a hasted shriek is held at the maximum.
-    CHECK(tb::MovementBudget(settings, tb::SpeedFactor(4.66f) * tb::MovementRate(haste), 10.0f) == Approx(13.5f));
-    CHECK(tb::MovementBudget(settings, tb::SpeedFactor(7.35f) * tb::MovementRate(haste), 10.0f) == Approx(20.0f));
 }
 
 TEST_CASE("a creature's pace is its build's times every movement rate effect on it, of both kinds", "[rules][pace]")

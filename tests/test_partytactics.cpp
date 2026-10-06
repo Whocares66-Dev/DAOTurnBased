@@ -514,7 +514,9 @@ TEST_CASE("chosen for a companion, its turn is its tactics': told to choose, the
     // The turn is its AI's: what its tactics choose is let through, and End
     // and Delay are not offered on it.
     CHECK_FALSE(w.machine.View().delayOffered);
-    CHECK(w.Order(kCompanion, CommandType::Attack, Source::Script, 0.0f) == Verdict::Allow);
+    // (A swing of its whole bar: with time left it would be told to choose
+    // again.)
+    CHECK(w.Order(kCompanion, CommandType::Attack, Source::Script, 0.0f, 4.0f) == Verdict::Allow);
     w.Finish(kCompanion);
     w.RunFor(1200);
     CHECK(Lines(w, "Alistair's turn ends: done") == 1);
@@ -599,7 +601,7 @@ TEST_CASE("a choice taken back in a companion's own turn applies from its next: 
     CHECK_FALSE(w.machine.View().playerTurn);
     CHECK_FALSE(Card(w, kCompanion).yours);
     CHECK_FALSE(Card(w, kCompanion).tacticsPlay);
-    CHECK(w.Order(kCompanion, CommandType::Attack, Source::Script, 0.0f) == Verdict::Allow);
+    CHECK(w.Order(kCompanion, CommandType::Attack, Source::Script, 0.0f, 4.0f) == Verdict::Allow); // its whole bar
     w.Finish(kCompanion);
     w.RunFor(1200);
     CHECK(Lines(w, "Alistair's turn ends: done") == 1);
@@ -940,7 +942,6 @@ TEST_CASE("as built, the player's order in a turn a companion's tactics play is 
     // stays its tactics', which are told to choose again after it; and End
     // ends no turn the player does not play.
     Settings s = Fixed();
-    s.turnClock = TurnClock::Time;
     s.secondsPerTurn = 4.0f;
     s.paceMps = 5.0f;
     World w{s};

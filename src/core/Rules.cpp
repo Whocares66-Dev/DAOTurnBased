@@ -19,10 +19,11 @@ CommandKind Classify(CommandType type)
     case CommandType::UseItem:
     case CommandType::Fly:
         return CommandKind::Action;
-    // What is not fighting costs no action and does not end the turn (the
-    // user's rule, 2026-10-01: a door, and the like; action points will put
-    // a price on these): a door, a chest or a lever used, a lock, a thing
-    // handed over or picked up. The walk to it is movement all the same.
+    // What is not fighting is no action and does not end the turn (the
+    // user's rule, 2026-10-01: a door, and the like): a door, a chest or a
+    // lever used, a lock, a thing handed over or picked up. It costs its own
+    // seconds of the bar ([costs] object), and the walk to it is movement
+    // all the same.
     case CommandType::UseObject:
     case CommandType::Interact:
     case CommandType::Lock:
@@ -267,22 +268,6 @@ ObjectId NearestInReach(std::span<const Foe> foes)
         }
     }
     return nearest != nullptr ? nearest->id : kNoObject;
-}
-
-float MovementBudget(const Settings &settings, float speedModifier, float dexterity)
-{
-    float meters = settings.movementMeters;
-    if (settings.movementRule == MovementRule::Speed)
-    {
-        // A multiplier on a person's pace: an appearance's speed against a
-        // person's, times Haste's 1.3 or a slow's 0.5 (Pace). A value no
-        // multiplier would be (0, a negative, something huge) is read as
-        // "normal".
-        const bool sensible = std::isfinite(speedModifier) && speedModifier >= 0.1f && speedModifier <= 5.0f;
-        meters *= sensible ? speedModifier : 1.0f;
-    }
-    meters += std::max(0.0f, dexterity - 10.0f) * settings.movementPerDexterity;
-    return std::clamp(meters, settings.movementMin, settings.movementMax);
 }
 
 bool IsMovementRate(float potency)

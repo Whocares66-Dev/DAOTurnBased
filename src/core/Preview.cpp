@@ -183,7 +183,7 @@ std::wstring EncodeNoPreview(const OrderCost &cost, ObjectId over)
 
 OrderCost CostOf(const TurnView &view, float walkMeters, float actionSeconds)
 {
-    if (!view.timed || !(view.paceMps > 0.0f))
+    if (!(view.paceMps > 0.0f))
     {
         return {};
     }

@@ -55,12 +55,6 @@ const char *Name(EventKind kind)
         return "condition_expired";
     case EventKind::ActionGivenBack:
         return "action_given_back";
-    case EventKind::CastCharging:
-        return "cast_charging";
-    case EventKind::CastLanded:
-        return "cast_landed";
-    case EventKind::CastInterrupted:
-        return "cast_interrupted";
     case EventKind::ActionPending:
         return "action_pending";
     case EventKind::ActionLanded:
@@ -132,7 +126,7 @@ EventDescription Describe(EventKind kind)
         return {"A held creature's turn was taken at once (a turn_ended follows).",
                 true,
                 nullptr,
-                "turns it still owes",
+                "milliseconds of its time it still owes",
                 nullptr,
                 nullptr};
     case EventKind::Refused:
@@ -169,14 +163,14 @@ EventDescription Describe(EventKind kind)
                 nullptr,
                 nullptr};
     case EventKind::ConditionHeld:
-        return {"A stun, pin, knockdown, paralysis or sleep holds a creature: it loses turns.",
+        return {"A stun, pin, knockdown, paralysis or sleep holds a creature: it costs it its time.",
                 true,
-                nullptr,
-                "turns it costs (0: as long as it lasts)",
+                "where its time is from: its seconds, or condition_turns",
+                "milliseconds of its time it costs (0: as long as it lasts)",
                 nullptr,
                 nullptr};
     case EventKind::ConditionEnded:
-        return {"A condition's turns are spent: the mod ends it at the creature's turn, and it acts.",
+        return {"A condition's time is paid: the mod ends it at the creature's turn, and it acts.",
                 true,
                 nullptr,
                 nullptr,
@@ -192,19 +186,19 @@ EventDescription Describe(EventKind kind)
     case EventKind::ConditionExpired:
         return {"A condition ended by itself.",
                 true,
-                "ran out (on the clock: the turns it owes stand) or taken off (a cure: they are given back)",
+                "ran out (on the clock: the time it owes stands) or taken off (a cure: it is given back)",
                 nullptr,
                 nullptr,
                 nullptr};
     case EventKind::CooldownHeld:
-        return {"An ability used is held on cooldown for its user's turns.",
+        return {"An ability used is held on cooldown, its seconds to run on its user's clock.",
                 true,
-                "how many turns",
+                "its seconds",
                 "the ability",
                 nullptr,
                 nullptr};
     case EventKind::CooldownReleased:
-        return {"An ability held on cooldown is ready again, as its user's turn begins.",
+        return {"An ability held on cooldown is ready again: its seconds have run on its user's clock.",
                 true,
                 nullptr,
                 "the ability",
@@ -241,29 +235,8 @@ EventDescription Describe(EventKind kind)
                 nullptr,
                 "the command",
                 "of an attack refused before a step, whom it was at"};
-    case EventKind::CastCharging:
-        return {"A slow cast charges: begun (its action spent, its turn over), or a turn of its caster's spent on it.",
-                true,
-                "the turns still to go before it is cast, as text",
-                "the ability",
-                nullptr,
-                nullptr};
-    case EventKind::CastLanded:
-        return {"A charged cast is cast, at the start of its caster's turn; the caster then has its turn.",
-                true,
-                nullptr,
-                "the ability",
-                nullptr,
-                nullptr};
-    case EventKind::CastInterrupted:
-        return {"A charging cast is lost: nothing spent, nothing on cooldown.",
-                true,
-                "why: held (a stun, a knockdown, paralysis, sleep), fell, gone, the fight over",
-                "the ability",
-                nullptr,
-                nullptr};
     case EventKind::ActionPending:
-        return {"With a turn a bar of time: an action did not fit what was left of its creature's bar. It is kept, "
+        return {"An action did not fit what was left of its creature's bar. It is kept, "
                 "its creature walks to where it can do it, and it lands as a later turn has paid what it owes; or "
                 "a whole turn was spent on what it owes.",
                 true,
@@ -306,7 +279,7 @@ EventDescription Describe(EventKind kind)
                 true,
                 "why it waits now: the turn is its player's, after its action, the order queued no command, the "
                 "order was refused",
-                "milliseconds of its bar left with a turn a bar of time; the actions left without",
+                "milliseconds of its bar left",
                 nullptr,
                 "the movement left, in meters"};
     }

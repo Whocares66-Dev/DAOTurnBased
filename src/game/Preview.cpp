@@ -512,7 +512,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     // target can be reached this turn, red if not, before the player
     // clicks"). Over anything else that is an object (a door, a chest, a
     // friend) the click is no walk the preview knows, and nothing is drawn.
-    const ObjectId target = object && view.actionsLeft > 0 && api::GetObjectType(*object) == k::OBJECT_TYPE_CREATURE &&
+    const ObjectId target = object && view.timeLeftMs > 0 && api::GetObjectType(*object) == k::OBJECT_TYPE_CREATURE &&
                                     api::IsDead(*object) == 0 && api::IsObjectHostile(view.current, *object) != 0
                                 ? *object
                                 : kNoObject;
@@ -531,7 +531,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     {
         searched_ = false;
         path_.clear();
-        ShowCost(CostOf(view, 0.0f, view.timed ? AbilitySecondsOf(view.current, aim->ability) : 0.0f));
+        ShowCost(CostOf(view, 0.0f, AbilitySecondsOf(view.current, aim->ability)));
         return;
     }
     std::optional<dao::Vector> point;
@@ -607,7 +607,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
         {
             // In reach where it stands: no walk to show; with a turn a bar
             // of time, what the swing would cost.
-            ShowCost(CostOf(view, walk, view.timed ? AttackSeconds(view.current) : 0.0f));
+            ShowCost(CostOf(view, walk, AttackSeconds(view.current)));
             return;
         }
     }
@@ -625,7 +625,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     // With a turn a bar of time, what the order would cost: a move its walk,
     // an attack its walk and its swing; nothing for one too far, which is
     // refused.
-    if (view.timed && !split.TooFar())
+    if (!split.TooFar())
     {
         const OrderCost cost = CostOf(view, walk, attack ? AttackSeconds(view.current) : 0.0f);
         shown.cost = cost.seconds;

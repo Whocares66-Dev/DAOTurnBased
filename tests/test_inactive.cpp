@@ -51,7 +51,6 @@ namespace
 Settings WithABar()
 {
     Settings s = Fixed();
-    s.turnClock = TurnClock::Time;
     s.secondsPerTurn = 4.0f;
     s.paceMps = 5.0f;
     s.freeStepMeters = 1.0f;
@@ -103,14 +102,16 @@ int UntilTurnOf(World &w, ObjectId id, int most = 2000)
     return -1;
 }
 
-// Everyone but the party passes when told, and each telling is counted.
+// Everyone but the party passes when told, and each telling is counted. (By a
+// wait of no length, which is a pass: one of two seconds would take two of
+// its bar's four, and its creature be told to choose again.)
 struct Tellings
 {
     explicit Tellings(World &w)
     {
         w.onPoke = [this, &w](ObjectId id) {
             who.push_back(id);
-            (void)w.Wait(id, 2.0f);
+            (void)w.Wait(id, 0.0f);
         };
     }
     [[nodiscard]] int Of(ObjectId id) const

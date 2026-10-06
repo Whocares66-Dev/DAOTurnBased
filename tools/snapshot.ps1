@@ -26,8 +26,8 @@ param(
     [int] $Width = 1280,
     [int] $Height = 720,
     [int] $Seconds = 3,
-    # The movie's sample: 1, the fight as built; time, with a turn a bar of time;
-    # many, ten in the bar; more, fourteen, more than its row holds.
+    # The movie's sample: 1, a fight of seven; many, ten in the bar; more,
+    # fourteen, more than its row holds.
     [string] $Sample = '1',
     # More of the movie's parameters, each name=value: first=2 (the row's first
     # place, with -Sample more), turn=ai (somebody else's turn: no End, no Delay),

@@ -77,11 +77,6 @@ class Rng
 // rank of Survival.
 [[nodiscard]] int RollInitiative(Rng &rng, float dexterity, const Settings &settings, int survival = 0);
 
-// Meters a combatant may move in one turn. speedModifier is how fast it
-// moves against a person (Pace below: its build's pace times its Haste and
-// slows); anything not a sensible multiplier counts as 1.
-[[nodiscard]] float MovementBudget(const Settings &settings, float speedModifier, float dexterity);
-
 // A person's combat move speed, meters a second: the appearance table's
 // Game_CbtSpeed for humans, elves, dwarves, genlocks and hurlocks (apr_base,
 // read 2026-09-30).
@@ -115,21 +110,16 @@ inline constexpr float kPersonCombatSpeed = 4.66f;
 // The pace a turn's meters are made from, against a person's: the creature's
 // build (SpeedFactor) times its movement rate effects (MovementRate).
 //
-// With a turn a bar of time it is what a second of the bar walks
-// (Settings::paceMps times it), and it is the creature's pace as it is now:
-// read as the turn begins and again with every look at everyone in it, so
-// that what is left to walk is the time left times the pace now
-// (TurnMachine::FollowPace; issue 49). It was one pace a turn at first, read
-// as the turn began; the user, 2026-10-05, of reading it again within the
-// turn: "I think that would be more accurate". The bar is the same length
-// hasted or not, and what is hasted is what a thing costs of it: the user,
-// the same day, "keeping the bar constant and reducing the cost makes
-// sense. I think that also fits better mechanically".
-//
-// As built (one action and meters of movement) it is one pace a turn, read
-// as the turn begins (MovementBudget): the meters are an allowance of their
-// own there, and a pace that changed within a turn would want a second rule
-// for the meters already walked.
+// It is what a second of the turn's bar walks (Settings::paceMps times it),
+// and it is the creature's pace as it is now: read as the turn begins and
+// again with every look at everyone in it, so that what is left to walk is
+// the time left times the pace now (TurnMachine::FollowPace; issue 49). It
+// was one pace a turn at first, read as the turn began; the user,
+// 2026-10-05, of reading it again within the turn: "I think that would be
+// more accurate". The bar is the same length hasted or not, and what is
+// hasted is what a thing costs of it: the user, the same day, "keeping the
+// bar constant and reducing the cost makes sense. I think that also fits
+// better mechanically".
 [[nodiscard]] float Pace(float build, const MovementEffects &effects);
 
 // Where the party is: where its living members are (issue 42).
@@ -396,9 +386,8 @@ struct Foe
 // its turn paid for it given back.
 [[nodiscard]] ObjectId NearestInReach(std::span<const Foe> foes);
 
-// How long things take, with a turn a bar of time (Settings::turnClock,
-// dev/REBALANCE.md, "Current specification": every action costs its own
-// time).
+// How long things take, a turn being a bar of time (dev/REBALANCE.md,
+// "Current specification": every action costs its own time).
 //
 // A melee swing is the game's own formula (CalculateAttackTiming, core_h.nss,
 // read 2026-10-02): a base by weapon style (BASE_TIMING_*: 2.0 s one weapon,

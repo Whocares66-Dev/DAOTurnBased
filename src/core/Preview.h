@@ -107,9 +107,9 @@ struct PreviewView
     ObjectId over = kNoObject;
 };
 
-// With a turn a bar of time, what an order would cost of the current
-// creature's bar: its walk at the creature's pace, after the meters that
-// cost nothing, and its action's own seconds. Nothing as built.
+// What an order would cost of the current creature's bar: its walk at the
+// creature's pace, after the meters that cost nothing, and its action's own
+// seconds. Nothing between two turns, when there is no bar.
 struct OrderCost
 {
     float seconds = 0;

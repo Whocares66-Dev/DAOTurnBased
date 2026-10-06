@@ -60,10 +60,12 @@ TEST_CASE("the machine's state says whose turn, what is held and what cools down
     CHECK(json.find(R"("current":{"id":"0x100","name":"Hero","side":"party","yours":true})") != std::string::npos);
     CHECK(json.find(R"("player_turn":true)") != std::string::npos);
     CHECK(json.find(R"({"id":"0x100","name":"Hero","side":"party")") != std::string::npos);
-    CHECK(json.find(R"("held":[{"id":"0x200","name":"Genlock","condition":"disabled","turns_owed":1)") !=
-          std::string::npos);
+    // A hold whose seconds were not read: a turn's worth of its time. And the
+    // talent's 20 s, none of them passed as it ends.
     CHECK(json.find(
-              R"("cooldowns":[{"id":"0x100","ability":617,"turns":2,"of":2,"left_ms":0,"of_ms":0}],"charging":[]})") !=
+              R"("held":[{"id":"0x200","name":"Genlock","condition":"disabled","on_clock":false,"owed_ms":4000}])") !=
+          std::string::npos);
+    CHECK(json.find(R"("cooldowns":[{"id":"0x100","ability":617,"left_ms":20000,"of_ms":20000}],"charging":[]})") !=
           std::string::npos);
     CHECK(json.ends_with("]}"));
 }

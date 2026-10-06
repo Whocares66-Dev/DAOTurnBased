@@ -1,11 +1,9 @@
 // Haste and slows in a turn's meters (issue 49), driven through scripted
 // fights in the stand-in for the game (World.h): the pace a turn's meters are
-// made from is its creature's build times its movement rate effects. With a
-// turn a bar of time it is the pace as it is now: as the turn begins, and
-// from each look at everyone in it, so that what is left to walk is the time
-// left times the pace now. As built (one action and meters) it is one pace a
-// turn, as the turn begins. And the log says what was read, and what it came
-// to.
+// made from is its creature's build times its movement rate effects. It is
+// the pace as it is now: as the turn begins, and from each look at everyone
+// in it, so that what is left to walk is the time left times the pace now.
+// And the log says what was read, and what it came to.
 //
 // The game's own figures, from its scripts (read 2026-10-05): a Swift Salve
 // 1.2 and Haste 1.3, each an EFFECT_TYPE_MOVEMENT_RATE; a caltrop trap 0.6
@@ -41,7 +39,6 @@ constexpr float kGrease = 0.5f;
 Settings Timed()
 {
     Settings s = Fixed();
-    s.turnClock = TurnClock::Time;
     s.secondsPerTurn = 4.0f;
     s.paceMps = 5.0f;
     s.freeStepMeters = 1.0f;
@@ -404,141 +401,32 @@ TEST_CASE("with time, an AI slowed in its own action is told to choose again wit
           At(w, "Genlock chooses again: 2.50 s and 8.5 m left"));
 }
 
-TEST_CASE("as built, a turn's meters are its creature's pace as the turn begins: Haste, a salve, a slow", "[pace]")
-{
-    World w; // one action and 9 m a turn for a person
-    w.StartFight();
-    REQUIRE(w.Current() == kHero);
-    CHECK(w.machine.View().movementMax == 9.0f);
-
-    UntilNotTurnOf(w, kHero);
-    w.Get(kHero).movement.rates = {kSalve};
-    UntilTurnOf(w, kHero);
-    CHECK(w.machine.View().movementMax == Approx(10.8f));
-    CHECK(w.machine.View().movementLeft == Approx(10.8f));
-
-    UntilNotTurnOf(w, kHero);
-    w.Get(kHero).movement.rates = {kSalve, kHaste};
-    UntilTurnOf(w, kHero);
-    CHECK(w.machine.View().movementMax == Approx(14.04f));
-
-    // She may walk that far and no further.
-    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Allow);
-    w.Frame();
-    const float walked = WalkOn(w, kHero, 40.0f);
-    CHECK(w.Said(L"Out of movement"));
-    CHECK(walked > 13.9f);
-    CHECK(walked < 14.04f + TurnMachine::kOvershoot + 0.3f);
-
-    // Grease alone: half her meters.
-    UntilNotTurnOf(w, kHero);
-    w.Get(kHero).movement.rates.clear();
-    w.Get(kHero).movement.debuffs = {kGrease};
-    UntilTurnOf(w, kHero);
-    CHECK(w.machine.View().movementMax == Approx(4.5f));
-
-    // And as she was when it ends.
-    UntilNotTurnOf(w, kHero);
-    w.Get(kHero).movement.debuffs.clear();
-    UntilTurnOf(w, kHero);
-    CHECK(w.machine.View().movementMax == 9.0f);
-}
-
-TEST_CASE("as built, an effect put on or ended within a turn counts from its creature's next turn", "[pace]")
-{
-    // One action and meters of movement: the meters are an allowance of
-    // their own, made once as the turn begins, though everyone is looked at
-    // again after the action.
-    World w;
-    w.StartFight();
-    REQUIRE(w.Current() == kHero);
-    const TurnView began = w.machine.View();
-
-    // She drinks the salve: an action of her turn, and the effect is on her
-    // as it ends.
-    const int looks = w.statusReads;
-    CHECK(w.Order(kHero, CommandType::UseItem, Source::Player, std::nullopt, 1.0f) == Verdict::Allow);
-    w.RunFor(300);
-    w.Get(kHero).movement.rates = {kSalve};
-    w.Finish(kHero);
-    w.RunFor(600);
-    REQUIRE(w.Current() == kHero);
-    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.statusReads > looks); // the machine has looked since
-    CHECK(w.machine.View().movementMax == began.movementMax);
-    CHECK_FALSE(Logged(w, "a person's pace"));
-
-    // Her next turn has it.
-    UntilTurnOf(w, kHero);
-    CHECK(w.machine.View().movementMax == Approx(10.8f));
-    CHECK(Lines(w, "Hero moves at 1.20 a person's pace this turn (10.8 m to move): 1.00 from its build, 1.20 from "
-                   "haste or slows (1.00 at its last turn)") == 1);
-
-    // It runs out in the middle of that turn: the turn keeps its meters.
-    w.Get(kHero).movement.rates.clear();
-    CHECK(w.Order(kHero, CommandType::UseItem, Source::Player, std::nullopt, 1.0f) == Verdict::Allow);
-    w.RunFor(300);
-    w.Finish(kHero);
-    w.RunFor(600);
-    REQUIRE(w.Current() == kHero);
-    CHECK(w.machine.View().movementMax == Approx(10.8f));
-    // And the one after is her own again.
-    UntilTurnOf(w, kHero);
-    CHECK(w.machine.View().movementMax == 9.0f);
-    CHECK_FALSE(Logged(w, "from now in this turn"));
-}
-
 TEST_CASE("an enemy slowed in the middle of a fight has fewer meters from its next turn, and its build still counts",
           "[pace]")
 {
-    for (const bool timed : {false, true})
-    {
-        CAPTURE(timed);
-        // The genlock a shriek for its pace: 1.5 a person's by its build.
-        std::vector<Creature> fight = StandardFight();
-        fight[1].speed = 1.5f;
-        World w(timed ? Timed() : Fixed(), fight);
-        w.StartFight();
-        UntilTurnOf(w, kGenlock);
-        if (timed)
-        {
-            CHECK(w.machine.View().paceMps == Approx(7.5f));
-        }
-        else
-        {
-            CHECK(w.machine.View().movementMax == Approx(13.5f));
-        }
-        // Its build alone is not said as a pace of this turn's: it is what
-        // it always moves at.
-        CHECK_FALSE(Logged(w, "Genlock moves at"));
+    // The genlock a shriek for its pace: 1.5 a person's by its build.
+    std::vector<Creature> fight = StandardFight();
+    fight[1].speed = 1.5f;
+    World w(Timed(), fight);
+    w.StartFight();
+    UntilTurnOf(w, kGenlock);
+    CHECK(w.machine.View().paceMps == Approx(7.5f));
+    // Its build alone is not said as a pace of this turn's: it is what it
+    // always moves at.
+    CHECK_FALSE(Logged(w, "Genlock moves at"));
 
-        // It walks onto the hero's caltrop trap in her turn, and stays in it.
-        UntilNotTurnOf(w, kGenlock);
-        w.Get(kGenlock).movement.debuffs = {kCaltrops};
-        UntilTurnOf(w, kGenlock);
-        if (timed)
-        {
-            CHECK(w.machine.View().paceMps == Approx(4.5f)); // 5 m/s, 1.5 its build, 0.6 the trap
-        }
-        else
-        {
-            CHECK(w.machine.View().movementMax == Approx(8.1f));
-        }
-        CHECK(Logged(w, "Genlock moves at 0.90 a person's pace this turn"));
-        CHECK(Logged(w, "1.50 from its build, 0.60 from haste or slows (1.00 at its last turn)"));
+    // It walks onto the hero's caltrop trap in her turn, and stays in it.
+    UntilNotTurnOf(w, kGenlock);
+    w.Get(kGenlock).movement.debuffs = {kCaltrops};
+    UntilTurnOf(w, kGenlock);
+    CHECK(w.machine.View().paceMps == Approx(4.5f)); // 5 m/s, 1.5 its build, 0.6 the trap
+    CHECK(Logged(w, "Genlock moves at 0.90 a person's pace this turn"));
+    CHECK(Logged(w, "1.50 from its build, 0.60 from haste or slows (1.00 at its last turn)"));
 
-        // The hero, whom nothing slows, is as she was all along.
-        UntilTurnOf(w, kHero);
-        if (timed)
-        {
-            CHECK(w.machine.View().paceMps == 5.0f);
-        }
-        else
-        {
-            CHECK(w.machine.View().movementMax == 9.0f);
-        }
-        CHECK_FALSE(Logged(w, "Hero moves at"));
-    }
+    // The hero, whom nothing slows, is as she was all along.
+    UntilTurnOf(w, kHero);
+    CHECK(w.machine.View().paceMps == 5.0f);
+    CHECK_FALSE(Logged(w, "Hero moves at"));
 }
 
 TEST_CASE("one on its way out of the fight has its turn at the pace it has then", "[pace]")
@@ -549,31 +437,20 @@ TEST_CASE("one on its way out of the fight has its turn at the pace it has then"
     // turn of its that comes before it is gone is made like anyone's, of the
     // Haste and slows the look at everyone read on it (the random fights
     // with strays, seed 16, 2026-10-05).
-    for (const bool timed : {false, true})
-    {
-        CAPTURE(timed);
-        World w(timed ? Timed() : Fixed());
-        w.StartFight();
-        REQUIRE(w.Current() == kHero);
-        Creature &genlock = w.Get(kGenlock);
-        genlock.fighting = false;
-        genlock.perception = Unperceived();
-        genlock.movement.debuffs = {kCaltrops};
-        w.onPoke = [](ObjectId) {}; // its AI is waited on: the turn stands
-        (void)w.machine.OnEndTurn();
-        w.RunFor(100);
-        REQUIRE(w.Current() == kGenlock);
-        REQUIRE(Logged(w, "Genlock's turn (enemy, AI)"));
-        if (timed)
-        {
-            CHECK(w.machine.View().paceMps == Approx(3.0f));
-        }
-        else
-        {
-            CHECK(w.machine.View().movementMax == Approx(5.4f));
-        }
-        CHECK(Logged(w, "Genlock moves at 0.60 a person's pace this turn"));
-    }
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    Creature &genlock = w.Get(kGenlock);
+    genlock.fighting = false;
+    genlock.perception = Unperceived();
+    genlock.movement.debuffs = {kCaltrops};
+    w.onPoke = [](ObjectId) {}; // its AI is waited on: the turn stands
+    (void)w.machine.OnEndTurn();
+    w.RunFor(100);
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(Logged(w, "Genlock's turn (enemy, AI)"));
+    CHECK(w.machine.View().paceMps == Approx(3.0f));
+    CHECK(Logged(w, "Genlock moves at 0.60 a person's pace this turn"));
 }
 
 TEST_CASE("one that joins in the middle of a fight has its first turn at the pace it has", "[pace]")
@@ -635,22 +512,6 @@ TEST_CASE("[turns] pace changed in a turn is the next turn's, whatever its creat
     CHECK(w.machine.View().paceMps == Approx(6.0f));
     UntilTurnOf(w, kHero);
     CHECK(w.machine.View().paceMps == Approx(12.0f));
-}
-
-TEST_CASE("under [movement] rule = constant, as built, no pace counts, and the log says so", "[pace]")
-{
-    Settings s = Fixed();
-    s.movementRule = MovementRule::Constant;
-    World w(s);
-    w.StartFight();
-    REQUIRE(w.Current() == kHero);
-    CHECK(w.machine.View().movementMax == 9.0f);
-    UntilNotTurnOf(w, kHero);
-    w.Get(kHero).movement.rates = {kHaste};
-    UntilTurnOf(w, kHero);
-    CHECK(w.machine.View().movementMax == 9.0f);
-    CHECK(Logged(w, "Hero moves at 1.30 a person's pace this turn (9.0 m to move all the same: [movement] rule = "
-                    "constant)"));
 }
 
 TEST_CASE("a turn's pace is said once as it begins while Haste or a slow changes it, and once more as they end",

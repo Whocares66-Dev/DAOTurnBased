@@ -19,8 +19,7 @@
 //   - a wait that ends the turn is the last thing of its creature's judged
 //     in it: said once, and what its script or the engine queues on it while
 //     the turn settles is refused (test_time.cpp has the turn from play);
-//   - a turn the player plays is untouched, and so is a turn of one action
-//     and its meters (`clock = actions`).
+//   - a turn the player plays is untouched.
 #include "World.h"
 
 #include "core/TurnMachine.h"
@@ -45,7 +44,6 @@ namespace
 Settings Timed()
 {
     Settings s = Fixed();
-    s.turnClock = TurnClock::Time;
     s.secondsPerTurn = 5.0f;
     s.paceMps = 5.0f;
     s.freeStepMeters = 1.0f;
@@ -308,21 +306,4 @@ TEST_CASE("with time and party = tactics, a companion's turn is its AI's, and it
     CHECK(companionsBar == std::vector<std::uint32_t>{3000, 1000, 1000});
     CHECK(Logged(w, "Alistair waits 2.00 s; 3.00 s and"));
     CHECK(Logged(w, "Alistair's turn ends: waits"));
-}
-
-TEST_CASE("with a turn one action and its meters, a wait passes the turn whatever its length", "[machine][wait]")
-{
-    World w; // clock = actions
-    int pokes = 0;
-    w.onPoke = [&](ObjectId id) {
-        ++pokes;
-        CHECK(w.Wait(id, 2.0f) == Verdict::Block);
-    };
-    EndTheHerosTurn(w);
-    CHECK(pokes == 1);
-    CHECK(w.Current() == kCompanion);
-    CHECK(Logged(w, "Genlock's turn ends: waits"));
-    // Nothing is said of time where a turn has none.
-    CHECK_FALSE(Logged(w, "Genlock waits"));
-    CHECK_FALSE(Logged(w, "Genlock's wait"));
 }

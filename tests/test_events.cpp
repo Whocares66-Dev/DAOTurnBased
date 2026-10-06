@@ -71,13 +71,14 @@ TEST_CASE("a fight's events come in the order a test asserts on", "[events]")
     CHECK(kinds[3] == "awaiting_order");
     CHECK(events[3].who == kHero);
     CHECK(events[3].detail == "the turn is its player's");
-    CHECK(events[3].note == "9.0 m");
+    CHECK(events[3].value == 4000); // of its bar left, in milliseconds
+    CHECK(events[3].note == "21.0 m");
     // An order refused while it waits says so by its own event, and the turn
     // still waits: no second awaiting_order.
     CHECK(kinds[4] == "refused");
     CHECK(events[4].detail == "Too far");
     CHECK(events[4].command == "attack");
-    CHECK(events[4].note == "30.0 m to walk, 9.0 m left");
+    CHECK(events[4].note == "30.0 m to walk, 21.0 m left");
     CHECK(kinds[5] == "turn_ended");
     CHECK(events[5].detail == "ended by the player");
     CHECK(std::ranges::count(kinds, std::string{"fell"}) == 2);
