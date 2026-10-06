@@ -90,7 +90,7 @@ foreach ($running in @(Get-Process -Name DAOrigins -ErrorAction SilentlyContinue
 # while one stands that is not this caller's, nothing is copied or taken out. -Owner says who
 # is deploying. The old name too, which a bridge started before the shared name still writes.
 $claimFolder = Join-Path $Documents 'daolib'
-foreach ($claimFile in @((Join-Path $claimFolder 'game.claim.json'), (Join-Path $claimFolder 'eluvian.claim.json'))) {
+foreach ($claimFile in @(Join-Path $claimFolder 'game.claim.json')) {
     if (Test-Path $claimFile) {
         try {
             $claim = Get-Content $claimFile -Raw | ConvertFrom-Json
