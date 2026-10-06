@@ -44,14 +44,12 @@ auto Lines(const World &w, std::string_view text)
 
 // The standard fight with everyone given a place: the party to the west, the
 // two enemies three meters east of them, each side two meters apart.
-World Placed()
+void Place(World &w)
 {
-    World w;
     w.Get(kHero).position = Vec3{0.0f, 0.0f, 0.0f};
     w.Get(kCompanion).position = Vec3{0.0f, 2.0f, 0.0f};
     w.Get(kGenlock).position = Vec3{3.0f, 0.0f, 0.0f};
     w.Get(kHurlock).position = Vec3{3.0f, 2.0f, 0.0f};
-    return w;
 }
 
 // The genlock made a big creature: whoever strikes at it is aimed by the
@@ -125,7 +123,8 @@ TEST_CASE("the player's attack at one the engine would not turn her to: faced at
           "said, and counted for the fight's end",
           "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     w.Stall(kHero, kGenlock, 1.5f);
@@ -153,7 +152,8 @@ TEST_CASE("at whatever angle, and either way round: the dead case is the engine'
     // faced twice as it stood could have been left; and a long way round.
     for (const float off : {1.02f, -1.02f, 3.95f, -6.5f, 40.0f, -170.0f})
     {
-        World w = Placed();
+        World w;
+        Place(w);
         w.StartFight();
         w.Stall(kHero, kGenlock, off);
         REQUIRE(w.Attack(kHero, kGenlock, Source::Player) == Verdict::Allow);
@@ -169,7 +169,8 @@ TEST_CASE("one the engine would turn is left to its turn, however little it is o
 {
     for (const float off : {1.02f, -1.5f, 3.95f, 30.0f, 179.0f})
     {
-        World w = Placed();
+        World w;
+        Place(w);
         w.StartFight();
         // Off its target, and its movement controller with a turn to make.
         w.FaceOff(kHero, kGenlock, off);
@@ -187,7 +188,8 @@ TEST_CASE("one the engine has for facing its target is given its attack as it st
 {
     for (const float off : {0.0f, 0.5f, -0.9f})
     {
-        World w = Placed();
+        World w;
+        Place(w);
         w.StartFight();
         // Its controller as dead as can be: with the creature facing, the
         // engine asks no turn of anyone.
@@ -206,7 +208,8 @@ TEST_CASE("one the engine has for facing its target is given its attack as it st
 
 TEST_CASE("the rule is on the engine's word that the turn would stall, and on nothing else of its answer", "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     CHECK(w.machine.FaceFirst(HerAttack(TurnToFace{1.02f, false, true}), Verdict::Allow));
@@ -224,7 +227,8 @@ TEST_CASE("the rule is on the engine's word that the turn would stall, and on no
 TEST_CASE("an ability aimed at another is as an attack: faced first; one aimed at nobody, or at its user, is not",
           "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     w.Stall(kHero, kGenlock, 2.0f);
@@ -262,7 +266,8 @@ TEST_CASE("an ability aimed at another is as an attack: faced first; one aimed a
 
 TEST_CASE("a command that turns its creature to nobody is not the rule's, whatever turn comes with it", "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     // A walk to someone, a stalled turn given all the same (the gate asks
@@ -276,7 +281,8 @@ TEST_CASE("a command that turns its creature to nobody is not the rule's, whatev
 
 TEST_CASE("a command refused or kept is not given, and its creature is not turned for it", "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     CommandRequest attack = HerAttack(TurnToFace{1.5f, false, true});
@@ -298,7 +304,8 @@ TEST_CASE("a command refused or kept is not given, and its creature is not turne
 
 TEST_CASE("with no answer from the engine nobody is faced", "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     w.StartFight();
     // No facing of hers: the stand-in's engine has no turn to answer, as the
     // gate has none off the game's thread.
@@ -311,7 +318,8 @@ TEST_CASE("with no answer from the engine nobody is faced", "[facing]")
 
 TEST_CASE("with no fight on the game is as it was: nobody is faced", "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     // Before any fight.
     w.Stall(kHero, kGenlock, 1.5f);
     REQUIRE(w.Attack(kHero, kGenlock, Source::Player) == Verdict::Allow);
@@ -336,7 +344,8 @@ TEST_CASE("with no fight on the game is as it was: nobody is faced", "[facing]")
 TEST_CASE("a fight standing aside for a conversation faces nobody: what its scene has them do is the game's",
           "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     w.mode = Mode::Dialog;
@@ -354,7 +363,8 @@ TEST_CASE("a fight standing aside for a conversation faces nobody: what its scen
 
 TEST_CASE("one the fight does not hold is the game's: not faced", "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     // A bystander the game has out of combat, its script's own command let
     // through as the game's.
     Creature bystander = Make(0x300, Side::Enemy, false, L"Bystander", 10.0f);
@@ -373,7 +383,8 @@ TEST_CASE("one the fight does not hold is the game's: not faced", "[facing]")
 
 TEST_CASE("an AI's own attack in its turn is faced first like the player's", "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     std::vector<Verdict> answers;
     w.onPoke = [&](ObjectId id) {
         if (id == kGenlock && answers.empty())
@@ -404,7 +415,8 @@ TEST_CASE("an AI's own attack in its turn is faced first like the player's", "[f
 TEST_CASE("a kept attack given back to a creature a little over a degree off its unmoved target finds it facing",
           "[facing][time]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     std::vector<Verdict> answers;
     w.onPoke = [&](ObjectId id) {
         if (id == kGenlock && answers.empty())
@@ -448,7 +460,8 @@ TEST_CASE("the count is the fight's own: the next fight starts from none", "[fac
     // Three swings of a second in one turn, of a bar of four: after each she
     // is left off her target again, as one that stepped aside would leave
     // her.
-    World w = Placed();
+    World w;
+    Place(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     for (int given = 0; given < 3; ++given)
@@ -483,7 +496,8 @@ TEST_CASE("a blow at a big creature: one facing the engine's aim is left alone, 
           "target stands",
           "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     MakeBig(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
@@ -503,7 +517,8 @@ TEST_CASE("a blow at a big creature: one the engine would not turn is faced at t
           "target stands",
           "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     MakeBig(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
@@ -522,7 +537,8 @@ TEST_CASE("a blow at a big creature: one the engine would not turn is faced at t
 TEST_CASE("the engine will not face a creature whose movement controller is not idle: said at warning, not counted",
           "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     w.Stall(kHero, kGenlock, -2.0f);
@@ -543,7 +559,8 @@ TEST_CASE("the engine will not face a creature whose movement controller is not 
 TEST_CASE("a facing the engine does not have for done after is said at warning with both angles, and not counted",
           "[facing]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     CommandRequest cast = HerAttack(TurnToFace{-1.25f, false, true});
@@ -585,7 +602,8 @@ TEST_CASE("a facing the engine does not have for done after is said at warning w
 TEST_CASE("an attack refused a creature at its own mode's command turns nobody, though the engine would not turn it",
           "[facing][ownmode]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     w.Get(kHero).modes.insert(kSong);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
@@ -607,7 +625,8 @@ TEST_CASE("an attack refused a creature at its own mode's command turns nobody, 
 TEST_CASE("an attack faced first and then stopped by End is counted for the fight's end all the same",
           "[facing][ownmode]")
 {
-    World w = Placed();
+    World w;
+    Place(w);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     w.Stall(kHero, kGenlock, 1.5f);

@@ -751,10 +751,19 @@ TEST_CASE("a creature joining mid-fight waits for its first turn", "[machine]")
     w.StartFight();
     constexpr ObjectId kShriek = 0x202;
     // Not yet in the order: held, and a scan asked for.
-    CHECK(w.machine.OnCommand({kShriek, CommandType::Attack, Source::Script, true, std::nullopt}) == Verdict::Block);
+    // A script's command for a creature, in combat or not, as the gate
+    // has it.
+    const auto scripted = [](ObjectId object, CommandType type, bool inCombat) {
+        CommandRequest request;
+        request.object = object;
+        request.type = type;
+        request.source = Source::Script;
+        request.inCombat = inCombat;
+        return request;
+    };
+    CHECK(w.machine.OnCommand(scripted(kShriek, CommandType::Attack, true)) == Verdict::Block);
     // Not fighting at all (a townsperson walking): let be.
-    CHECK(w.machine.OnCommand({0x300, CommandType::MoveToLocation, Source::Script, false, std::nullopt}) ==
-          Verdict::Allow);
+    CHECK(w.machine.OnCommand(scripted(0x300, CommandType::MoveToLocation, false)) == Verdict::Allow);
     w.creatures.push_back(Make(kShriek, Side::Enemy, false, L"Shriek", 30.0f)); // initiative 21, first next round
     w.Frame();
     REQUIRE(w.machine.Order().Find(kShriek) != nullptr);

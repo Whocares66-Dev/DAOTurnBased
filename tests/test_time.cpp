@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -51,8 +52,12 @@ Verdict Act(World &w, ObjectId id, CommandType type, Source source, float second
 void Walk(World &w, ObjectId id, float meters)
 {
     w.Get(id).moving = true;
-    for (float done = 0.0f; done < meters - 0.001f; done += 0.5f)
+    // As many half meters as it takes: counted, where a float counted them
+    // before (the same steps: halves add up exactly).
+    const int steps = static_cast<int>(std::ceil((meters - 0.001f) / 0.5f));
+    for (int step = 0; step < steps; ++step)
     {
+        const float done = 0.5f * static_cast<float>(step);
         w.Get(id).position.x += std::min(0.5f, meters - done);
         w.Frame();
     }
@@ -1533,8 +1538,13 @@ TEST_CASE("with time, walking moves the clock too, and a turn lost moves it a wh
     w.Frame();
     Walk(w, kHero, 6.0f);
     Done(w, kHero);
-    CHECK(*left(kHero) >= 7990);
-    CHECK(*left(kHero) <= 8010);
+    // Read with a value to fall back on: the analyser does not know that a
+    // REQUIRE ends the case, and took the cooldown read after one for a
+    // value nobody had set.
+    REQUIRE(left(kHero));
+    const std::uint32_t afterTheWalk = left(kHero).value_or(0);
+    CHECK(afterTheWalk >= 7990);
+    CHECK(afterTheWalk <= 8010);
     // Stunned through her next turn: the turn is lost, and her clock moves
     // through it.
     (void)w.machine.OnEndTurn();
@@ -1551,8 +1561,9 @@ TEST_CASE("with time, walking moves the clock too, and a turn lost moves it a wh
     // 9 s less the second walked, the rest of turn 1 (1 s more of a 4 s
     // turn's 2 s after the talent) and the whole of the lost turn 2.
     REQUIRE(left(kHero));
-    CHECK(*left(kHero) >= 2990);
-    CHECK(*left(kHero) <= 3010);
+    const std::uint32_t afterTheLostTurn = left(kHero).value_or(0);
+    CHECK(afterTheLostTurn >= 2990);
+    CHECK(afterTheLostTurn <= 3010);
 }
 
 namespace

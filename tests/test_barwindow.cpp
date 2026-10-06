@@ -439,7 +439,8 @@ TEST_CASE("whatever happens to the order, the row holds to the user's rules", "[
     // step checked against what the user asked for: a turn passing, one
     // falling (before the row, in it, after it), one joining, a click on
     // either arrow, the fight ending and another beginning.
-    std::mt19937 rng{20261003};
+    // The same sequence every run, on purpose: a failure is found again.
+    std::mt19937 rng{20261003}; // NOLINT(bugprone-random-generator-seed)
     const auto below = [&](std::size_t n) { return static_cast<std::size_t>(rng() % n); };
     BarWindow window;
     ObjectId nextId = 1;

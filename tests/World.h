@@ -32,7 +32,12 @@ namespace tb::test
 // Wall): World::binding says which do.
 inline constexpr std::int32_t kSong = 1000;
 
-struct Creature
+// (Its implicit move constructor may throw, by the standard library's own
+// doing: MSVC's unordered_set allocates as it is moved, for `modes`. Nothing
+// declares it otherwise, and a vector of creatures copies them as it grows,
+// which is all a test needs: clang-tidy's rule that no move constructor
+// throws is not one this struct was given.)
+struct Creature // NOLINT(bugprone-exception-escape)
 {
     ObjectId id = kNoObject;
     Side side = Side::Enemy;
@@ -225,6 +230,12 @@ class World
           creatures(std::move(fight))
     {
     }
+    // Made where it is used, and never copied or moved: its machine's log
+    // sink holds this world's address (above). Until the tests were linted
+    // (issue 55) one helper returned a World it had named, which is a move
+    // wherever the compiler does not build it in place.
+    World(const World &) = delete;
+    World &operator=(const World &) = delete;
 
     Creature &Get(ObjectId id)
     {
@@ -892,6 +903,7 @@ class World
                     if (kept != heldCasts.end() && kept->second.type == CommandType::Attack)
                     {
                         std::vector<Foe> foes;
+                        foes.reserve(e.others.size());
                         for (const ObjectId other : e.others)
                         {
                             foes.push_back(Measure(e.target, other));

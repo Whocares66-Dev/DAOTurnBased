@@ -1,5 +1,15 @@
-# The tests, relaxed from the root .clang-tidy where a test's shape is the
-# point: Catch2 macros expand to code the analyser walks on every REQUIRE.
+# The tests, held to the root .clang-tidy but for what Catch2's macros do to
+# the analysis. Linted since DAOLib's e6c06f4 (its issue 34: the shared lint
+# target takes every source the build compiles; until then it left a
+# plugin's tests out, and these two exceptions had nothing to except):
+#
+#   bugprone-unchecked-optional-access   a test checks an optional with
+#                                        REQUIRE(answer) and then reads
+#                                        *answer; the analyser does not know
+#                                        REQUIRE ends the test when it fails
+#   bugprone-chained-comparison          Catch2 takes CHECK(a == b) apart
+#                                        with operators of its own, which
+#                                        read to the check as a < b < c
 InheritParentConfig: true
 Checks: >
   -bugprone-chained-comparison,

@@ -685,8 +685,10 @@ TEST_CASE("a default's camera goes by the creature's size, held between the tabl
     // each model's own, and until one is looked at the aim is in the middle.
     for (const FramingRow *row : {&fours, &upright})
     {
-        for (float extent = 0.1f; extent < 80.0f; extent += 0.37f)
+        // Sizes from a tenth of a meter to eighty, 0.37 m apart.
+        for (int step = 0; step < 216; ++step)
         {
+            const float extent = 0.1f + 0.37f * static_cast<float>(step);
             const PortraitCamera camera = FrameByDefault(*row, extent).camera;
             CAPTURE(row->label, extent);
             CHECK(camera.rotation == 0.0f);

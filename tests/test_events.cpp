@@ -54,6 +54,7 @@ TEST_CASE("a fight's events come in the order a test asserts on", "[events]")
     w.RunFor(1000);
 
     std::vector<std::string> kinds;
+    kinds.reserve(events.size());
     for (const TurnEvent &e : events)
     {
         kinds.emplace_back(Name(e.kind));

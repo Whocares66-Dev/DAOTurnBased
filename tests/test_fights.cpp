@@ -1425,14 +1425,22 @@ class Arena
         FollowTurn();
         Choosing();
         heldThisFrame_ = false;
-        if (interlude_ > 0 && --interlude_ == 0)
+        if (interlude_ > 0)
         {
-            world_.mode = Mode::Combat;
+            --interlude_;
+            if (interlude_ == 0)
+            {
+                world_.mode = Mode::Combat;
+            }
         }
-        if (menu_ > 0 && --menu_ == 0)
+        if (menu_ > 0)
         {
-            world_.mode = Mode::Combat;
-            world_.paused = false; // leaving a menu unpauses (GameModeGUI's slot 8)
+            --menu_;
+            if (menu_ == 0)
+            {
+                world_.mode = Mode::Combat;
+                world_.paused = false; // leaving a menu unpauses (GameModeGUI's slot 8)
+            }
         }
         if (world_.mode == Mode::Dialog)
         {
@@ -1882,6 +1890,7 @@ class Arena
             return true;
         });
         std::vector<ObjectId> ids;
+        ids.reserve(tasks_.size());
         for (const auto &[id, task] : tasks_)
         {
             ids.push_back(id);
@@ -2959,15 +2968,30 @@ class Arena
 namespace
 {
 
+// A test's knob, from the environment: empty where it is not set. By the
+// C library's own safe read: getenv hands out a pointer into the
+// environment that another thread may change, which clang-tidy and MSVC's
+// own headers both say of it.
+std::string Knob(const char *name)
+{
+    char *value = nullptr;
+    std::size_t length = 0;
+    std::string text;
+    if (_dupenv_s(&value, &length, name) == 0 && value != nullptr)
+    {
+        text = value;
+    }
+    std::free(value); // the C library's own, to free
+    return text;
+}
+
 // What a lot of fights reached, printed where TB_COUNTS is set: what the
 // floors below are measured against (each about a third of it), for when a
 // change sends the fights other ways and they are measured again.
 // `set TB_COUNTS=1& tb_tests "[fights]"`.
 void Count(const Coverage &c, std::uint64_t count, bool strays, bool choices)
 {
-#pragma warning(suppress : 4996) // the C library's getenv: a test's knob, read once
-    const char *wanted = std::getenv("TB_COUNTS");
-    if (wanted == nullptr || *wanted == '\0')
+    if (Knob("TB_COUNTS").empty())
     {
         return;
     }
@@ -3378,11 +3402,7 @@ TEST_CASE("random fights with the party's tactics chosen and changed in them kee
 // chooses whose tactics play its turns.
 TEST_CASE("one random fight, by the seed in TB_SEED", "[.][fight-seed]")
 {
-    const auto env = [](const char *name) {
-#pragma warning(suppress : 4996) // the C library's getenv: a test's knob, read once
-        const char *value = std::getenv(name);
-        return std::string{value != nullptr ? value : ""};
-    };
+    const auto env = [](const char *name) { return Knob(name); };
     const std::string seed = env("TB_SEED");
     REQUIRE_FALSE(seed.empty());
     Coverage coverage;

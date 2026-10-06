@@ -488,7 +488,7 @@ TEST_CASE("an AI's singer's turn is spent on the mode at once, each turn, and it
         CHECK(Lines(w, "chose nothing") == 0);
         // Its own clock a turn's seconds a turn; the song on, and nothing
         // of its cleared.
-        CHECK(w.agedOwn[kGenlock] == 3 * 4000);
+        CHECK(w.agedOwn[kGenlock] == std::int64_t{3} * 4000);
         CHECK(w.Get(kGenlock).modes.contains(kSong));
         CHECK(w.Get(kGenlock).current == CommandType::ExecuteEffect);
         CHECK(Effects(w, EffectKind::ClearCommands, kGenlock) == 0);

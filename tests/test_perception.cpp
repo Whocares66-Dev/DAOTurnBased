@@ -603,7 +603,7 @@ TEST_CASE("a hostile the scan no longer finds fighting stays in the fight while 
     struct Case
     {
         Perception perception;
-        const char *why;
+        const char *why = "";
     };
     Perception watching = Unperceived(); // the party has lost it; it has not lost the party
     watching.ofParty = true;
