@@ -3,6 +3,7 @@
 
 #include "core/Bar.h"
 
+#include <algorithm>
 #include <cmath>
 #include <format>
 
@@ -14,7 +15,7 @@ namespace
 
 Vec3 Between(const Vec3 &a, const Vec3 &b, float part)
 {
-    return Vec3{a.x + (b.x - a.x) * part, a.y + (b.y - a.y) * part, a.z + (b.z - a.z) * part};
+    return Vec3{a.x + ((b.x - a.x) * part), a.y + ((b.y - a.y) * part), a.z + ((b.z - a.z) * part)};
 }
 
 // From a point to the nearest point of a step.
@@ -23,12 +24,12 @@ float ToStep(const Vec3 &point, const Vec3 &from, const Vec3 &to)
     const float dx = to.x - from.x;
     const float dy = to.y - from.y;
     const float dz = to.z - from.z;
-    const float square = dx * dx + dy * dy + dz * dz;
+    const float square = (dx * dx) + (dy * dy) + (dz * dz);
     float along = 0.0f;
     if (square > 0.0f)
     {
-        along = ((point.x - from.x) * dx + (point.y - from.y) * dy + (point.z - from.z) * dz) / square;
-        along = along < 0.0f ? 0.0f : (along > 1.0f ? 1.0f : along);
+        along = (((point.x - from.x) * dx) + ((point.y - from.y) * dy) + ((point.z - from.z) * dz)) / square;
+        along = std::clamp(along, 0.0f, 1.0f);
     }
     return Distance(point, Between(from, to, along));
 }
@@ -153,7 +154,7 @@ std::vector<Vec3> RingAround(const Vec3 &centre, float radius, int count)
     for (int i = 0; i < count; ++i)
     {
         const float angle = kTurn * static_cast<float>(i) / static_cast<float>(count);
-        ring.push_back(Vec3{centre.x + std::cos(angle) * radius, centre.y + std::sin(angle) * radius, centre.z});
+        ring.push_back(Vec3{centre.x + (std::cos(angle) * radius), centre.y + (std::sin(angle) * radius), centre.z});
     }
     return ring;
 }

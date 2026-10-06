@@ -70,7 +70,7 @@ float OffItsPlace(const World &w)
     const Creature &genlock = w.Get(kGenlock);
     const float x = genlock.position.x - hero.position.x;
     const float y = genlock.position.y - hero.position.y;
-    return std::abs(std::atan2(hero.facingX * y - hero.facingY * x, hero.facingX * x + hero.facingY * y)) *
+    return std::abs(std::atan2((hero.facingX * y) - (hero.facingY * x), (hero.facingX * x) + (hero.facingY * y))) *
            (180.0f / std::numbers::pi_v<float>);
 }
 

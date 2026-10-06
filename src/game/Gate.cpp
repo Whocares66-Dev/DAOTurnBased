@@ -790,6 +790,7 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
     const auto from = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
     const Caller caller = dao::Module::Containing(from);
     if (self != nullptr && command != nullptr)
+    {
         try
         {
             const auto type = static_cast<CommandType>(static_cast<int>(command->Type()));
@@ -913,6 +914,7 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
         {
             Report("the gate, on a command"); // let through, as with no fight
         }
+    }
     return g_queue.Original()(self, edx, command, addToFront, overrideBehaviour);
 }
 
@@ -1037,7 +1039,7 @@ template <class Fn> bool Place(dao::Detour<Fn> &detour, dao::AddressId id, Fn ho
 }
 
 // Every one placed, whether or not another failed.
-template <std::size_t... I> bool WatchOrders(std::index_sequence<I...>)
+template <std::size_t... I> bool WatchOrders(std::index_sequence<I...> /*unused*/)
 {
     const std::array placed{Place(OrderWatch<I>::detour, kOrders[I].handler, &OrderWatch<I>::Hook, kOrders[I].what)...};
     return std::ranges::all_of(placed, [](bool ok) { return ok; });

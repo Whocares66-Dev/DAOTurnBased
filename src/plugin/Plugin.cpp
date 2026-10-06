@@ -116,7 +116,7 @@ bool TurnBasedOn()
 // box in the game's options. Answers whether it is on after.
 bool Toggle()
 {
-    const bool inCombat = g.bridge->PartyInCombat();
+    const bool inCombat = tb::game::Bridge::PartyInCombat();
     tb::ToggleResult result = tb::ToggleResult::RefusedInCombat;
     {
         const std::lock_guard lock(g.mutex);
@@ -126,15 +126,15 @@ bool Toggle()
     {
     case tb::ToggleResult::Enabled:
         tb::game::SaveEnabled(true);
-        g.bridge->Say(L"Turn-based combat on", tb::kGold);
+        tb::game::Bridge::Say(L"Turn-based combat on", tb::kGold);
         return true;
     case tb::ToggleResult::Disabled:
         tb::game::SaveEnabled(false);
-        g.bridge->Say(L"Turn-based combat off", tb::kGrey);
+        tb::game::Bridge::Say(L"Turn-based combat off", tb::kGrey);
         return false;
     case tb::ToggleResult::RefusedInCombat:
         spdlog::info("toggle refused: in combat");
-        g.bridge->Say(L"Turn-based combat can be changed only out of combat", tb::kRed);
+        tb::game::Bridge::Say(L"Turn-based combat can be changed only out of combat", tb::kRed);
         break;
     }
     return TurnBasedOn();

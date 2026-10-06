@@ -317,8 +317,9 @@ ObjectId StandsForTheParty(std::span<const PartyMember> party, ObjectId leader, 
 
 ObjectId ActsForThePlayer(std::span<const PartyMember> party, ObjectId leader, ObjectId controlled)
 {
-    // The same choice among the living, the one controlled put first.
-    return StandsForTheParty(party, controlled, leader);
+    // The same choice among the living, the one controlled put first: the
+    // two change places on purpose.
+    return StandsForTheParty(party, controlled, leader); // NOLINT(readability-suspicious-call-argument)
 }
 
 std::vector<ObjectId> LivingMembers(std::span<const PartyMember> party, ObjectId leader, ObjectId controlled)
@@ -349,8 +350,11 @@ float MetersFromTheParty(std::span<const float> toLiving)
     for (const float meters : toLiving)
     {
         // A distance that is none (not a number) is never the nearer: the
-        // comparison fails, and it is passed over.
-        if (meters < nearest)
+        // comparison fails, and it is passed over. Not std::min, which
+        // clang-tidy would have here and once wrote: it answers its first
+        // argument unless the second is less, so a distance that is no
+        // number became the nearest (issue 55; the tests said so).
+        if (meters < nearest) // NOLINT(readability-use-std-min-max)
         {
             nearest = meters;
         }
@@ -542,7 +546,7 @@ float ConjureSeconds(std::int32_t conjureAnim, int loops, bool staff)
         start = 0.47f;
         loop = 3.40f;
     }
-    return start + loop * static_cast<float>(loops);
+    return start + (loop * static_cast<float>(loops));
 }
 
 float AttackSeconds(const AttackFacts &facts)
@@ -583,7 +587,7 @@ float AbilitySeconds(const AbilityFacts &facts)
     if (facts.loops > 0 && known(facts.conjure))
     {
         cast +=
-            *facts.conjure + (known(facts.conjureLoop) ? *facts.conjureLoop : 0.0f) * static_cast<float>(facts.loops);
+            *facts.conjure + ((known(facts.conjureLoop) ? *facts.conjureLoop : 0.0f) * static_cast<float>(facts.loops));
     }
     return cast;
 }
@@ -609,7 +613,7 @@ float InterruptThreshold(bool party, int combatTraining, int level)
 {
     const float levels = static_cast<float>(std::max(0, level));
     const float ranks = static_cast<float>(std::clamp(combatTraining, 0, 20));
-    return party ? 10.0f * ranks + 5.0f + levels / 2.0f : 10.0f * ranks + levels;
+    return party ? (10.0f * ranks) + 5.0f + (levels / 2.0f) : (10.0f * ranks) + levels;
 }
 
 int TrainingOfRankAsShipped(int creatureRank)

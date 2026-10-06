@@ -105,7 +105,7 @@ struct Tellings
 // genlock's and being played.
 void UntilTheGenlocksTurn(World &w)
 {
-    for (int frames = 0; frames < 4000 && !(w.Current() == kGenlock && InATurn(w)); ++frames)
+    for (int frames = 0; frames < 4000 && (w.Current() != kGenlock || !InATurn(w)); ++frames)
     {
         if (w.machine.GetPhase() == Phase::AwaitingOrder)
         {

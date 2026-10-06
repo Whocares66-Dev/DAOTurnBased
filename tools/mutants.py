@@ -1199,8 +1199,8 @@ MUTANTS = [
     Mutant(
         "the preview's ring is not round its centre",
         PREVIEW,
-        "centre.y + std::sin(angle) * radius, centre.z}",
-        "centre.y + std::cos(angle) * radius, centre.z}",
+        "centre.y + (std::sin(angle) * radius), centre.z}",
+        "centre.y + (std::cos(angle) * radius), centre.z}",
     ),
     Mutant(
         "the preview's rings are left out of its string",
@@ -1217,8 +1217,8 @@ MUTANTS = [
     Mutant(
         "a walk is measured from the path's lines, not its steps",
         PREVIEW,
-        "        along = along < 0.0f ? 0.0f : (along > 1.0f ? 1.0f : along);",
-        "        along = along < 0.0f ? 0.0f : along;",
+        "        along = std::clamp(along, 0.0f, 1.0f);",
+        "        along = std::max(along, 0.0f);",
     ),
     Mutant(
         "marks are laid past the reach asked for",
@@ -1590,7 +1590,7 @@ MUTANTS = [
     Mutant(
         "a creature is as far from the party as from the first of its living",
         RULES,
-        "        if (meters < nearest)\n        {\n            nearest = meters;",
+        "        if (meters < nearest) // NOLINT(readability-use-std-min-max)\n        {\n            nearest = meters;",
         "        if (meters < nearest && !std::isfinite(nearest))\n        {\n            nearest = meters;",
     ),
     Mutant(
@@ -2083,7 +2083,7 @@ MUTANTS = [
     Mutant(
         "rules: a conjuring ignores its loops",
         RULES,
-        "    return start + loop * static_cast<float>(loops);",
+        "    return start + (loop * static_cast<float>(loops));",
         "    return start + loop;",
     ),
     Mutant(
@@ -2430,14 +2430,14 @@ MUTANTS = [
     Mutant(
         "rules: a party member's threshold forgets Combat Training",
         RULES,
-        "    return party ? 10.0f * ranks + 5.0f + levels / 2.0f : 10.0f * ranks + levels;",
-        "    return party ? 0.0f * ranks + 5.0f + levels / 2.0f : 10.0f * ranks + levels;",
+        "    return party ? (10.0f * ranks) + 5.0f + (levels / 2.0f) : (10.0f * ranks) + levels;",
+        "    return party ? (0.0f * ranks) + 5.0f + (levels / 2.0f) : (10.0f * ranks) + levels;",
     ),
     Mutant(
         "rules: a boss is interrupted as a critter is",
         RULES,
-        "    return party ? 10.0f * ranks + 5.0f + levels / 2.0f : 10.0f * ranks + levels;",
-        "    return party ? 10.0f * ranks + 5.0f + levels / 2.0f : 0.0f * ranks + 10.0f + levels;",
+        "    return party ? (10.0f * ranks) + 5.0f + (levels / 2.0f) : (10.0f * ranks) + levels;",
+        "    return party ? (10.0f * ranks) + 5.0f + (levels / 2.0f) : (0.0f * ranks) + 10.0f + levels;",
     ),
     Mutant(
         "delay: one that waited may wait again in its round",
@@ -3467,7 +3467,7 @@ MUTANTS = [
     Mutant(
         "the close distance for where the camera stands forgets the player's zoom",
         PORTRAITS,
-        "    return ViewStand{ViewAnswer::Stand, best->side, meters, (meters - (1.0f - zoom) * kFarGame) / zoom};",
+        "    return ViewStand{ViewAnswer::Stand, best->side, meters, (meters - ((1.0f - zoom) * kFarGame)) / zoom};",
         "    return ViewStand{ViewAnswer::Stand, best->side, meters, meters};",
     ),
     Mutant(
@@ -3557,7 +3557,7 @@ MUTANTS = [
     Mutant(
         "the camera's distance forgets the far one: zoomed out, its lines are asked short of where it stands",
         PORTRAITS,
-        "    return zoom * close + (1.0f - zoom) * kFarGame;",
+        "    return (zoom * close) + ((1.0f - zoom) * kFarGame);",
         "    return zoom * close;",
     ),
     Mutant(
@@ -4351,7 +4351,7 @@ MUTANTS = [
     Mutant(
         "a line that is no choice is passed over, and the rest of a damaged file believed",
         PARTYTACTICS,
-        '            return damaged(\n                std::format("line {} is not a choice (\\"{}<tag>\\" or \\"{}<tag>\\"): damaged", number, kOn, kOff));',
+        '            return damaged(\n                std::format(R"(line {} is not a choice ("{}<tag>" or "{}<tag>"): damaged)", number, kOn, kOff));',
         "            continue;",
     ),
     Mutant(

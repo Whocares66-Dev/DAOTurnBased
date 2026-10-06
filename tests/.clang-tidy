@@ -1,7 +1,7 @@
 # The tests, held to the root .clang-tidy but for what Catch2's macros do to
 # the analysis. Linted since DAOLib's e6c06f4 (its issue 34: the shared lint
 # target takes every source the build compiles; until then it left a
-# plugin's tests out, and these two exceptions had nothing to except):
+# plugin's tests out, and these exceptions had nothing to except):
 #
 #   bugprone-unchecked-optional-access   a test checks an optional with
 #                                        REQUIRE(answer) and then reads
@@ -10,7 +10,13 @@
 #   bugprone-chained-comparison          Catch2 takes CHECK(a == b) apart
 #                                        with operators of its own, which
 #                                        read to the check as a < b < c
+#   cognitive complexity, macros ignored each CHECK expands to branches that
+#                                        are not the test's own: a case is
+#                                        measured by what it does itself
+#                                        (issue 55)
 InheritParentConfig: true
 Checks: >
   -bugprone-chained-comparison,
   -bugprone-unchecked-optional-access
+CheckOptions:
+  readability-function-cognitive-complexity.IgnoreMacros: true

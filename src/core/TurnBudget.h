@@ -110,7 +110,7 @@ class TurnBudget
 
   private:
     bool bar_ = false;
-    TurnTime time_{};
+    TurnTime time_;
     float pace_ = 1.0f;    // meters a second
     float free_ = 0;       // meters walked without time
     float walked_ = 0;     // meters walked this turn

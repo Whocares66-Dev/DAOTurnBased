@@ -27,6 +27,10 @@
 // "mymod.thing_happened"); prefix them too.
 #pragma once
 
+// (The turn-based mod's copy: these two lines and the one at the file's end
+// are its own. The header is C's as much as C++'s, and its typedefs stay.)
+// NOLINTBEGIN(modernize-use-using)
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -124,3 +128,4 @@ inline const EluvianInterface1 *EluvianFind()
     return get != nullptr ? get(1) : nullptr;
 }
 #endif
+// NOLINTEND(modernize-use-using)

@@ -311,7 +311,7 @@ class World
     // attack order struck nothing"), and through a clearing of its commands
     // (in play the song went on after `clear commands`), until an order
     // turns the mode off.
-    void Bind(Creature &c)
+    void Bind(Creature &c) const
     {
         if (OwnMode(c) == kNoMode)
         {
@@ -589,7 +589,7 @@ class World
         {
             return std::nullopt;
         }
-        const float degrees = std::atan2(c.facingX * y - c.facingY * x, c.facingX * x + c.facingY * y) *
+        const float degrees = std::atan2((c.facingX * y) - (c.facingY * x), (c.facingX * x) + (c.facingY * y)) *
                               (180.0f / std::numbers::pi_v<float>);
         // The engine's own test: within a degree, a plain <= (core/Facing.h).
         const bool done = std::abs(degrees) <= 1.0f;
@@ -604,7 +604,7 @@ class World
     {
         Creature &c = Get(id);
         const auto [x, y] = AimFrom(id, target);
-        const float facing = std::atan2(y, x) - degrees * (std::numbers::pi_v<float> / 180.0f);
+        const float facing = std::atan2(y, x) - (degrees * (std::numbers::pi_v<float> / 180.0f));
         c.facingX = std::cos(facing);
         c.facingY = std::sin(facing);
     }

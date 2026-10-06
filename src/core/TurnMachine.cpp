@@ -4244,7 +4244,7 @@ bool TurnMachine::TurnSpent() const
     return !budget_.spend.TimeLeft();
 }
 
-bool TurnMachine::ActorGone(const Observation &obs) const
+bool TurnMachine::ActorGone(const Observation &obs)
 {
     return obs.actor && (!obs.actor->exists || obs.actor->down);
 }

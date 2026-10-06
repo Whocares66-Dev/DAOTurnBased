@@ -464,7 +464,7 @@ TEST_CASE("whatever happens to the order, the row holds to the user's rules", "[
         bool same = false; // the row must show the fighters it showed
         if (what < 35 && ids.size() > 1)
         {
-            std::rotate(ids.begin(), ids.begin() + 1, ids.end()); // a turn passes
+            std::ranges::rotate(ids, ids.begin() + 1); // a turn passes
         }
         else if (what < 55 && ids.size() > 2)
         {

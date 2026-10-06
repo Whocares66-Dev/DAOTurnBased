@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <string>
 #include <vector>
 
@@ -688,7 +689,7 @@ TEST_CASE("a default's camera goes by the creature's size, held between the tabl
         // Sizes from a tenth of a meter to eighty, 0.37 m apart.
         for (int step = 0; step < 216; ++step)
         {
-            const float extent = 0.1f + 0.37f * static_cast<float>(step);
+            const float extent = 0.1f + (0.37f * static_cast<float>(step));
             const PortraitCamera camera = FrameByDefault(*row, extent).camera;
             CAPTURE(row->label, extent);
             CHECK(camera.rotation == 0.0f);
@@ -1258,7 +1259,7 @@ TEST_CASE("an enemy is looked at from 40 degrees round to its right or its left,
           "[portraits]")
 {
     using Catch::Approx;
-    const float halfTurn = 3.14159265f;
+    const float halfTurn = std::numbers::pi_v<float>;
     // The user: "maybe don't be directly behind enemies. Perhaps offset it by
     // 30 or 45 degrees to the right (or left if something is blocking the
     // right side)".
@@ -1591,7 +1592,7 @@ TEST_CASE("with no place behind a creature the camera looks at it from in front,
 TEST_CASE("staying with the party, the camera turns to look from the player's own toward the creature", "[portraits]")
 {
     using Catch::Approx;
-    const float halfTurn = 3.14159265f;
+    const float halfTurn = std::numbers::pi_v<float>;
     const float nan = std::numeric_limits<float>::quiet_NaN();
     // The camera's yaw is the direction from what it looks at to itself: to
     // look from the player's own toward a creature it stands on the far side

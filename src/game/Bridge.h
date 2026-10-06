@@ -17,6 +17,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace tb::game
@@ -25,7 +26,7 @@ namespace tb::game
 class Bridge
 {
   public:
-    explicit Bridge(const Settings &settings) : settings_(settings)
+    explicit Bridge(Settings settings) : settings_(std::move(settings))
     {
     }
     void SetSettings(const Settings &settings)
@@ -45,12 +46,12 @@ class Bridge
     // Whether the party is fighting, by the game's own word (any living
     // member's combat state: a fallen hero's is 0, issue 42), menus open or
     // not.
-    bool PartyInCombat();
+    static bool PartyInCombat();
 
     // Floating text outside the machine's effects (the toggle key's answer),
     // over the one the player acts as (core/Rules.h, ActsForThePlayer): the
     // creature controlled while it lives, where the player is looking.
-    void Say(const std::wstring &text, std::uint32_t colour);
+    static void Say(const std::wstring &text, std::uint32_t colour);
 
     // Each frame, after Apply: whether the camera got where it was sent.
     void WatchCamera()
@@ -99,11 +100,11 @@ class Bridge
     void SayWhoStands(ObjectId stands, ObjectId leader, ObjectId controlled);
     Combatant Describe(ObjectId id, Side side, bool hero);
     ActorObservation Actor(ObjectId id);
-    CombatantStatus Status(ObjectId id);
+    static CombatantStatus Status(ObjectId id);
     const Known &Remember(ObjectId id);
-    void Poke(ObjectId id);
+    void Poke(ObjectId id) const;
     void Explain(ObjectId id);
-    void Signal(const Effect &effect);
+    static void Signal(const Effect &effect);
 
     Settings settings_;
     std::unordered_map<ObjectId, Known> known_;

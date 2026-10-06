@@ -187,7 +187,7 @@ ChoicesRead ReadChoices(std::string_view file)
         if (!on && !text.starts_with(kOff))
         {
             return damaged(
-                std::format("line {} is not a choice (\"{}<tag>\" or \"{}<tag>\"): damaged", number, kOn, kOff));
+                std::format(R"(line {} is not a choice ("{}<tag>" or "{}<tag>"): damaged)", number, kOn, kOff));
         }
         text.remove_prefix(on ? kOn.size() : kOff.size());
         const std::optional<std::wstring> tag = FromUtf8(text);

@@ -633,7 +633,7 @@ TEST_CASE("an ability's time: its cast less the blend, its conjuring, or a shot"
     inferno.conjure = 0.77f;
     inferno.conjureLoop = 2.70f;
     inferno.loops = 1;
-    CHECK(tb::AbilitySeconds(inferno) == Approx(1.03f * 0.84f + 3.47f));
+    CHECK(tb::AbilitySeconds(inferno) == Approx((1.03f * 0.84f) + 3.47f));
     inferno.loops = 0; // instant: no conjuring
     CHECK(tb::AbilitySeconds(inferno) == Approx(1.03f * 0.84f));
     tb::AbilityFacts pinning; // no cast animation, a bow in hand: a shot

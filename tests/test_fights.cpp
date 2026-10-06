@@ -139,7 +139,7 @@ bool Chance(Rng &rng, double p)
 }
 float Between(Rng &rng, float lo, float hi)
 {
-    return lo + static_cast<float>(Unit(rng)) * (hi - lo);
+    return lo + (static_cast<float>(Unit(rng)) * (hi - lo));
 }
 template <class T> const T &Pick(Rng &rng, const std::vector<T> &from)
 {
@@ -418,7 +418,7 @@ class Arena
                 FollowTurn();
                 Must(!PlayerControls(world_.Current()), "a turn the player plays ended at max_turn_ms");
                 Must(turnFromMs_ &&
-                         turnRunMs_ - *turnFromMs_ + 4 * kFrameMs >= static_cast<std::uint32_t>(settings_.maxTurnMs),
+                         turnRunMs_ - *turnFromMs_ + (4 * kFrameMs) >= static_cast<std::uint32_t>(settings_.maxTurnMs),
                      "an AI's turn ended as too long before max_turn_ms");
             }
             if (line.find("is held by an effect's command past ") != std::string_view::npos)
@@ -476,7 +476,7 @@ class Arena
                     const Creature &c = world_.Get(world_.Current());
                     const TurnView view = world_.machine.View();
                     const float pace = Pace(c.speed, c.movement);
-                    Must(std::abs(view.paceMps - settings_.paceMps * pace) < 0.001f,
+                    Must(std::abs(view.paceMps - (settings_.paceMps * pace)) < 0.001f,
                          "a turn's bar does not walk at its creature's pace as the turn began");
                     turnPace_ = pace;
                     const float rate = MovementRate(c.movement);
@@ -504,7 +504,7 @@ class Arena
                 FollowTurn();
                 const Creature &c = world_.Get(world_.Current());
                 const float pace = Pace(c.speed, c.movement);
-                Must(std::abs(world_.machine.View().paceMps - settings_.paceMps * pace) < 0.001f,
+                Must(std::abs(world_.machine.View().paceMps - (settings_.paceMps * pace)) < 0.001f,
                      "a bar's pace changed in its turn is not its creature's pace then");
                 Must(turnPace_ && pace != *turnPace_, "a turn's pace said to change, and it had not");
                 ++coverage_.pacedInTurn;
@@ -512,7 +512,7 @@ class Arena
                 {
                     ++coverage_.hastedInTurn;
                     const float rest = std::max(0.0f, turnMeters_ - walked_);
-                    turnMeters_ = std::max(turnMeters_, walked_ + rest * pace / *turnPace_);
+                    turnMeters_ = std::max(turnMeters_, walked_ + (rest * pace / *turnPace_));
                 }
                 turnPace_ = pace;
             }
@@ -892,7 +892,7 @@ class Arena
         const ObjectId current = world_.Current();
         // An ability: one of a few, with a cooldown, now and then a sustained
         // one turned on or off, which costs nothing.
-        const std::int32_t ability = static_cast<std::int32_t>(rng_.Next() % 4);
+        const auto ability = static_cast<std::int32_t>(rng_.Next() % 4);
         const bool sustained = type == CommandType::UseAbility && Chance(rng_, 0.25);
         const bool on = Chance(rng_, 0.5);
         const float cooldown = Chance(rng_, 0.3) ? 0.0f : Between(rng_, 5.0f, 60.0f);
@@ -1930,7 +1930,7 @@ class Arena
             // Of the machine's clock, which runs at the fight's speed.
             const float worth = settings_.secondsPerTurn;
             const auto bound = static_cast<std::uint32_t>(worth * 1000.0f / settings_.fightSpeed) + kHoldSlackMs;
-            Must(!(turn && heldAtStart_ && stillHeld && turnRunMs_ - turnBeganAtMs_ > bound),
+            Must(!turn || !heldAtStart_ || !stillHeld || turnRunMs_ - turnBeganAtMs_ <= bound,
                  "a turn waited past a turn's worth on an effect no condition named");
         }
         for (const ObjectId id : ids)
@@ -2089,10 +2089,13 @@ class Arena
                 }
                 conditionLeftMs_[id] = static_cast<std::int32_t>(Between(rng_, 2000.0f, 10000.0f));
                 // The game layer reads its seconds, most times.
-                world_.Get(id).conditionSeconds =
-                    Chance(rng_, 0.7) ? (Chance(rng_, 0.5) ? Between(rng_, 0.5f, 3.9f)
-                                                           : static_cast<float>(conditionLeftMs_[id]) / 1000.0f)
-                                      : 0.0f;
+                float seconds = 0.0f;
+                if (Chance(rng_, 0.7))
+                {
+                    seconds = Chance(rng_, 0.5) ? Between(rng_, 0.5f, 3.9f)
+                                                : static_cast<float>(conditionLeftMs_[id]) / 1000.0f;
+                }
+                world_.Get(id).conditionSeconds = seconds;
                 if (world_.Get(id).conditionSeconds > 0.0f && world_.Get(id).condition == Condition::Disabled)
                 {
                     secondsKnown_.insert(id);
@@ -2500,7 +2503,7 @@ class Arena
                 const Creature &c = world_.Get(e.who);
                 Must(Unaware(c.side, c.perception), "a turn skipped as unaware though its creature has noticed");
                 Must(beatOf_ == e.who, "a turn skipped as unaware with no beat said for it");
-                const float ran = static_cast<float>(turnRunMs_ - beatFromMs_ + 2 * kFrameMs) * settings_.fightSpeed;
+                const float ran = static_cast<float>(turnRunMs_ - beatFromMs_ + (2 * kFrameMs)) * settings_.fightSpeed;
                 Must(ran >= static_cast<float>(TurnMachine::kUnawareMs),
                      "an unaware hostile's turn skipped before its beat was out");
                 ++coverage_.unawareTurns;
@@ -2632,7 +2635,7 @@ class Arena
         {
             Must(!timeHeld_, "effects' time left held with no fight on");
         }
-        else if (phase != Phase::Starting && !(phase == Phase::Suspended && world_.machine.Order().Round() == 0))
+        else if (phase != Phase::Starting && (phase != Phase::Suspended || world_.machine.Order().Round() != 0))
         {
             Must(timeHeld_, "effects' time running in a fight");
         }
@@ -2730,7 +2733,7 @@ class Arena
                                      phase == Phase::Settling;
                 if (const auto looked = looked_.find(current); turnPace_ && playing && looked != looked_.end())
                 {
-                    Must(std::abs(world_.machine.View().paceMps - settings_.paceMps * looked->second) < 0.001f,
+                    Must(std::abs(world_.machine.View().paceMps - (settings_.paceMps * looked->second)) < 0.001f,
                          "a turn's bar does not walk at its creature's pace as the machine last looked at it");
                 }
                 const float budget = turnMeters_;
@@ -2749,8 +2752,8 @@ class Arena
                                     static_cast<float>(kFrameMs) / 1000.0f;
                 // And each of those two tries may shift its feet a way before
                 // it is stopped (kShuffle).
-                const float slack = TurnMachine::kOvershoot + 2.0f * TurnMachine::kShuffle +
-                                    (4.0f + 2.0f * static_cast<float>(interruptions_)) * frame;
+                const float slack = TurnMachine::kOvershoot + (2.0f * TurnMachine::kShuffle) +
+                                    ((4.0f + (2.0f * static_cast<float>(interruptions_))) * frame);
                 if (walked_ > budget + slack + 0.01f)
                 {
                     const std::string what =
@@ -2767,12 +2770,12 @@ class Arena
                     // take the frames the arena and the machine count apart,
                     // and two more for a conversation.
                     const std::uint32_t bound = static_cast<std::uint32_t>(settings_.maxTurnMs) +
-                                                (4 + 2 * static_cast<std::uint32_t>(interruptions_)) * kFrameMs;
+                                                ((4 + (2 * static_cast<std::uint32_t>(interruptions_))) * kFrameMs);
                     Must(!turnFromMs_ || turnRunMs_ - *turnFromMs_ <= bound, "an AI's turn went on past max_turn_ms");
                 }
             }
         }
-        if (phase == Phase::Idle && ended_ == false && world_.machine.Order().Empty() && coverage_.turns > 0 &&
+        if (phase == Phase::Idle && !ended_ && world_.machine.Order().Empty() && coverage_.turns > 0 &&
             world_.mode == Mode::Combat)
         {
             ended_ = true;
@@ -2828,7 +2831,7 @@ class Arena
         if (played && world_.mode == Mode::Combat && whose != kNoObject)
         {
             const Creature &c = world_.Get(whose);
-            Must(!(c.inactive && c.exists && !c.down), "a turn went on for one the game has made inactive");
+            Must(!c.inactive || !c.exists || c.down, "a turn went on for one the game has made inactive");
         }
         // One at its own mode's command (20), by the same count of frames:
         // a turn its tactics play is over within a frame or two of its
@@ -2856,7 +2859,7 @@ class Arena
         if (modeWait)
         {
             const std::uint32_t barNow = world_.machine.View().timeLeftMs;
-            Must(!(modeWaitOf_ == turn_ && barNow < modeBar_),
+            Must(modeWaitOf_ != turn_ || barNow >= modeBar_,
                  "a turn waiting at its creature's own mode's command had time taken of its bar");
             modeBar_ = barNow;
         }

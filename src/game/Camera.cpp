@@ -255,9 +255,9 @@ void CameraDirector::TurnTo(ObjectId id, ObjectId own)
         const auto measure = [&](ViewSide side, std::string_view name) {
             const float angle = ViewYaw(*behind, side);
             const auto at = [&](float meters) {
-                return dao::Vector{feet.x + meters * std::sin(pitch) * std::cos(angle),
-                                   feet.y + meters * std::sin(pitch) * std::sin(angle),
-                                   feet.z + meters * std::cos(pitch)};
+                return dao::Vector{feet.x + (meters * std::sin(pitch) * std::cos(angle)),
+                                   feet.y + (meters * std::sin(pitch) * std::sin(angle)),
+                                   feet.z + (meters * std::cos(pitch))};
             };
             const dao::Vector eye = at(wanted);
             const std::optional<dao::world::Hit> cut = FirstCut(head, eye, kViewGroups, id);

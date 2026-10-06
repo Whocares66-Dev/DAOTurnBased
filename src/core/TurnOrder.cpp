@@ -91,7 +91,7 @@ bool TurnOrder::Advance()
     }
     bool newRound = false;
     // Two laps at most: the second would find nobody standing either.
-    for (std::size_t step = 0; step < 2 * order_.size() + 2; ++step)
+    for (std::size_t step = 0; step < (2 * order_.size()) + 2; ++step)
     {
         ++current_;
         if (current_ >= order_.size())
@@ -197,7 +197,7 @@ std::vector<TurnOrder::Slot> TurnOrder::Upcoming(std::size_t count) const
         }
         const Combatant &c = order_[index];
         // The next round's fallen others will have been dropped by then.
-        if (Shown(c) && !(round > round_ && c.down && c.side != Side::Party))
+        if (Shown(c) && (round <= round_ || !c.down || c.side == Side::Party))
         {
             slots.push_back({&c, round, false});
         }

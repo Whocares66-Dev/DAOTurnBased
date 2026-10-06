@@ -1078,7 +1078,7 @@ class TurnMachine
     // over; kNoObject with nobody.
     [[nodiscard]] ObjectId PartysOwn(ObjectId except = kNoObject) const;
     bool TurnSpent() const;
-    bool ActorGone(const Observation &obs) const;
+    static bool ActorGone(const Observation &obs);
     void Floaty(std::vector<Effect> &fx, ObjectId target, std::wstring text, std::uint32_t colour) const;
     void Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId object, std::int32_t a, std::int32_t b) const;
     void Refuse(ObjectId target, std::wstring text, CommandType command, std::string note = {});

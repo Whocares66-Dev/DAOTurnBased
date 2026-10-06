@@ -756,7 +756,7 @@ std::optional<float> YawToward(const Vec3 &from, const Vec3 &at)
 
 float OrbitDistance(float zoom, float close)
 {
-    return zoom * close + (1.0f - zoom) * kFarGame;
+    return (zoom * close) + ((1.0f - zoom) * kFarGame);
 }
 
 namespace
@@ -812,7 +812,7 @@ std::optional<ViewStand> ChooseOf(float zoom, const std::optional<float> &asked,
     // The close distance that puts the camera there: the orbit's blend
     // undone. The zoom is not nothing here, since only then is the distance
     // asked another than the game's own, and this one between the two.
-    return ViewStand{ViewAnswer::Stand, best->side, meters, (meters - (1.0f - zoom) * kFarGame) / zoom};
+    return ViewStand{ViewAnswer::Stand, best->side, meters, (meters - ((1.0f - zoom) * kFarGame)) / zoom};
 }
 
 } // namespace

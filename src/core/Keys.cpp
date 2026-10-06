@@ -54,7 +54,7 @@ std::optional<int> Number(std::string_view text)
         {
             return std::nullopt;
         }
-        n = n * 10 + (c - '0');
+        n = (n * 10) + (c - '0');
     }
     return n;
 }
@@ -96,7 +96,7 @@ std::optional<std::uint8_t> Key(const std::string &name)
         const int low = digit(name[3]);
         if (high >= 0 && low >= 0 && (high != 0 || low != 0))
         {
-            return static_cast<std::uint8_t>(high * 16 + low);
+            return static_cast<std::uint8_t>((high * 16) + low);
         }
         return std::nullopt;
     }

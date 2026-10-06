@@ -1,12 +1,29 @@
 # clang-tidy configuration.
 #
-# Correctness and performance checks only. Nothing here is a style opinion:
-# modernize-*, readability-*, google-*, llvm-*, hicpp-* and the like are left
-# at their default (off), and formatting is clang-format's job with a stock
-# style. The bar for a check being here is that a finding is a plausible bug
-# or a real cost, not a matter of taste.
+# Correctness and cost, and since 2026-10-06 (issue 55; the user: "style &
+# readability also matter. We want to write good clean code, avoid
+# complexity", and "a good balance between strictly enforcing correctness
+# versus also considering good style. If there's code that could be
+# simplified, or modernized, or made less complex, that's also a win")
+# readability-* and modernize-* less the ones that are taste alone. The bar
+# for a check being here is that a finding is a plausible bug, a real cost,
+# or code that reads worse than it need; a check that only prefers one
+# spelling of the same thing to another is left out below, with why.
+# google-*, llvm-*, hicpp-* and the like stay off, and formatting is
+# clang-format's job with a stock style.
 #
-# Run:  cmake --build --preset debug --target tidy   (see cmake/Quality.cmake)
+# The list began as DAOLib's (its issue 33) and is this tree's own: a check
+# is put in or left out here for what it finds in the mod.
+#
+# Most of readability-* and modernize-* can rewrite what they find: run
+# clang-tidy with --fix and the two --extra-arg the tidy target passes
+# (DAOLib's cmake/Quality.cmake), or it sees compiler errors and applies
+# nothing. Read the diff it makes: a constant that is the game's own figure
+# is not std::numbers' (modernize-use-std-numbers changes its value), an
+# initialiser an aggregate leans on is not redundant, and a member made
+# static changes how it is called.
+#
+# Run:  cmake --build --preset debug --target tidy   (DAOLib's cmake/Quality.cmake)
 Checks: >
   bugprone-*,
   -bugprone-easily-swappable-parameters,
@@ -31,7 +48,29 @@ Checks: >
   -performance-no-int-to-ptr,
   -performance-enum-size,
   portability-*,
-  -portability-avoid-pragma-once
+  -portability-avoid-pragma-once,
+  readability-*,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -readability-uppercase-literal-suffix,
+  -readability-avoid-nested-conditional-operator,
+  -readability-function-cognitive-complexity,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-use-nodiscard,
+  -modernize-use-designated-initializers,
+  -modernize-avoid-c-arrays,
+  -modernize-use-scoped-lock
+
+# A function harder to follow than this is split along its real parts, or
+# simplified; one that is a single thing and honestly long says so beside a
+# NOLINT (the user, to DAOLib's session: a split follows a function's parts,
+# not the number). 25 is the check's own default, said here so it is seen.
+# The check itself is off in the list above for now: 36 functions were over
+# it when the rest of readability-* came on (2026-10-06), and it is turned
+# on by the commit that takes the last of them apart.
+CheckOptions:
+  readability-function-cognitive-complexity.Threshold: 25
 
 # Excluded, and why:
 #   bugprone-easily-swappable-parameters   a design lint, fires on (int, int)
@@ -58,6 +97,47 @@ Checks: >
 #   misc-unused-parameters                 the compiler already warns (C4100)
 #   portability-avoid-pragma-once          every header here uses #pragma once,
 #                                          and MSVC and clang-cl both keep it
+#   readability-magic-numbers              a rule's number, a table's row or a
+#                                          figure read from the game IS a
+#                                          number; the ones that matter have
+#                                          their names already, and the comment
+#                                          beside the rest says what a name would
+#   readability-identifier-length          taste: i, id and at are names
+#   readability-uppercase-literal-suffix   taste: 1.0f or 1.0F
+#   readability-avoid-nested-conditional-operator   this tree's own exclusion
+#                                          (DAOLib keeps the check). It found
+#                                          35 places: a clamp (std::clamp
+#                                          now), three with a conditional
+#                                          inside a branch (written out since),
+#                                          and 31 a ladder, `a ? x : b ? y :
+#                                          z`, laid out by clang-format as the
+#                                          table it is: a word for a log line
+#                                          by which of three things is so. The
+#                                          check
+#                                          does not tell a ladder from a
+#                                          conditional inside a conditional's
+#                                          branch, and what it would have in a
+#                                          ladder's place (a variable and an
+#                                          if chain, or a function for every
+#                                          three-way word) is longer and no
+#                                          plainer. A conditional nested in a
+#                                          branch is still to be written
+#                                          another way; no check holds that
+#   modernize-use-trailing-return-type     taste: rewrites every signature to
+#                                          `auto f() -> T` for nothing
+#   modernize-use-nodiscard                wants [[nodiscard]] on every const
+#                                          getter; a result dropped where it
+#                                          matters is bugprone-unused-return-
+#                                          value's, and core says [[nodiscard]]
+#                                          where it means it
+#   modernize-use-designated-initializers  good where a struct is spelled out
+#                                          by hand, but it also fires on every
+#                                          row of a table of them (the
+#                                          portraits' framing rows)
+#   modernize-avoid-c-arrays               a string literal's array and an
+#                                          engine structure's are what they are
+#   modernize-use-scoped-lock              std::lock_guard over one mutex is
+#                                          already the plain thing
 
 # Our headers anywhere under src. The lint target passes this checkout's src
 # as an absolute path instead (cmake/Quality.cmake), which is stricter; this

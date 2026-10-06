@@ -12,7 +12,7 @@ using tb::Utf8;
 TEST_CASE("names in the log come out as UTF-8, whatever their script", "[text]")
 {
     CHECK(Utf8(L"Alistair") == "Alistair");
-    CHECK(Utf8(L"") == "");
+    CHECK(Utf8(L"").empty());
     CHECK(Utf8(L"Zévran") == "Z\xc3\xa9vran"); // two bytes
     CHECK(Utf8(L"€5") == "\xe2\x82\xac"
                          "5");                        // three

@@ -1861,7 +1861,7 @@ void Bridge::Apply(const std::vector<Effect> &effects)
     }
 }
 
-void Bridge::Poke(ObjectId id)
+void Bridge::Poke(ObjectId id) const
 {
     // Processed at once (bProcessImmediate): the creature's scripts run
     // now, inside this call, and whatever its AI queues comes back through

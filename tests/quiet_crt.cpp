@@ -3,7 +3,7 @@
 // sat over the game for ten minutes in the desktop play test (2026-09-30),
 // and a run left waiting holds tools/mutants.py up. The reports go to stderr
 // instead, and abort skips Windows Error Reporting.
-#if defined(_MSC_VER)
+#ifdef _MSC_VER
 
 #include <crtdbg.h>
 #include <cstdlib>

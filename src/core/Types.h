@@ -34,7 +34,7 @@ struct Vec3
     const float dx = a.x - b.x;
     const float dy = a.y - b.y;
     const float dz = a.z - b.z;
-    return std::sqrt(dx * dx + dy * dy + dz * dz);
+    return std::sqrt((dx * dx) + (dy * dy) + (dz * dz));
 }
 
 // Whose side a combatant fights on, from the party's point of view: the

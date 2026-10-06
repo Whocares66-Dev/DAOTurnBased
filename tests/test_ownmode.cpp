@@ -150,7 +150,7 @@ void UntilTurnOf(World &w, ObjectId id)
         }
         w.Frame();
     }
-    for (int frames = 0; frames < 4000 && !(w.Current() == id && InATurn(w)); ++frames)
+    for (int frames = 0; frames < 4000 && (w.Current() != id || !InATurn(w)); ++frames)
     {
         if (w.machine.GetPhase() == Phase::AwaitingOrder)
         {

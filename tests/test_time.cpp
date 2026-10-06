@@ -1616,7 +1616,7 @@ TEST_CASE("with time, a hold of a turn and more is a turn lost and the rest of t
     REQUIRE(genlock != held.end());
     CHECK(genlock->owedMs == 2000);
     // Round 2: the 2 s left are half its bar.
-    for (int i = 0; i < 4000 && !(w.machine.Order().Round() == 2 && w.Current() == kGenlock); ++i)
+    for (int i = 0; i < 4000 && (w.machine.Order().Round() != 2 || w.Current() != kGenlock); ++i)
     {
         if (w.machine.GetPhase() == Phase::AwaitingOrder)
         {

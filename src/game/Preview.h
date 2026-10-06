@@ -73,7 +73,7 @@ class Preview
 
     void ShowMarker(const Vec3 &at);
     void HideMarker();
-    void Lay(Marks &marks, std::int32_t row, float scale, const std::vector<Vec3> &at);
+    static void Lay(Marks &marks, std::int32_t row, float scale, const std::vector<Vec3> &at);
     void HideMarks();
 
     std::mutex mutex_;

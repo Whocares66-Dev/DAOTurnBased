@@ -125,7 +125,7 @@ std::size_t At(const World &w, std::string_view text)
 // free meter.
 float BarMeters(const TurnView &view, float pace, float freeMeters)
 {
-    return static_cast<float>(view.timeLeftMs) / 1000.0f * pace + freeMeters;
+    return (static_cast<float>(view.timeLeftMs) / 1000.0f * pace) + freeMeters;
 }
 
 // A creature under its command walks a tenth of a meter a frame, until it has
@@ -297,7 +297,7 @@ TEST_CASE("with time, a salve drunk in a turn lengthens what is left of that tur
     REQUIRE(w.Current() == kHero);
     view = w.machine.View();
     CHECK(view.paceMps == 5.0f);
-    CHECK(view.movementLeft == Approx(static_cast<float>(view.timeLeftMs) / 1000.0f * 5.0f + 1.0f).margin(0.01f));
+    CHECK(view.movementLeft == Approx((static_cast<float>(view.timeLeftMs) / 1000.0f * 5.0f) + 1.0f).margin(0.01f));
     CHECK(Lines(w, "Hero moves at 1.00 a person's pace from now in this turn (5.00 m a second of its bar; 1.00 from "
                    "its build, 1.00 from haste or slows): it was 1.20, and it has ") == 1);
     UntilTurnOf(w, kHero);

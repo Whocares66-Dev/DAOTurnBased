@@ -74,7 +74,7 @@ float TurnBudget::MovementLeft() const
         return 0.0f;
     }
     const float freeLeft = std::max(0.0f, free_ - freeWalked_);
-    const float timed = static_cast<float>(time_.CapacityLeft()) / 1000.0f * pace_ - owedMeters_;
+    const float timed = (static_cast<float>(time_.CapacityLeft()) / 1000.0f * pace_) - owedMeters_;
     return credit_ + freeLeft + std::max(0.0f, timed);
 }
 

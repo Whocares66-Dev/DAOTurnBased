@@ -1300,7 +1300,7 @@ void UntilHerosTurn(World &w)
         }
         w.Frame();
     }
-    for (int i = 0; i < 2000 && !(w.Current() == kHero && w.machine.GetPhase() == Phase::AwaitingOrder); ++i)
+    for (int i = 0; i < 2000 && (w.Current() != kHero || w.machine.GetPhase() != Phase::AwaitingOrder); ++i)
     {
         if (w.machine.GetPhase() == Phase::AwaitingOrder)
         {
@@ -1650,7 +1650,7 @@ TEST_CASE("at speed 2 an AI's waits pass in half the time", "[machine][speed]")
         w.Frame();
         w.Frame();
         REQUIRE(w.Current() == kGenlock); // its AI chooses nothing
-        w.RunFor(static_cast<std::uint32_t>(s.aiThinkMs / 2 + 100));
+        w.RunFor(static_cast<std::uint32_t>((s.aiThinkMs / 2) + 100));
         if (speed == 2.0f)
         {
             CHECK(w.Current() != kGenlock); // its thinking time, in the world's time, is over
@@ -2370,7 +2370,7 @@ void GenlockLeaves(World &w)
     w.StartFight();
     w.Get(kGenlock).unfound = true;
     REQUIRE(w.machine.OnEndTurn()); // the hero passes; the genlock's own turn goes by, nothing chosen
-    for (int i = 0; i < 1000 && !(w.Current() == kCompanion && w.machine.GetPhase() == Phase::AwaitingOrder); ++i)
+    for (int i = 0; i < 1000 && (w.Current() != kCompanion || w.machine.GetPhase() != Phase::AwaitingOrder); ++i)
     {
         w.Frame();
     }
@@ -2670,7 +2670,7 @@ void ToTheGenlocksTurn(World &w)
 {
     w.StartFight();
     REQUIRE(w.machine.OnEndTurn());
-    for (int i = 0; i < 10 && !(w.Current() == kGenlock && w.machine.GetPhase() != Phase::TurnStart); ++i)
+    for (int i = 0; i < 10 && (w.Current() != kGenlock || w.machine.GetPhase() == Phase::TurnStart); ++i)
     {
         w.Frame();
     }
