@@ -278,11 +278,33 @@ class Arena
           sings_(seed ^ 0x5150ull), settings_(RandomSettings(rng_)), world_(settings_, RandomFight(rng_), seed),
           coverage_(coverage), runners_(strays), choices_(choices)
     {
+        ComeAsStrays();
+        world_.record = false;
+        world_.machine.SetLogLevel(LogLevel::Info); // the turns, for a failure's message
+        if (choices_)
+        {
+            ChooseBeforeTheFight();
+        }
+        world_.onPoke = [this](ObjectId id) { Poked(id); };
+        world_.onEffect = [this](const Effect &e) { Saw(e); };
+        world_.onMeasure = [this](ObjectId attacker, ObjectId other) { return Measured(attacker, other); };
+        world_.onApproach = [this](ObjectId id) { Approached(id); };
+        world_.onConjureReleased = [this](ObjectId id) { ConjureLetComplete(id); };
+        world_.onReleased = [this](ObjectId id, const CommandRequest &request, Verdict verdict) {
+            KeptGiven(id, request, verdict);
+        };
+        world_.machine.SetEventSink([this](const TurnEvent &e) { Heard(e); });
+        world_.onLog = [this](std::string_view line) { Logged(line); };
+    }
+
+    // What a fight with strays comes with.
+    void ComeAsStrays()
+    {
         // The engine's perception says of these that they perceive nobody
         // to fight; the party perceives them.
         for (Creature &c : world_.creatures)
         {
-            if (strays && c.side == Side::Enemy && Chance(notice_, 0.5))
+            if (runners_ && c.side == Side::Enemy && Chance(notice_, 0.5))
             {
                 c.perception = Unnoticing();
             }
@@ -293,330 +315,353 @@ class Arena
         // stream of its own.
         for (Creature &c : world_.creatures)
         {
-            if (strays && Chance(sings_, 0.1))
+            if (runners_ && Chance(sings_, 0.1))
             {
                 c.modes.insert(kSong);
             }
         }
-        world_.record = false;
-        world_.machine.SetLogLevel(LogLevel::Info); // the turns, for a failure's message
-        // What a playthrough comes into a fight with: a choice made for
-        // about half of the party, the hero asked for among them.
-        if (choices_)
+    }
+
+    // What a playthrough comes into a fight with: a choice made for
+    // about half of the party, the hero asked for among them.
+    void ChooseBeforeTheFight()
+    {
+        std::vector<ObjectId> party;
+        for (const Creature &c : world_.creatures)
         {
-            std::vector<ObjectId> party;
-            for (const Creature &c : world_.creatures)
+            if (c.side == Side::Party)
             {
-                if (c.side == Side::Party)
-                {
-                    party.push_back(c.id);
-                }
-            }
-            for (const ObjectId id : party)
-            {
-                if (Chance(chooses_, 0.5))
-                {
-                    Choose(id, Chance(chooses_, 0.5));
-                }
+                party.push_back(c.id);
             }
         }
-        world_.onPoke = [this](ObjectId id) {
-            // One the gate turned away, told as the fight lets the world go
-            // (15): the command it then asks for is its own again. The fallen
-            // and the gone the game layer passes over. With no draw: nobody
-            // was told so before there was such a telling, and a fight is
-            // draw for draw the fight it was.
-            if (!world_.machine.Active() && owed_.contains(id))
+        for (const ObjectId id : party)
+        {
+            if (Chance(chooses_, 0.5))
             {
-                if (const Creature &c = world_.Get(id); c.exists && !c.down)
-                {
-                    Must(world_.Order(id, CommandType::Attack, Source::Script) == Verdict::Allow,
-                         "one told the fight is over had its command refused");
-                    world_.Finish(id);
-                }
-                return;
+                Choose(id, Chance(chooses_, 0.5));
             }
-            Decide(id, false);
-        };
-        world_.onEffect = [this](const Effect &e) { Saw(e); };
-        // A kept attack whose target is gone is turned on one of those the
-        // machine named for it, if the game layer finds one in its creature's
-        // reach (issue 22). Each must be of the other side, and it is turned
-        // only as its creature's turn begins. Whether one is in reach and in
-        // sight is drawn on a stream of its own, so that a fight in which no
-        // attack is turned is the fight it was before any could be.
-        world_.onMeasure = [this](ObjectId attacker, ObjectId other) {
-            const Creature &to = world_.Get(other);
-            Must(Opposed(world_.Get(attacker).side, to.side), "a kept attack offered one of its creature's own side");
-            Must(attacker == world_.Current(), "a kept attack turned on another out of its creature's turn");
-            Foe foe;
-            foe.id = other;
-            foe.standing = to.exists && !to.down && !to.inactive; // nor one out of the world (issue 44)
-            foe.hostile = true;
-            foe.seen = Chance(reach_, 0.8);
-            foe.meters = Between(reach_, 0.0f, 5.0f);
-            foe.inReach = foe.meters <= world_.reach;
-            return foe;
-        };
-        // A kept action given again as its creature's turn begins: it walks
-        // a little (its target may have stepped away), then works.
-        // The walk to a kept attack's target, given by the game layer: now
-        // and then it cannot be made, and now and then it is longer than
-        // was paid for.
-        world_.onApproach = [this](ObjectId id) {
+        }
+    }
+
+    // One the gate turned away, told as the fight lets the world go
+    // (15): the command it then asks for is its own again. The fallen
+    // and the gone the game layer passes over. With no draw: nobody
+    // was told so before there was such a telling, and a fight is
+    // draw for draw the fight it was.
+    void Poked(ObjectId id)
+    {
+        if (!world_.machine.Active() && owed_.contains(id))
+        {
+            if (const Creature &c = world_.Get(id); c.exists && !c.down)
+            {
+                Must(world_.Order(id, CommandType::Attack, Source::Script) == Verdict::Allow,
+                     "one told the fight is over had its command refused");
+                world_.Finish(id);
+            }
+            return;
+        }
+        Decide(id, false);
+    }
+
+    // A kept attack whose target is gone is turned on one of those the
+    // machine named for it, if the game layer finds one in its creature's
+    // reach (issue 22). Each must be of the other side, and it is turned
+    // only as its creature's turn begins. Whether one is in reach and in
+    // sight is drawn on a stream of its own, so that a fight in which no
+    // attack is turned is the fight it was before any could be.
+    Foe Measured(ObjectId attacker, ObjectId other)
+    {
+        const Creature &to = world_.Get(other);
+        Must(Opposed(world_.Get(attacker).side, to.side), "a kept attack offered one of its creature's own side");
+        Must(attacker == world_.Current(), "a kept attack turned on another out of its creature's turn");
+        Foe foe;
+        foe.id = other;
+        foe.standing = to.exists && !to.down && !to.inactive; // nor one out of the world (issue 44)
+        foe.hostile = true;
+        foe.seen = Chance(reach_, 0.8);
+        foe.meters = Between(reach_, 0.0f, 5.0f);
+        foe.inReach = foe.meters <= world_.reach;
+        return foe;
+    }
+
+    // The walk to a kept attack's target, given by the game layer: now
+    // and then it cannot be made, and now and then it is longer than
+    // was paid for.
+    void Approached(ObjectId id)
+    {
+        if (Chance(rng_, 0.1))
+        {
+            return;
+        }
+        if (world_.Order(id, CommandType::MoveToObject, Source::Script) != Verdict::Allow)
+        {
+            return;
+        }
+        ++coverage_.approaches;
+        Task task{CommandType::MoveToObject};
+        task.walk = Between(rng_, 0.5f, 8.0f);
+        tasks_[id] = task;
+    }
+
+    // A spell held in its conjure let complete: one that was held, and in
+    // its caster's turn.
+    void ConjureLetComplete(ObjectId id)
+    {
+        const auto found = tasks_.find(id);
+        Must(found != tasks_.end() && found->second.conjuring, "a conjure let complete that was not held");
+        Must(id == world_.Current(), "a conjure let complete out of its caster's turn");
+        found->second.conjuring = false;
+        ++coverage_.conjureLanded;
+    }
+
+    // A kept action given again as its creature's turn begins: it walks
+    // a little (its target may have stepped away), then works.
+    void KeptGiven(ObjectId id, const CommandRequest &request, Verdict verdict)
+    {
+        if (verdict != Verdict::Allow)
+        {
+            return;
+        }
+        ++coverage_.landed;
+        Task task{request.type};
+        task.walk = Chance(rng_, 0.5) ? 0.0f : Between(rng_, 0.5f, 6.0f);
+        task.workMs = 600;
+        tasks_[id] = task;
+    }
+
+    // Every line the machine logs: what the arena counts by it, what it
+    // checks and keeps by it, and its last words for a failure's message.
+    void Logged(std::string_view line)
+    {
+        if (echo)
+        {
+            std::printf("%7u %.*s\n", world_.now, static_cast<int>(line.size()), line.data());
+        }
+        CountLine(line);
+        const auto says = [line](std::string_view words) { return line.find(words) != std::string_view::npos; };
+        if (says("'s turn is still going after "))
+        {
+            SaidAtItsLimit();
+        }
+        if (says("is held by an effect's command past "))
+        {
+            ++coverage_.heldByEffect;
+            // Lost only once the hold has outlasted the bar (13).
+            Must(world_.machine.View().timeLeftMs == 0, "a turn lost to a hold with time left on its bar");
+        }
+        // One at its own mode's command is not held (20): no hold is
+        // begun for it, whatever else the engine has laid on it.
+        if (says(" is held by an effect's command, "))
+        {
+            Must(!Sings(world_.Current()), "one at its own mode's command taken for held by an effect");
+        }
+        if (says(" is free of the effect's command after "))
+        {
+            SaidFreeOfItsHold();
+        }
+        if (line.starts_with("round ") && says("'s turn ("))
+        {
+            SaidTurnBegun();
+        }
+        if (says(" a person's pace from now in this turn "))
+        {
+            SaidPaceChanged();
+        }
+        if (says("it lands on its next turn"))
+        {
+            ++coverage_.kept;
+            // Now and then its target is gone by the time it would land.
             if (Chance(rng_, 0.1))
             {
-                return;
+                world_.targetGone.insert(world_.Current());
             }
-            if (world_.Order(id, CommandType::MoveToObject, Source::Script) != Verdict::Allow)
-            {
-                return;
-            }
-            ++coverage_.approaches;
-            Task task{CommandType::MoveToObject};
-            task.walk = Between(rng_, 0.5f, 8.0f);
-            tasks_[id] = task;
+        }
+        // (Gone, or out of the world: one the game has made inactive
+        // since the action was kept, issue 44.)
+        if (says("is dropped: its target is "))
+        {
+            ++coverage_.targetsGone;
+            // What it owed is back in the bar: the turn may walk that
+            // much further than it could as it began.
+            turnMeters_ = std::max(turnMeters_, walked_ + world_.machine.View().movementLeft);
+        }
+        if (says(": unaware, its AI is not told"))
+        {
+            SaidUnawareBeat();
+        }
+        if (says(" has noticed someone to fight"))
+        {
+            SaidNoticed();
+        }
+        recent_.emplace_back(line);
+        if (recent_.size() > 40)
+        {
+            recent_.pop_front();
+        }
+    }
+
+    // The lines that are only counted: each says the fights reached what it
+    // tells of.
+    void CountLine(std::string_view line)
+    {
+        struct Counted
+        {
+            std::string_view words;
+            int Coverage::*count;
         };
-        world_.onConjureReleased = [this](ObjectId id) {
-            const auto found = tasks_.find(id);
-            Must(found != tasks_.end() && found->second.conjuring, "a conjure let complete that was not held");
-            Must(id == world_.Current(), "a conjure let complete out of its caster's turn");
-            found->second.conjuring = false;
-            ++coverage_.conjureLanded;
-        };
-        world_.onReleased = [this](ObjectId id, const CommandRequest &request, Verdict verdict) {
-            if (verdict != Verdict::Allow)
+        static constexpr std::array<Counted, 15> kCounted{{
+            {"the action it was moving for is kept", &Coverage::refunds},
+            {"took too long", &Coverage::timeouts},
+            {" is at its own mode's command (ability ", &Coverage::songWaits},
+            {" is stopped: its turn was ended while it ran", &Coverage::endStops},
+            {" m to walk with ", &Coverage::tooFar},
+            {"'s pending attack is turned on ", &Coverage::turned},
+            {"'s turn is spent on its pending", &Coverage::wholeTurns},
+            {"over at once: it did nothing", &Coverage::unplayed},
+            {"'s walk runs past its bar", &Coverage::walkedOnAction},
+            {" s taken now", &Coverage::arrivals},
+            {"'s condition takes ", &Coverage::heldShares},
+            {" runs now and owes ", &Coverage::owed},
+            {" chooses again: ", &Coverage::choseAgain},
+            {"; nothing rolls over, its actor not having ended it", &Coverage::forfeited},
+            {", and stays in the fight: ", &Coverage::stayedAfar},
+        }};
+        for (const Counted &counted : kCounted)
+        {
+            if (line.find(counted.words) != std::string_view::npos)
             {
-                return;
+                ++(coverage_.*counted.count);
             }
-            ++coverage_.landed;
-            Task task{request.type};
-            task.walk = Chance(rng_, 0.5) ? 0.0f : Between(rng_, 0.5f, 6.0f);
-            task.workMs = 600;
-            tasks_[id] = task;
-        };
-        world_.machine.SetEventSink([this](const TurnEvent &e) { Heard(e); });
-        // The machine's last words, for a failure's message.
-        world_.onLog = [this](std::string_view line) {
-            if (echo)
-            {
-                std::printf("%7u %.*s\n", world_.now, static_cast<int>(line.size()), line.data());
-            }
-            if (line.find("the action it was moving for is kept") != std::string_view::npos)
-            {
-                ++coverage_.refunds;
-            }
-            if (line.find("took too long") != std::string_view::npos)
-            {
-                ++coverage_.timeouts;
-            }
-            if (line.find("'s turn is still going after ") != std::string_view::npos)
-            {
-                // Ended at its time limit (14): an AI's, and not before the
-                // limit, by the arena's own count of the turn's frames.
-                ++coverage_.turnLimits;
-                FollowTurn();
-                Must(!PlayerControls(world_.Current()), "a turn the player plays ended at max_turn_ms");
-                Must(turnFromMs_ &&
-                         turnRunMs_ - *turnFromMs_ + (4 * kFrameMs) >= static_cast<std::uint32_t>(settings_.maxTurnMs),
-                     "an AI's turn ended as too long before max_turn_ms");
-            }
-            if (line.find("is held by an effect's command past ") != std::string_view::npos)
-            {
-                ++coverage_.heldByEffect;
-                // Lost only once the hold has outlasted the bar (13).
-                Must(world_.machine.View().timeLeftMs == 0, "a turn lost to a hold with time left on its bar");
-            }
-            // One at its own mode's command is not held (20): no hold is
-            // begun for it, whatever else the engine has laid on it.
-            if (line.find(" is held by an effect's command, ") != std::string_view::npos)
-            {
-                Must(!Sings(world_.Current()), "one at its own mode's command taken for held by an effect");
-            }
-            if (line.find(" is at its own mode's command (ability ") != std::string_view::npos)
-            {
-                ++coverage_.songWaits;
-            }
-            if (line.find(" is stopped: its turn was ended while it ran") != std::string_view::npos)
-            {
-                ++coverage_.endStops;
-            }
-            // A hold let go within the turn (13): with time, what it ran is
-            // gone from the bar, whatever else the turn paid as it began (the
-            // debt of a kept action). On the machine's clock, which runs at
-            // the fight's speed; less the frames between the turn's beginning
-            // and the first look at its creature.
-            if (line.find(" is free of the effect's command after ") != std::string_view::npos)
-            {
-                ++coverage_.heldFreed;
-                if (std::exchange(heldPaidDue_, false))
-                {
-                    const TurnView view = world_.machine.View();
-                    const auto ran = static_cast<std::uint32_t>(
-                        std::lround(static_cast<float>(heldAtStartMs_) * settings_.fightSpeed));
-                    const auto slack = static_cast<std::uint32_t>(std::lround(4.0f * kFrameMs * settings_.fightSpeed));
-                    Must(view.timeMs - view.timeLeftMs + slack >= ran,
-                         "a hold let go took less of the bar than it ran");
-                    ++coverage_.heldPaid;
-                }
-            }
-            // At an effect's command no condition names as the machine begins
-            // its turn: the hold runs on the turn's clock, and the turn is
-            // lost only once it has run a turn's worth.
-            if (line.starts_with("round ") && line.find("'s turn (") != std::string_view::npos)
-            {
-                FollowTurn();
-                turnMeters_ = world_.machine.View().movementLeft;
-                // Its meters are of its creature's pace as the world has it
-                // in this frame, which is a frame the machine looked at
-                // everyone in (19): its build's times every movement rate
-                // effect on it. As built that pace is the turn's from here
-                // (4); with time, until a look finds another.
-                {
-                    const Creature &c = world_.Get(world_.Current());
-                    const TurnView view = world_.machine.View();
-                    const float pace = Pace(c.speed, c.movement);
-                    Must(std::abs(view.paceMps - (settings_.paceMps * pace)) < 0.001f,
-                         "a turn's bar does not walk at its creature's pace as the turn began");
-                    turnPace_ = pace;
-                    const float rate = MovementRate(c.movement);
-                    coverage_.pacedTurns += rate != 1.0f ? 1 : 0;
-                    coverage_.hastedTurns += rate > 1.0f ? 1 : 0;
-                }
-                // (Not one at its own mode's command, whatever else the
-                // engine has laid on it: it is not held, 20.)
-                const auto found = tasks_.find(world_.Current());
-                heldAtStart_ = found != tasks_.end() && found->second.type == CommandType::ExecuteEffect &&
-                               world_.Get(world_.Current()).condition == Condition::None && !Sings(world_.Current());
-                heldAtStartMs_ = 0;
-                heldPaidDue_ = heldAtStart_; // until the machine says it free: a frame or two after it is
-                turnBeganAtMs_ = turnRunMs_; // a padded round's wait came before
-                turnFromMs_ = turnRunMs_;
-            }
-            // With time, a bar's pace changed in the middle of its turn (19):
-            // to its creature's as the world has it in this frame, which is
-            // the frame the machine looked in. What the rest of the turn may
-            // walk is the more for a haste, and the bound (4) with it; for a
-            // slow the bound is left as it was (the less is held by the
-            // bar's pace, checked every frame: Check).
-            if (line.find(" a person's pace from now in this turn ") != std::string_view::npos)
-            {
-                FollowTurn();
-                const Creature &c = world_.Get(world_.Current());
-                const float pace = Pace(c.speed, c.movement);
-                Must(std::abs(world_.machine.View().paceMps - (settings_.paceMps * pace)) < 0.001f,
-                     "a bar's pace changed in its turn is not its creature's pace then");
-                Must(turnPace_ && pace != *turnPace_, "a turn's pace said to change, and it had not");
-                ++coverage_.pacedInTurn;
-                if (turnPace_ && pace > *turnPace_)
-                {
-                    ++coverage_.hastedInTurn;
-                    const float rest = std::max(0.0f, turnMeters_ - walked_);
-                    turnMeters_ = std::max(turnMeters_, walked_ + (rest * pace / *turnPace_));
-                }
-                turnPace_ = pace;
-            }
-            if (line.find(" m to walk with ") != std::string_view::npos)
-            {
-                ++coverage_.tooFar;
-            }
-            if (line.find("it lands on its next turn") != std::string_view::npos)
-            {
-                ++coverage_.kept;
-                // Now and then its target is gone by the time it would land.
-                if (Chance(rng_, 0.1))
-                {
-                    world_.targetGone.insert(world_.Current());
-                }
-            }
-            if (line.find("'s pending attack is turned on ") != std::string_view::npos)
-            {
-                ++coverage_.turned;
-            }
-            // (Gone, or out of the world: one the game has made inactive
-            // since the action was kept, issue 44.)
-            if (line.find("is dropped: its target is ") != std::string_view::npos)
-            {
-                ++coverage_.targetsGone;
-                // What it owed is back in the bar: the turn may walk that
-                // much further than it could as it began.
-                turnMeters_ = std::max(turnMeters_, walked_ + world_.machine.View().movementLeft);
-            }
-            if (line.find("'s turn is spent on its pending") != std::string_view::npos)
-            {
-                ++coverage_.wholeTurns;
-            }
-            if (line.find("over at once: it did nothing") != std::string_view::npos)
-            {
-                ++coverage_.unplayed;
-            }
-            if (line.find("'s walk runs past its bar") != std::string_view::npos)
-            {
-                ++coverage_.walkedOnAction;
-            }
-            if (line.find(" s taken now") != std::string_view::npos)
-            {
-                ++coverage_.arrivals;
-            }
-            if (line.find("'s condition takes ") != std::string_view::npos)
-            {
-                ++coverage_.heldShares;
-            }
-            if (line.find(" runs now and owes ") != std::string_view::npos)
-            {
-                ++coverage_.owed;
-            }
-            if (line.find(" chooses again: ") != std::string_view::npos)
-            {
-                ++coverage_.choseAgain;
-            }
-            if (line.find("'s wait of ") != std::string_view::npos && line.ends_with(" it has left: its turn ends"))
-            {
-                ++coverage_.waitsTooLong;
-            }
-            if (line.ends_with(" s rolls over") && !line.ends_with("; 0.00 s rolls over"))
-            {
-                ++coverage_.rolledOver;
-            }
-            if (line.find("; nothing rolls over, its actor not having ended it") != std::string_view::npos)
-            {
-                ++coverage_.forfeited;
-            }
-            // An unaware hostile's beat begins: its turn is skipped when it
-            // is out, not before (11).
-            if (line.find(": unaware, its AI is not told") != std::string_view::npos)
-            {
-                FollowTurn();
-                beatOf_ = world_.Current();
-                beatFromMs_ = turnRunMs_;
-                // One that has noticed nobody is not held, whatever the
-                // engine has it at: its beat, and its turn skipped (13).
-                heldAtStart_ = false;
-                heldPaidDue_ = false;
-            }
-            if (line.find(" has noticed someone to fight") != std::string_view::npos)
-            {
-                ++coverage_.noticedInBeat;
-                // Noticing with an effect's command still on it, it is held
-                // from now: the beat before took nothing of its bar (13).
-                FollowTurn();
-                const auto found = tasks_.find(world_.Current());
-                heldAtStart_ = found != tasks_.end() && found->second.type == CommandType::ExecuteEffect &&
-                               world_.Get(world_.Current()).condition == Condition::None && !Sings(world_.Current());
-                heldAtStartMs_ = 0;
-                heldPaidDue_ = heldAtStart_;
-                turnBeganAtMs_ = turnRunMs_;
-            }
-            if (line.find(", and stays in the fight: ") != std::string_view::npos)
-            {
-                ++coverage_.stayedAfar;
-            }
-            recent_.emplace_back(line);
-            if (recent_.size() > 40)
-            {
-                recent_.pop_front();
-            }
-        };
+        }
+        if (line.find("'s wait of ") != std::string_view::npos && line.ends_with(" it has left: its turn ends"))
+        {
+            ++coverage_.waitsTooLong;
+        }
+        if (line.ends_with(" s rolls over") && !line.ends_with("; 0.00 s rolls over"))
+        {
+            ++coverage_.rolledOver;
+        }
+    }
+
+    // Ended at its time limit (14): an AI's, and not before the
+    // limit, by the arena's own count of the turn's frames.
+    void SaidAtItsLimit()
+    {
+        ++coverage_.turnLimits;
+        FollowTurn();
+        Must(!PlayerControls(world_.Current()), "a turn the player plays ended at max_turn_ms");
+        Must(turnFromMs_ &&
+                 turnRunMs_ - *turnFromMs_ + (4 * kFrameMs) >= static_cast<std::uint32_t>(settings_.maxTurnMs),
+             "an AI's turn ended as too long before max_turn_ms");
+    }
+
+    // A hold let go within the turn (13): with time, what it ran is
+    // gone from the bar, whatever else the turn paid as it began (the
+    // debt of a kept action). On the machine's clock, which runs at
+    // the fight's speed; less the frames between the turn's beginning
+    // and the first look at its creature.
+    void SaidFreeOfItsHold()
+    {
+        ++coverage_.heldFreed;
+        if (std::exchange(heldPaidDue_, false))
+        {
+            const TurnView view = world_.machine.View();
+            const auto ran =
+                static_cast<std::uint32_t>(std::lround(static_cast<float>(heldAtStartMs_) * settings_.fightSpeed));
+            const auto slack = static_cast<std::uint32_t>(std::lround(4.0f * kFrameMs * settings_.fightSpeed));
+            Must(view.timeMs - view.timeLeftMs + slack >= ran, "a hold let go took less of the bar than it ran");
+            ++coverage_.heldPaid;
+        }
+    }
+
+    // Whether the creature whose turn it is stands at an effect's command no
+    // condition names. (Not one at its own mode's command, whatever else the
+    // engine has laid on it: it is not held, 20.)
+    bool HeldNow() const
+    {
+        const auto found = tasks_.find(world_.Current());
+        return found != tasks_.end() && found->second.type == CommandType::ExecuteEffect &&
+               world_.Get(world_.Current()).condition == Condition::None && !Sings(world_.Current());
+    }
+
+    // At an effect's command no condition names as the machine begins
+    // its turn: the hold runs on the turn's clock, and the turn is
+    // lost only once it has run a turn's worth.
+    void SaidTurnBegun()
+    {
+        FollowTurn();
+        turnMeters_ = world_.machine.View().movementLeft;
+        // Its meters are of its creature's pace as the world has it
+        // in this frame, which is a frame the machine looked at
+        // everyone in (19): its build's times every movement rate
+        // effect on it. As built that pace is the turn's from here
+        // (4); with time, until a look finds another.
+        {
+            const Creature &c = world_.Get(world_.Current());
+            const TurnView view = world_.machine.View();
+            const float pace = Pace(c.speed, c.movement);
+            Must(std::abs(view.paceMps - (settings_.paceMps * pace)) < 0.001f,
+                 "a turn's bar does not walk at its creature's pace as the turn began");
+            turnPace_ = pace;
+            const float rate = MovementRate(c.movement);
+            coverage_.pacedTurns += rate != 1.0f ? 1 : 0;
+            coverage_.hastedTurns += rate > 1.0f ? 1 : 0;
+        }
+        heldAtStart_ = HeldNow();
+        heldAtStartMs_ = 0;
+        heldPaidDue_ = heldAtStart_; // until the machine says it free: a frame or two after it is
+        turnBeganAtMs_ = turnRunMs_; // a padded round's wait came before
+        turnFromMs_ = turnRunMs_;
+    }
+
+    // With time, a bar's pace changed in the middle of its turn (19):
+    // to its creature's as the world has it in this frame, which is
+    // the frame the machine looked in. What the rest of the turn may
+    // walk is the more for a haste, and the bound (4) with it; for a
+    // slow the bound is left as it was (the less is held by the
+    // bar's pace, checked every frame: Check).
+    void SaidPaceChanged()
+    {
+        FollowTurn();
+        const Creature &c = world_.Get(world_.Current());
+        const float pace = Pace(c.speed, c.movement);
+        Must(std::abs(world_.machine.View().paceMps - (settings_.paceMps * pace)) < 0.001f,
+             "a bar's pace changed in its turn is not its creature's pace then");
+        Must(turnPace_ && pace != *turnPace_, "a turn's pace said to change, and it had not");
+        ++coverage_.pacedInTurn;
+        if (turnPace_ && pace > *turnPace_)
+        {
+            ++coverage_.hastedInTurn;
+            const float rest = std::max(0.0f, turnMeters_ - walked_);
+            turnMeters_ = std::max(turnMeters_, walked_ + (rest * pace / *turnPace_));
+        }
+        turnPace_ = pace;
+    }
+
+    // An unaware hostile's beat begins: its turn is skipped when it
+    // is out, not before (11).
+    void SaidUnawareBeat()
+    {
+        FollowTurn();
+        beatOf_ = world_.Current();
+        beatFromMs_ = turnRunMs_;
+        // One that has noticed nobody is not held, whatever the
+        // engine has it at: its beat, and its turn skipped (13).
+        heldAtStart_ = false;
+        heldPaidDue_ = false;
+    }
+
+    // One that had noticed nobody notices in its beat.
+    void SaidNoticed()
+    {
+        ++coverage_.noticedInBeat;
+        // Noticing with an effect's command still on it, it is held
+        // from now: the beat before took nothing of its bar (13).
+        FollowTurn();
+        heldAtStart_ = HeldNow();
+        heldAtStartMs_ = 0;
+        heldPaidDue_ = heldAtStart_;
+        turnBeganAtMs_ = turnRunMs_;
     }
 
     void Play()
@@ -865,6 +910,34 @@ class Arena
         }
     }
 
+    // A command as Try puts it to the gate: whose and what, how the fight
+    // stood as it was given, and what was drawn for it.
+    struct Asked
+    {
+        ObjectId id = kNoObject;
+        CommandType type = CommandType::Invalid;
+        Source source = Source::Script;
+        bool sings = false;           // its creature is at its own mode's command
+        bool active = false;          // a fight held the world
+        ObjectId current = kNoObject; // and whose turn it was
+        std::int32_t ability = 0;
+        bool sustained = false;
+        bool on = false;
+        float cooldown = 0.0f;
+        CommandKind kind = CommandKind::Free;
+        float approach = 0.0f;        // an attack's walk to its target
+        float path = 0.0f;            // a move's path, as the gate measures it
+        bool told = false;            // the gate is told how far it must walk
+        float walk = 0.0f;            // and how far that is
+        float left = 0.0f;            // the meters its turn had left, where the walk is told
+        float seconds = 0.0f;         // the action's own length
+        bool item = false;            // an item used
+        bool conjures = false;        // a spell that conjures
+        ObjectId grabbed = kNoObject; // whom its own effect holds with it, after it
+        float wait = 0.0f;            // a wait's length
+        std::uint32_t timeLeft = 0;   // what the turn's bar had left before the gate answered
+    };
+
     // A command put to the gate, with the gate's promises checked (1, 5).
     void Try(ObjectId id, CommandType type, Source source)
     {
@@ -888,139 +961,230 @@ class Arena
             return;
         }
         FollowTurn();
-        const bool active = world_.machine.Active();
-        const ObjectId current = world_.Current();
-        // An ability: one of a few, with a cooldown, now and then a sustained
-        // one turned on or off, which costs nothing.
-        const auto ability = static_cast<std::int32_t>(rng_.Next() % 4);
-        const bool sustained = type == CommandType::UseAbility && Chance(rng_, 0.25);
-        const bool on = Chance(rng_, 0.5);
-        const float cooldown = Chance(rng_, 0.3) ? 0.0f : Between(rng_, 5.0f, 60.0f);
-        const CommandKind kind = sustained ? CommandKind::Free : Classify(type);
-        // An attack's walk to its target is chosen now: the game layer tells
-        // the gate how far a player's attack must walk (src/game/Gate.cpp).
-        const float approach = Chance(rng_, 0.4) ? 0.0f : Between(rng_, 0.5f, 16.0f);
-        // Now and then the walk cannot be told (an order off the scripts'
-        // thread): the attack walks until it is stopped, as an AI's does.
-        // A move's path, as the gate measures it (path_check): its length.
-        const float path = Between(rng_, 1.0f, 16.0f);
-        const bool told = (type == CommandType::Attack || type == CommandType::MoveToLocation) &&
-                          source == Source::Player && Chance(rng_, 0.7);
-        const float walk = type == CommandType::Attack ? approach : path;
-        const float left = told && active ? world_.machine.View().movementLeft : 0.0f;
-        // An attack's swing: a weapon's, or the machine's stand-in. Now and
-        // then one longer than a turn (a ritual's conjuring), and an item
-        // used, which is not kept but owes what does not fit.
-        float seconds = 0.0f;
-        bool item = false;
-        if (type == CommandType::Attack)
+        const Asked asked = Draw(id, type, source, sings);
+        const Verdict verdict = Put(asked);
+        if (type == CommandType::Wait && asked.active)
         {
-            seconds = Chance(rng_, 0.08) ? Between(rng_, 4.0f, 10.0f)
-                                         : (Chance(rng_, 0.7) ? Between(rng_, 1.0f, 2.6f) : 0.0f);
-        }
-        else if (type == CommandType::UseAbility && !sustained && Chance(rng_, 0.25))
-        {
-            item = true;
-            seconds = Between(rng_, 1.0f, 6.0f);
-        }
-        // A spell that conjures (Settings::engineConjure): one longer than
-        // what is left goes to the engine at once, held in its conjure.
-        bool conjures = false;
-        if (!item && type == CommandType::UseAbility && !sustained && Chance(rng_, 0.5))
-        {
-            conjures = true;
-            seconds = Between(rng_, 2.5f, 7.0f);
-        }
-        // An ability aimed at an opponent whose own effect holds its creature
-        // and its target after it (an ogre's grab, a spider's Overwhelm).
-        ObjectId grabbed = kNoObject;
-        if (!item && !conjures && type == CommandType::UseAbility && !sustained && Chance(rng_, 0.2))
-        {
-            const Creature &self = world_.Get(id);
-            const auto opponents = Living(self.side == Side::Enemy
-                                              ? +[](const Creature &c) { return c.side != Side::Enemy; }
-                                              : +[](const Creature &c) { return c.side == Side::Enemy && c.fighting; });
-            if (!opponents.empty())
-            {
-                grabbed = Pick(rng_, opponents);
-            }
-        }
-        CommandRequest grab;
-        grab.object = id;
-        grab.type = CommandType::UseAbility;
-        grab.source = source;
-        grab.inCombat = world_.InCombat(id);
-        grab.ability = 90036;
-        grab.cooldownSeconds = cooldown;
-        grab.actionSeconds = 1.0f;
-        grab.target = grabbed;
-        CommandRequest spell;
-        spell.object = id;
-        spell.type = CommandType::UseAbility;
-        spell.source = source;
-        spell.inCombat = world_.InCombat(id);
-        spell.ability = ability;
-        spell.cooldownSeconds = cooldown;
-        spell.abilityType = kAbilitySpell;
-        spell.conjureAnim = 245;
-        spell.conjureSeconds = 1.0f;
-        spell.actionSeconds = seconds;
-        // A wait's length, the command's own as the game layer reads it: the
-        // AI's two (AI_DO_NOTHING_DELAY, 2 s, and its quick one, 1 s), and
-        // now and then none read. Drawn on a stream of its own (issue 31).
-        const float wait = type != CommandType::Wait ? 0.0f
-                           : Chance(waits_, 0.15)    ? 0.0f
-                           : Chance(waits_, 0.7)     ? 2.0f
-                                                     : 1.0f;
-        const std::uint32_t timeLeft = active ? world_.machine.View().timeLeftMs : 0;
-        const Verdict verdict =
-            item                        ? world_.Order(id, CommandType::UseItem, source, std::nullopt, seconds)
-            : conjures                  ? world_.Queue(spell)
-            : grabbed != kNoObject      ? world_.Queue(grab)
-            : type == CommandType::Wait ? world_.Wait(id, wait, source)
-            : type == CommandType::UseAbility
-                ? world_.UseAbility(id, source, ability, cooldown, sustained, on)
-                : world_.Order(id, type, source, told ? std::optional{walk} : std::nullopt, seconds);
-        if (type == CommandType::Wait && active)
-        {
-            // A wait takes its own length of its creature's bar, or nothing:
-            // only an AI's on its own turn, and only one that fits what was
-            // left. Paid for or not, it is never let through.
-            const std::uint32_t after = world_.machine.View().timeLeftMs;
-            const auto waitMs = static_cast<std::uint32_t>(std::lround(wait * 1000.0f));
-            const bool paid = after != timeLeft;
-            Must(!paid || (id == current && !PlayerControls(id)),
-                 "a wait paid for that is not an AI's on its own turn");
-            Must(!paid || (waitMs > 0 && waitMs <= timeLeft && after == timeLeft - waitMs),
-                 "a wait took other than its own length of the bar");
-            Must(id != current || verdict == Verdict::Block, "the current combatant's wait let through");
-            coverage_.waitsPaid += paid ? 1 : 0;
-        }
-        if (told && active && verdict == Verdict::Allow && walk > left + TurnMachine::kReachSlack &&
-            id == world_.Current())
-        {
-            Must(false, "the player's order let through though it cannot reach this turn");
-        }
-        if (!active)
-        {
-            Must(verdict == Verdict::Allow, "the gate refused a command with no fight holding the world");
+            CheckWait(asked, verdict);
         }
         // The fight holds what the game has in combat (1): one it does not,
         // that is not of the party, is the game's, and what its script has
         // it do goes through, always, whoever's turn it is: it has no turn
         // of its own (16).
-        const bool gamesOwn = active && source == Source::Script && !world_.InCombat(id) &&
-                              world_.Get(id).side != Side::Party && kind != CommandKind::Involuntary;
+        const bool gamesOwn = asked.active && source == Source::Script && !world_.InCombat(id) &&
+                              world_.Get(id).side != Side::Party && asked.kind != CommandKind::Involuntary;
+        CheckGate(asked, verdict, gamesOwn);
+        if (verdict == Verdict::Conjure)
+        {
+            Conjure(asked);
+            return;
+        }
+        if (verdict != Verdict::Allow)
+        {
+            return;
+        }
+        if (asked.active && asked.kind == CommandKind::Action)
+        {
+            Must(id != asked.current || asked.timeLeft > 0, "an action let through with no time left");
+        }
+        // What is let through for one at its own mode's command (what
+        // costs nothing; what the engine does to it is below) does not run
+        // while the mode is on: World binds it at the mode's command, and
+        // nothing of it is the arena's to play out.
+        if (sings && asked.kind != CommandKind::Involuntary)
+        {
+            return;
+        }
+        Begin(asked, gamesOwn);
+    }
+
+    // What the command is, drawn; every draw in the order it always had, so
+    // that a fight is draw for draw the fight it was.
+    Asked Draw(ObjectId id, CommandType type, Source source, bool sings)
+    {
+        Asked asked;
+        asked.id = id;
+        asked.type = type;
+        asked.source = source;
+        asked.sings = sings;
+        asked.active = world_.machine.Active();
+        asked.current = world_.Current();
+        // An ability: one of a few, with a cooldown, now and then a sustained
+        // one turned on or off, which costs nothing.
+        asked.ability = static_cast<std::int32_t>(rng_.Next() % 4);
+        asked.sustained = type == CommandType::UseAbility && Chance(rng_, 0.25);
+        asked.on = Chance(rng_, 0.5);
+        asked.cooldown = Chance(rng_, 0.3) ? 0.0f : Between(rng_, 5.0f, 60.0f);
+        asked.kind = asked.sustained ? CommandKind::Free : Classify(type);
+        // An attack's walk to its target is chosen now: the game layer tells
+        // the gate how far a player's attack must walk (src/game/Gate.cpp).
+        asked.approach = Chance(rng_, 0.4) ? 0.0f : Between(rng_, 0.5f, 16.0f);
+        // Now and then the walk cannot be told (an order off the scripts'
+        // thread): the attack walks until it is stopped, as an AI's does.
+        // A move's path, as the gate measures it (path_check): its length.
+        asked.path = Between(rng_, 1.0f, 16.0f);
+        asked.told = (type == CommandType::Attack || type == CommandType::MoveToLocation) && source == Source::Player &&
+                     Chance(rng_, 0.7);
+        asked.walk = type == CommandType::Attack ? asked.approach : asked.path;
+        asked.left = asked.told && asked.active ? world_.machine.View().movementLeft : 0.0f;
+        DrawLength(asked);
+        asked.grabbed = DrawGrabbed(asked);
+        // A wait's length, the command's own as the game layer reads it: the
+        // AI's two (AI_DO_NOTHING_DELAY, 2 s, and its quick one, 1 s), and
+        // now and then none read. Drawn on a stream of its own (issue 31).
+        asked.wait = type != CommandType::Wait ? 0.0f : DrawWait();
+        asked.timeLeft = asked.active ? world_.machine.View().timeLeftMs : 0;
+        return asked;
+    }
+
+    // How long the action is, and whether it is an item used or a spell that
+    // conjures.
+    void DrawLength(Asked &asked)
+    {
+        // An attack's swing: a weapon's, or the machine's stand-in. Now and
+        // then one longer than a turn (a ritual's conjuring), and an item
+        // used, which is not kept but owes what does not fit.
+        if (asked.type == CommandType::Attack)
+        {
+            asked.seconds = Chance(rng_, 0.08) ? Between(rng_, 4.0f, 10.0f)
+                                               : (Chance(rng_, 0.7) ? Between(rng_, 1.0f, 2.6f) : 0.0f);
+        }
+        else if (asked.type == CommandType::UseAbility && !asked.sustained && Chance(rng_, 0.25))
+        {
+            asked.item = true;
+            asked.seconds = Between(rng_, 1.0f, 6.0f);
+        }
+        // A spell that conjures (Settings::engineConjure): one longer than
+        // what is left goes to the engine at once, held in its conjure.
+        if (!asked.item && asked.type == CommandType::UseAbility && !asked.sustained && Chance(rng_, 0.5))
+        {
+            asked.conjures = true;
+            asked.seconds = Between(rng_, 2.5f, 7.0f);
+        }
+    }
+
+    // An ability aimed at an opponent whose own effect holds its creature
+    // and its target after it (an ogre's grab, a spider's Overwhelm): at
+    // whom, or at nobody.
+    ObjectId DrawGrabbed(const Asked &asked)
+    {
+        if (!asked.item && !asked.conjures && asked.type == CommandType::UseAbility && !asked.sustained &&
+            Chance(rng_, 0.2))
+        {
+            const auto opponents = Opponents(asked.id);
+            if (!opponents.empty())
+            {
+                return Pick(rng_, opponents);
+            }
+        }
+        return kNoObject;
+    }
+
+    float DrawWait()
+    {
+        if (Chance(waits_, 0.15))
+        {
+            return 0.0f;
+        }
+        return Chance(waits_, 0.7) ? 2.0f : 1.0f;
+    }
+
+    // Those a creature may strike at: of the other side, living; and of the
+    // enemy only those the scan finds fighting.
+    std::vector<ObjectId> Opponents(ObjectId id) const
+    {
+        return Living(world_.Get(id).side == Side::Enemy
+                          ? +[](const Creature &c) { return c.side != Side::Enemy; }
+                          : +[](const Creature &c) { return c.side == Side::Enemy && c.fighting; });
+    }
+
+    // The command given to the world, as the game layer would have read it,
+    // and the gate's answer.
+    Verdict Put(const Asked &asked)
+    {
+        if (asked.item)
+        {
+            return world_.Order(asked.id, CommandType::UseItem, asked.source, std::nullopt, asked.seconds);
+        }
+        if (asked.conjures)
+        {
+            CommandRequest spell;
+            spell.object = asked.id;
+            spell.type = CommandType::UseAbility;
+            spell.source = asked.source;
+            spell.inCombat = world_.InCombat(asked.id);
+            spell.ability = asked.ability;
+            spell.cooldownSeconds = asked.cooldown;
+            spell.abilityType = kAbilitySpell;
+            spell.conjureAnim = 245;
+            spell.conjureSeconds = 1.0f;
+            spell.actionSeconds = asked.seconds;
+            return world_.Queue(spell);
+        }
+        if (asked.grabbed != kNoObject)
+        {
+            CommandRequest grab;
+            grab.object = asked.id;
+            grab.type = CommandType::UseAbility;
+            grab.source = asked.source;
+            grab.inCombat = world_.InCombat(asked.id);
+            grab.ability = 90036;
+            grab.cooldownSeconds = asked.cooldown;
+            grab.actionSeconds = 1.0f;
+            grab.target = asked.grabbed;
+            return world_.Queue(grab);
+        }
+        if (asked.type == CommandType::Wait)
+        {
+            return world_.Wait(asked.id, asked.wait, asked.source);
+        }
+        if (asked.type == CommandType::UseAbility)
+        {
+            return world_.UseAbility(asked.id, asked.source, asked.ability, asked.cooldown, asked.sustained, asked.on);
+        }
+        return world_.Order(asked.id, asked.type, asked.source, asked.told ? std::optional{asked.walk} : std::nullopt,
+                            asked.seconds);
+    }
+
+    // A wait takes its own length of its creature's bar, or nothing:
+    // only an AI's on its own turn, and only one that fits what was
+    // left. Paid for or not, it is never let through.
+    void CheckWait(const Asked &asked, Verdict verdict)
+    {
+        const std::uint32_t after = world_.machine.View().timeLeftMs;
+        const auto waitMs = static_cast<std::uint32_t>(std::lround(asked.wait * 1000.0f));
+        const bool paid = after != asked.timeLeft;
+        Must(!paid || (asked.id == asked.current && !PlayerControls(asked.id)),
+             "a wait paid for that is not an AI's on its own turn");
+        Must(!paid || (waitMs > 0 && waitMs <= asked.timeLeft && after == asked.timeLeft - waitMs),
+             "a wait took other than its own length of the bar");
+        Must(asked.id != asked.current || verdict == Verdict::Block, "the current combatant's wait let through");
+        coverage_.waitsPaid += paid ? 1 : 0;
+    }
+
+    // What the gate promises of its answer (1, 5), whatever the command.
+    void CheckGate(const Asked &asked, Verdict verdict, bool gamesOwn)
+    {
+        const ObjectId id = asked.id;
+        if (asked.told && asked.active && verdict == Verdict::Allow &&
+            asked.walk > asked.left + TurnMachine::kReachSlack && id == world_.Current())
+        {
+            Must(false, "the player's order let through though it cannot reach this turn");
+        }
+        if (!asked.active)
+        {
+            Must(verdict == Verdict::Allow, "the gate refused a command with no fight holding the world");
+        }
         if (gamesOwn)
         {
             Must(verdict == Verdict::Allow, "one the game does not have in combat held out of its turn");
             ++coverage_.gamesOwn;
         }
-        else if (active && verdict == Verdict::Allow && kind != CommandKind::Involuntary)
+        else if (asked.active && verdict == Verdict::Allow && asked.kind != CommandKind::Involuntary)
         {
-            Must(id == current, "the gate let through a command out of turn");
+            Must(id == asked.current, "the gate let through a command out of turn");
         }
-        if (active && verdict == Verdict::Block && id != current)
+        if (asked.active && verdict == Verdict::Block && id != asked.current)
         {
             ++coverage_.blockedOutOfTurn;
             // Turned away outside the order (15): owed a telling as the
@@ -1037,48 +1201,43 @@ class Arena
         // whoever's turn that is. (The machine has looked at it since the
         // mode came on: a creature turns one on by an order of its own turn,
         // and the arena gives it no other in that frame.)
-        if (sings && active && id == current && (kind == CommandKind::Action || kind == CommandKind::Move))
+        if (asked.sings && asked.active && id == asked.current &&
+            (asked.kind == CommandKind::Action || asked.kind == CommandKind::Move))
         {
             Must(verdict == Verdict::Block, "an action or a move let through for one at its own mode's command");
-            Must(world_.machine.View().timeLeftMs == timeLeft,
+            Must(world_.machine.View().timeLeftMs == asked.timeLeft,
                  "an order refused one at its own mode's command took time of its bar");
             ++coverage_.songRefused;
         }
-        if (verdict == Verdict::Conjure)
-        {
-            Must(active && conjures, "a spell given to the engine to conjure that was none");
-            Must(id == current, "a spell given to the engine to conjure out of turn");
-            ++coverage_.conjured;
-            Task task{CommandType::UseAbility};
-            task.walk = Chance(rng_, 0.7) ? 0.0f : Between(rng_, 0.5f, 6.0f);
-            task.workMs = 600; // its cast, once let complete
-            task.conjuring = true;
-            // At its conjure once it has walked into range: the turn waits.
-            world_.Get(id).conjureHeld = task.walk <= 0.0f;
-            tasks_[id] = task;
-            return;
-        }
-        if (verdict != Verdict::Allow)
-        {
-            return;
-        }
-        if (active && kind == CommandKind::Action)
-        {
-            Must(id != current || timeLeft > 0, "an action let through with no time left");
-        }
-        // What is let through for one at its own mode's command (what
-        // costs nothing; what the engine does to it is below) does not run
-        // while the mode is on: World binds it at the mode's command, and
-        // nothing of it is the arena's to play out.
-        if (sings && kind != CommandKind::Involuntary)
-        {
-            return;
-        }
-        Task task{item ? CommandType::UseItem : type};
-        switch (type)
+    }
+
+    // A spell given to the engine to conjure: held there until its time is
+    // paid.
+    void Conjure(const Asked &asked)
+    {
+        const ObjectId id = asked.id;
+        Must(asked.active && asked.conjures, "a spell given to the engine to conjure that was none");
+        Must(id == asked.current, "a spell given to the engine to conjure out of turn");
+        ++coverage_.conjured;
+        Task task{CommandType::UseAbility};
+        task.walk = Chance(rng_, 0.7) ? 0.0f : Between(rng_, 0.5f, 6.0f);
+        task.workMs = 600; // its cast, once let complete
+        task.conjuring = true;
+        // At its conjure once it has walked into range: the turn waits.
+        world_.Get(id).conjureHeld = task.walk <= 0.0f;
+        tasks_[id] = task;
+    }
+
+    // A command let through begins: its walk and its work, for the arena to
+    // play out (Run).
+    void Begin(const Asked &asked, bool gamesOwn)
+    {
+        const ObjectId id = asked.id;
+        Task task{asked.item ? CommandType::UseItem : asked.type};
+        switch (asked.type)
         {
         case CommandType::Attack:
-            task.walk = approach;
+            task.walk = asked.approach;
             task.workMs = 600;
             break;
         case CommandType::UseAbility:
@@ -1086,7 +1245,7 @@ class Arena
             task.workMs = static_cast<std::int32_t>(Between(rng_, 500.0f, 4000.0f));
             break;
         case CommandType::MoveToLocation:
-            task.walk = path;
+            task.walk = asked.path;
             break;
         case CommandType::Drive:
             task.walk = Between(rng_, 1.0f, 16.0f);
@@ -1100,20 +1259,17 @@ class Arena
             task.workMs = 400;
             break;
         }
-        const Creature &self = world_.Get(id);
-        const auto opponents =
-            Living(self.side == Side::Enemy ? +[](const Creature &c) { return c.side != Side::Enemy; }
-                                            : +[](const Creature &c) { return c.side == Side::Enemy && c.fighting; });
+        const auto opponents = Opponents(id);
         if (!opponents.empty())
         {
             task.target = Pick(rng_, opponents);
         }
         task.story = world_.mode == Mode::Dialog;
         task.gamesOwn = gamesOwn;
-        if (grabbed != kNoObject)
+        if (asked.grabbed != kNoObject)
         {
             task.grab = true;
-            task.target = grabbed;
+            task.target = asked.grabbed;
             task.workMs = 400;
         }
         // What the engine puts in front of a spell held in its conjure (a
@@ -1248,30 +1404,7 @@ class Arena
             }
             break;
         case EffectKind::PokeAi:
-            // The fight over, those of it still standing that are not the
-            // party's are told so, as the bystanders are (issue 12): an AI
-            // whose wait was blocked has nothing queued to run it again.
-            // And whoever the gate turned away with no turn to come (15),
-            // the only way a party member is told with no fight on: turned
-            // away as combat began, and no fight followed.
-            if (!world_.machine.Active())
-            {
-                Must(world_.Get(e.target).side != Side::Party || owed_.contains(e.target),
-                     "a party member's AI told the fight is over");
-                Must(toldIdle_.insert(e.target).second, "an AI told twice as the fight let the world go");
-                break;
-            }
-            Must(e.target == world_.Current(), "an AI told to choose out of its turn");
-            Must(!PlayerControls(e.target), "the AI told to choose for a creature the player controls");
-            Must(world_.Get(e.target).condition != Condition::Disabled, "a stunned creature's AI told to act");
-            Must(!Unaware(world_.Get(e.target).side, world_.Get(e.target).perception),
-                 "a hostile that has noticed nobody to fight told to choose");
-            Must(!NothingToFight(world_.Get(e.target).side, world_.Get(e.target).perception),
-                 "one the game does not have in combat, nobody for it to fight, told to choose: it has no turn");
-            Must(!world_.Get(e.target).inactive, "one the game has made inactive told to choose: it has no turn");
-            Must(!Sings(e.target), "one at its own mode's command told to choose: its turn is spent on the mode");
-            FollowTurn();
-            told_ = e.target;
+            SawPoke(e);
             break;
         case EffectKind::Select:
             Must(world_.Get(e.target).side == Side::Party, "a creature not in the party selected");
@@ -1303,80 +1436,10 @@ class Arena
             ++coverage_.speedChanges;
             break;
         case EffectKind::AgeTime:
-            Must(timeHeld_, "effects aged by the fight while their time runs anyway");
-            if (e.target != kNoObject)
-            {
-                // A creature's own clock: only one put on its own, only in
-                // its own turn (this frame's, or one that opened or closed
-                // in it), and by something.
-                Must(settings_.ownClocks, "a creature's own clock moved with own clocks off");
-                Must(ownClock_.contains(e.target), "a creature's own clock moved though it was never put on one");
-                // (Or the target of the acting creature's own effect: a grab
-                // holds both, and both clocks move by its steps. As the
-                // machine has it now, or had it as this frame began: a step
-                // of the effect and the turn's end, stopped as too long, came
-                // in one frame, and the turn ended forgets its target: the
-                // long run with combatants out of reach, seed 86 with time,
-                // 2026-10-04.)
-                Must(e.target == world_.Current() || e.target == lastCurrent_ || turnsThisFrame_.contains(e.target) ||
-                         e.target == world_.machine.OwnEffectTarget() || e.target == grabbedBefore_,
-                     "a creature's own clock moved outside its own turn");
-                Must(e.b > 0, "a creature's own clock moved by nothing");
-                ++coverage_.ownAged;
-                // Its own clock's worth off the timer of what holds it: an
-                // effect on a creature on its own clock wears off as that
-                // clock moves (DAOLib's dao::clock::Advance for one object),
-                // so a hold its turn pays for ends within the turn.
-                if (const auto left = conditionLeftMs_.find(e.target); left != conditionLeftMs_.end())
-                {
-                    left->second -= e.b;
-                }
-                break;
-            }
-            // A round's worth, or a step of an action's own effect, or the
-            // round's worth less those.
-            // A round is a turn's seconds.
-            Must(e.b > 0 && e.b <= static_cast<std::int32_t>(settings_.secondsPerTurn * 1000.0f), "a round aged wrong");
-            ++coverage_.roundsAged;
-            // A round's worth off every condition's own timer; not one on a
-            // creature on a clock of its own, which the shared clock passes
-            // by (DAOLib's dao::effects::Advance).
-            for (auto &[id, left] : conditionLeftMs_)
-            {
-                if (!ownClock_.contains(id))
-                {
-                    left -= e.b;
-                }
-            }
+            SawAgeTime(e);
             break;
         case EffectKind::Cooldown:
-            Must(e.target != kNoObject && e.a >= 0 && e.b >= 0, "a cooldown for nobody, or for no ability");
-            // Ready again only as its user's turn begins: the one last told
-            // its turn had come, or the one whose turn is beginning in this
-            // frame. With time, what a hold or a grab took of the bar as the
-            // turn began moves its clock before the scripts are told of the
-            // turn, and a cooldown that runs out in that share lifts there
-            // (the long run with combatants out of reach, seed 206 with
-            // time, 2026-10-04: the check went by the turn-start signal
-            // alone, which comes a few effects later in the same step).
-            // Or the one whose turn it was as this frame began: a turn put
-            // off and taken later (Delay) is told once, the first time, so
-            // the last told is by then the one whose turn came between; and
-            // a cooldown that runs out with the rest of that turn's seconds,
-            // as it ends, lifts in the step that begins the next turn (the
-            // long run with the party's tactics chosen, seed 39, 2026-10-05:
-            // the lot's first two hundred and fifty fights on the bar with
-            // nobody unaware, issue 50).
-            if (e.b == 0)
-            {
-                Must(e.target == lastTurnStart_ || e.target == world_.Current() || e.target == currentBefore_,
-                     "a cooldown released out of its user's turn");
-                ++coverage_.cooldownsReleased;
-            }
-            else if (e.b == TurnMachine::kCooldownHoldSeconds)
-            {
-                ++coverage_.cooldownsHeld;
-            }
+            SawCooldown(e);
             break;
         case EffectKind::EndConditions:
             Must(e.target == world_.Current(), "a condition ended out of its creature's turn");
@@ -1421,6 +1484,117 @@ class Arena
                 ++coverage_.movementCuts;
             }
             break;
+        }
+    }
+
+    // The fight over, those of it still standing that are not the
+    // party's are told so, as the bystanders are (issue 12): an AI
+    // whose wait was blocked has nothing queued to run it again.
+    // And whoever the gate turned away with no turn to come (15),
+    // the only way a party member is told with no fight on: turned
+    // away as combat began, and no fight followed.
+    void SawPoke(const Effect &e)
+    {
+        if (!world_.machine.Active())
+        {
+            Must(world_.Get(e.target).side != Side::Party || owed_.contains(e.target),
+                 "a party member's AI told the fight is over");
+            Must(toldIdle_.insert(e.target).second, "an AI told twice as the fight let the world go");
+            return;
+        }
+        Must(e.target == world_.Current(), "an AI told to choose out of its turn");
+        Must(!PlayerControls(e.target), "the AI told to choose for a creature the player controls");
+        Must(world_.Get(e.target).condition != Condition::Disabled, "a stunned creature's AI told to act");
+        Must(!Unaware(world_.Get(e.target).side, world_.Get(e.target).perception),
+             "a hostile that has noticed nobody to fight told to choose");
+        Must(!NothingToFight(world_.Get(e.target).side, world_.Get(e.target).perception),
+             "one the game does not have in combat, nobody for it to fight, told to choose: it has no turn");
+        Must(!world_.Get(e.target).inactive, "one the game has made inactive told to choose: it has no turn");
+        Must(!Sings(e.target), "one at its own mode's command told to choose: its turn is spent on the mode");
+        FollowTurn();
+        told_ = e.target;
+    }
+
+    // Effects aged by the fight: one creature's on its own clock, or
+    // everyone's on the shared one.
+    void SawAgeTime(const Effect &e)
+    {
+        Must(timeHeld_, "effects aged by the fight while their time runs anyway");
+        if (e.target != kNoObject)
+        {
+            // A creature's own clock: only one put on its own, only in
+            // its own turn (this frame's, or one that opened or closed
+            // in it), and by something.
+            Must(settings_.ownClocks, "a creature's own clock moved with own clocks off");
+            Must(ownClock_.contains(e.target), "a creature's own clock moved though it was never put on one");
+            // (Or the target of the acting creature's own effect: a grab
+            // holds both, and both clocks move by its steps. As the
+            // machine has it now, or had it as this frame began: a step
+            // of the effect and the turn's end, stopped as too long, came
+            // in one frame, and the turn ended forgets its target: the
+            // long run with combatants out of reach, seed 86 with time,
+            // 2026-10-04.)
+            Must(e.target == world_.Current() || e.target == lastCurrent_ || turnsThisFrame_.contains(e.target) ||
+                     e.target == world_.machine.OwnEffectTarget() || e.target == grabbedBefore_,
+                 "a creature's own clock moved outside its own turn");
+            Must(e.b > 0, "a creature's own clock moved by nothing");
+            ++coverage_.ownAged;
+            // Its own clock's worth off the timer of what holds it: an
+            // effect on a creature on its own clock wears off as that
+            // clock moves (DAOLib's dao::clock::Advance for one object),
+            // so a hold its turn pays for ends within the turn.
+            if (const auto left = conditionLeftMs_.find(e.target); left != conditionLeftMs_.end())
+            {
+                left->second -= e.b;
+            }
+            return;
+        }
+        // A round's worth, or a step of an action's own effect, or the
+        // round's worth less those.
+        // A round is a turn's seconds.
+        Must(e.b > 0 && e.b <= static_cast<std::int32_t>(settings_.secondsPerTurn * 1000.0f), "a round aged wrong");
+        ++coverage_.roundsAged;
+        // A round's worth off every condition's own timer; not one on a
+        // creature on a clock of its own, which the shared clock passes
+        // by (DAOLib's dao::effects::Advance).
+        for (auto &[id, left] : conditionLeftMs_)
+        {
+            if (!ownClock_.contains(id))
+            {
+                left -= e.b;
+            }
+        }
+    }
+
+    // A cooldown held, or released as its user's turn begins.
+    void SawCooldown(const Effect &e)
+    {
+        Must(e.target != kNoObject && e.a >= 0 && e.b >= 0, "a cooldown for nobody, or for no ability");
+        // Ready again only as its user's turn begins: the one last told
+        // its turn had come, or the one whose turn is beginning in this
+        // frame. With time, what a hold or a grab took of the bar as the
+        // turn began moves its clock before the scripts are told of the
+        // turn, and a cooldown that runs out in that share lifts there
+        // (the long run with combatants out of reach, seed 206 with
+        // time, 2026-10-04: the check went by the turn-start signal
+        // alone, which comes a few effects later in the same step).
+        // Or the one whose turn it was as this frame began: a turn put
+        // off and taken later (Delay) is told once, the first time, so
+        // the last told is by then the one whose turn came between; and
+        // a cooldown that runs out with the rest of that turn's seconds,
+        // as it ends, lifts in the step that begins the next turn (the
+        // long run with the party's tactics chosen, seed 39, 2026-10-05:
+        // the lot's first two hundred and fifty fights on the bar with
+        // nobody unaware, issue 50).
+        if (e.b == 0)
+        {
+            Must(e.target == lastTurnStart_ || e.target == world_.Current() || e.target == currentBefore_,
+                 "a cooldown released out of its user's turn");
+            ++coverage_.cooldownsReleased;
+        }
+        else if (e.b == TurnMachine::kCooldownHoldSeconds)
+        {
+            ++coverage_.cooldownsHeld;
         }
     }
 
@@ -1587,7 +1761,15 @@ class Arena
         const ObjectId current = world_.Current();
         const bool own = std::ranges::find(standing, current) != standing.end() && Chance(paces_, 0.4);
         Creature &c = world_.Get(own ? current : Pick(paces_, standing));
-        MovementEffects &on = c.movement;
+        ChangePace(c.movement);
+        ++coverage_.paceChanges;
+        coverage_.paceInOwnTurn += c.id == current ? 1 : 0;
+    }
+
+    // What is on one creature changes: something of it ends, or a Haste or a
+    // slow is put on it.
+    void ChangePace(MovementEffects &on)
+    {
         constexpr std::size_t kMost = 2;
         const bool has = !on.rates.empty() || !on.debuffs.empty();
         const bool full = on.rates.size() >= kMost && on.debuffs.size() >= kMost;
@@ -1617,8 +1799,6 @@ class Arena
             constexpr std::array<float, 3> kSlows{0.5f, 0.6f, 0.8f};
             on.debuffs.push_back(kSlows.at(static_cast<std::size_t>(paces_.Next() % kSlows.size())));
         }
-        ++coverage_.paceChanges;
-        coverage_.paceInOwnTurn += c.id == current ? 1 : 0;
     }
 
     // Now and then one of the fight that is not the party's goes where the
@@ -1680,6 +1860,14 @@ class Arena
 
     void Wandering()
     {
+        AskFromAfar();
+        ComeBackOrBeLost();
+        RunOff();
+    }
+
+    // Those gone from the fight ask for a command now and then (Asks).
+    void AskFromAfar()
+    {
         if (world_.machine.Active())
         {
             for (const auto &[id, frames] : away_)
@@ -1690,6 +1878,12 @@ class Arena
                 }
             }
         }
+    }
+
+    // Each one gone, its while out: found fighting again, or lost for good,
+    // neither perceiving the other.
+    void ComeBackOrBeLost()
+    {
         for (auto it = away_.begin(); it != away_.end();)
         {
             Creature &c = world_.Get(it->first);
@@ -1713,6 +1907,12 @@ class Arena
             }
             it = away_.erase(it);
         }
+    }
+
+    // Now and then one of the fight that is not the party's goes where the
+    // scan's rules no longer find it fighting.
+    void RunOff()
+    {
         if (!runners_ || !world_.machine.Active() || !Chance(notice_, 0.002))
         {
             return;
@@ -1883,18 +2083,7 @@ class Arena
     // Commands progress while the game runs.
     void Run()
     {
-        // One taken into combat stops what it was at as the game's own: its
-        // script clears its commands as it perceives a hostile (rules_core.nss,
-        // EVENT_TYPE_PERCEPTION_APPEAR: SetCombatState, WR_ClearAllCommands),
-        // and from then the fight holds it.
-        std::erase_if(tasks_, [&](const auto &entry) {
-            if (!entry.second.gamesOwn || !world_.InCombat(entry.first))
-            {
-                return false;
-            }
-            world_.Finish(entry.first);
-            return true;
-        });
+        StopTheGamesOwn();
         std::vector<ObjectId> ids;
         ids.reserve(tasks_.size());
         for (const auto &[id, task] : tasks_)
@@ -1903,142 +2092,177 @@ class Arena
         }
         if (world_.machine.Active() && world_.Current() != kNoObject)
         {
-            turnRunMs_ += kFrameMs;
-            // Seen in play (2026-09-30, 13:25): a pinned character's turn
-            // waited 12 s on the pin's command.
-            const Phase phase = world_.machine.GetPhase();
-            const bool turn = phase == Phase::AwaitingOrder || phase == Phase::Dispatching ||
-                              phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling;
-            heldInTurnMs_ =
-                turn && world_.Get(world_.Current()).condition == Condition::Disabled ? heldInTurnMs_ + kFrameMs : 0;
-            Must(heldInTurnMs_ <= kHeldTurnMs, "a held creature's turn waited on its condition");
-            FollowTurn();
-            const auto found = tasks_.find(world_.Current());
-            const bool stillHeld = found != tasks_.end() && found->second.type == CommandType::ExecuteEffect;
-            if (!stillHeld)
-            {
-                heldAtStart_ = false; // let go (a hold after is another's)
-            }
-            else if (turn && heldAtStart_)
-            {
-                heldAtStartMs_ += kFrameMs;
-                heldThisFrame_ = true; // (taken back if a menu opens in this frame: Happenings)
-            }
-            // A turn's worth (13): with time the turn's seconds, which a hold
-            // takes of the bar as it runs; as built what a round spends on
-            // effects, or a turn's seconds with effects on the game's clock.
-            // Of the machine's clock, which runs at the fight's speed.
-            const float worth = settings_.secondsPerTurn;
-            const auto bound = static_cast<std::uint32_t>(worth * 1000.0f / settings_.fightSpeed) + kHoldSlackMs;
-            Must(!turn || !heldAtStart_ || !stillHeld || turnRunMs_ - turnBeganAtMs_ <= bound,
-                 "a turn waited past a turn's worth on an effect no condition named");
+            WatchTheTurn();
         }
         for (const ObjectId id : ids)
         {
-            const auto found = tasks_.find(id);
-            if (found == tasks_.end())
-            {
-                continue;
-            }
-            Task &task = found->second;
-            Creature &c = world_.Get(id);
-            if (c.down)
-            {
-                world_.Finish(id);
-                tasks_.erase(found);
-                continue;
-            }
-            // (At its own mode's command nothing of its own runs, 20: only
-            // what the engine has laid on it besides.)
-            if (Sings(id) && Classify(task.type) != CommandKind::Involuntary)
-            {
-                continue;
-            }
-            if (task.walk > 0.0f)
-            {
-                // At its build's pace times its Haste and slows as they are
-                // in this frame: the engine moves it at a new rate at once.
-                const float step =
-                    std::min(task.walk, kRunSpeed * Pace(c.speed, c.movement) * static_cast<float>(kFrameMs) / 1000.0f);
-                c.position.x += step;
-                task.walk -= step;
-                c.moving = true;
-                // A turn's walking; in a conversation it is the story's.
-                if (id == world_.Current() && Classify(task.type) != CommandKind::Involuntary &&
-                    world_.mode == Mode::Combat && !task.story && !task.gamesOwn)
-                {
-                    walked_ += step;
-                }
-                continue;
-            }
-            c.moving = false;
-            if (task.held)
-            {
-                continue;
-            }
-            if (task.conjuring)
-            {
-                // At its held conjure; a blow over its caster's threshold, or
-                // a knockdown, clears it now and then in another's turn, as
-                // the game's own rules_core would.
-                c.conjureHeld = true;
-                if (id != world_.Current() && world_.machine.Active() && Chance(rng_, 0.0004))
-                {
-                    tasks_.erase(found);
-                    world_.heldConjures.erase(id);
-                    c.conjureHeld = false;
-                    world_.Finish(id);
-                    Must(world_.machine.OnConjureCleared(id), "a held conjure cleared that the machine did not know");
-                    ++coverage_.conjureCleared;
-                }
-                continue;
-            }
-            task.workMs -= static_cast<std::int32_t>(kFrameMs);
-            if (task.workMs > 0)
-            {
-                continue;
-            }
-            const Task done = task;
-            tasks_.erase(found);
+            Advance(id);
+        }
+    }
+
+    // One creature's command, a frame on: its walk, then its work, and what
+    // it does as it ends.
+    void Advance(ObjectId id)
+    {
+        const auto found = tasks_.find(id);
+        if (found == tasks_.end())
+        {
+            return;
+        }
+        Task &task = found->second;
+        Creature &c = world_.Get(id);
+        if (c.down)
+        {
             world_.Finish(id);
-            // A grab: its own effect holds it (and its target) a while, the
-            // engine's command in front; the machine runs both clocks by it.
-            if (done.grab && id == world_.Current() && world_.machine.Active() && done.target != kNoObject &&
-                !world_.Get(done.target).down)
+            tasks_.erase(found);
+            return;
+        }
+        // (At its own mode's command nothing of its own runs, 20: only
+        // what the engine has laid on it besides.)
+        if (Sings(id) && Classify(task.type) != CommandKind::Involuntary)
+        {
+            return;
+        }
+        if (task.walk > 0.0f)
+        {
+            // At its build's pace times its Haste and slows as they are
+            // in this frame: the engine moves it at a new rate at once.
+            const float step =
+                std::min(task.walk, kRunSpeed * Pace(c.speed, c.movement) * static_cast<float>(kFrameMs) / 1000.0f);
+            c.position.x += step;
+            task.walk -= step;
+            c.moving = true;
+            // A turn's walking; in a conversation it is the story's.
+            if (id == world_.Current() && Classify(task.type) != CommandKind::Involuntary &&
+                world_.mode == Mode::Combat && !task.story && !task.gamesOwn)
             {
-                Task held{CommandType::ExecuteEffect};
-                held.workMs = static_cast<std::int32_t>(Between(rng_, 1000.0f, 9000.0f));
-                tasks_[id] = held;
-                world_.Get(id).busy = true;
-                world_.Get(id).current = CommandType::ExecuteEffect;
-                ++coverage_.grabs;
-                continue;
+                walked_ += step;
             }
-            if (done.type == CommandType::Attack && done.target != kNoObject)
+            return;
+        }
+        c.moving = false;
+        if (task.held)
+        {
+            return;
+        }
+        if (task.conjuring)
+        {
+            // At its held conjure; a blow over its caster's threshold, or
+            // a knockdown, clears it now and then in another's turn, as
+            // the game's own rules_core would.
+            c.conjureHeld = true;
+            if (id != world_.Current() && world_.machine.Active() && Chance(rng_, 0.0004))
             {
-                Creature &victim = world_.Get(done.target);
-                // (Nor at one the game has made inactive since: nobody is
-                // there to strike. The draws as they were.)
-                const bool there = !victim.inactive;
-                if (there)
-                {
-                    Notices(victim);
-                }
-                const double kill = victim.side == Side::Party ? 0.05 : 0.35;
-                if (!victim.down && Chance(rng_, kill) && there)
-                {
-                    victim.down = true;
-                }
-                else if (!victim.down && Chance(rng_, 0.2))
-                {
-                    Try(done.target, CommandType::ExecuteEffect, Source::Engine);
-                }
+                tasks_.erase(found);
+                world_.heldConjures.erase(id);
+                c.conjureHeld = false;
+                world_.Finish(id);
+                Must(world_.machine.OnConjureCleared(id), "a held conjure cleared that the machine did not know");
+                ++coverage_.conjureCleared;
             }
-            // COMMAND_COMPLETE: the creature's AI chooses again.
-            if (world_.machine.Order().Find(id) != nullptr)
+            return;
+        }
+        task.workMs -= static_cast<std::int32_t>(kFrameMs);
+        if (task.workMs > 0)
+        {
+            return;
+        }
+        const Task done = task;
+        tasks_.erase(found);
+        world_.Finish(id);
+        Finished(id, done);
+    }
+
+    // One taken into combat stops what it was at as the game's own: its
+    // script clears its commands as it perceives a hostile (rules_core.nss,
+    // EVENT_TYPE_PERCEPTION_APPEAR: SetCombatState, WR_ClearAllCommands),
+    // and from then the fight holds it.
+    void StopTheGamesOwn()
+    {
+        std::erase_if(tasks_, [&](const auto &entry) {
+            if (!entry.second.gamesOwn || !world_.InCombat(entry.first))
             {
-                Decide(id, true);
+                return false;
             }
+            world_.Finish(entry.first);
+            return true;
+        });
+    }
+
+    // The turn under way, a frame on: how long it has run, and how long a
+    // condition or an effect's command has held its creature in it (13).
+    void WatchTheTurn()
+    {
+        turnRunMs_ += kFrameMs;
+        // Seen in play (2026-09-30, 13:25): a pinned character's turn
+        // waited 12 s on the pin's command.
+        const bool turn = Playing(world_.machine.GetPhase());
+        heldInTurnMs_ =
+            turn && world_.Get(world_.Current()).condition == Condition::Disabled ? heldInTurnMs_ + kFrameMs : 0;
+        Must(heldInTurnMs_ <= kHeldTurnMs, "a held creature's turn waited on its condition");
+        FollowTurn();
+        const auto found = tasks_.find(world_.Current());
+        const bool stillHeld = found != tasks_.end() && found->second.type == CommandType::ExecuteEffect;
+        if (!stillHeld)
+        {
+            heldAtStart_ = false; // let go (a hold after is another's)
+        }
+        else if (turn && heldAtStart_)
+        {
+            heldAtStartMs_ += kFrameMs;
+            heldThisFrame_ = true; // (taken back if a menu opens in this frame: Happenings)
+        }
+        // A turn's worth (13): with time the turn's seconds, which a hold
+        // takes of the bar as it runs; as built what a round spends on
+        // effects, or a turn's seconds with effects on the game's clock.
+        // Of the machine's clock, which runs at the fight's speed.
+        const float worth = settings_.secondsPerTurn;
+        const auto bound = static_cast<std::uint32_t>(worth * 1000.0f / settings_.fightSpeed) + kHoldSlackMs;
+        Must(!turn || !heldAtStart_ || !stillHeld || turnRunMs_ - turnBeganAtMs_ <= bound,
+             "a turn waited past a turn's worth on an effect no condition named");
+    }
+
+    // A command done: what it does as it ends, and its creature's AI chooses
+    // again.
+    void Finished(ObjectId id, const Task &done)
+    {
+        // A grab: its own effect holds it (and its target) a while, the
+        // engine's command in front; the machine runs both clocks by it.
+        if (done.grab && id == world_.Current() && world_.machine.Active() && done.target != kNoObject &&
+            !world_.Get(done.target).down)
+        {
+            Task held{CommandType::ExecuteEffect};
+            held.workMs = static_cast<std::int32_t>(Between(rng_, 1000.0f, 9000.0f));
+            tasks_[id] = held;
+            world_.Get(id).busy = true;
+            world_.Get(id).current = CommandType::ExecuteEffect;
+            ++coverage_.grabs;
+            return;
+        }
+        if (done.type == CommandType::Attack && done.target != kNoObject)
+        {
+            Creature &victim = world_.Get(done.target);
+            // (Nor at one the game has made inactive since: nobody is
+            // there to strike. The draws as they were.)
+            const bool there = !victim.inactive;
+            if (there)
+            {
+                Notices(victim);
+            }
+            const double kill = victim.side == Side::Party ? 0.05 : 0.35;
+            if (!victim.down && Chance(rng_, kill) && there)
+            {
+                victim.down = true;
+            }
+            else if (!victim.down && Chance(rng_, 0.2))
+            {
+                Try(done.target, CommandType::ExecuteEffect, Source::Engine);
+            }
+        }
+        // COMMAND_COMPLETE: the creature's AI chooses again.
+        if (world_.machine.Order().Find(id) != nullptr)
+        {
+            Decide(id, true);
         }
     }
 
@@ -2072,47 +2296,52 @@ class Arena
             const auto fighting = Living(&Arena::Anyone);
             if (!fighting.empty())
             {
-                const ObjectId id = Pick(rng_, fighting);
-                // It interrupts what its victim was doing. Now and then one
-                // the statuses do not name (an ogre's grab, say): the
-                // creature is held all the same.
-                ConjureBroken(id);
-                tasks_.erase(id);
-                world_.Finish(id);
-                const bool already = world_.Get(id).condition == Condition::Disabled;
-                const float before = world_.Get(id).conditionSeconds;
-                world_.Get(id).condition = Chance(rng_, 0.2) ? Condition::None : Condition::Disabled;
-                Try(id, CommandType::ExecuteEffect, Source::Engine);
-                if (const auto found = tasks_.find(id); found != tasks_.end())
-                {
-                    found->second.held = true;
-                }
-                conditionLeftMs_[id] = static_cast<std::int32_t>(Between(rng_, 2000.0f, 10000.0f));
-                // The game layer reads its seconds, most times.
-                float seconds = 0.0f;
-                if (Chance(rng_, 0.7))
-                {
-                    seconds = Chance(rng_, 0.5) ? Between(rng_, 0.5f, 3.9f)
-                                                : static_cast<float>(conditionLeftMs_[id]) / 1000.0f;
-                }
-                world_.Get(id).conditionSeconds = seconds;
-                if (world_.Get(id).conditionSeconds > 0.0f && world_.Get(id).condition == Condition::Disabled)
-                {
-                    secondsKnown_.insert(id);
-                }
-                // Held already: the longer of the two is what there is to read.
-                if (already)
-                {
-                    world_.Get(id).conditionSeconds = std::max(before, world_.Get(id).conditionSeconds);
-                }
-                ++coverage_.stunned;
-                if (echo)
-                {
-                    std::printf("%7u (arena: %u held, condition %d, %.1f s read, was held %d)\n", world_.now, id,
-                                static_cast<int>(world_.Get(id).condition),
-                                static_cast<double>(world_.Get(id).conditionSeconds), already ? 1 : 0);
-                }
+                Hold(Pick(rng_, fighting));
             }
+        }
+    }
+
+    // A stun or a pin lands on one of the fight.
+    void Hold(ObjectId id)
+    {
+        // It interrupts what its victim was doing. Now and then one
+        // the statuses do not name (an ogre's grab, say): the
+        // creature is held all the same.
+        ConjureBroken(id);
+        tasks_.erase(id);
+        world_.Finish(id);
+        const bool already = world_.Get(id).condition == Condition::Disabled;
+        const float before = world_.Get(id).conditionSeconds;
+        world_.Get(id).condition = Chance(rng_, 0.2) ? Condition::None : Condition::Disabled;
+        Try(id, CommandType::ExecuteEffect, Source::Engine);
+        if (const auto found = tasks_.find(id); found != tasks_.end())
+        {
+            found->second.held = true;
+        }
+        conditionLeftMs_[id] = static_cast<std::int32_t>(Between(rng_, 2000.0f, 10000.0f));
+        // The game layer reads its seconds, most times.
+        float seconds = 0.0f;
+        if (Chance(rng_, 0.7))
+        {
+            seconds =
+                Chance(rng_, 0.5) ? Between(rng_, 0.5f, 3.9f) : static_cast<float>(conditionLeftMs_[id]) / 1000.0f;
+        }
+        world_.Get(id).conditionSeconds = seconds;
+        if (world_.Get(id).conditionSeconds > 0.0f && world_.Get(id).condition == Condition::Disabled)
+        {
+            secondsKnown_.insert(id);
+        }
+        // Held already: the longer of the two is what there is to read.
+        if (already)
+        {
+            world_.Get(id).conditionSeconds = std::max(before, world_.Get(id).conditionSeconds);
+        }
+        ++coverage_.stunned;
+        if (echo)
+        {
+            std::printf("%7u (arena: %u held, condition %d, %.1f s read, was held %d)\n", world_.now, id,
+                        static_cast<int>(world_.Get(id).condition),
+                        static_cast<double>(world_.Get(id).conditionSeconds), already ? 1 : 0);
         }
     }
 
@@ -2379,74 +2608,11 @@ class Arena
             delayed_.clear();
             break;
         case EventKind::TurnDelayed:
-            Must(turnOpen_, "a turn put off that was not open");
-            Must(delayed_.contains(e.who), "a turn put off that nobody asked for");
-            if (const auto asked = delayed_.find(e.who); asked != delayed_.end())
-            {
-                Must(e.round == asked->second.round, "a turn put off in another round than it was asked in");
-                Must(!asked->second.awaited, "a turn put off twice in a round");
-                asked->second.awaited = true;
-            }
-            turnOpen_ = false;
-            begunOf_ = kNoObject; // put off: it begins again when it comes (18)
-            endAsked_.reset();    // and an End pressed beside the delay went with it (21)
-            ++coverage_.delays;
+            HeardTurnDelayed(e);
             break;
         case EventKind::TurnStarted:
         case EventKind::TurnLost:
-            turnsThisFrame_.insert(e.who);
-            Must(roundStarted_, "a turn before the fight's first round");
-            Must(!turnOpen_, "a turn opened while another was open");
-            Must(e.who == world_.Current(), "a turn opened for someone not current");
-            // No turn is begun for one the game has made inactive (17). One a
-            // condition holds loses its turn to that first, as anyone does.
-            Must(e.kind == EventKind::TurnLost || !world_.Get(e.who).inactive,
-                 "a turn begun for one the game has made inactive");
-            turnOpen_ = true;
-            // Who plays the turn is settled as the machine begins it, by what
-            // is chosen for its creature now (18): the machine's word for it
-            // is the arena's, by its own record of the choices.
-            if (e.kind == EventKind::TurnStarted)
-            {
-                begunOf_ = e.who;
-                begunChosen_ = Chosen(e.who);
-                Must((e.detail == "yours") == PlayerControls(e.who),
-                     "a turn begun as the player's, or as its AI's, against what was chosen for its creature");
-                const Creature &c = world_.Get(e.who);
-                if (c.side == Side::Party && !c.hero && begunChosen_ &&
-                    *begunChosen_ != (settings_.partyControl == PartyControl::Tactics))
-                {
-                    ++coverage_.chosenTurns;
-                }
-            }
-            // Time rolled over into this turn only from one its actor ended
-            // (10). The arena's own word for which those are: the three ends
-            // that can leave time unspent by the actor's choice.
-            if (e.kind == EventKind::TurnStarted && world_.machine.View().rolledMs > 0)
-            {
-                const auto last = endedWhy_.find(e.who);
-                const bool saved = last != endedWhy_.end() && (last->second == "ended by the player" ||
-                                                               last->second == "done" || last->second == "waits");
-                if (!saved)
-                {
-                    const std::string what =
-                        "time rolled over from a turn its actor did not end: " +
-                        (last != endedWhy_.end() ? last->second : std::string{"it had no turn before"});
-                    Must(false, what.c_str());
-                }
-            }
-            if (const auto asked = delayed_.find(e.who); asked != delayed_.end() && asked->second.awaited)
-            {
-                // The turn it put off: in the same round, and with the bar
-                // it had.
-                asked->second.awaited = false;
-                Must(e.round == asked->second.round, "a turn put off came in another round");
-                if (e.kind == EventKind::TurnStarted)
-                {
-                    Must(world_.machine.View().timeMs == asked->second.bar, "a turn put off came with another bar");
-                    ++coverage_.delayedTurns;
-                }
-            }
+            HeardTurnOpened(e);
             break;
         case EventKind::TurnResumed:
             // The turn a conversation came in the middle of, still open.
@@ -2462,101 +2628,9 @@ class Arena
             // And only a turn the player plays, as it began (18).
             Must(PlayerControls(e.who), "a turn waits on an order for a creature whose AI plays it");
             break;
-        case EventKind::TurnEnded: {
-            turnsThisFrame_.insert(e.who);
-            const bool wasOpen = std::exchange(turnOpen_, false);
-            const bool players = PlayerControls(e.who); // as the turn began (18)
-            begunOf_ = kNoObject; // no turn is under way: the next begins by what is chosen then (18)
-            Must(EndedByItsActor(e.detail).has_value(), "a turn ended for a reason core/TurnEnd.h does not class");
-            endedWhy_[e.who] = e.detail;
-            // No clock of the mod's ends a turn the player plays (20).
-            if (e.detail == "took too long")
-            {
-                Must(!players, "a turn the player plays ended as having taken too long");
-            }
-            // Nor is a turn lost to its creature's own mode's command (20).
-            if (e.detail == "held by an effect")
-            {
-                Must(!Sings(e.who), "a turn lost to its creature's own mode's command, as to a hold");
-            }
-            // Spent on its creature's own mode (20): only the turn of one at
-            // its own mode's command ends so, and the player's only by End.
-            const bool ended = std::exchange(endAsked_, std::nullopt).has_value();
-            if (e.detail == "keeping up its mode")
-            {
-                Must(Sings(e.who), "a turn spent on a mode of its creature's that it is not at the command of");
-                Must(!players || ended, "a turn the player plays spent on its creature's mode with no End pressed");
-                ++coverage_.songTurns;
-                coverage_.songTurnsEnded += players ? 1 : 0;
-            }
-            // And only End ends a turn "ended by the player" (21).
-            if (e.detail == "ended by the player")
-            {
-                Must(players && ended, "a turn ended by the player that the player did not end");
-            }
-            // An unaware hostile's turn (11): skipped only while it has
-            // noticed nobody, only after its beat was said and is out (of the
-            // fight's clock, which runs with its speed), and never waited out
-            // on an AI that had nobody to choose.
-            if (e.detail == "unaware")
-            {
-                const Creature &c = world_.Get(e.who);
-                Must(Unaware(c.side, c.perception), "a turn skipped as unaware though its creature has noticed");
-                Must(beatOf_ == e.who, "a turn skipped as unaware with no beat said for it");
-                const float ran = static_cast<float>(turnRunMs_ - beatFromMs_ + (2 * kFrameMs)) * settings_.fightSpeed;
-                Must(ran >= static_cast<float>(TurnMachine::kUnawareMs),
-                     "an unaware hostile's turn skipped before its beat was out");
-                ++coverage_.unawareTurns;
-            }
-            // Only an AI that was told to choose is waited on: and one that
-            // had noticed nobody is never told (PokeAi, above).
-            if (e.detail == "chose nothing")
-            {
-                Must(told_ == e.who, "a turn waited out on an AI that was never told to choose");
-            }
-            // One the game has made inactive (17): only such a creature's
-            // turn ends so. Passed over as it came (no turn was open), or
-            // ended in the middle, its creature gone as it played. What it
-            // had put off this round (Delay) has come, and gone the same way.
-            if (e.detail == "inactive")
-            {
-                const Creature &c = world_.Get(e.who);
-                Must(c.inactive, "a turn ended as inactive for one the game has active");
-                ++coverage_.inactiveTurns;
-                coverage_.inactiveMidTurn += wasOpen ? 1 : 0;
-                coverage_.inactiveQueued += c.queued != CommandType::Invalid ? 1 : 0;
-                if (const auto asked = delayed_.find(e.who); asked != delayed_.end())
-                {
-                    asked->second.awaited = false;
-                }
-            }
-            // One with no turn (16): only one that is not of the party and
-            // that the game does not have in combat.
-            if (e.detail == "out of combat")
-            {
-                const Creature &c = world_.Get(e.who);
-                Must(c.side != Side::Party && !world_.InCombat(e.who),
-                     "a turn ended as out of combat for one of the party, or one the game has in combat");
-                ++coverage_.noTurns;
-                // What it was at is the engine's to finish, and the game's
-                // from here: nothing clears it, the game's scripts queue its
-                // way home behind it (sys_rubberband_h.nss, Rubber_GoHome:
-                // WR_AddCommand, and no clearing), and its walk is no turn's
-                // to measure, though the order names it again before it is
-                // done. An attack begun in its turn, its creature gone out of
-                // the scan's reach on the way to its target, walked on into
-                // the next round's padding and was counted as that turn's
-                // (the long run with combatants out of reach, seed 73,
-                // 2026-10-05). Taken into combat again, it stops as anything
-                // of the game's own does (Run).
-                if (const auto task = tasks_.find(e.who); task != tasks_.end())
-                {
-                    task->second.gamesOwn = true;
-                }
-            }
-            beatOf_ = kNoObject;
+        case EventKind::TurnEnded:
+            HeardTurnEnded(e);
             break;
-        }
         case EventKind::FightOver:
             turnOpen_ = false;
             begunOf_ = kNoObject;
@@ -2612,7 +2686,207 @@ class Arena
         }
     }
 
-    // After each frame (2, 3, 4, 7).
+    // A turn put off (Delay): an open one, asked for, once in its round.
+    void HeardTurnDelayed(const TurnEvent &e)
+    {
+        Must(turnOpen_, "a turn put off that was not open");
+        Must(delayed_.contains(e.who), "a turn put off that nobody asked for");
+        if (const auto asked = delayed_.find(e.who); asked != delayed_.end())
+        {
+            Must(e.round == asked->second.round, "a turn put off in another round than it was asked in");
+            Must(!asked->second.awaited, "a turn put off twice in a round");
+            asked->second.awaited = true;
+        }
+        turnOpen_ = false;
+        begunOf_ = kNoObject; // put off: it begins again when it comes (18)
+        endAsked_.reset();    // and an End pressed beside the delay went with it (21)
+        ++coverage_.delays;
+    }
+
+    // A turn opened, begun or lost to a condition: after the fight's first
+    // round, one at a time, the current creature's.
+    void HeardTurnOpened(const TurnEvent &e)
+    {
+        turnsThisFrame_.insert(e.who);
+        Must(roundStarted_, "a turn before the fight's first round");
+        Must(!turnOpen_, "a turn opened while another was open");
+        Must(e.who == world_.Current(), "a turn opened for someone not current");
+        // No turn is begun for one the game has made inactive (17). One a
+        // condition holds loses its turn to that first, as anyone does.
+        Must(e.kind == EventKind::TurnLost || !world_.Get(e.who).inactive,
+             "a turn begun for one the game has made inactive");
+        turnOpen_ = true;
+        // Who plays the turn is settled as the machine begins it, by what
+        // is chosen for its creature now (18): the machine's word for it
+        // is the arena's, by its own record of the choices.
+        if (e.kind == EventKind::TurnStarted)
+        {
+            begunOf_ = e.who;
+            begunChosen_ = Chosen(e.who);
+            Must((e.detail == "yours") == PlayerControls(e.who),
+                 "a turn begun as the player's, or as its AI's, against what was chosen for its creature");
+            const Creature &c = world_.Get(e.who);
+            if (c.side == Side::Party && !c.hero && begunChosen_ &&
+                *begunChosen_ != (settings_.partyControl == PartyControl::Tactics))
+            {
+                ++coverage_.chosenTurns;
+            }
+        }
+        if (e.kind == EventKind::TurnStarted && world_.machine.View().rolledMs > 0)
+        {
+            CheckRolledOver(e);
+        }
+        if (const auto asked = delayed_.find(e.who); asked != delayed_.end() && asked->second.awaited)
+        {
+            // The turn it put off: in the same round, and with the bar
+            // it had.
+            asked->second.awaited = false;
+            Must(e.round == asked->second.round, "a turn put off came in another round");
+            if (e.kind == EventKind::TurnStarted)
+            {
+                Must(world_.machine.View().timeMs == asked->second.bar, "a turn put off came with another bar");
+                ++coverage_.delayedTurns;
+            }
+        }
+    }
+
+    // A turn ended: for a reason core/TurnEnd.h classes, and each reason only
+    // where it may be given.
+    void HeardTurnEnded(const TurnEvent &e)
+    {
+        turnsThisFrame_.insert(e.who);
+        const bool wasOpen = std::exchange(turnOpen_, false);
+        const bool players = PlayerControls(e.who); // as the turn began (18)
+        begunOf_ = kNoObject;                       // no turn is under way: the next begins by what is chosen then (18)
+        Must(EndedByItsActor(e.detail).has_value(), "a turn ended for a reason core/TurnEnd.h does not class");
+        endedWhy_[e.who] = e.detail;
+        // No clock of the mod's ends a turn the player plays (20).
+        if (e.detail == "took too long")
+        {
+            Must(!players, "a turn the player plays ended as having taken too long");
+        }
+        // Nor is a turn lost to its creature's own mode's command (20).
+        if (e.detail == "held by an effect")
+        {
+            Must(!Sings(e.who), "a turn lost to its creature's own mode's command, as to a hold");
+        }
+        // Spent on its creature's own mode (20): only the turn of one at
+        // its own mode's command ends so, and the player's only by End.
+        const bool ended = std::exchange(endAsked_, std::nullopt).has_value();
+        if (e.detail == "keeping up its mode")
+        {
+            Must(Sings(e.who), "a turn spent on a mode of its creature's that it is not at the command of");
+            Must(!players || ended, "a turn the player plays spent on its creature's mode with no End pressed");
+            ++coverage_.songTurns;
+            coverage_.songTurnsEnded += players ? 1 : 0;
+        }
+        // And only End ends a turn "ended by the player" (21).
+        if (e.detail == "ended by the player")
+        {
+            Must(players && ended, "a turn ended by the player that the player did not end");
+        }
+        if (e.detail == "unaware")
+        {
+            EndedUnaware(e);
+        }
+        // Only an AI that was told to choose is waited on: and one that
+        // had noticed nobody is never told (PokeAi, above).
+        if (e.detail == "chose nothing")
+        {
+            Must(told_ == e.who, "a turn waited out on an AI that was never told to choose");
+        }
+        if (e.detail == "inactive")
+        {
+            EndedInactive(e, wasOpen);
+        }
+        if (e.detail == "out of combat")
+        {
+            EndedOutOfCombat(e);
+        }
+        beatOf_ = kNoObject;
+    }
+
+    // Time rolled over into this turn only from one its actor ended
+    // (10). The arena's own word for which those are: the three ends
+    // that can leave time unspent by the actor's choice.
+    void CheckRolledOver(const TurnEvent &e) const
+    {
+        const auto last = endedWhy_.find(e.who);
+        const bool saved = last != endedWhy_.end() &&
+                           (last->second == "ended by the player" || last->second == "done" || last->second == "waits");
+        if (!saved)
+        {
+            const std::string what = "time rolled over from a turn its actor did not end: " +
+                                     (last != endedWhy_.end() ? last->second : std::string{"it had no turn before"});
+            Must(false, what.c_str());
+        }
+    }
+
+    // An unaware hostile's turn (11): skipped only while it has
+    // noticed nobody, only after its beat was said and is out (of the
+    // fight's clock, which runs with its speed), and never waited out
+    // on an AI that had nobody to choose.
+    void EndedUnaware(const TurnEvent &e)
+    {
+        const Creature &c = world_.Get(e.who);
+        Must(Unaware(c.side, c.perception), "a turn skipped as unaware though its creature has noticed");
+        Must(beatOf_ == e.who, "a turn skipped as unaware with no beat said for it");
+        const float ran = static_cast<float>(turnRunMs_ - beatFromMs_ + (2 * kFrameMs)) * settings_.fightSpeed;
+        Must(ran >= static_cast<float>(TurnMachine::kUnawareMs),
+             "an unaware hostile's turn skipped before its beat was out");
+        ++coverage_.unawareTurns;
+    }
+
+    // One the game has made inactive (17): only such a creature's
+    // turn ends so. Passed over as it came (no turn was open), or
+    // ended in the middle, its creature gone as it played. What it
+    // had put off this round (Delay) has come, and gone the same way.
+    void EndedInactive(const TurnEvent &e, bool wasOpen)
+    {
+        const Creature &c = world_.Get(e.who);
+        Must(c.inactive, "a turn ended as inactive for one the game has active");
+        ++coverage_.inactiveTurns;
+        coverage_.inactiveMidTurn += wasOpen ? 1 : 0;
+        coverage_.inactiveQueued += c.queued != CommandType::Invalid ? 1 : 0;
+        if (const auto asked = delayed_.find(e.who); asked != delayed_.end())
+        {
+            asked->second.awaited = false;
+        }
+    }
+
+    // One with no turn (16): only one that is not of the party and
+    // that the game does not have in combat.
+    void EndedOutOfCombat(const TurnEvent &e)
+    {
+        const Creature &c = world_.Get(e.who);
+        Must(c.side != Side::Party && !world_.InCombat(e.who),
+             "a turn ended as out of combat for one of the party, or one the game has in combat");
+        ++coverage_.noTurns;
+        // What it was at is the engine's to finish, and the game's
+        // from here: nothing clears it, the game's scripts queue its
+        // way home behind it (sys_rubberband_h.nss, Rubber_GoHome:
+        // WR_AddCommand, and no clearing), and its walk is no turn's
+        // to measure, though the order names it again before it is
+        // done. An attack begun in its turn, its creature gone out of
+        // the scan's reach on the way to its target, walked on into
+        // the next round's padding and was counted as that turn's
+        // (the long run with combatants out of reach, seed 73,
+        // 2026-10-05). Taken into combat again, it stops as anything
+        // of the game's own does (Run).
+        if (const auto task = tasks_.find(e.who); task != tasks_.end())
+        {
+            task->second.gamesOwn = true;
+        }
+    }
+
+    // A turn is being played in this phase: waited on, or under way.
+    static bool Playing(Phase phase)
+    {
+        return phase == Phase::AwaitingOrder || phase == Phase::Dispatching || phase == Phase::AiThinking ||
+               phase == Phase::Executing || phase == Phase::Settling;
+    }
+
+    // After each frame (2, 3, 4, 7): each promise's check is a function below.
     void Check()
     {
         turnsThisFrame_.clear();
@@ -2629,8 +2903,36 @@ class Arena
                 begunOf_ = kNoObject;
             }
         }
-        // Effects' time is held exactly while a fight is on (and the setting
-        // asks for it): never left held once the fight is over or dropped.
+        CheckTimeHeld(phase);
+        CheckSpeed(phase);
+        if (world_.mode == Mode::Combat)
+        {
+            CheckPause(phase);
+        }
+        if (world_.machine.Active() && world_.mode == Mode::Combat)
+        {
+            const ObjectId current = world_.Current();
+            CheckOnlyTheCurrentActs(current);
+            if (current != kNoObject)
+            {
+                CheckTheTurn(phase, current);
+            }
+        }
+        CheckTheFightsEnd(phase);
+        CheckWhoWasTold(phase);
+        toldIdle_.clear();
+        phaseBefore_ = phase;
+        const bool played = Playing(phase);
+        const ObjectId whose = world_.Current();
+        CheckNoTurn(played, whose);
+        CheckAtItsMode(phase, played, whose);
+        CheckEndPressed(phase, played);
+    }
+
+    // Effects' time is held exactly while a fight is on (and the setting
+    // asks for it): never left held once the fight is over or dropped.
+    void CheckTimeHeld(Phase phase) const
+    {
         if (phase == Phase::Idle)
         {
             Must(!timeHeld_, "effects' time left held with no fight on");
@@ -2639,8 +2941,12 @@ class Arena
         {
             Must(timeHeld_, "effects' time running in a fight");
         }
-        // The game runs at the fight's speed through its turns, anyone's, and
-        // at its own through a conversation and with no fight on.
+    }
+
+    // The game runs at the fight's speed through its turns, anyone's, and
+    // at its own through a conversation and with no fight on.
+    void CheckSpeed(Phase phase) const
+    {
         const bool aiTurn = (phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling) &&
                             world_.Current() != kNoObject && !PlayerControls(world_.Current());
         const bool ownSpeed = phase == Phase::Idle || phase == Phase::Suspended;
@@ -2660,121 +2966,126 @@ class Arena
         {
             Must(world_.speed == 1000, "the game not at its own speed outside a fight's turns");
         }
-        if (world_.mode == Mode::Combat)
+    }
+
+    // Paused where a turn waits, running where one plays out.
+    void CheckPause(Phase phase) const
+    {
+        const bool choosing = phase == Phase::AwaitingOrder;
+        const bool wantsPause =
+            phase == Phase::Starting || phase == Phase::TurnStart || (choosing && settings_.pauseOnPlayerTurn);
+        const bool wantsRun = phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling ||
+                              phase == Phase::RoundPadding || phase == Phase::Dispatching ||
+                              (choosing && !settings_.pauseOnPlayerTurn);
+        Must(!wantsPause || world_.paused, "the game running while it should wait");
+        Must(!wantsRun || !world_.paused, "the game paused while a turn plays out");
+    }
+
+    // Running, not merely queued: paused, nothing runs, and a
+    // creature not yet seen fighting (a joiner before its scan)
+    // cannot be stopped before it is seen.
+    void CheckOnlyTheCurrentActs(ObjectId current) const
+    {
+        for (const auto &[id, task] : tasks_)
         {
-            const bool choosing = phase == Phase::AwaitingOrder;
-            const bool wantsPause =
-                phase == Phase::Starting || phase == Phase::TurnStart || (choosing && settings_.pauseOnPlayerTurn);
-            const bool wantsRun = phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling ||
-                                  phase == Phase::RoundPadding || phase == Phase::Dispatching ||
-                                  (choosing && !settings_.pauseOnPlayerTurn);
-            Must(!wantsPause || world_.paused, "the game running while it should wait");
-            Must(!wantsRun || !world_.paused, "the game paused while a turn plays out");
-        }
-        if (world_.machine.Active() && world_.mode == Mode::Combat)
-        {
-            const ObjectId current = world_.Current();
-            // Running, not merely queued: paused, nothing runs, and a
-            // creature not yet seen fighting (a joiner before its scan)
-            // cannot be stopped before it is seen.
-            for (const auto &[id, task] : tasks_)
+            if (world_.paused)
             {
-                if (world_.paused)
-                {
-                    break;
-                }
-                const Creature &c = world_.Get(id);
-                // One that is not in this fight, the scan's rules not
-                // finding it fighting, is the game's own: what it took up in
-                // real time before the fight began goes on (an ally told
-                // the last fight was over, far from where the next begins:
-                // the long run with combatants out of reach, seed 409 with
-                // time); and so does what one that has left the fight was
-                // set to by a conversation's scripts (seed 215). Found
-                // fighting, it joins or is back, and is stopped.
-                const Combatant *in = world_.machine.Order().Find(id);
-                if (!c.fighting && (in == nullptr || in->down))
-                {
-                    continue;
-                }
-                // (A spell held in its conjure, the engine's own, waits
-                // through the others' turns: its caster draws it in.)
-                // (Nor is one the game does not have in combat held: what it is
-                // at is the game's, in anyone's turn (1, 2). A walk its script
-                // set it on, until the frame after the game takes it into
-                // combat (Run). Or what it began while it fought: a spell
-                // kept through its turns landed as its own turn began, the
-                // party lost to it by then, and that turn was skipped as
-                // unaware with the cast still playing, as the machine has
-                // skipped it since issue 29 "whatever the engine has it at":
-                // the long run with combatants out of reach, seed 103 with
-                // time, 2026-10-05, which none of the fights before the
-                // game's own were let through had reached.)
-                const bool gamesOwn = task.gamesOwn || (c.side != Side::Party && !world_.InCombat(id));
-                if (id != current && !c.down && Classify(task.type) != CommandKind::Involuntary &&
-                    !(task.conjuring && c.conjureHeld) && !gamesOwn)
-                {
-                    const std::string what =
-                        "someone other than the current combatant is acting: " + std::to_string(id) + " at a " +
-                        Name(task.type);
-                    Must(false, what.c_str());
-                }
+                break;
             }
-            if (current != kNoObject)
+            const Creature &c = world_.Get(id);
+            // One that is not in this fight, the scan's rules not
+            // finding it fighting, is the game's own: what it took up in
+            // real time before the fight began goes on (an ally told
+            // the last fight was over, far from where the next begins:
+            // the long run with combatants out of reach, seed 409 with
+            // time); and so does what one that has left the fight was
+            // set to by a conversation's scripts (seed 215). Found
+            // fighting, it joins or is back, and is stopped.
+            const Combatant *in = world_.machine.Order().Find(id);
+            if (!c.fighting && (in == nullptr || in->down))
             {
-                const Creature &c = world_.Get(current);
-                // With time, the bar of a turn the machine has begun walks,
-                // in every frame of it, at its creature's pace as the
-                // machine's last look at everyone found it (19): no older,
-                // and not the engine's of this instant, which the machine
-                // has not read.
-                const bool playing = phase == Phase::AwaitingOrder || phase == Phase::Dispatching ||
-                                     phase == Phase::AiThinking || phase == Phase::Executing ||
-                                     phase == Phase::Settling;
-                if (const auto looked = looked_.find(current); turnPace_ && playing && looked != looked_.end())
-                {
-                    Must(std::abs(world_.machine.View().paceMps - (settings_.paceMps * looked->second)) < 0.001f,
-                         "a turn's bar does not walk at its creature's pace as the machine last looked at it");
-                }
-                const float budget = turnMeters_;
-                // Past the budget by the overshoot and the frame the cut is
-                // seen in, and the turn's first step, which the machine
-                // measures from. Then two tries to reach something, each a
-                // step before it is stopped: with the action a move left
-                // unspent, and with the action given back (once a turn). A
-                // conversation costs two frames more: the one it starts in,
-                // which the machine sees as the conversation, and the first
-                // after, which it measures from. Seed 624 of the long run
-                // took all four.
-                // (A frame's step at the rate it moves at now, Run; or, the
-                // longer, at the one its turn began with.)
-                const float frame = kRunSpeed * std::max(Pace(c.speed, c.movement), turnPace_.value_or(c.speed)) *
-                                    static_cast<float>(kFrameMs) / 1000.0f;
-                // And each of those two tries may shift its feet a way before
-                // it is stopped (kShuffle).
-                const float slack = TurnMachine::kOvershoot + (2.0f * TurnMachine::kShuffle) +
-                                    ((4.0f + (2.0f * static_cast<float>(interruptions_))) * frame);
-                if (walked_ > budget + slack + 0.01f)
-                {
-                    const std::string what =
-                        "walked past its movement: " + std::to_string(walked_) + " of " + std::to_string(budget);
-                    Must(false, what.c_str());
-                }
-                if (!PlayerControls(current))
-                {
-                    // An AI's turn has a time limit (14): max_turn_ms of the
-                    // running game's time from when the machine began it,
-                    // whatever it has been doing; nothing counts its commands
-                    // (issue 38: max_commands_per_turn did, and this bound was
-                    // by that count, each command to its own limit). Give or
-                    // take the frames the arena and the machine count apart,
-                    // and two more for a conversation.
-                    const std::uint32_t bound = static_cast<std::uint32_t>(settings_.maxTurnMs) +
-                                                ((4 + (2 * static_cast<std::uint32_t>(interruptions_))) * kFrameMs);
-                    Must(!turnFromMs_ || turnRunMs_ - *turnFromMs_ <= bound, "an AI's turn went on past max_turn_ms");
-                }
+                continue;
+            }
+            // (A spell held in its conjure, the engine's own, waits
+            // through the others' turns: its caster draws it in.)
+            // (Nor is one the game does not have in combat held: what it is
+            // at is the game's, in anyone's turn (1, 2). A walk its script
+            // set it on, until the frame after the game takes it into
+            // combat (Run). Or what it began while it fought: a spell
+            // kept through its turns landed as its own turn began, the
+            // party lost to it by then, and that turn was skipped as
+            // unaware with the cast still playing, as the machine has
+            // skipped it since issue 29 "whatever the engine has it at":
+            // the long run with combatants out of reach, seed 103 with
+            // time, 2026-10-05, which none of the fights before the
+            // game's own were let through had reached.)
+            const bool gamesOwn = task.gamesOwn || (c.side != Side::Party && !world_.InCombat(id));
+            if (id != current && !c.down && Classify(task.type) != CommandKind::Involuntary &&
+                !(task.conjuring && c.conjureHeld) && !gamesOwn)
+            {
+                const std::string what = "someone other than the current combatant is acting: " + std::to_string(id) +
+                                         " at a " + Name(task.type);
+                Must(false, what.c_str());
             }
         }
+    }
+
+    // What the turn under way has walked, and how long it has gone on (4, 14, 19).
+    void CheckTheTurn(Phase phase, ObjectId current) const
+    {
+        const Creature &c = world_.Get(current);
+        // With time, the bar of a turn the machine has begun walks,
+        // in every frame of it, at its creature's pace as the
+        // machine's last look at everyone found it (19): no older,
+        // and not the engine's of this instant, which the machine
+        // has not read.
+        if (const auto looked = looked_.find(current); turnPace_ && Playing(phase) && looked != looked_.end())
+        {
+            Must(std::abs(world_.machine.View().paceMps - (settings_.paceMps * looked->second)) < 0.001f,
+                 "a turn's bar does not walk at its creature's pace as the machine last looked at it");
+        }
+        const float budget = turnMeters_;
+        // Past the budget by the overshoot and the frame the cut is
+        // seen in, and the turn's first step, which the machine
+        // measures from. Then two tries to reach something, each a
+        // step before it is stopped: with the action a move left
+        // unspent, and with the action given back (once a turn). A
+        // conversation costs two frames more: the one it starts in,
+        // which the machine sees as the conversation, and the first
+        // after, which it measures from. Seed 624 of the long run
+        // took all four.
+        // (A frame's step at the rate it moves at now, Run; or, the
+        // longer, at the one its turn began with.)
+        const float frame = kRunSpeed * std::max(Pace(c.speed, c.movement), turnPace_.value_or(c.speed)) *
+                            static_cast<float>(kFrameMs) / 1000.0f;
+        // And each of those two tries may shift its feet a way before
+        // it is stopped (kShuffle).
+        const float slack = TurnMachine::kOvershoot + (2.0f * TurnMachine::kShuffle) +
+                            ((4.0f + (2.0f * static_cast<float>(interruptions_))) * frame);
+        if (walked_ > budget + slack + 0.01f)
+        {
+            const std::string what =
+                "walked past its movement: " + std::to_string(walked_) + " of " + std::to_string(budget);
+            Must(false, what.c_str());
+        }
+        if (!PlayerControls(current))
+        {
+            // An AI's turn has a time limit (14): max_turn_ms of the
+            // running game's time from when the machine began it,
+            // whatever it has been doing; nothing counts its commands
+            // (issue 38: max_commands_per_turn did, and this bound was
+            // by that count, each command to its own limit). Give or
+            // take the frames the arena and the machine count apart,
+            // and two more for a conversation.
+            const std::uint32_t bound = static_cast<std::uint32_t>(settings_.maxTurnMs) +
+                                        ((4 + (2 * static_cast<std::uint32_t>(interruptions_))) * kFrameMs);
+            Must(!turnFromMs_ || turnRunMs_ - *turnFromMs_ <= bound, "an AI's turn went on past max_turn_ms");
+        }
+    }
+
+    // A fight over with its order empty left no enemy fighting.
+    void CheckTheFightsEnd(Phase phase)
+    {
         if (phase == Phase::Idle && !ended_ && world_.machine.Order().Empty() && coverage_.turns > 0 &&
             world_.mode == Mode::Combat)
         {
@@ -2791,9 +3102,13 @@ class Arena
             Must(Living(+[](const Creature &c) { return c.side == Side::Enemy && c.fighting && !c.inactive; }).empty(),
                  "the fight ended with an enemy still fighting");
         }
-        // The fight let the world go with this frame (15): whoever left it
-        // alive, or was turned away outside it, and still lives, was told in
-        // it. The fallen and the gone are the game layer's to pass over.
+    }
+
+    // The fight let the world go with this frame (15): whoever left it
+    // alive, or was turned away outside it, and still lives, was told in
+    // it. The fallen and the gone are the game layer's to pass over.
+    void CheckWhoWasTold(Phase phase)
+    {
         if (phaseBefore_ != Phase::Idle && phase == Phase::Idle)
         {
             for (const ObjectId id : owed_)
@@ -2808,17 +3123,16 @@ class Arena
             }
             owed_.clear();
         }
-        toldIdle_.clear();
-        phaseBefore_ = phase;
-        // One that is not of the party, out of the game's combat and with
-        // nobody to fight, has no turn (16): the turn it is found so in is
-        // over within a frame or two, the frame it is found in and the one
-        // that closes it. Not the beat that skips an unaware hostile's turn,
-        // which is its own promise (11); nor a frame the machine does not
-        // step in (a menu, a conversation).
-        const bool played = phase == Phase::AwaitingOrder || phase == Phase::Dispatching ||
-                            phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling;
-        const ObjectId whose = world_.Current();
+    }
+
+    // One that is not of the party, out of the game's combat and with
+    // nobody to fight, has no turn (16): the turn it is found so in is
+    // over within a frame or two, the frame it is found in and the one
+    // that closes it. Not the beat that skips an unaware hostile's turn,
+    // which is its own promise (11); nor a frame the machine does not
+    // step in (a menu, a conversation).
+    void CheckNoTurn(bool played, ObjectId whose)
+    {
         const bool noTurn = played && world_.mode == Mode::Combat && whose != kNoObject && beatOf_ != whose &&
                             NothingToFight(world_.Get(whose).side, world_.Get(whose).perception);
         noTurnFrames_ = noTurn && whose == noTurnOf_ ? noTurnFrames_ + 1 : (noTurn ? 1 : 0);
@@ -2833,13 +3147,17 @@ class Arena
             const Creature &c = world_.Get(whose);
             Must(!c.inactive || !c.exists || c.down, "a turn went on for one the game has made inactive");
         }
-        // One at its own mode's command (20), by the same count of frames:
-        // a turn its tactics play is over within a frame or two of its
-        // creature being so, the frame it is found in and the one that
-        // closes it; and a turn the player plays is never "executing" for
-        // it, but waits. Not the beat that skips an unaware hostile's turn,
-        // nor one a condition holds, whose turn that takes (and one with
-        // nobody to fight has none, above).
+    }
+
+    // One at its own mode's command (20), by the same count of frames:
+    // a turn its tactics play is over within a frame or two of its
+    // creature being so, the frame it is found in and the one that
+    // closes it; and a turn the player plays is never "executing" for
+    // it, but waits. Not the beat that skips an unaware hostile's turn,
+    // nor one a condition holds, whose turn that takes (and one with
+    // nobody to fight has none, above).
+    void CheckAtItsMode(Phase phase, bool played, ObjectId whose)
+    {
         const bool atMode = played && world_.mode == Mode::Combat && whose != kNoObject && beatOf_ != whose &&
                             Sings(whose) && world_.Get(whose).condition != Condition::Disabled &&
                             !NothingToFight(world_.Get(whose).side, world_.Get(whose).perception);
@@ -2864,11 +3182,15 @@ class Arena
             modeBar_ = barNow;
         }
         modeWaitOf_ = modeWait ? turn_ : std::pair{0, kNoObject};
-        // End pressed on a turn the player plays ends it (21): at once, or
-        // as the world settles after a command of its creature's that was
-        // over (settle_ms of the fight's clock, which runs at its speed).
-        // Counted in the frames the machine steps the turn in: not under a
-        // menu or in a conversation, which the turn outlasts.
+    }
+
+    // End pressed on a turn the player plays ends it (21): at once, or
+    // as the world settles after a command of its creature's that was
+    // over (settle_ms of the fight's clock, which runs at its speed).
+    // Counted in the frames the machine steps the turn in: not under a
+    // menu or in a conversation, which the turn outlasts.
+    void CheckEndPressed(Phase phase, bool played)
+    {
         if (phase == Phase::Idle || (endAsked_ && *endAsked_ != turn_))
         {
             endAsked_.reset();

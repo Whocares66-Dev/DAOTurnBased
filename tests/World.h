@@ -339,42 +339,7 @@ class World
         if (needs.scan)
         {
             ++scans;
-            std::vector<Combatant> seen;
-            for (const Creature &c : creatures)
-            {
-                // As the game's scan: the party, and living creatures in
-                // combat. And of those the machine named as in the fight
-                // (Needs::inFight), the living ones that are not found so:
-                // read all the same, with their perception, which is what
-                // keeps them in it or does not (issue 29).
-                const bool found =
-                    c.side == Side::Party || (!c.down && c.fighting && !c.unfound && !c.inactive && inCombat);
-                const bool named = !c.down && std::ranges::find(needs.inFight, c.id) != needs.inFight.end();
-                if (!c.exists || (!found && !named))
-                {
-                    continue;
-                }
-                Combatant x;
-                x.id = c.id;
-                x.side = c.side;
-                x.hero = c.hero;
-                x.name = c.name;
-                x.tag = c.tag;
-                x.dexterity = c.dexterity;
-                x.speed = c.speed;
-                x.down = c.down;
-                x.engaged = c.engaged;
-                x.rank = c.rank;
-                x.tactics = c.tactics;
-                x.survival = c.survival;
-                // Its health as the scan reads it; not its mana or stamina,
-                // which the game's scan does not read (Bridge::Describe).
-                x.health = c.down ? 0.0f : c.health;
-                x.perception = c.perception;
-                x.fighting = found;
-                seen.push_back(x);
-            }
-            obs.scan = seen;
+            obs.scan = ScanFor(needs);
         }
         if (needs.actor != kNoObject)
         {
@@ -968,22 +933,7 @@ class World
                 paused = false;
                 break;
             case EffectKind::ClearCommands:
-                // (Not what waits on an inactive creature: in play the
-                // machine's ClearAllCommands, eleven turns running, left what
-                // was queued on a tentacle under ground where it was. Issue
-                // 44; why is not read.)
-                if (Get(e.target).inactive && Get(e.target).queued != CommandType::Invalid)
-                {
-                    break;
-                }
-                Finish(e.target);
-                if (heldConjures.erase(e.target) > 0)
-                {
-                    // A held conjure's command cleared: the game layer hears
-                    // it end (Gate.cpp's OnEnd) and says so.
-                    Get(e.target).conjureHeld = false;
-                    (void)machine.OnConjureCleared(e.target);
-                }
+                ClearCommandsOf(e);
                 break;
             case EffectKind::EndConditions:
                 Get(e.target).condition = Condition::None;
@@ -1025,30 +975,7 @@ class World
                 }
                 break;
             case EffectKind::FaceTarget:
-                // The game layer has the engine face the creature at whom
-                // its command is aimed, asks the engine again, and keeps
-                // what came of it for the machine (Bridge.cpp, FaceTarget).
-                if (!e.others.empty())
-                {
-                    const ObjectId target = e.others.front();
-                    const auto type = static_cast<CommandType>(e.a);
-                    FacedLook look;
-                    look.who = e.target;
-                    look.target = target;
-                    look.type = type;
-                    if (const std::optional<TurnToFace> before = Turn(type, e.target, target))
-                    {
-                        look.stood = std::abs(before->degrees);
-                        look.taken = !faceRefused;
-                        if (look.taken)
-                        {
-                            FaceOff(e.target, target, 0.0f);
-                            faced.emplace_back(e.target, target);
-                        }
-                        look.now = Turn(type, e.target, target);
-                    }
-                    facedLooks.push_back(look);
-                }
+                FaceAtTarget(e);
                 break;
             case EffectKind::Approach:
                 // The game layer walks the creature to its kept attack's
@@ -1064,95 +991,205 @@ class World
                 }
                 break;
             case EffectKind::ReleaseCast:
-                if (heldConjures.erase(e.target) > 0)
-                {
-                    // Its conjure let complete: the cast runs, and ends as a
-                    // test or the arena finishes it.
-                    Get(e.target).conjureHeld = false;
-                    if (onConjureReleased)
-                    {
-                        onConjureReleased(e.target);
-                    }
-                    break;
-                }
-                // The game layer gives the cast it kept, as a script's; not
-                // one whose target is gone, which it says with the next
-                // frame's observation. A plain attack is given all the same,
-                // at the nearest of those the machine named that its creature
-                // can strike from where it stands, if there is one.
-                // Gone as a test says (targetGone), or made inactive by the
-                // game since the action was kept, which is the same to the
-                // game layer (Bridge.cpp, NotThere; issue 44).
-                if (const bool said = targetGone.erase(e.target) > 0; said || KeptAtInactive(e.target))
-                {
-                    const auto kept = heldCasts.find(e.target);
-                    ObjectId next = kNoObject;
-                    if (kept != heldCasts.end() && kept->second.type == CommandType::Attack)
-                    {
-                        std::vector<Foe> foes;
-                        foes.reserve(e.others.size());
-                        for (const ObjectId other : e.others)
-                        {
-                            foes.push_back(Measure(e.target, other));
-                        }
-                        next = NearestInReach(foes);
-                    }
-                    if (next != kNoObject)
-                    {
-                        CommandRequest again = kept->second;
-                        heldCasts.erase(kept);
-                        again.source = Source::Script;
-                        again.inCombat = InCombat(e.target); // as the gate reads it now, not as it was kept
-                        again.target = next;
-                        again.walk = 0.0f; // in reach: nothing to walk
-                        turned.emplace_back(e.target, next);
-                        released.push_back(Queue(again));
-                        if (onReleased)
-                        {
-                            onReleased(e.target, again, released.back());
-                        }
-                    }
-                    else
-                    {
-                        heldCasts.erase(e.target);
-                        keptVoid.push_back(e.target);
-                    }
-                }
-                else if (const auto kept = heldCasts.find(e.target); kept != heldCasts.end())
-                {
-                    CommandRequest again = kept->second;
-                    heldCasts.erase(kept);
-                    again.source = Source::Script;
-                    again.inCombat = InCombat(e.target); // as the gate reads it now, not as it was kept
-                    released.push_back(Queue(again));
-                    if (onReleased)
-                    {
-                        onReleased(e.target, again, released.back());
-                    }
-                }
+                ReleaseKept(e);
                 break;
             case EffectKind::DropCast:
-                if (e.target == kNoObject)
-                {
-                    heldCasts.clear();
-                    for (const ObjectId held : heldConjures)
-                    {
-                        Get(held).conjureHeld = false; // let run on
-                    }
-                    heldConjures.clear();
-                }
-                else
-                {
-                    heldCasts.erase(e.target);
-                    if (heldConjures.erase(e.target) > 0)
-                    {
-                        Get(e.target).conjureHeld = false;
-                        Finish(e.target); // its command cleared
-                    }
-                }
+                DropKept(e);
                 break;
             default:
                 break;
+            }
+        }
+    }
+
+    // What the game's scan would read, a frame's worth.
+    std::vector<Combatant> ScanFor(const Needs &needs) const
+    {
+        std::vector<Combatant> seen;
+        for (const Creature &c : creatures)
+        {
+            // As the game's scan: the party, and living creatures in
+            // combat. And of those the machine named as in the fight
+            // (Needs::inFight), the living ones that are not found so:
+            // read all the same, with their perception, which is what
+            // keeps them in it or does not (issue 29).
+            const bool found =
+                c.side == Side::Party || (!c.down && c.fighting && !c.unfound && !c.inactive && inCombat);
+            const bool named = !c.down && std::ranges::find(needs.inFight, c.id) != needs.inFight.end();
+            if (!c.exists || (!found && !named))
+            {
+                continue;
+            }
+            Combatant x;
+            x.id = c.id;
+            x.side = c.side;
+            x.hero = c.hero;
+            x.name = c.name;
+            x.tag = c.tag;
+            x.dexterity = c.dexterity;
+            x.speed = c.speed;
+            x.down = c.down;
+            x.engaged = c.engaged;
+            x.rank = c.rank;
+            x.tactics = c.tactics;
+            x.survival = c.survival;
+            // Its health as the scan reads it; not its mana or stamina,
+            // which the game's scan does not read (Bridge::Describe).
+            x.health = c.down ? 0.0f : c.health;
+            x.perception = c.perception;
+            x.fighting = found;
+            seen.push_back(x);
+        }
+        return seen;
+    }
+
+    // A creature's commands cleared, and a spell held in its conjure with
+    // them. (Not what waits on an inactive creature: in play the
+    // machine's ClearAllCommands, eleven turns running, left what
+    // was queued on a tentacle under ground where it was. Issue
+    // 44; why is not read.)
+    void ClearCommandsOf(const Effect &e)
+    {
+        if (Get(e.target).inactive && Get(e.target).queued != CommandType::Invalid)
+        {
+            return;
+        }
+        Finish(e.target);
+        if (heldConjures.erase(e.target) > 0)
+        {
+            // A held conjure's command cleared: the game layer hears
+            // it end (Gate.cpp's OnEnd) and says so.
+            Get(e.target).conjureHeld = false;
+            (void)machine.OnConjureCleared(e.target);
+        }
+    }
+
+    // The game layer has the engine face the creature at whom
+    // its command is aimed, asks the engine again, and keeps
+    // what came of it for the machine (Bridge.cpp, FaceTarget).
+    void FaceAtTarget(const Effect &e)
+    {
+        if (!e.others.empty())
+        {
+            const ObjectId target = e.others.front();
+            const auto type = static_cast<CommandType>(e.a);
+            FacedLook look;
+            look.who = e.target;
+            look.target = target;
+            look.type = type;
+            if (const std::optional<TurnToFace> before = Turn(type, e.target, target))
+            {
+                look.stood = std::abs(before->degrees);
+                look.taken = !faceRefused;
+                if (look.taken)
+                {
+                    FaceOff(e.target, target, 0.0f);
+                    faced.emplace_back(e.target, target);
+                }
+                look.now = Turn(type, e.target, target);
+            }
+            facedLooks.push_back(look);
+        }
+    }
+
+    // A kept cast's time has come: a spell held in its conjure is let
+    // complete, and one the game layer kept is given again.
+    void ReleaseKept(const Effect &e)
+    {
+        if (heldConjures.erase(e.target) > 0)
+        {
+            // Its conjure let complete: the cast runs, and ends as a
+            // test or the arena finishes it.
+            Get(e.target).conjureHeld = false;
+            if (onConjureReleased)
+            {
+                onConjureReleased(e.target);
+            }
+            return;
+        }
+        // The game layer gives the cast it kept, as a script's; not
+        // one whose target is gone, which it says with the next
+        // frame's observation. A plain attack is given all the same,
+        // at the nearest of those the machine named that its creature
+        // can strike from where it stands, if there is one.
+        // Gone as a test says (targetGone), or made inactive by the
+        // game since the action was kept, which is the same to the
+        // game layer (Bridge.cpp, NotThere; issue 44).
+        if (const bool said = targetGone.erase(e.target) > 0; said || KeptAtInactive(e.target))
+        {
+            TurnOnAnother(e);
+        }
+        else if (const auto kept = heldCasts.find(e.target); kept != heldCasts.end())
+        {
+            const CommandRequest again = kept->second;
+            heldCasts.erase(kept);
+            GiveAgain(e.target, again);
+        }
+    }
+
+    // A kept action whose target is gone: a plain attack is given at the
+    // nearest of those the machine named that is in reach; anything else,
+    // and an attack with nobody in reach, is not given, and the machine
+    // hears so (keptVoid).
+    void TurnOnAnother(const Effect &e)
+    {
+        const auto kept = heldCasts.find(e.target);
+        ObjectId next = kNoObject;
+        if (kept != heldCasts.end() && kept->second.type == CommandType::Attack)
+        {
+            std::vector<Foe> foes;
+            foes.reserve(e.others.size());
+            for (const ObjectId other : e.others)
+            {
+                foes.push_back(Measure(e.target, other));
+            }
+            next = NearestInReach(foes);
+        }
+        if (next == kNoObject)
+        {
+            heldCasts.erase(e.target);
+            keptVoid.push_back(e.target);
+            return;
+        }
+        CommandRequest again = kept->second;
+        heldCasts.erase(kept);
+        again.target = next;
+        again.walk = 0.0f; // in reach: nothing to walk
+        turned.emplace_back(e.target, next);
+        GiveAgain(e.target, again);
+    }
+
+    // A kept action put to the gate again, as a script's.
+    void GiveAgain(ObjectId who, CommandRequest again)
+    {
+        again.source = Source::Script;
+        again.inCombat = InCombat(who); // as the gate reads it now, not as it was kept
+        released.push_back(Queue(again));
+        if (onReleased)
+        {
+            onReleased(who, again, released.back());
+        }
+    }
+
+    // What was kept is dropped: one creature's, or everyone's.
+    void DropKept(const Effect &e)
+    {
+        if (e.target == kNoObject)
+        {
+            heldCasts.clear();
+            for (const ObjectId held : heldConjures)
+            {
+                Get(held).conjureHeld = false; // let run on
+            }
+            heldConjures.clear();
+        }
+        else
+        {
+            heldCasts.erase(e.target);
+            if (heldConjures.erase(e.target) > 0)
+            {
+                Get(e.target).conjureHeld = false;
+                Finish(e.target); // its command cleared
             }
         }
     }
