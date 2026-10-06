@@ -97,6 +97,12 @@ class Bridge
     };
 
     std::vector<Combatant> Scan(const std::vector<ObjectId> &inFight);
+    // Scan's steps, over the scan in the making (Bridge.cpp).
+    struct Scanning;
+    void AddFound(Scanning &scan, ObjectId id, Side side, bool unaware);
+    bool FightsNear(const Scanning &scan, ObjectId id) const;
+    bool InUnawares(const Scanning &scan, ObjectId id, bool partyInCombat, bool someoneToFight) const;
+    std::size_t AddNotFound(Scanning &scan, const std::vector<ObjectId> &inFight);
     void SayWhoStands(ObjectId stands, ObjectId leader, ObjectId controlled);
     Combatant Describe(ObjectId id, Side side, bool hero);
     ActorObservation Actor(ObjectId id);
@@ -105,6 +111,16 @@ class Bridge
     void Poke(ObjectId id) const;
     void Explain(ObjectId id);
     static void Signal(const Effect &effect);
+    // Apply's effects that are more than a call, one each (Apply is the
+    // switch over them).
+    void TellAi(const Effect &e);
+    void GiveKept(const Effect &e);
+    static void WalkToKept(const Effect &e);
+    void HoldEffectsTime(const Effect &e);
+    void SetGameSpeed(const Effect &e);
+    static void AgeEffects(const Effect &e);
+    static void SetCooldown(const Effect &e);
+    static void EndConditionsOf(const Effect &e);
 
     Settings settings_;
     std::unordered_map<ObjectId, Known> known_;

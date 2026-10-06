@@ -73,6 +73,24 @@ bool AskAgain()
     return movie && movie->Invoke(kRefresh);
 }
 
+// What the game's UI code calls cannot take an exception: one that comes of
+// `body` is said, with what it was at, and goes no further.
+template <class Body> void Guarded(std::string_view what, const Body &body)
+{
+    try
+    {
+        body();
+    }
+    catch (const std::exception &e)
+    {
+        spdlog::error("{}: {}", what, e.what());
+    }
+    catch (...)
+    {
+        spdlog::error("{}: an exception of no known kind", what);
+    }
+}
+
 } // namespace
 
 void TacticsBox::Install(TurnMachine &machine, std::mutex &mutex)
@@ -92,8 +110,7 @@ void TacticsBox::Install(TurnMachine &machine, std::mutex &mutex)
         {
             return;
         }
-        try
-        {
+        Guarded(shown ? "the tactics screen opening" : "the tactics screen closing", [this, shown] {
             if (shown)
             {
                 Opened();
@@ -102,21 +119,11 @@ void TacticsBox::Install(TurnMachine &machine, std::mutex &mutex)
             {
                 Closed();
             }
-        }
-        catch (const std::exception &e)
-        {
-            spdlog::error("the tactics screen {}: {}", shown ? "opening" : "closing", e.what());
-        }
-        catch (...)
-        {
-            spdlog::error("the tactics screen {}: an exception of no known kind", shown ? "opening" : "closing");
-        }
+        });
     });
     dao::gui::OnExternalInterface("TurnBased_TacticsBox", [this](const dao::gui::Call &call) {
-        // Called from the game's UI code, which cannot take an exception.
         // With no answer the movie reads no number and shows no box.
-        try
-        {
+        Guarded("TurnBased_TacticsBox", [this, &call] {
             called_.store(true);
             const std::optional<ObjectId> id = AskedOf(call.args);
             call.Return(dao::gui::Value::Number(id ? Answer(*id) : static_cast<int>(BoxState::None)));
@@ -125,19 +132,10 @@ void TacticsBox::Install(TurnMachine &machine, std::mutex &mutex)
                 spdlog::warn("TurnBased_TacticsBox was asked with no creature's id: no box (the tactics screen's "
                              "GUI.SelectedChar.ID was not a number, or the movie is not the plugin's pair)");
             }
-        }
-        catch (const std::exception &e)
-        {
-            spdlog::error("TurnBased_TacticsBox: {}", e.what());
-        }
-        catch (...)
-        {
-            spdlog::error("TurnBased_TacticsBox: an exception of no known kind");
-        }
+        });
     });
     dao::gui::OnFSCommand("TurnBased_UseWhenTurnBased", [this](void *, std::string_view args) {
-        try
-        {
+        Guarded("TurnBased_UseWhenTurnBased", [this, args] {
             const std::optional<BoxClick> click = ReadBoxClick(args);
             if (!click)
             {
@@ -148,21 +146,12 @@ void TacticsBox::Install(TurnMachine &machine, std::mutex &mutex)
             }
             const std::lock_guard lock(mutex_);
             clicks_.push_back(*click);
-        }
-        catch (const std::exception &e)
-        {
-            spdlog::error("TurnBased_UseWhenTurnBased: {}", e.what());
-        }
-        catch (...)
-        {
-            spdlog::error("TurnBased_UseWhenTurnBased: an exception of no known kind");
-        }
+        });
     });
     // The movie's own word of what it did, for whoever reads the log with
     // no eye on the screen: where it put the box, or why there is none.
     dao::gui::OnFSCommand("TurnBased_TacticsSays", [this](void *, std::string_view text) {
-        try
-        {
+        Guarded("TurnBased_TacticsSays", [this, text] {
             called_.store(true);
             if (text.starts_with('!'))
             {
@@ -172,15 +161,7 @@ void TacticsBox::Install(TurnMachine &machine, std::mutex &mutex)
             {
                 spdlog::info("the tactics page's movie: {}", text);
             }
-        }
-        catch (const std::exception &e)
-        {
-            spdlog::error("TurnBased_TacticsSays: {}", e.what());
-        }
-        catch (...)
-        {
-            spdlog::error("TurnBased_TacticsSays: an exception of no known kind");
-        }
+        });
     });
     spdlog::info("the game's tactics page gets a box of the mod's, \"Use when turn-based\", a companion "
                  "(turnbased_tactics.swf beside the plugin, loaded into the screen as it opens); its calls are "

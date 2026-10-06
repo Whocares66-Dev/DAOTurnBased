@@ -168,6 +168,149 @@ std::string GroundWords(const GroundUnder &under)
 }
 } // namespace
 
+namespace
+{
+
+// Where the camera goes on a creature's turn, settled before it moves:
+// whom it follows (nobody: it is left where it is), how close, turned to
+// what yaw (none: left as it is turned), from where in words for the log,
+// and whether it stays with the party and only looks at the creature.
+struct Going
+{
+    ObjectId on = kNoObject;
+    std::optional<float> close;
+    std::optional<float> yaw;
+    std::string from;
+    bool stays = false;
+};
+
+// An enemy is looked at from one of six places, three behind it and
+// three in front, and from no further than the camera's line to it is
+// clear (core: ChooseStand, with the rule, the user's words for it and
+// what was seen without it); the party from behind, at the game's own
+// distance. Two things are asked of the engine for a place:
+// - how far its line is clear: what a line from the creature's head to
+//   where the camera would stand at the whole distance first meets
+//   (FirstCut, of kViewGroups, above). Anything of those groups cuts a
+//   line, a placeable that blocks no creature's sight too. Where the
+//   engine has no answer (no area, another thread than the game's: not
+//   where a turn begins) a line reads as clear, there being no telling
+//   that from nothing in the way;
+// - what lies under where the camera would then stand (GroundBelow,
+//   above), since scenery with no collision cuts no line: the
+//   Broodmother's cave.
+// One line and one ray down a place, with no stepping along either: six
+// raycasts a turn of a creature not of the party, and twelve on a turn
+// where no place behind it stands and the three in front are asked.
+// `going` comes as it would be with nothing in the way (the creature
+// followed, from behind, as close as its size asks) and is changed to where
+// the camera stands, or to its staying with the party (`own`: whom the
+// player acts as).
+void LookAtAnEnemy(Going &going, ObjectId id, ObjectId own, const dao::SceneCamera &scene, float behind,
+                   std::optional<float> asked)
+{
+    const dao::Vector feet = dao::script::api::GetPosition(id);
+    const dao::Vector head = dao::portraits::HeadPosition(id).value_or(dao::Vector{feet.x, feet.y, feet.z + 1.5f});
+    // Where the orbit puts the camera (dao/CameraMoves.h): at its
+    // distance (core: OrbitDistance) about the focus, by the yaw and the
+    // pitch from straight above.
+    const float zoom = scene.Zoom();
+    const float pitch = scene.Pitch();
+    const float wanted = OrbitDistance(zoom, asked.value_or(kCloseGame));
+    struct Measure
+    {
+        std::string_view name;
+        std::optional<dao::world::Hit> cut;
+        float clear;
+        GroundUnder under;
+    };
+    const auto measure = [&](ViewSide side, std::string_view name) {
+        const float angle = ViewYaw(behind, side);
+        const auto at = [&](float meters) {
+            return dao::Vector{feet.x + (meters * std::sin(pitch) * std::cos(angle)),
+                               feet.y + (meters * std::sin(pitch) * std::sin(angle)),
+                               feet.z + (meters * std::cos(pitch))};
+        };
+        const dao::Vector eye = at(wanted);
+        const std::optional<dao::world::Hit> cut = FirstCut(head, eye, kViewGroups, id);
+        const float clear = cut ? ClearDistance(Of(head), Of(eye), Of(cut->position), wanted) : wanted;
+        return Measure{name, cut, clear, GroundBelow(at(StandDistance(zoom, asked, clear)), feet)};
+    };
+    using Three = std::array<Measure, 3>;
+    const auto rowOf = [](const Three &three) {
+        return ViewRow{ViewPlace{three[0].clear, IsPlace(three[0].under)},
+                       ViewPlace{three[1].clear, IsPlace(three[1].under)},
+                       ViewPlace{three[2].clear, IsPlace(three[2].under)}};
+    };
+    const Three back{measure(ViewSide::Right, "its right"), measure(ViewSide::Left, "its left"),
+                     measure(ViewSide::Behind, "behind")};
+    ViewStand stand = ChooseStand(zoom, asked, rowOf(back), std::nullopt);
+    std::optional<Three> front;
+    if (stand.answer == ViewAnswer::AskFront)
+    {
+        front = Three{measure(ViewSide::FrontRight, "its front right"), measure(ViewSide::FrontLeft, "its front left"),
+                      measure(ViewSide::Front, "in front")};
+        stand = ChooseStand(zoom, asked, rowOf(back), rowOf(*front));
+    }
+    // What was found, for the log: each place's line and the ground
+    // under it, the zoom, and what cut each line that was cut. By the
+    // cuts play told a hall's walls from a cave with no collision
+    // (kViewGroups, above); by the ground it is to tell what a ray down
+    // makes of the inside of such a cave.
+    const auto said = [](const Three &three) {
+        return std::format("{} clear to {:.1f} m {}, {} to {:.1f} m {}, {} to {:.1f} m {}", three[0].name,
+                           three[0].clear, GroundWords(three[0].under), three[1].name, three[1].clear,
+                           GroundWords(three[1].under), three[2].name, three[2].clear, GroundWords(three[2].under));
+    };
+    std::string found = said(back);
+    if (front)
+    {
+        found += "; " + said(*front);
+    }
+    found += std::format("; zoom {:.2f}", zoom);
+    const auto cuts = [&](const Three &three) {
+        for (const Measure &place : three)
+        {
+            if (place.cut)
+            {
+                found += std::format("; {} cut by {}", place.name, WhatCut(*place.cut));
+            }
+        }
+    };
+    cuts(back);
+    if (front)
+    {
+        cuts(*front);
+    }
+    if (stand.answer == ViewAnswer::Stand)
+    {
+        going.close = stand.close;
+        going.yaw = ViewYaw(behind, stand.side);
+        going.from = std::format("{} at {:.1f} m of the {:.1f} m its size asks ({})", ViewSideWords(stand.side),
+                                 stand.meters, wanted, found);
+    }
+    else
+    {
+        // No place round it for the camera to stand: the camera does not
+        // go to it. It stays with the party, on the one the player acts
+        // as and at the game's own distance, which is where the lines
+        // below put it on a party member's turn, and turns to keep the
+        // creature in the frame (the user, 2026-10-05; core's ChooseStand
+        // has the words). With nobody of the party to stay with, it is
+        // left where it is.
+        going.stays = true;
+        const bool with = own != kNoObject && dao::script::api::IsObjectValid(own) != 0;
+        going.on = with ? own : kNoObject;
+        going.close = std::nullopt;
+        going.yaw = with ? YawToward(Of(dao::script::api::GetPosition(own)), Of(feet)) : std::nullopt;
+        spdlog::debug("the camera stays with the party on {:#010x}'s turn and looks at it: no place round it to "
+                      "stand ({})",
+                      id, found);
+    }
+}
+
+} // namespace
+
 void CameraDirector::TurnTo(ObjectId id, ObjectId own)
 {
     auto *app = dao::CClientExoApp::Get();
@@ -212,153 +355,38 @@ void CameraDirector::TurnTo(ObjectId id, ObjectId own)
     const std::optional<float> behind = dao::camera::YawBehind(id);
     dao::SceneCamera *scene = camera->Scene();
     const bool party = dao::script::api::IsHero(id) != 0 || dao::script::api::IsFollower(id) != 0;
-    ObjectId on = id;
-    std::optional<float> close = asked;
-    std::optional<float> yaw = behind;
-    std::string from = "behind";
-    bool stays = false;
-    // An enemy is looked at from one of six places, three behind it and
-    // three in front, and from no further than the camera's line to it is
-    // clear (core: ChooseStand, with the rule, the user's words for it and
-    // what was seen without it); the party from behind, at the game's own
-    // distance. Two things are asked of the engine for a place:
-    // - how far its line is clear: what a line from the creature's head to
-    //   where the camera would stand at the whole distance first meets
-    //   (FirstCut, of kViewGroups, above). Anything of those groups cuts a
-    //   line, a placeable that blocks no creature's sight too. Where the
-    //   engine has no answer (no area, another thread than the game's: not
-    //   where a turn begins) a line reads as clear, there being no telling
-    //   that from nothing in the way;
-    // - what lies under where the camera would then stand (GroundBelow,
-    //   above), since scenery with no collision cuts no line: the
-    //   Broodmother's cave.
-    // One line and one ray down a place, with no stepping along either: six
-    // raycasts a turn of a creature not of the party, and twelve on a turn
-    // where no place behind it stands and the three in front are asked.
+    Going going{id, asked, behind, "behind", false};
+    // An enemy is looked at from where the camera has ground to stand over and
+    // a clear line (LookAtAnEnemy); the party from behind, at the game's own
+    // distance.
     if (!party && scene != nullptr && behind)
     {
-        const dao::Vector feet = dao::script::api::GetPosition(id);
-        const dao::Vector head = dao::portraits::HeadPosition(id).value_or(dao::Vector{feet.x, feet.y, feet.z + 1.5f});
-        // Where the orbit puts the camera (dao/CameraMoves.h): at its
-        // distance (core: OrbitDistance) about the focus, by the yaw and the
-        // pitch from straight above.
-        const float zoom = scene->Zoom();
-        const float pitch = scene->Pitch();
-        const float wanted = OrbitDistance(zoom, asked.value_or(kCloseGame));
-        struct Measure
-        {
-            std::string_view name;
-            std::optional<dao::world::Hit> cut;
-            float clear;
-            GroundUnder under;
-        };
-        const auto measure = [&](ViewSide side, std::string_view name) {
-            const float angle = ViewYaw(*behind, side);
-            const auto at = [&](float meters) {
-                return dao::Vector{feet.x + (meters * std::sin(pitch) * std::cos(angle)),
-                                   feet.y + (meters * std::sin(pitch) * std::sin(angle)),
-                                   feet.z + (meters * std::cos(pitch))};
-            };
-            const dao::Vector eye = at(wanted);
-            const std::optional<dao::world::Hit> cut = FirstCut(head, eye, kViewGroups, id);
-            const float clear = cut ? ClearDistance(Of(head), Of(eye), Of(cut->position), wanted) : wanted;
-            return Measure{name, cut, clear, GroundBelow(at(StandDistance(zoom, asked, clear)), feet)};
-        };
-        using Three = std::array<Measure, 3>;
-        const auto rowOf = [](const Three &three) {
-            return ViewRow{ViewPlace{three[0].clear, IsPlace(three[0].under)},
-                           ViewPlace{three[1].clear, IsPlace(three[1].under)},
-                           ViewPlace{three[2].clear, IsPlace(three[2].under)}};
-        };
-        const Three back{measure(ViewSide::Right, "its right"), measure(ViewSide::Left, "its left"),
-                         measure(ViewSide::Behind, "behind")};
-        ViewStand stand = ChooseStand(zoom, asked, rowOf(back), std::nullopt);
-        std::optional<Three> front;
-        if (stand.answer == ViewAnswer::AskFront)
-        {
-            front = Three{measure(ViewSide::FrontRight, "its front right"),
-                          measure(ViewSide::FrontLeft, "its front left"), measure(ViewSide::Front, "in front")};
-            stand = ChooseStand(zoom, asked, rowOf(back), rowOf(*front));
-        }
-        // What was found, for the log: each place's line and the ground
-        // under it, the zoom, and what cut each line that was cut. By the
-        // cuts play told a hall's walls from a cave with no collision
-        // (kViewGroups, above); by the ground it is to tell what a ray down
-        // makes of the inside of such a cave.
-        const auto said = [](const Three &three) {
-            return std::format("{} clear to {:.1f} m {}, {} to {:.1f} m {}, {} to {:.1f} m {}", three[0].name,
-                               three[0].clear, GroundWords(three[0].under), three[1].name, three[1].clear,
-                               GroundWords(three[1].under), three[2].name, three[2].clear, GroundWords(three[2].under));
-        };
-        std::string found = said(back);
-        if (front)
-        {
-            found += "; " + said(*front);
-        }
-        found += std::format("; zoom {:.2f}", zoom);
-        const auto cuts = [&](const Three &three) {
-            for (const Measure &place : three)
-            {
-                if (place.cut)
-                {
-                    found += std::format("; {} cut by {}", place.name, WhatCut(*place.cut));
-                }
-            }
-        };
-        cuts(back);
-        if (front)
-        {
-            cuts(*front);
-        }
-        if (stand.answer == ViewAnswer::Stand)
-        {
-            close = stand.close;
-            yaw = ViewYaw(*behind, stand.side);
-            from = std::format("{} at {:.1f} m of the {:.1f} m its size asks ({})", ViewSideWords(stand.side),
-                               stand.meters, wanted, found);
-        }
-        else
-        {
-            // No place round it for the camera to stand: the camera does not
-            // go to it. It stays with the party, on the one the player acts
-            // as and at the game's own distance, which is where the lines
-            // below put it on a party member's turn, and turns to keep the
-            // creature in the frame (the user, 2026-10-05; core's ChooseStand
-            // has the words). With nobody of the party to stay with, it is
-            // left where it is.
-            stays = true;
-            const bool with = own != kNoObject && dao::script::api::IsObjectValid(own) != 0;
-            on = with ? own : kNoObject;
-            close = std::nullopt;
-            yaw = with ? YawToward(Of(dao::script::api::GetPosition(own)), Of(feet)) : std::nullopt;
-            spdlog::debug("the camera stays with the party on {:#010x}'s turn and looks at it: no place round it to "
-                          "stand ({})",
-                          id, found);
-        }
+        LookAtAnEnemy(going, id, own, *scene, *behind, asked);
     }
-    if (on != kNoObject)
+    if (going.on != kNoObject)
     {
-        Pan(on, nowMs);
-        spdlog::debug("camera to {:#010x}: following {:#010x}", on, camera->Target());
+        Pan(going.on, nowMs);
+        spdlog::debug("camera to {:#010x}: following {:#010x}", going.on, camera->Target());
     }
-    Stand(close);
-    if (!yaw)
+    Stand(going.close);
+    if (!going.yaw)
     {
         return;
     }
-    dao::camera::EaseYaw(*yaw, MoveSeconds());
+    dao::camera::EaseYaw(*going.yaw, MoveSeconds());
     if (scene == nullptr || (logged_ >= 3 && party))
     {
         return;
     }
     ++logged_;
-    if (stays)
+    if (going.stays)
     {
-        spdlog::debug("the camera, with {:#010x}, turns to look at {:#010x}: yaw {:.2f} (it was {:.2f})", on, id, *yaw,
-                      scene->Yaw());
+        spdlog::debug("the camera, with {:#010x}, turns to look at {:#010x}: yaw {:.2f} (it was {:.2f})", going.on, id,
+                      *going.yaw, scene->Yaw());
         return;
     }
-    spdlog::debug("the camera comes round {:#010x} from {}: yaw {:.2f} (it was {:.2f})", id, from, *yaw, scene->Yaw());
+    spdlog::debug("the camera comes round {:#010x} from {}: yaw {:.2f} (it was {:.2f})", id, going.from, *going.yaw,
+                  scene->Yaw());
 }
 
 // How far its size asks the camera to stand on a creature's turn (core:

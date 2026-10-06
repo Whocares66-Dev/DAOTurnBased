@@ -116,6 +116,9 @@ class BarLink
     void KeepScreen(bool fighting);
 
   private:
+    // KeepScreen's first part: the screen added, once, and its movie looked
+    // for. False while the game has no GUI system yet.
+    bool AddScreen();
     PortraitBook portraits_; // the frame callback's alone
     // The portrait put up large (TryPortrait's `show`): whose, since when and
     // for how long. The frame callback's alone, as all of this is but the

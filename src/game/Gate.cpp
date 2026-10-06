@@ -265,6 +265,82 @@ std::string RoomOf(const dao::attack::Approach &approach)
                        said(approach.inReach), said(approach.strikesAtOnce), said(approach.roomOnceFilled));
 }
 
+// An attack out of its reach, walked by the engine's own path to where its
+// approach goes (DAOLib's dao::attack::Walk): the walk's length in
+// `reached`, and `by` saying so. With no walk to be had: a door in the way
+// is said in `reached`, and the attack still judged by the straight line;
+// so is a search that gave no answer; and where the engine itself has no
+// walk for it, `reached` says which of its answers that was and this
+// answers false: the attack is judged, and has no walk.
+bool WalkByPath(Reached &reached, ObjectId attacker, ObjectId target, const dao::attack::Approach &approach,
+                std::string_view kind, std::string_view &by)
+{
+    if (const std::optional<dao::attack::Walked> walk = dao::attack::Walk(attacker, target))
+    {
+        reached.walk = walk->metres;
+        by = "the engine's path";
+    }
+    else
+    {
+        // No path reaches, or the engine would give a shot up on the
+        // way for want of a line. The whole search, for why there is no
+        // path: the pathfinder's
+        // answer 6 is a door or the like in the way, what the game ends
+        // a move at with COMMAND_FAILED_PATH_ACTION_REQUIRED (DAOLib's
+        // Pathfind, seen in play behind the Elven Ruins' shut doors).
+        const dao::world::PathSearch search = dao::world::Pathfind(attacker, api::GetPosition(target), target);
+        const bool door = search.result == kDoorInTheWay;
+        reached.door = door;
+        // What is in the way, as the game finds it (DAOLib cb08d00: a
+        // placeable within 5 m of where the path stopped). Only shut
+        // doors have been seen; said, in case it is ever something else.
+        const std::string across = search.blocker != dao::kInvalidObject
+                                       ? std::format("{} ({:#x})", Utf8(api::GetName(search.blocker)), search.blocker)
+                                       : std::string{};
+        if (door)
+        {
+            spdlog::debug("attack on {:#010x}: the game finds no path to it ({}); {} is in the way", target,
+                          search.result, across.empty() ? std::string{"a door"} : across);
+        }
+        else if (!Answered(search.result))
+        {
+            // Not asked, or stopped when its time ran out: the engine
+            // has not said no, and the walk is not known.
+            spdlog::debug("attack on {:#010x}: the search for a path to it gave no answer ({}); judged by the "
+                          "straight line",
+                          target, search.result);
+        }
+        else
+        {
+            // The engine's own "no": it has no walk for this attack
+            // (dao::attack::Walk, which makes the engine's search to
+            // where the approach goes, a blow's to its place on the
+            // ring once filled; one with no such place was refused
+            // above). A shot whose path to its target
+            // does arrive is one the engine would give up on the way, no
+            // line of sight to be had along it (Walk follows the move
+            // update's own tests); anything else is no path there. With
+            // the search's own account of itself: nobody has yet read
+            // why a creature had no path from where it stood (issue 27's
+            // second case).
+            const bool shot = approach.ranged && search.path.has_value();
+            reached.none = shot ? NoAttack::NoLine : NoAttack::NoPath;
+            reached.walk.reset();
+            spdlog::debug("attack on {:#010x}: {:.1f} m away, out of its reach by the engine's {} approach{}, and "
+                          "the engine has no walk for it: {} (the search to its target answers {}{}); the "
+                          "search: {}",
+                          target, reached.line, kind, approach.lineOfSight ? "" : " (no line of sight)",
+                          shot ? "its path arrives and its shot would be given up on the way, no line of sight "
+                                 "to be had"
+                               : "no path to where its approach goes",
+                          search.result, across.empty() ? std::string{} : "; " + across + " lies across the way",
+                          search.trace);
+            return false;
+        }
+    }
+    return true;
+}
+
 std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Command &command)
 {
     static std::once_flag said;
@@ -346,72 +422,9 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     {
         spdlog::debug("attack on {:#010x}: its creature is at a command already; judged by the straight line", *target);
     }
-    if (g_pathCheck.load() && atRest)
+    if (g_pathCheck.load() && atRest && !WalkByPath(reached, attacker, *target, *approach, kind, by))
     {
-        if (const std::optional<dao::attack::Walked> walk = dao::attack::Walk(attacker, *target))
-        {
-            reached.walk = walk->metres;
-            by = "the engine's path";
-        }
-        else
-        {
-            // No path reaches, or the engine would give a shot up on the
-            // way for want of a line. The whole search, for why there is no
-            // path: the pathfinder's
-            // answer 6 is a door or the like in the way, what the game ends
-            // a move at with COMMAND_FAILED_PATH_ACTION_REQUIRED (DAOLib's
-            // Pathfind, seen in play behind the Elven Ruins' shut doors).
-            const dao::world::PathSearch search = dao::world::Pathfind(attacker, api::GetPosition(*target), *target);
-            const bool door = search.result == kDoorInTheWay;
-            reached.door = door;
-            // What is in the way, as the game finds it (DAOLib cb08d00: a
-            // placeable within 5 m of where the path stopped). Only shut
-            // doors have been seen; said, in case it is ever something else.
-            const std::string across =
-                search.blocker != dao::kInvalidObject
-                    ? std::format("{} ({:#x})", Utf8(api::GetName(search.blocker)), search.blocker)
-                    : std::string{};
-            if (door)
-            {
-                spdlog::debug("attack on {:#010x}: the game finds no path to it ({}); {} is in the way", *target,
-                              search.result, across.empty() ? std::string{"a door"} : across);
-            }
-            else if (!Answered(search.result))
-            {
-                // Not asked, or stopped when its time ran out: the engine
-                // has not said no, and the walk is not known.
-                spdlog::debug("attack on {:#010x}: the search for a path to it gave no answer ({}); judged by the "
-                              "straight line",
-                              *target, search.result);
-            }
-            else
-            {
-                // The engine's own "no": it has no walk for this attack
-                // (dao::attack::Walk, which makes the engine's search to
-                // where the approach goes, a blow's to its place on the
-                // ring once filled; one with no such place was refused
-                // above). A shot whose path to its target
-                // does arrive is one the engine would give up on the way, no
-                // line of sight to be had along it (Walk follows the move
-                // update's own tests); anything else is no path there. With
-                // the search's own account of itself: nobody has yet read
-                // why a creature had no path from where it stood (issue 27's
-                // second case).
-                const bool shot = approach->ranged && search.path.has_value();
-                reached.none = shot ? NoAttack::NoLine : NoAttack::NoPath;
-                reached.walk.reset();
-                spdlog::debug("attack on {:#010x}: {:.1f} m away, out of its reach by the engine's {} approach{}, and "
-                              "the engine has no walk for it: {} (the search to its target answers {}{}); the "
-                              "search: {}",
-                              *target, reached.line, kind, approach->lineOfSight ? "" : " (no line of sight)",
-                              shot ? "its path arrives and its shot would be given up on the way, no line of sight "
-                                     "to be had"
-                                   : "no path to where its approach goes",
-                              search.result, across.empty() ? std::string{} : "; " + across + " lies across the way",
-                              search.trace);
-                return reached;
-            }
-        }
+        return reached;
     }
     // Said with what it was judged by: the log is where a wrong walk shows.
     // A shot in range with no line of sight walks for one, and how far the
@@ -785,6 +798,134 @@ using QueueCommandFn = int(__fastcall *)(dao::CCObject *self, int edx, dao::Comm
                                          int overrideBehaviour);
 dao::Detour<QueueCommandFn> g_queue;
 
+// A cast that charges, kept by the gate to be given again when its turns
+// are up (core: Verdict::Hold): what it is, and at whom or where.
+void KeepCast(const dao::CCObject &self, const dao::Command &command, const CommandRequest &request)
+{
+    // A cast that charges: kept, to be given again when its
+    // turns are up, and refused now as below.
+    HeldCast kept;
+    kept.type = request.type;
+    kept.ability = request.ability;
+    kept.target = command.Target().value_or(dao::kInvalidObject);
+    if (const std::optional<dao::Vector> place = command.Position())
+    {
+        kept.placed = true;
+        kept.x = place->x;
+        kept.y = place->y;
+        kept.z = place->z;
+    }
+    g_heldCasts[self.Id()] = kept;
+    // A command aimed at a creature carries a place as well: both
+    // are kept and given again; said by the one it is aimed at.
+    if (kept.target != dao::kInvalidObject)
+    {
+        spdlog::debug("{:#x}: its cast of ability {} is kept while it charges (at {:#x})", self.Id(), kept.ability,
+                      kept.target);
+    }
+    else
+    {
+        spdlog::debug("{:#x}: its cast of ability {} is kept while it charges (at {}a place)", self.Id(), kept.ability,
+                      kept.placed ? "" : "nothing, not ");
+    }
+}
+
+// A command on its way to an object's queue, put to the machine: whether
+// it goes on to the queue. One the machine refuses, or keeps, does not, and
+// is freed here.
+bool LetThrough(dao::CCObject &self, dao::Command &command, const Caller &caller, std::uintptr_t from)
+{
+    const auto type = static_cast<CommandType>(static_cast<int>(command.Type()));
+    const Source source = SourceOf(command, caller);
+    NoteCaller(caller, from, type);
+    const dao::CCCreature *creature = self.AsCreature();
+    // The walk to an attack's target: the player's, to refuse one
+    // out of reach; and an AI's, with a turn a bar of time, so that
+    // a walk and a swing that do not both fit are told apart from
+    // ones that do (core: TurnMachine::PayAction; an AI's walk
+    // unknown, a spider 13.6 m off paid its swing, walked, was
+    // stopped a step short and lost the turn: play test 25's duel).
+    const std::optional<Reached> reached =
+        type == CommandType::Attack && (source == Source::Player || source == Source::Script)
+            ? WalkToTarget(self, command)
+            : std::nullopt;
+    if (source == Source::Script && type == CommandType::Attack)
+    {
+        SayAiAttack(self, command, reached);
+    }
+    std::optional<float> walk = reached ? reached->walk : std::nullopt;
+    if (source == Source::Player && type == CommandType::MoveToLocation)
+    {
+        walk = MoveLength(self, command);
+    }
+    CommandRequest request;
+    request.object = self.Id();
+    request.target = command.Target().value_or(dao::kInvalidObject);
+    request.type = type;
+    request.source = source;
+    // A script's wait is its AI's: how long it waits (core: PayWait).
+    request.waitSeconds = type == CommandType::Wait && source == Source::Script ? WaitSecondsOf(self, command) : 0.0f;
+    request.inCombat = creature != nullptr && creature->CombatState() != 0;
+    request.walk = walk;
+    request.doorInTheWay = reached && reached->door;
+    // The engine's own "no", for the machine to refuse by: the gate
+    // only passes on what it was answered (WalkToTarget).
+    request.noAttack = reached ? reached->none : NoAttack::None;
+    if (type == CommandType::UseAbility)
+    {
+        DescribeAbility(self, command, request);
+    }
+    if (type == CommandType::Attack)
+    {
+        request.actionSeconds = SwingSecondsOf(self.Id());
+    }
+    // (Nothing is asked here of the command's turn to face its
+    // target: the engine asks that after the command's approach, and
+    // so does the mod, as the command comes to it. Bridge.cpp,
+    // TurnLookOf; issue 40.)
+    Verdict verdict = Verdict::Allow;
+    {
+        const std::lock_guard lock(*g_mutex);
+        verdict = g_machine->OnCommand(request);
+    }
+    if (verdict == Verdict::Block && source == Source::Player && reached && reached->walk && *reached->walk > 0.0f)
+    {
+        // Why an attack was too far, at info: what the engine's
+        // approach for it was, and what it would walk.
+        spdlog::info("the refused attack: {:.1f} m away, {:.1f} m to walk by the engine's {} approach, main "
+                     "hand base item {} (bitm_base){}",
+                     reached->line, *reached->walk, reached->approach.ranged ? "ranged" : "melee", reached->weaponType,
+                     reached->approach.lineOfSight ? "" : ", no line of sight");
+    }
+    if (verdict == Verdict::Hold)
+    {
+        KeepCast(self, command, request);
+    }
+    if (verdict == Verdict::Conjure)
+    {
+        // The engine's own cast: let through, its conjure held until
+        // its time is paid (ReleaseEngineConjure), its caster drawing
+        // the spell in meanwhile, and the installed rules_core free to
+        // interrupt it.
+        dao::commands::HoldConjure(self.Id());
+        g_engineConjures.insert(self.Id());
+        spdlog::info("{:#x}: its spell (ability {}) conjures, held until its time is paid", self.Id(), request.ability);
+    }
+    if (verdict != Verdict::Allow && verdict != Verdict::Conjure)
+    {
+        // The queue always takes a command it is given, and no caller
+        // frees one after (DAOLib's reading of all ten, 2026-09-30), so
+        // a refused one is the gate's to free: back to the commands'
+        // pool, as a script's dropped command goes (0x0066DE30). A
+        // player's refused order also never raises
+        // EVENT_TYPE_PLAYER_COMMAND_ADDED, which the queue signals
+        // before it adds one.
+        dao::script::DestroyStructure(dao::EngineStructure::Command, &command);
+        return false;
+    }
+    return true;
+}
+
 int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command, int addToFront, int overrideBehaviour)
 {
     const auto from = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
@@ -793,120 +934,8 @@ int __fastcall QueueCommand(dao::CCObject *self, int edx, dao::Command *command,
     {
         try
         {
-            const auto type = static_cast<CommandType>(static_cast<int>(command->Type()));
-            const Source source = SourceOf(*command, caller);
-            NoteCaller(caller, from, type);
-            const dao::CCCreature *creature = self->AsCreature();
-            // The walk to an attack's target: the player's, to refuse one
-            // out of reach; and an AI's, with a turn a bar of time, so that
-            // a walk and a swing that do not both fit are told apart from
-            // ones that do (core: TurnMachine::PayAction; an AI's walk
-            // unknown, a spider 13.6 m off paid its swing, walked, was
-            // stopped a step short and lost the turn: play test 25's duel).
-            const std::optional<Reached> reached =
-                type == CommandType::Attack && (source == Source::Player || source == Source::Script)
-                    ? WalkToTarget(*self, *command)
-                    : std::nullopt;
-            if (source == Source::Script && type == CommandType::Attack)
+            if (!LetThrough(*self, *command, caller, from))
             {
-                SayAiAttack(*self, *command, reached);
-            }
-            std::optional<float> walk = reached ? reached->walk : std::nullopt;
-            if (source == Source::Player && type == CommandType::MoveToLocation)
-            {
-                walk = MoveLength(*self, *command);
-            }
-            CommandRequest request;
-            request.object = self->Id();
-            request.target = command->Target().value_or(dao::kInvalidObject);
-            request.type = type;
-            request.source = source;
-            // A script's wait is its AI's: how long it waits (core: PayWait).
-            request.waitSeconds =
-                type == CommandType::Wait && source == Source::Script ? WaitSecondsOf(*self, *command) : 0.0f;
-            request.inCombat = creature != nullptr && creature->CombatState() != 0;
-            request.walk = walk;
-            request.doorInTheWay = reached && reached->door;
-            // The engine's own "no", for the machine to refuse by: the gate
-            // only passes on what it was answered (WalkToTarget).
-            request.noAttack = reached ? reached->none : NoAttack::None;
-            if (type == CommandType::UseAbility)
-            {
-                DescribeAbility(*self, *command, request);
-            }
-            if (type == CommandType::Attack)
-            {
-                request.actionSeconds = SwingSecondsOf(self->Id());
-            }
-            // (Nothing is asked here of the command's turn to face its
-            // target: the engine asks that after the command's approach, and
-            // so does the mod, as the command comes to it. Bridge.cpp,
-            // TurnLookOf; issue 40.)
-            Verdict verdict = Verdict::Allow;
-            {
-                const std::lock_guard lock(*g_mutex);
-                verdict = g_machine->OnCommand(request);
-            }
-            if (verdict == Verdict::Block && source == Source::Player && reached && reached->walk &&
-                *reached->walk > 0.0f)
-            {
-                // Why an attack was too far, at info: what the engine's
-                // approach for it was, and what it would walk.
-                spdlog::info("the refused attack: {:.1f} m away, {:.1f} m to walk by the engine's {} approach, main "
-                             "hand base item {} (bitm_base){}",
-                             reached->line, *reached->walk, reached->approach.ranged ? "ranged" : "melee",
-                             reached->weaponType, reached->approach.lineOfSight ? "" : ", no line of sight");
-            }
-            if (verdict == Verdict::Hold)
-            {
-                // A cast that charges: kept, to be given again when its
-                // turns are up, and refused now as below.
-                HeldCast kept;
-                kept.type = request.type;
-                kept.ability = request.ability;
-                kept.target = command->Target().value_or(dao::kInvalidObject);
-                if (const std::optional<dao::Vector> place = command->Position())
-                {
-                    kept.placed = true;
-                    kept.x = place->x;
-                    kept.y = place->y;
-                    kept.z = place->z;
-                }
-                g_heldCasts[self->Id()] = kept;
-                // A command aimed at a creature carries a place as well: both
-                // are kept and given again; said by the one it is aimed at.
-                if (kept.target != dao::kInvalidObject)
-                {
-                    spdlog::debug("{:#x}: its cast of ability {} is kept while it charges (at {:#x})", self->Id(),
-                                  kept.ability, kept.target);
-                }
-                else
-                {
-                    spdlog::debug("{:#x}: its cast of ability {} is kept while it charges (at {}a place)", self->Id(),
-                                  kept.ability, kept.placed ? "" : "nothing, not ");
-                }
-            }
-            if (verdict == Verdict::Conjure)
-            {
-                // The engine's own cast: let through, its conjure held until
-                // its time is paid (ReleaseEngineConjure), its caster drawing
-                // the spell in meanwhile, and the installed rules_core free to
-                // interrupt it.
-                dao::commands::HoldConjure(self->Id());
-                g_engineConjures.insert(self->Id());
-                spdlog::info("{:#x}: its spell (ability {}) conjures, held until its time is paid", self->Id(),
-                             request.ability);
-            }
-            if (verdict != Verdict::Allow && verdict != Verdict::Conjure)
-            {
-                // The queue always takes a command it is given, and no caller
-                // frees one after (DAOLib's reading of all ten, 2026-09-30), so
-                // a refused one is the gate's to free: back to the commands'
-                // pool, as a script's dropped command goes (0x0066DE30). A
-                // player's refused order also never raises
-                // EVENT_TYPE_PLAYER_COMMAND_ADDED, which the queue signals
-                // before it adds one.
-                dao::script::DestroyStructure(dao::EngineStructure::Command, command);
                 return 0;
             }
         }
@@ -1351,6 +1380,38 @@ void WatchAttacksBegin()
     });
 }
 
+// The damage of one blow that interrupts a creature's spell, by the game's
+// own rule (core/Rules.h, InterruptThreshold), from what the engine has of
+// the creature.
+float InterruptThresholdOf(ObjectId target)
+{
+    // Combat Training's ranks as the game's own rule counts them
+    // (core/Rules.h, InterruptThreshold): a party member's by the
+    // abilities the script names, anyone else's from the autoscale
+    // table by its rank (rules_core.nss: Diff_GetAutoScaleTable is
+    // TABLE_AUTOSCALE whatever the difficulty). The abilities are the
+    // installed script's (ReadInstalledRules), the shipped script's
+    // until it has been read.
+    const bool party = api::IsHero(target) != 0 || api::IsFollower(target) != 0;
+    int training = 0;
+    if (party)
+    {
+        for (const std::int32_t ability : CombatTrainingAbilities())
+        {
+            training += api::HasAbility(target, ability) != 0 ? 1 : 0;
+        }
+    }
+    else
+    {
+        const std::int32_t rank = api::GetCreatureRank(target);
+        training = dao::gda::GetInt(dao::script::Table::Autoscale, rank, "nCombatTraining")
+                       .value_or(TrainingOfRankAsShipped(rank));
+    }
+    const int level =
+        static_cast<int>(api::GetCreatureProperty(target, k::PROPERTY_SIMPLE_LEVEL, k::PROPERTY_VALUE_TOTAL));
+    return InterruptThreshold(party, training, level);
+}
+
 // A blow that interrupts a spell (core: TurnMachine::OnDamaged): the
 // scripts' EVENT_TYPE_DAMAGED, sent once the damage is done (events_h.nss,
 // SendEventOnDamaged: the damage, its type, the attacker; DAOLib's
@@ -1397,31 +1458,7 @@ void WatchDamage(TurnMachine &machine, std::mutex &mutex)
                     return;
                 }
             }
-            // Combat Training's ranks as the game's own rule counts them
-            // (core/Rules.h, InterruptThreshold): a party member's by the
-            // abilities the script names, anyone else's from the autoscale
-            // table by its rank (rules_core.nss: Diff_GetAutoScaleTable is
-            // TABLE_AUTOSCALE whatever the difficulty). The abilities are the
-            // installed script's (ReadInstalledRules), the shipped script's
-            // until it has been read.
-            const bool party = api::IsHero(target) != 0 || api::IsFollower(target) != 0;
-            int training = 0;
-            if (party)
-            {
-                for (const std::int32_t ability : CombatTrainingAbilities())
-                {
-                    training += api::HasAbility(target, ability) != 0 ? 1 : 0;
-                }
-            }
-            else
-            {
-                const std::int32_t rank = api::GetCreatureRank(target);
-                training = dao::gda::GetInt(dao::script::Table::Autoscale, rank, "nCombatTraining")
-                               .value_or(TrainingOfRankAsShipped(rank));
-            }
-            const int level =
-                static_cast<int>(api::GetCreatureProperty(target, k::PROPERTY_SIMPLE_LEVEL, k::PROPERTY_VALUE_TOTAL));
-            const float threshold = InterruptThreshold(party, training, level);
+            const float threshold = InterruptThresholdOf(target);
             bool interrupted = false;
             {
                 const std::lock_guard lock(mutex);

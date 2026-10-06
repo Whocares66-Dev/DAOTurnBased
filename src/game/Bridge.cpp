@@ -685,26 +685,220 @@ Perception Perceived(ObjectId id, const std::vector<ObjectId> &party)
 //   leads and wherever the leader stands. Asked of the leader alone, as it
 //   was, a companion sent back by itself found nobody.
 // What the enemies left behind do meanwhile is not the scan's (issue 43).
-std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
+// A scan in the making: who has been found so far and whom it measures
+// from, for the steps Scan is made of.
+struct Bridge::Scanning
 {
     std::vector<Combatant> out;
+    std::unordered_set<ObjectId> seen; // each creature once
+    std::vector<ObjectId> members;     // the party, living or not
+    std::vector<ObjectId> living;      // its living members, the one who stands for it first
+    ObjectId stands = kNoObject;       // who stands for the party
+    bool byRooms = false;              // the area goes by the rooms the party has seen, not by sight
+    std::size_t outside = 0;           // found fighting, and not the party's fight
+    std::string rooms;                 // those, each with why, for the log
+};
+
+namespace
+{
+
+// The game's own question for who is fighting the party (UT_Surrender,
+// utility_h.nss): the nearest living hostiles, those in combat. Asked
+// round each living member, the one who stands for the party first, and
+// each creature taken once: the engine answers with the nearest
+// kMaxCreaturesInCombat to the creature it is asked of, so asked of one
+// alone it names nobody beside another who stands far from that one, or
+// behind a crowd of two dozen nearer to it. Asked of each, more than that
+// many can be near the party; none is turned away for the count, since
+// each is among the nearest to someone. Whose side a creature is on stays
+// one creature's word, as it was the leader's: one named by another
+// member alone is taken as the one who stands for the party has it (a
+// member turned against the party would name its friends).
+std::vector<ObjectId> NearTheLiving(const std::vector<ObjectId> &living, ObjectId stands, std::int32_t hostile)
+{
+    std::vector<ObjectId> found;
+    for (const ObjectId member : living)
+    {
+        const dao::script::Array nearest =
+            api::GetNearestObjectByHostility(member, hostile, k::OBJECT_TYPE_CREATURE, kMaxCreaturesInCombat, 1, 0, 0);
+        for (std::size_t i = 0; i < nearest.Size(); ++i)
+        {
+            const ObjectId id = nearest.Object(i);
+            if (std::ranges::find(found, id) != found.end() ||
+                (member != stands && (api::IsObjectHostile(stands, id) != 0) != (hostile != 0)))
+            {
+                continue;
+            }
+            found.push_back(id);
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+namespace
+{
+// Which rule an area goes by, the rooms the party has seen or sight, said
+// when it changes, at info: it is read out of a player's own log. Outdoors
+// (the Dalish forest, 2026-10-01, by Eluvian's inspect) every creature's
+// room, the party's own too, reads in view and not loaded, so sight is the
+// rule there. `was`: what the last scan went by.
+void SayRule(std::optional<bool> &was, bool byRooms, const std::optional<dao::world::Room> &ours, ObjectId stands)
+{
+    if (was != byRooms)
+    {
+        was = byRooms;
+        if (byRooms)
+        {
+            spdlog::info("who is in a fight here goes by the rooms the party has seen");
+        }
+        else if (ours)
+        {
+            spdlog::info("who is in a fight here goes by sight: the party's own room {} (where {:#x} stands for it) "
+                         "reads seen {} load {}, not shown",
+                         ours->number, stands, ours->seen, ours->load);
+        }
+        else
+        {
+            spdlog::info("who is in a fight here goes by sight: the area has no rooms");
+        }
+    }
+}
+} // namespace
+
+// One found in the fight, added to the scan: described, with what it has
+// noticed and whether it is in the party's fight or outside it.
+void Bridge::AddFound(Scanning &scan, ObjectId id, Side side, bool unaware)
+{
+    Combatant c = Describe(id, side, false);
+    // What it has noticed, and whether the party has noticed it, by the
+    // engine's perception: a hostile that perceives nobody to fight has
+    // its turn skipped (core: Unaware). Said at debug for one that
+    // perceives nobody, each scan: a play test reads there when it
+    // noticed.
+    c.perception = Perceived(id, scan.members);
+    if (!c.perception.ofParty && !c.perception.ofFoes)
+    {
+        spdlog::debug("{:#x} perceives no party member and nobody hostile to it, and is {} combat; the party "
+                      "{} it",
+                      id, c.perception.inCombat ? "in" : "not in",
+                      c.perception.byParty ? "perceives" : "does not perceive");
+    }
+    // One drawn in though it has not noticed is in the party's fight by
+    // the rule that drew it in (seen, within the join radius).
+    if (settings_.joinBySight && !unaware)
+    {
+        const std::optional<dao::world::Room> room = scan.byRooms ? dao::world::RoomOf(id) : std::nullopt;
+        const Sighting sighting = Sight(id, scan.living, room);
+        c.engaged = InThePartysFight(sighting, settings_);
+        if (!c.engaged)
+        {
+            ++scan.outside;
+            if (spdlog::should_log(spdlog::level::debug))
+            {
+                // Seen and still outside: fighting someone else, too far
+                // off to be the party's.
+                scan.rooms +=
+                    sighting.seen
+                        ? std::format(" {:#x} seen, {:.0f} m off, not fighting the party", id, sighting.meters)
+                    : room ? std::format(" {:#x} room {} seen {} load {}", id, room->number, room->seen, room->load)
+                           : std::format(" {:#x} no room, out of sight", id);
+            }
+        }
+    }
+    scan.out.push_back(std::move(c));
+}
+
+// combat_radius is how far from the party a fight takes a creature in
+// from: from the nearest of its living members (core: WithinReach). It
+// takes nobody out any more: one in the fight that this no longer finds
+// is read further down, and stays by the engine's perception (issue 29).
+bool Bridge::FightsNear(const Scanning &scan, ObjectId id) const
+{
+    return api::IsObjectValid(id) != 0 && !scan.seen.contains(id) && api::GetCombatState(id) != 0 &&
+           WithinReach(FromTheParty(id, scan.living), settings_);
+}
+
+// Whether a hostile that has not noticed the party is in its fight all the
+// same (core: FightsUnawares): the lines of sight are asked only where the
+// answer hangs on them.
+bool Bridge::InUnawares(const Scanning &scan, ObjectId id, bool partyInCombat, bool someoneToFight) const
+{
+    if (!partyInCombat || api::IsObjectValid(id) == 0 || scan.seen.contains(id) || api::GetCombatState(id) != 0 ||
+        api::IsDead(id) != 0 || !WithinReach(FromTheParty(id, scan.living), settings_))
+    {
+        return false;
+    }
+    const bool drawnIn = unawares_.contains(id);
+    // The lines of sight are asked only where the answer hangs on them.
+    Sighting sighting;
+    if (!drawnIn && !someoneToFight)
+    {
+        sighting = Sight(id, scan.living, std::nullopt);
+    }
+    return FightsUnawares(partyInCombat, someoneToFight, drawnIn, sighting, settings_);
+}
+
+// Those the machine has in the fight that nothing above found (issue
+// 29): out of combat, or further than combat_radius from every living
+// member of the party.
+// Until 2026-10-04 that was the end of them: left out of the scan, they
+// were out of the fight four seconds later, and stood where they were as
+// any creature outside the order does, whoever they were chasing. The
+// game itself keeps a fight by perception, not by a distance
+// (combat_h.nss, Combat_HandleCreatureDisappear), so each is read with
+// the engine's perception between it and the party, and core decides
+// whether it stays (StaysInTheFight). Its side is the game's word as of
+// now: one that has surrendered is no enemy. Not yet seen in play.
+std::size_t Bridge::AddNotFound(Scanning &scan, const std::vector<ObjectId> &inFight)
+{
+    std::size_t afar = 0;
+    for (const ObjectId id : inFight)
+    {
+        if (scan.seen.contains(id) || api::IsObjectValid(id) == 0 || api::IsDead(id) != 0)
+        {
+            continue;
+        }
+        scan.seen.insert(id);
+        Combatant c = Describe(id, api::IsObjectHostile(scan.stands, id) != 0 ? Side::Enemy : Side::Ally, false);
+        c.fighting = false;
+        c.perception = Perceived(id, scan.members);
+        ++afar;
+        // (Inactive, said here: in the Broodmother's fight the four tentacles
+        // under ground, in combat 14 to 16 m from the party, each read "not
+        // found fighting", and nothing in the line said why. That the
+        // engine's own question for who is near does not answer with an
+        // object its scripts have disabled is the reading; this is to show
+        // it. Issue 44.)
+        spdlog::debug("{:#x} is in the fight and not found fighting (combat state {}, {:.0f} m from the nearest "
+                      "living party member{}): the party {} it; it perceives {}, {}",
+                      id, api::GetCombatState(id), FromTheParty(id, scan.living), Inactive(id) ? ", inactive" : "",
+                      c.perception.byParty ? "perceives" : "does not perceive",
+                      c.perception.ofParty ? "a party member" : "no party member",
+                      c.perception.ofFoes ? "someone hostile to it" : "nobody hostile to it");
+        scan.out.push_back(std::move(c));
+    }
+    return afar;
+}
+
+std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
+{
+    Scanning scan;
     const ObjectId hero = api::GetHero();
     if (api::IsObjectValid(hero) == 0)
     {
-        return out;
+        return scan.out;
     }
-    std::unordered_set<ObjectId> seen;
-
     const std::vector<PartyMember> party = ReadParty(hero);
-    std::vector<ObjectId> members;
-    members.reserve(party.size());
+    scan.members.reserve(party.size());
     for (const PartyMember &member : party)
     {
-        seen.insert(member.id);
-        members.push_back(member.id);
-        out.push_back(Describe(member.id, Side::Party, member.id == hero));
+        scan.seen.insert(member.id);
+        scan.members.push_back(member.id);
+        scan.out.push_back(Describe(member.id, Side::Party, member.id == hero));
     }
-    party_ = members; // for the acting creature's perception, read every frame (Actor)
+    party_ = scan.members; // for the acting creature's perception, read every frame (Actor)
     // Where the party is: where its living members are (core/Rules.h, "Where
     // the party is"; issue 42). Everything below that is a distance, a line
     // of sight or a list of who is near is asked of each of them, and what
@@ -728,21 +922,19 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
     // as it did); who the player acts as is the one controlled (Say).
     const ObjectId leader = Leader(hero);
     const ObjectId controlled = api::GetMainControlled();
-    const std::vector<ObjectId> living = LivingMembers(party, leader, controlled);
+    scan.living = LivingMembers(party, leader, controlled);
     // With nobody living there is nobody to measure from and nobody is found
     // near (the game's mode goes to Dead, and the machine ends the fight by
     // that): the hero then, for what death does not change, whose side a
     // creature is on.
-    const ObjectId stands = living.empty() ? hero : living.front();
-    if (!living.empty())
+    scan.stands = scan.living.empty() ? hero : scan.living.front();
+    if (!scan.living.empty())
     {
-        SayWhoStands(stands, leader, controlled);
+        SayWhoStands(scan.stands, leader, controlled);
     }
-    std::size_t outside = 0;
     // Those the player cannot see fighting, each with its room as the game
     // has it (seen: 0 never, 1 in view, 2 before; load: 0 loading, 1
     // loaded, 2 not), for a play test to set beside what the screen shows.
-    std::string rooms;
     // The rooms are gone by only where they can be: the party's own room,
     // which the game shows if it shows any, must read as shown. An area
     // with rooms where the game never marks one seen would read every
@@ -751,115 +943,19 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
     // party member's line of sight is the rule there, as where an area has
     // no rooms. The party's own room is the room of the one who stands for
     // it: a living member's, which the game shows for its standing there.
-    const std::optional<dao::world::Room> ours = settings_.joinBySight ? dao::world::RoomOf(stands) : std::nullopt;
-    const bool byRooms = ours && ours->Shown();
-    // Said when it changes, at info: which rule an area goes by is read
-    // out of a player's own log. Outdoors (the Dalish forest, 2026-10-01,
-    // by Eluvian's inspect) every creature's room, the party's own too,
-    // reads in view and not loaded, so sight is the rule there.
-    if (settings_.joinBySight && byRooms_ != byRooms)
+    const std::optional<dao::world::Room> ours = settings_.joinBySight ? dao::world::RoomOf(scan.stands) : std::nullopt;
+    scan.byRooms = ours && ours->Shown();
+    if (settings_.joinBySight)
     {
-        byRooms_ = byRooms;
-        if (byRooms)
-        {
-            spdlog::info("who is in a fight here goes by the rooms the party has seen");
-        }
-        else if (ours)
-        {
-            spdlog::info("who is in a fight here goes by sight: the party's own room {} (where {:#x} stands for it) "
-                         "reads seen {} load {}, not shown",
-                         ours->number, stands, ours->seen, ours->load);
-        }
-        else
-        {
-            spdlog::info("who is in a fight here goes by sight: the area has no rooms");
-        }
+        SayRule(byRooms_, scan.byRooms, ours, scan.stands);
     }
-    const auto add = [&](ObjectId id, Side side, bool unaware = false) {
-        Combatant c = Describe(id, side, false);
-        // What it has noticed, and whether the party has noticed it, by the
-        // engine's perception: a hostile that perceives nobody to fight has
-        // its turn skipped (core: Unaware). Said at debug for one that
-        // perceives nobody, each scan: a play test reads there when it
-        // noticed.
-        c.perception = Perceived(id, members);
-        if (!c.perception.ofParty && !c.perception.ofFoes)
-        {
-            spdlog::debug("{:#x} perceives no party member and nobody hostile to it, and is {} combat; the party "
-                          "{} it",
-                          id, c.perception.inCombat ? "in" : "not in",
-                          c.perception.byParty ? "perceives" : "does not perceive");
-        }
-        // One drawn in though it has not noticed is in the party's fight by
-        // the rule that drew it in (seen, within the join radius).
-        if (settings_.joinBySight && !unaware)
-        {
-            const std::optional<dao::world::Room> room = byRooms ? dao::world::RoomOf(id) : std::nullopt;
-            const Sighting sighting = Sight(id, living, room);
-            c.engaged = InThePartysFight(sighting, settings_);
-            if (!c.engaged)
-            {
-                ++outside;
-                if (spdlog::should_log(spdlog::level::debug))
-                {
-                    // Seen and still outside: fighting someone else, too far
-                    // off to be the party's.
-                    rooms +=
-                        sighting.seen
-                            ? std::format(" {:#x} seen, {:.0f} m off, not fighting the party", id, sighting.meters)
-                        : room ? std::format(" {:#x} room {} seen {} load {}", id, room->number, room->seen, room->load)
-                               : std::format(" {:#x} no room, out of sight", id);
-                }
-            }
-        }
-        out.push_back(std::move(c));
-    };
-    // The game's own question for who is fighting the party (UT_Surrender,
-    // utility_h.nss): the nearest living hostiles, those in combat. Asked
-    // round each living member, the one who stands for the party first, and
-    // each creature taken once: the engine answers with the nearest
-    // kMaxCreaturesInCombat to the creature it is asked of, so asked of one
-    // alone it names nobody beside another who stands far from that one, or
-    // behind a crowd of two dozen nearer to it. Asked of each, more than that
-    // many can be near the party; none is turned away for the count, since
-    // each is among the nearest to someone. Whose side a creature is on stays
-    // one creature's word, as it was the leader's: one named by another
-    // member alone is taken as the one who stands for the party has it (a
-    // member turned against the party would name its friends).
-    const auto nearTheLiving = [&](std::int32_t hostile) {
-        std::vector<ObjectId> found;
-        for (const ObjectId member : living)
-        {
-            const dao::script::Array nearest = api::GetNearestObjectByHostility(
-                member, hostile, k::OBJECT_TYPE_CREATURE, kMaxCreaturesInCombat, 1, 0, 0);
-            for (std::size_t i = 0; i < nearest.Size(); ++i)
-            {
-                const ObjectId id = nearest.Object(i);
-                if (std::ranges::find(found, id) != found.end() ||
-                    (member != stands && (api::IsObjectHostile(stands, id) != 0) != (hostile != 0)))
-                {
-                    continue;
-                }
-                found.push_back(id);
-            }
-        }
-        return found;
-    };
-    // combat_radius is how far from the party a fight takes a creature in
-    // from: from the nearest of its living members (core: WithinReach). It
-    // takes nobody out any more: one in the fight that this no longer finds
-    // is read further down, and stays by the engine's perception (issue 29).
-    const auto fighting = [&](ObjectId id) {
-        return api::IsObjectValid(id) != 0 && !seen.contains(id) && api::GetCombatState(id) != 0 &&
-               WithinReach(FromTheParty(id, living), settings_);
-    };
-    const std::vector<ObjectId> hostiles = nearTheLiving(1);
+    const std::vector<ObjectId> hostiles = NearTheLiving(scan.living, scan.stands, 1);
     for (const ObjectId id : hostiles)
     {
-        if (fighting(id))
+        if (FightsNear(scan, id))
         {
-            seen.insert(id);
-            add(id, Side::Enemy);
+            scan.seen.insert(id);
+            AddFound(scan, id, Side::Enemy, false);
         }
     }
     // And a hostile that has not noticed the party, with the party in combat
@@ -872,31 +968,16 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
     // fallen leader's combat state is 0 with the rest of the party fighting.
     const bool partyInCombat = PartyIsInCombat(party);
     const bool someoneToFight =
-        std::ranges::any_of(out, [](const Combatant &c) { return c.side == Side::Enemy && c.engaged; });
-    const auto unawares = [&](ObjectId id) {
-        if (!partyInCombat || api::IsObjectValid(id) == 0 || seen.contains(id) || api::GetCombatState(id) != 0 ||
-            api::IsDead(id) != 0 || !WithinReach(FromTheParty(id, living), settings_))
-        {
-            return false;
-        }
-        const bool drawnIn = unawares_.contains(id);
-        // The lines of sight are asked only where the answer hangs on them.
-        Sighting sighting;
-        if (!drawnIn && !someoneToFight)
-        {
-            sighting = Sight(id, living, std::nullopt);
-        }
-        return FightsUnawares(partyInCombat, someoneToFight, drawnIn, sighting, settings_);
-    };
+        std::ranges::any_of(scan.out, [](const Combatant &c) { return c.side == Side::Enemy && c.engaged; });
     std::unordered_set<ObjectId> drawn;
     for (const ObjectId id : hostiles)
     {
-        if (!unawares(id))
+        if (!InUnawares(scan, id, partyInCombat, someoneToFight))
         {
             continue;
         }
-        seen.insert(id);
-        add(id, Side::Enemy, true);
+        scan.seen.insert(id);
+        AddFound(scan, id, Side::Enemy, true);
         if (!unawares_.contains(id))
         {
             spdlog::info("{} ({:#x}) has not noticed the party and is in sight within {:.0f} m, with nobody else to "
@@ -907,62 +988,28 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
     }
     unawares_ = std::move(drawn); // who is in the fight unawares now: each said once, and kept in while it is
     // Creatures in combat that are not hostile to the party fight beside it.
-    const std::vector<ObjectId> others = nearTheLiving(0);
+    const std::vector<ObjectId> others = NearTheLiving(scan.living, scan.stands, 0);
     for (const ObjectId id : others)
     {
-        if (fighting(id))
+        if (FightsNear(scan, id))
         {
-            seen.insert(id);
-            add(id, Side::Ally);
+            scan.seen.insert(id);
+            AddFound(scan, id, Side::Ally, false);
         }
     }
-    // Those the machine has in the fight that nothing above found (issue
-    // 29): out of combat, or further than combat_radius from every living
-    // member of the party.
-    // Until 2026-10-04 that was the end of them: left out of the scan, they
-    // were out of the fight four seconds later, and stood where they were as
-    // any creature outside the order does, whoever they were chasing. The
-    // game itself keeps a fight by perception, not by a distance
-    // (combat_h.nss, Combat_HandleCreatureDisappear), so each is read with
-    // the engine's perception between it and the party, and core decides
-    // whether it stays (StaysInTheFight). Its side is the game's word as of
-    // now: one that has surrendered is no enemy. Not yet seen in play.
-    std::size_t afar = 0;
-    for (const ObjectId id : inFight)
-    {
-        if (seen.contains(id) || api::IsObjectValid(id) == 0 || api::IsDead(id) != 0)
-        {
-            continue;
-        }
-        seen.insert(id);
-        Combatant c = Describe(id, api::IsObjectHostile(stands, id) != 0 ? Side::Enemy : Side::Ally, false);
-        c.fighting = false;
-        c.perception = Perceived(id, members);
-        ++afar;
-        // (Inactive, said here: in the Broodmother's fight the four tentacles
-        // under ground, in combat 14 to 16 m from the party, each read "not
-        // found fighting", and nothing in the line said why. That the
-        // engine's own question for who is near does not answer with an
-        // object its scripts have disabled is the reading; this is to show
-        // it. Issue 44.)
-        spdlog::debug("{:#x} is in the fight and not found fighting (combat state {}, {:.0f} m from the nearest "
-                      "living party member{}): the party {} it; it perceives {}, {}",
-                      id, api::GetCombatState(id), FromTheParty(id, living), Inactive(id) ? ", inactive" : "",
-                      c.perception.byParty ? "perceives" : "does not perceive",
-                      c.perception.ofParty ? "a party member" : "no party member",
-                      c.perception.ofFoes ? "someone hostile to it" : "nobody hostile to it");
-        out.push_back(std::move(c));
-    }
+    const std::size_t afar = AddNotFound(scan, inFight);
     // What was measured from, with the counts: how many of the party live,
     // who stands for it, and how many living creatures the engine named round
     // its living members, each once (not, as until 2026-10-04, round its
     // leader).
     spdlog::debug("scan: {} in the party, {} living ({}); {} hostiles and {} others near the living; {} fighting, {} "
                   "of them not the party{}{}; {} of the fight not found fighting",
-                  party.size(), living.size(),
-                  living.empty() ? std::string{"nobody stands for it"} : std::format("{:#x} stands for it", stands),
-                  hostiles.size(), others.size(), out.size() - afar, outside, rooms.empty() ? "" : ":", rooms, afar);
-    return out;
+                  party.size(), scan.living.size(),
+                  scan.living.empty() ? std::string{"nobody stands for it"}
+                                      : std::format("{:#x} stands for it", scan.stands),
+                  hostiles.size(), others.size(), scan.out.size() - afar, scan.outside, scan.rooms.empty() ? "" : ":",
+                  scan.rooms, afar);
+    return std::move(scan.out);
 }
 
 // Whether the leader stands for the party, said at info as it changes: a
@@ -1245,6 +1292,165 @@ void SayOwnMode(ObjectId id, std::int32_t mode, std::int32_t effectType)
 
 } // namespace
 
+namespace
+{
+
+// The acting creature at an effect's command: how long the engine still
+// holds it, what stands on it, and whether the command is its own mode's
+// and no hold. Answers the kind of effect its own mode keeps it at the
+// command by, 0 if none does.
+std::int32_t AtAnEffect(ActorObservation &actor, ObjectId id, const dao::Command &command)
+{
+    // How long the engine's own count has this command still to run,
+    // where it can say: the sub-actions left on it, each with its
+    // delay and the timed time it has left (DAOLib's
+    // dao::commands::HeldFor, its issue 18). Not known, it is "at
+    // least" that: one of them is untimed or has not begun (an
+    // animation takes its length only as it begins), or is spent
+    // and still there, or none is left of a command still current.
+    // No command at all leaves both as they are, nothing known. The
+    // machine says it beside the time the hold then ran, which is
+    // what the hold costs (core: TurnMachine::HoldRuns, issue 30).
+    // Seen in play 2026-10-04 with DAOLib 57e1540, which read known
+    // and 0.00 s for every knockback of the high dragon's (its one
+    // sub-action spent, the fall and rise on no list, 0.61 to
+    // 3.19 s): since DAOLib 5e0108a that reads at least 0.
+    const std::vector<dao::commands::SubAction> subs = dao::commands::SubActions(id);
+    if (const std::optional<dao::commands::Held> held = dao::commands::HeldFor(id))
+    {
+        actor.heldSeconds = held->seconds;
+        actor.heldKnown = held->known;
+    }
+    SayEffectCommand(id, command, subs);
+    // What holds it, as the engine has it: every temporary effect
+    // standing on the creature, with the ability that applied it,
+    // who did and the seconds it has left (DAOLib's
+    // dao::effects::On). For the machine's lines: which of them the
+    // command is of is not read (the diagnostic above is to show).
+    //
+    // And whether the command is its own mode's, not a hold (core:
+    // ActorObservation::ownMode, Rules.h's OwnModeAtItsCommand;
+    // issue 51): by an effect standing on it that it put on itself,
+    // by an ability that is a mode of its own and on, of a kind that
+    // keeps its creature at a command (Captivating Song's singing
+    // effect, Feign Death's). The mode is asked about only for an
+    // effect that passes the two cheap tests, so a creature with no
+    // such effect costs no table read and no script call more.
+    std::vector<EffectOn> standing;
+    for (const dao::effects::Standing &effect : dao::effects::On(id))
+    {
+        EffectOn on;
+        on.type = static_cast<std::int32_t>(effect.type);
+        on.ability = effect.ability;
+        on.creator = effect.creator;
+        on.modeOn =
+            on.creator == id && KeepsItsCreatureAtACommand(on.type) && on.ability > 0 &&
+            dao::gda::GetInt(dao::script::Table::AbilitiesTalents, on.ability, "UseType").value_or(0) == kUseTypeMode &&
+            api::IsModalAbilityActive(id, on.ability) != 0;
+        standing.push_back(on);
+        if (!(effect.remaining > 0.0f))
+        {
+            continue;
+        }
+        if (!actor.effects.empty())
+        {
+            actor.effects += "; ";
+        }
+        actor.effects += std::format("effect type {} of ability {} by {:#x}, {:.1f} of {:.1f} s left",
+                                     static_cast<std::int32_t>(effect.type), effect.ability, effect.creator,
+                                     effect.remaining, effect.duration);
+    }
+    if (actor.effects.empty())
+    {
+        actor.effects = "no temporary effect stands on it";
+    }
+    actor.ownMode = OwnModeAtItsCommand(id, standing);
+    if (actor.ownMode != kNoMode)
+    {
+        const auto own = std::ranges::find_if(standing, [&](const EffectOn &on) {
+            return on.modeOn && on.ability == actor.ownMode && KeepsItsCreatureAtACommand(on.type);
+        });
+        return own != standing.end() ? own->type : 0;
+    }
+    return 0;
+}
+
+// The acting creature at an attack: whether its command is still at its
+// approach, as the engine has it.
+void AtAnAttack(ActorObservation &actor, ObjectId id)
+{
+    const std::uint32_t at = dao::commands::RunningSubAction(id);
+    actor.approaching = at == kMeleeApproach || at == kRangedApproach;
+    // Said as it changes, at debug: which sub-action a standing
+    // attacker is at is what a play test's log is read for.
+    static ObjectId lastWho = dao::kInvalidObject;
+    static std::uint32_t lastAt = 0;
+    if (id != lastWho || at != lastAt)
+    {
+        lastWho = id;
+        lastAt = at;
+        spdlog::debug("{:#x}'s attack is at sub-action {}{}", id, at, actor.approaching ? " (its approach)" : "");
+    }
+}
+
+// The acting creature at a death blow: where its command is, and its
+// victim's, for the log.
+void AtADeathBlow(ObjectId id, const dao::Command &command)
+{
+    // A death blow that stands (issue 28: twice an ogre's killer
+    // stood at one 36 s of the game's time): which sub-action it is
+    // at, and its victim's command, said as either changes, are what
+    // the next one's log is read for.
+    const std::uint32_t at = dao::commands::RunningSubAction(id);
+    const std::optional<ObjectId> victim = command.Target();
+    std::int32_t victimAt = -1;
+    if (victim && api::IsObjectValid(*victim) != 0)
+    {
+        if (const dao::script::OwnedCommand theirs = api::GetCurrentCommand(*victim))
+        {
+            victimAt = api::GetCommandType(*theirs.get());
+        }
+    }
+    static std::uint32_t lastAt = ~0U;
+    static std::int32_t lastVictimAt = -2;
+    if (at != lastAt || victimAt != lastVictimAt)
+    {
+        lastAt = at;
+        lastVictimAt = victimAt;
+        spdlog::debug("{:#x}'s death blow on {:#x} is at sub-action {}; its victim's command is {} ({})", id,
+                      victim.value_or(dao::kInvalidObject), at, victimAt,
+                      victim && api::IsDead(*victim) != 0 ? "dead" : "alive");
+    }
+}
+
+// What it has noticed, as of this frame (core: ActorObservation::
+// perception): a hostile that perceives nobody to fight is not told its
+// turn has come, and one that notices in its turn is told then (issue
+// 29). The party's own is not asked about. A few reads of the engine's
+// perception lists: IsPerceivingHostiles, and IsPerceiving of each party
+// member until one answers yes.
+void Noticed(ActorObservation &actor, ObjectId id, const std::vector<ObjectId> &party)
+{
+    actor.perception = Perceived(id, party);
+    // Said as it changes, at debug: when a creature noticed is what a
+    // play test's log is read for.
+    static ObjectId lastWho = dao::kInvalidObject;
+    static bool lastUnaware = false;
+    const bool unaware = !actor.perception.inCombat && !actor.perception.ofParty && !actor.perception.ofFoes;
+    if (id != lastWho || unaware != lastUnaware)
+    {
+        lastWho = id;
+        lastUnaware = unaware;
+        spdlog::debug("{:#x} on its turn: it is {} combat, and perceives {}, {}; the party {} it", id,
+                      actor.perception.inCombat ? "in" : "not in",
+                      actor.perception.ofParty ? "a party member" : "no party member",
+                      actor.perception.ofFoes ? "someone hostile to it" : "nobody hostile to it",
+                      actor.perception.byParty ? "perceives" : "does not perceive");
+    }
+}
+
+} // namespace
+
 ActorObservation Bridge::Actor(ObjectId id)
 {
     ActorObservation actor;
@@ -1289,120 +1495,15 @@ ActorObservation Bridge::Actor(ObjectId id)
         // or cast each frame.
         if (actor.current == CommandType::ExecuteEffect)
         {
-            // How long the engine's own count has this command still to run,
-            // where it can say: the sub-actions left on it, each with its
-            // delay and the timed time it has left (DAOLib's
-            // dao::commands::HeldFor, its issue 18). Not known, it is "at
-            // least" that: one of them is untimed or has not begun (an
-            // animation takes its length only as it begins), or is spent
-            // and still there, or none is left of a command still current.
-            // No command at all leaves both as they are, nothing known. The
-            // machine says it beside the time the hold then ran, which is
-            // what the hold costs (core: TurnMachine::HoldRuns, issue 30).
-            // Seen in play 2026-10-04 with DAOLib 57e1540, which read known
-            // and 0.00 s for every knockback of the high dragon's (its one
-            // sub-action spent, the fall and rise on no list, 0.61 to
-            // 3.19 s): since DAOLib 5e0108a that reads at least 0.
-            const std::vector<dao::commands::SubAction> subs = dao::commands::SubActions(id);
-            if (const std::optional<dao::commands::Held> held = dao::commands::HeldFor(id))
-            {
-                actor.heldSeconds = held->seconds;
-                actor.heldKnown = held->known;
-            }
-            SayEffectCommand(id, *current.get(), subs);
-            // What holds it, as the engine has it: every temporary effect
-            // standing on the creature, with the ability that applied it,
-            // who did and the seconds it has left (DAOLib's
-            // dao::effects::On). For the machine's lines: which of them the
-            // command is of is not read (the diagnostic above is to show).
-            //
-            // And whether the command is its own mode's, not a hold (core:
-            // ActorObservation::ownMode, Rules.h's OwnModeAtItsCommand;
-            // issue 51): by an effect standing on it that it put on itself,
-            // by an ability that is a mode of its own and on, of a kind that
-            // keeps its creature at a command (Captivating Song's singing
-            // effect, Feign Death's). The mode is asked about only for an
-            // effect that passes the two cheap tests, so a creature with no
-            // such effect costs no table read and no script call more.
-            std::vector<EffectOn> standing;
-            for (const dao::effects::Standing &effect : dao::effects::On(id))
-            {
-                EffectOn on;
-                on.type = static_cast<std::int32_t>(effect.type);
-                on.ability = effect.ability;
-                on.creator = effect.creator;
-                on.modeOn = on.creator == id && KeepsItsCreatureAtACommand(on.type) && on.ability > 0 &&
-                            dao::gda::GetInt(dao::script::Table::AbilitiesTalents, on.ability, "UseType").value_or(0) ==
-                                kUseTypeMode &&
-                            api::IsModalAbilityActive(id, on.ability) != 0;
-                standing.push_back(on);
-                if (!(effect.remaining > 0.0f))
-                {
-                    continue;
-                }
-                if (!actor.effects.empty())
-                {
-                    actor.effects += "; ";
-                }
-                actor.effects += std::format("effect type {} of ability {} by {:#x}, {:.1f} of {:.1f} s left",
-                                             static_cast<std::int32_t>(effect.type), effect.ability, effect.creator,
-                                             effect.remaining, effect.duration);
-            }
-            if (actor.effects.empty())
-            {
-                actor.effects = "no temporary effect stands on it";
-            }
-            actor.ownMode = OwnModeAtItsCommand(id, standing);
-            if (actor.ownMode != kNoMode)
-            {
-                const auto own = std::ranges::find_if(standing, [&](const EffectOn &on) {
-                    return on.modeOn && on.ability == actor.ownMode && KeepsItsCreatureAtACommand(on.type);
-                });
-                ownModeEffect = own != standing.end() ? own->type : 0;
-            }
+            ownModeEffect = AtAnEffect(actor, id, *current.get());
         }
         if (actor.current == CommandType::Attack)
         {
-            const std::uint32_t at = dao::commands::RunningSubAction(id);
-            actor.approaching = at == kMeleeApproach || at == kRangedApproach;
-            // Said as it changes, at debug: which sub-action a standing
-            // attacker is at is what a play test's log is read for.
-            static ObjectId lastWho = dao::kInvalidObject;
-            static std::uint32_t lastAt = 0;
-            if (id != lastWho || at != lastAt)
-            {
-                lastWho = id;
-                lastAt = at;
-                spdlog::debug("{:#x}'s attack is at sub-action {}{}", id, at,
-                              actor.approaching ? " (its approach)" : "");
-            }
+            AtAnAttack(actor, id);
         }
         else if (actor.current == CommandType::Deathblow)
         {
-            // A death blow that stands (issue 28: twice an ogre's killer
-            // stood at one 36 s of the game's time): which sub-action it is
-            // at, and its victim's command, said as either changes, are what
-            // the next one's log is read for.
-            const std::uint32_t at = dao::commands::RunningSubAction(id);
-            const std::optional<ObjectId> victim = current.get()->Target();
-            std::int32_t victimAt = -1;
-            if (victim && api::IsObjectValid(*victim) != 0)
-            {
-                if (const dao::script::OwnedCommand theirs = api::GetCurrentCommand(*victim))
-                {
-                    victimAt = api::GetCommandType(*theirs.get());
-                }
-            }
-            static std::uint32_t lastAt = ~0U;
-            static std::int32_t lastVictimAt = -2;
-            if (at != lastAt || victimAt != lastVictimAt)
-            {
-                lastAt = at;
-                lastVictimAt = victimAt;
-                spdlog::debug("{:#x}'s death blow on {:#x} is at sub-action {}; its victim's command is {} ({})", id,
-                              victim.value_or(dao::kInvalidObject), at, victimAt,
-                              victim && api::IsDead(*victim) != 0 ? "dead" : "alive");
-            }
+            AtADeathBlow(id, *current.get());
         }
     }
     SayOwnMode(id, actor.ownMode, ownModeEffect);
@@ -1418,30 +1519,10 @@ ActorObservation Bridge::Actor(ObjectId id)
     actor.position = {position.x, position.y, position.z};
     actor.conjureHeld = dao::commands::ConjureHeld(id) && dao::commands::Conjure(id).has_value();
     actor.timersHeld = dao::timers::Waiting(id) > 0;
-    // What it has noticed, as of this frame (core: ActorObservation::
-    // perception): a hostile that perceives nobody to fight is not told its
-    // turn has come, and one that notices in its turn is told then (issue
-    // 29). The party's own is not asked about. A few reads of the engine's
-    // perception lists: IsPerceivingHostiles, and IsPerceiving of each party
-    // member until one answers yes.
+    // What it has noticed, as of this frame: the party's own is not asked about.
     if (std::ranges::find(party_, id) == party_.end())
     {
-        actor.perception = Perceived(id, party_);
-        // Said as it changes, at debug: when a creature noticed is what a
-        // play test's log is read for.
-        static ObjectId lastWho = dao::kInvalidObject;
-        static bool lastUnaware = false;
-        const bool unaware = !actor.perception.inCombat && !actor.perception.ofParty && !actor.perception.ofFoes;
-        if (id != lastWho || unaware != lastUnaware)
-        {
-            lastWho = id;
-            lastUnaware = unaware;
-            spdlog::debug("{:#x} on its turn: it is {} combat, and perceives {}, {}; the party {} it", id,
-                          actor.perception.inCombat ? "in" : "not in",
-                          actor.perception.ofParty ? "a party member" : "no party member",
-                          actor.perception.ofFoes ? "someone hostile to it" : "nobody hostile to it",
-                          actor.perception.byParty ? "perceives" : "does not perceive");
-        }
+        Noticed(actor, id, party_);
     }
     return actor;
 }
@@ -1540,6 +1621,292 @@ CombatantStatus Bridge::Status(ObjectId id)
     return status;
 }
 
+// An AI told its turn has come, or that the fight is over: not one that is gone.
+void Bridge::TellAi(const Effect &e)
+{
+    // One told as a fight ends may never have been in its order, or
+    // may have left it alive (core: TurnMachine::LetGo;
+    // issue 43): nobody has read whether it still stands, so it is
+    // asked here. A dead creature's own script would hear the event
+    // before rules_core discards it, and one gone from the area is no
+    // object to signal.
+    if (Gone(e.target))
+    {
+        spdlog::debug("{:#010x} is dead or gone: not told to choose", e.target);
+        return;
+    }
+    Poke(e.target);
+}
+
+// A creature's kept cast or action given to it now, its time paid: a cast the engine holds let complete, one the gate
+// kept given again as a script's, and a kept attack whose target is gone turned on another in reach, or said to have
+// had none.
+void Bridge::GiveKept(const Effect &e)
+{
+    if (ReleaseEngineConjure(e.target))
+    {
+        return; // the engine's own cast, let complete (Gate.cpp): nothing kept to give
+    }
+    // The cast its creature charged (core: "Casts that charge"),
+    // given to it as a script gives a command: it comes back
+    // through the gate, which lets it through for nothing. Its
+    // conjuring is short now, the turns having been its time.
+    if (const std::optional<HeldCast> kept = TakeHeldCast(e.target);
+        kept && kept->target != dao::kInvalidObject && NotThere(kept->target))
+    {
+        // (Dead, gone, or made inactive since it was kept: NotThere.
+        // Each line says which.)
+        const char *why = WhyNotThere(kept->target);
+        // A plain attack whose target fell is turned on the nearest
+        // enemy its creature can strike from where it stands, and
+        // given at that one: through the gate as the kept one would
+        // have come, for nothing, its time paid as the turn began
+        // (the user, 2026-10-03, issue 22: "as the game's own
+        // auto-attack would", for everyone). Who it may be is the
+        // machine's to name (Effect::others) and which the core's to
+        // choose; here they are measured and the attack given.
+        const ObjectId next = kept->type == CommandType::Attack ? TurnedOn(e.target, e.others) : kNoObject;
+        if (next != kNoObject)
+        {
+            if (GiveAttack(e.target, next))
+            {
+                spdlog::info("{:#010x}: the target of its kept attack ({:#x}) {}: turned on {:#x}, the nearest of {} "
+                             "enemies standing that it can strike from where it is ({:.1f} m away)",
+                             e.target, kept->target, why, next, e.others.size(),
+                             api::GetDistanceBetween(e.target, next));
+                return;
+            }
+            spdlog::warn("{:#010x}: could not make the command for its kept attack, turned on {:#x}", e.target, next);
+        }
+        // Its target fell while it charged: not cast at nothing. In
+        // play the cast was given all the same, struck nothing, and
+        // put the talent on cooldown for five turns (the twelfth
+        // play test, 2026-10-01). Not given, nothing is spent: the
+        // machine says its cast did not come, and the turn goes on.
+        // A talent or a spell, always: its target was chosen. An
+        // attack, with no enemy in its reach: its creature's turn is
+        // handed over whole, and an AI chooses anew.
+        spdlog::info(
+            "{:#010x}: the target of its charged cast of ability {} ({:#x}) {}: not cast, nothing spent{}", e.target,
+            kept->ability, kept->target, why,
+            kept->type == CommandType::Attack
+                ? std::format(" (an attack: none of {} enemies standing is in its reach and sight)", e.others.size())
+                : std::string{});
+        // Logged, not shown: "Its target is gone" floated here in
+        // grey, and with a turn a bar of time most turns end on a
+        // kept attack whose target has often fallen by the next,
+        // eight to twelve times a fight in the Korcari Wilds. Nothing
+        // is lost by it, so nothing is asked of the player (the user,
+        // watching, 2026-10-03: "That can just be a thing we log and
+        // not show"; issue 8).
+        // Told to the machine with the next observation: with a turn
+        // a bar of time, what the turn paid for it is given back.
+        keptVoid_.push_back(e.target);
+    }
+    else if (kept && kept->type == CommandType::Attack)
+    {
+        // With a turn a bar of time, an attack kept for the turn its
+        // time is paid on (core: TurnMachine::PayAction), given as a
+        // script gives one.
+        if (kept->target == dao::kInvalidObject)
+        {
+            spdlog::warn("{:#010x}: its kept attack has no target: not given", e.target);
+        }
+        else if (const dao::script::OwnedCommand attack = api::CommandAttack(kept->target))
+        {
+            api::AddCommand(e.target, *attack.get(), 1);
+            spdlog::debug("{:#010x}: its kept attack on {:#x} is given to it", e.target, kept->target);
+        }
+        else
+        {
+            spdlog::warn("{:#010x}: could not make the command for its kept attack", e.target);
+        }
+    }
+    else if (kept)
+    {
+        const dao::Vector place = kept->placed ? dao::Vector{kept->x, kept->y, kept->z} : dao::Vector{};
+        if (const dao::script::OwnedCommand cast =
+                api::CommandUseAbility(kept->ability, kept->target, place, kChargedConjureSeconds))
+        {
+            api::AddCommand(e.target, *cast.get(), 1);
+            spdlog::debug("{:#010x}: its charged cast of ability {} is given to it", e.target, kept->ability);
+        }
+        else
+        {
+            spdlog::warn("{:#010x}: could not make the command for its charged cast of ability {}", e.target,
+                         kept->ability);
+        }
+    }
+    else
+    {
+        spdlog::warn("{:#010x}: no cast kept for it to be given (ability {})", e.target, e.a);
+    }
+}
+
+// A creature walked to where it can do the action kept for it.
+void Bridge::WalkToKept(const Effect &e)
+{
+    // With a turn a bar of time, an attack that did not fit is kept
+    // for its creature's next turn, and the creature walks to where
+    // it can strike now (core: TurnMachine::PayAction): a move to
+    // its target, given as a script gives one, to end inside what
+    // the engine's own approach for the attack asks (DAOLib's
+    // dao::attack::ApproachOf: for a shot the distance its approach
+    // stops at, for a blow the centres' furthest, its range).
+    if (const std::optional<HeldCast> kept = PeekHeldCast(e.target);
+        kept && kept->target != dao::kInvalidObject && api::IsObjectValid(kept->target) != 0)
+    {
+        constexpr float kInside = 0.3f; // meters inside the reach, so that the attack need not step
+        constexpr float kBeside = 1.5f; // where the engine has no approach to say: beside its target
+        const std::optional<dao::attack::Approach> approach = dao::attack::ApproachOf(e.target, kept->target);
+        // A blow's: how far from its target the engine's own place
+        // for the attacker on the target's ring is (the approach's
+        // goal), not a distance of the mod's. A ring with no place
+        // for it at all has the target itself for a goal (DAOLib
+        // 151e624; it had no approach to say before): beside its
+        // target then too.
+        const dao::Vector at = api::GetPosition(kept->target);
+        const float toPlace =
+            approach && !approach->ranged ? std::hypot(approach->goal.x - at.x, approach->goal.y - at.y) : 0.0f;
+        const float reach = !approach          ? kBeside
+                            : approach->ranged ? approach->stopWithin
+                            : toPlace > 0.0f   ? toPlace
+                                               : kBeside;
+        const float within = std::max(0.5f, reach - kInside);
+        if (const dao::script::OwnedCommand walk = api::CommandMoveToObject(kept->target, 1, within))
+        {
+            api::AddCommand(e.target, *walk.get(), 0);
+            spdlog::debug("{:#010x}: it walks to within {:.1f} m of {:#x}, where its kept action lands", e.target,
+                          within, kept->target);
+        }
+        else
+        {
+            spdlog::warn("{:#010x}: could not make the walk to its kept action's target", e.target);
+        }
+    }
+    else
+    {
+        spdlog::debug("{:#010x}: no kept action with a target to walk to", e.target);
+    }
+}
+
+// Every temporary effect's time held still, or let run.
+void Bridge::HoldEffectsTime(const Effect &e)
+{
+    // The clock temporary effects wear off on and regeneration ticks
+    // on (DAOLib's dao/Clock.h, a42be67): held through a fight,
+    // moved on a round's worth at a time. And with it the scripts'
+    // own timers of a second or more, whatever their kind (issue 26,
+    // Settings::scriptTimersFrom): named before the hold, which takes
+    // what is already in the engine's queue by the same rule.
+    if (e.a != 0)
+    {
+        dao::timers::HoldFrom(settings_.scriptTimersFrom);
+        dao::timers::Trace(settings_.scriptTimersTrace);
+    }
+    dao::clock::Hold(e.a != 0);
+    if (e.a == 0)
+    {
+        camera_.Release(); // the fight is over: the camera as the game has it
+    }
+    if (e.a != 0)
+    {
+        ReadInstalledRules(); // what the installed scripts count (Gate.cpp)
+    }
+}
+
+// The game run at so many thousandths of its speed.
+void Bridge::SetGameSpeed(const Effect &e)
+{
+    // Game logic and animation together (DAOLib's dao/Clock.h,
+    // 4e0032e); the Flash UI keeps its own clock.
+    // Whether the world's timer took it and the frame's hook is placed
+    // (DAOLib ed55ab8): an archer's shot took as long at 2 as at 1 in
+    // the second play test, the mod's own waits aside.
+    speedTook_ = dao::clock::SetSpeed(static_cast<float>(e.b) / 1000.0f);
+    camera_.SetSpeed(static_cast<float>(e.b) / 1000.0f);
+    if (!*speedTook_)
+    {
+        spdlog::warn("the game's speed {:.2f} did not take", static_cast<float>(e.b) / 1000.0f);
+    }
+    else
+    {
+        spdlog::debug("the game's speed is {:.2f}", static_cast<float>(e.b) / 1000.0f);
+    }
+}
+
+// Temporary effects aged by so many milliseconds, once: everyone's, or one creature's own.
+void Bridge::AgeEffects(const Effect &e)
+{
+    if (e.target != kNoObject)
+    {
+        // One creature's own clock (core: AgeOwnClock), in steps as
+        // small as a frame's walk: DAOLib keeps the fractions.
+        dao::clock::Advance(e.target, static_cast<float>(e.b) / 1000.0f);
+        return;
+    }
+    // With the effects and regeneration, since DAOLib 48fe011, the
+    // scripts' own timers that pace them (dao/Timers.h): a damage
+    // over time's ticks and a lasting area's pulses wait while the
+    // clock is held and come due as it is moved, where before they
+    // ran on in real time (the user, playing, 2026-10-02: "there's a
+    // environmental poison trap that keeps hitting the party even
+    // during turn-based combat"). How many wait is said, to read a
+    // fight's ticks against its rounds.
+    dao::clock::Advance(static_cast<float>(e.b) / 1000.0f);
+    if (const std::size_t waiting = dao::timers::Waiting(); waiting > 0)
+    {
+        spdlog::debug("the clock moved {:.2f} s: {} of the scripts' timers wait on it",
+                      static_cast<float>(e.b) / 1000.0f, waiting);
+    }
+}
+
+// An ability's cooldown held, released, or set back to seconds.
+void Bridge::SetCooldown(const Effect &e)
+{
+    // Held, released, or back to seconds (core: "Cooldowns in turns").
+    // With what the sweep is drawn against (c), through DAOLib
+    // (dao/Abilities.h, b51d676): the scripts' SetCooldown sets what
+    // is left and what it was set to as one, so a hold showed a full
+    // sweep that never moved, where the user wants the turns shown.
+    // DAOLib's refuses a creature with no record for the ability
+    // (an item's, by its tag): the scripts' then, as before.
+    if (e.c <= 0 || !dao::abilities::SetCooldown(e.target, e.a, static_cast<float>(e.b), static_cast<float>(e.c)))
+    {
+        if (e.c > 0)
+        {
+            spdlog::debug("ability {} of {:#010x}: no cooldown record to set {} of {} s on; set as the scripts do", e.a,
+                          e.target, e.b, e.c);
+        }
+        api::SetCooldown(e.target, e.a, static_cast<float>(e.b));
+    }
+}
+
+// A creature's stuns, paralysis, sleep and pins taken off: their turns are spent.
+void Bridge::EndConditionsOf(const Effect &e)
+{
+    // Their turns are spent (core: "Conditions in turns"): the
+    // engine's own timers are not waited for.
+    {
+        // Said before and after: the desktop play test (2026-09-30) saw
+        // a pin the machine ended hold its creature still.
+        const std::string before = Holding(e.target);
+        for (const std::int32_t type : kHolding)
+        {
+            api::RemoveEffectsByParameters(e.target, type);
+        }
+        const std::string after = Holding(e.target);
+        if (after != "nothing")
+        {
+            spdlog::warn("{:#010x}: ended {}, and {} holds it still", e.target, before, after);
+        }
+        else
+        {
+            spdlog::debug("{:#010x}: ended {}", e.target, before);
+        }
+    }
+}
+
 void Bridge::Apply(const std::vector<Effect> &effects)
 {
     for (const Effect &e : effects)
@@ -1563,121 +1930,10 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             api::SetPrimaryControlled(e.target);
             break;
         case EffectKind::PokeAi:
-            // One told as a fight ends may never have been in its order, or
-            // may have left it alive (core: TurnMachine::LetGo;
-            // issue 43): nobody has read whether it still stands, so it is
-            // asked here. A dead creature's own script would hear the event
-            // before rules_core discards it, and one gone from the area is no
-            // object to signal.
-            if (Gone(e.target))
-            {
-                spdlog::debug("{:#010x} is dead or gone: not told to choose", e.target);
-                break;
-            }
-            Poke(e.target);
+            TellAi(e);
             break;
         case EffectKind::ReleaseCast:
-            if (ReleaseEngineConjure(e.target))
-            {
-                break; // the engine's own cast, let complete (Gate.cpp): nothing kept to give
-            }
-            // The cast its creature charged (core: "Casts that charge"),
-            // given to it as a script gives a command: it comes back
-            // through the gate, which lets it through for nothing. Its
-            // conjuring is short now, the turns having been its time.
-            if (const std::optional<HeldCast> kept = TakeHeldCast(e.target);
-                kept && kept->target != dao::kInvalidObject && NotThere(kept->target))
-            {
-                // (Dead, gone, or made inactive since it was kept: NotThere.
-                // Each line says which.)
-                const char *why = WhyNotThere(kept->target);
-                // A plain attack whose target fell is turned on the nearest
-                // enemy its creature can strike from where it stands, and
-                // given at that one: through the gate as the kept one would
-                // have come, for nothing, its time paid as the turn began
-                // (the user, 2026-10-03, issue 22: "as the game's own
-                // auto-attack would", for everyone). Who it may be is the
-                // machine's to name (Effect::others) and which the core's to
-                // choose; here they are measured and the attack given.
-                const ObjectId next = kept->type == CommandType::Attack ? TurnedOn(e.target, e.others) : kNoObject;
-                if (next != kNoObject)
-                {
-                    if (GiveAttack(e.target, next))
-                    {
-                        spdlog::info(
-                            "{:#010x}: the target of its kept attack ({:#x}) {}: turned on {:#x}, the nearest of {} "
-                            "enemies standing that it can strike from where it is ({:.1f} m away)",
-                            e.target, kept->target, why, next, e.others.size(),
-                            api::GetDistanceBetween(e.target, next));
-                        break;
-                    }
-                    spdlog::warn("{:#010x}: could not make the command for its kept attack, turned on {:#x}", e.target,
-                                 next);
-                }
-                // Its target fell while it charged: not cast at nothing. In
-                // play the cast was given all the same, struck nothing, and
-                // put the talent on cooldown for five turns (the twelfth
-                // play test, 2026-10-01). Not given, nothing is spent: the
-                // machine says its cast did not come, and the turn goes on.
-                // A talent or a spell, always: its target was chosen. An
-                // attack, with no enemy in its reach: its creature's turn is
-                // handed over whole, and an AI chooses anew.
-                spdlog::info(
-                    "{:#010x}: the target of its charged cast of ability {} ({:#x}) {}: not cast, nothing spent{}",
-                    e.target, kept->ability, kept->target, why,
-                    kept->type == CommandType::Attack
-                        ? std::format(" (an attack: none of {} enemies standing is in its reach and sight)",
-                                      e.others.size())
-                        : std::string{});
-                // Logged, not shown: "Its target is gone" floated here in
-                // grey, and with a turn a bar of time most turns end on a
-                // kept attack whose target has often fallen by the next,
-                // eight to twelve times a fight in the Korcari Wilds. Nothing
-                // is lost by it, so nothing is asked of the player (the user,
-                // watching, 2026-10-03: "That can just be a thing we log and
-                // not show"; issue 8).
-                // Told to the machine with the next observation: with a turn
-                // a bar of time, what the turn paid for it is given back.
-                keptVoid_.push_back(e.target);
-            }
-            else if (kept && kept->type == CommandType::Attack)
-            {
-                // With a turn a bar of time, an attack kept for the turn its
-                // time is paid on (core: TurnMachine::PayAction), given as a
-                // script gives one.
-                if (kept->target == dao::kInvalidObject)
-                {
-                    spdlog::warn("{:#010x}: its kept attack has no target: not given", e.target);
-                }
-                else if (const dao::script::OwnedCommand attack = api::CommandAttack(kept->target))
-                {
-                    api::AddCommand(e.target, *attack.get(), 1);
-                    spdlog::debug("{:#010x}: its kept attack on {:#x} is given to it", e.target, kept->target);
-                }
-                else
-                {
-                    spdlog::warn("{:#010x}: could not make the command for its kept attack", e.target);
-                }
-            }
-            else if (kept)
-            {
-                const dao::Vector place = kept->placed ? dao::Vector{kept->x, kept->y, kept->z} : dao::Vector{};
-                if (const dao::script::OwnedCommand cast =
-                        api::CommandUseAbility(kept->ability, kept->target, place, kChargedConjureSeconds))
-                {
-                    api::AddCommand(e.target, *cast.get(), 1);
-                    spdlog::debug("{:#010x}: its charged cast of ability {} is given to it", e.target, kept->ability);
-                }
-                else
-                {
-                    spdlog::warn("{:#010x}: could not make the command for its charged cast of ability {}", e.target,
-                                 kept->ability);
-                }
-            }
-            else
-            {
-                spdlog::warn("{:#010x}: no cast kept for it to be given (ability {})", e.target, e.a);
-            }
+            GiveKept(e);
             break;
         case EffectKind::DropCast:
             DropHeldCast(e.target);
@@ -1690,73 +1946,13 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             }
             break;
         case EffectKind::Approach:
-            // With a turn a bar of time, an attack that did not fit is kept
-            // for its creature's next turn, and the creature walks to where
-            // it can strike now (core: TurnMachine::PayAction): a move to
-            // its target, given as a script gives one, to end inside what
-            // the engine's own approach for the attack asks (DAOLib's
-            // dao::attack::ApproachOf: for a shot the distance its approach
-            // stops at, for a blow the centres' furthest, its range).
-            if (const std::optional<HeldCast> kept = PeekHeldCast(e.target);
-                kept && kept->target != dao::kInvalidObject && api::IsObjectValid(kept->target) != 0)
-            {
-                constexpr float kInside = 0.3f; // meters inside the reach, so that the attack need not step
-                constexpr float kBeside = 1.5f; // where the engine has no approach to say: beside its target
-                const std::optional<dao::attack::Approach> approach = dao::attack::ApproachOf(e.target, kept->target);
-                // A blow's: how far from its target the engine's own place
-                // for the attacker on the target's ring is (the approach's
-                // goal), not a distance of the mod's. A ring with no place
-                // for it at all has the target itself for a goal (DAOLib
-                // 151e624; it had no approach to say before): beside its
-                // target then too.
-                const dao::Vector at = api::GetPosition(kept->target);
-                const float toPlace =
-                    approach && !approach->ranged ? std::hypot(approach->goal.x - at.x, approach->goal.y - at.y) : 0.0f;
-                const float reach = !approach          ? kBeside
-                                    : approach->ranged ? approach->stopWithin
-                                    : toPlace > 0.0f   ? toPlace
-                                                       : kBeside;
-                const float within = std::max(0.5f, reach - kInside);
-                if (const dao::script::OwnedCommand walk = api::CommandMoveToObject(kept->target, 1, within))
-                {
-                    api::AddCommand(e.target, *walk.get(), 0);
-                    spdlog::debug("{:#010x}: it walks to within {:.1f} m of {:#x}, where its kept action lands",
-                                  e.target, within, kept->target);
-                }
-                else
-                {
-                    spdlog::warn("{:#010x}: could not make the walk to its kept action's target", e.target);
-                }
-            }
-            else
-            {
-                spdlog::debug("{:#010x}: no kept action with a target to walk to", e.target);
-            }
+            WalkToKept(e);
             break;
         case EffectKind::Explain:
             Explain(e.target);
             break;
         case EffectKind::HoldTime:
-            // The clock temporary effects wear off on and regeneration ticks
-            // on (DAOLib's dao/Clock.h, a42be67): held through a fight,
-            // moved on a round's worth at a time. And with it the scripts'
-            // own timers of a second or more, whatever their kind (issue 26,
-            // Settings::scriptTimersFrom): named before the hold, which takes
-            // what is already in the engine's queue by the same rule.
-            if (e.a != 0)
-            {
-                dao::timers::HoldFrom(settings_.scriptTimersFrom);
-                dao::timers::Trace(settings_.scriptTimersTrace);
-            }
-            dao::clock::Hold(e.a != 0);
-            if (e.a == 0)
-            {
-                camera_.Release(); // the fight is over: the camera as the game has it
-            }
-            if (e.a != 0)
-            {
-                ReadInstalledRules(); // what the installed scripts count (Gate.cpp)
-            }
+            HoldEffectsTime(e);
             break;
         case EffectKind::OwnClock:
             // A combatant's effects, regeneration and the scripts' timers on
@@ -1767,86 +1963,16 @@ void Bridge::Apply(const std::vector<Effect> &effects)
             dao::clock::OwnClock(e.target, e.a != 0);
             break;
         case EffectKind::GameSpeed:
-            // Game logic and animation together (DAOLib's dao/Clock.h,
-            // 4e0032e); the Flash UI keeps its own clock.
-            // Whether the world's timer took it and the frame's hook is placed
-            // (DAOLib ed55ab8): an archer's shot took as long at 2 as at 1 in
-            // the second play test, the mod's own waits aside.
-            speedTook_ = dao::clock::SetSpeed(static_cast<float>(e.b) / 1000.0f);
-            camera_.SetSpeed(static_cast<float>(e.b) / 1000.0f);
-            if (!*speedTook_)
-            {
-                spdlog::warn("the game's speed {:.2f} did not take", static_cast<float>(e.b) / 1000.0f);
-            }
-            else
-            {
-                spdlog::debug("the game's speed is {:.2f}", static_cast<float>(e.b) / 1000.0f);
-            }
+            SetGameSpeed(e);
             break;
         case EffectKind::AgeTime:
-            if (e.target != kNoObject)
-            {
-                // One creature's own clock (core: AgeOwnClock), in steps as
-                // small as a frame's walk: DAOLib keeps the fractions.
-                dao::clock::Advance(e.target, static_cast<float>(e.b) / 1000.0f);
-                break;
-            }
-            // With the effects and regeneration, since DAOLib 48fe011, the
-            // scripts' own timers that pace them (dao/Timers.h): a damage
-            // over time's ticks and a lasting area's pulses wait while the
-            // clock is held and come due as it is moved, where before they
-            // ran on in real time (the user, playing, 2026-10-02: "there's a
-            // environmental poison trap that keeps hitting the party even
-            // during turn-based combat"). How many wait is said, to read a
-            // fight's ticks against its rounds.
-            dao::clock::Advance(static_cast<float>(e.b) / 1000.0f);
-            if (const std::size_t waiting = dao::timers::Waiting(); waiting > 0)
-            {
-                spdlog::debug("the clock moved {:.2f} s: {} of the scripts' timers wait on it",
-                              static_cast<float>(e.b) / 1000.0f, waiting);
-            }
+            AgeEffects(e);
             break;
         case EffectKind::Cooldown:
-            // Held, released, or back to seconds (core: "Cooldowns in turns").
-            // With what the sweep is drawn against (c), through DAOLib
-            // (dao/Abilities.h, b51d676): the scripts' SetCooldown sets what
-            // is left and what it was set to as one, so a hold showed a full
-            // sweep that never moved, where the user wants the turns shown.
-            // DAOLib's refuses a creature with no record for the ability
-            // (an item's, by its tag): the scripts' then, as before.
-            if (e.c <= 0 ||
-                !dao::abilities::SetCooldown(e.target, e.a, static_cast<float>(e.b), static_cast<float>(e.c)))
-            {
-                if (e.c > 0)
-                {
-                    spdlog::debug(
-                        "ability {} of {:#010x}: no cooldown record to set {} of {} s on; set as the scripts do", e.a,
-                        e.target, e.b, e.c);
-                }
-                api::SetCooldown(e.target, e.a, static_cast<float>(e.b));
-            }
+            SetCooldown(e);
             break;
         case EffectKind::EndConditions:
-            // Their turns are spent (core: "Conditions in turns"): the
-            // engine's own timers are not waited for.
-            {
-                // Said before and after: the desktop play test (2026-09-30) saw
-                // a pin the machine ended hold its creature still.
-                const std::string before = Holding(e.target);
-                for (const std::int32_t type : kHolding)
-                {
-                    api::RemoveEffectsByParameters(e.target, type);
-                }
-                const std::string after = Holding(e.target);
-                if (after != "nothing")
-                {
-                    spdlog::warn("{:#010x}: ended {}, and {} holds it still", e.target, before, after);
-                }
-                else
-                {
-                    spdlog::debug("{:#010x}: ended {}", e.target, before);
-                }
-            }
+            EndConditionsOf(e);
             break;
         case EffectKind::Floaty:
             api::DisplayFloatyMessage(e.target, e.text, k::FLOATY_MESSAGE, static_cast<std::int32_t>(e.colour), 2.0f);

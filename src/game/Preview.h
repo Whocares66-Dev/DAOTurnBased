@@ -61,6 +61,14 @@ class Preview
 
   private:
     void Clear();
+    // Update's second half: the walk it found, drawn; and of that, the marks
+    // laid along the path in the world.
+    void Draw(const TurnView &view, std::uint32_t nowMs, bool onGround, float walk, const std::vector<Vec3> &walked,
+              bool attack);
+    void MarkOnGround(ObjectId area, const PathSplit &split, const std::vector<Vec3> &walked, bool attack);
+    // And its two ways of having nothing to draw.
+    void NoWalk();
+    void NoPath();
     void ShowCost(const OrderCost &cost);
     void Search(ObjectId walker, const Vec3 &from, const Vec3 &to, ObjectId toward, std::uint32_t nowMs);
     void Compare(std::uint32_t nowMs);

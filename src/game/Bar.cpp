@@ -173,47 +173,59 @@ constexpr std::wstring_view kMovie = L"turnorder";
 constexpr std::wstring_view kAttackIcon = L"ic_attack";
 } // namespace
 
+// The bar's screen added to the game's, once, and its movie looked for:
+// said in the log, with where the movie was found. False while the game has
+// no GUI system to add it to.
+bool BarLink::AddScreen()
+{
+    // False until the GUI system exists, which is from the main menu on.
+    if (!dao::gui::AddScreen(kScreen, kMovie, dao::gui::kLayerHud))
+    {
+        return false;
+    }
+    // A plain SWF is looked for first, the game's own GFX after. The
+    // movie is the plugin's own, beside turnbased.dll, since issue 47
+    // (2026-10-05; DAOLib's issue 26, f442300): AddScreen has it served
+    // from the plugin's folder where the game's resource system has none
+    // by the name, and HasMovie answers for both places. The game's
+    // comes first, and the one it could have is a copy a deploy before
+    // then left in the override folder: an older movie shown with this
+    // plugin, when the two are a pair (TB_GetView's fields), so that is
+    // a warning. tools/deploy.ps1 takes the copy out.
+    const bool swf = dao::gui::HasMovie(L"turnorder.swf");
+    const bool gfx = !swf && dao::gui::HasMovie(L"turnorder.gfx");
+    movieFound_ = swf || gfx;
+    const bool gameSwf = dao::resources::Exists(L"turnorder.swf");
+    const bool gameGfx = !gameSwf && dao::resources::Exists(L"turnorder.gfx");
+    if (gameSwf || gameGfx)
+    {
+        spdlog::warn("the turn bar's screen is added, and its movie found as turnorder.{} by the game's own "
+                     "resource system, which comes before the plugin's folder: a copy in the override folder "
+                     "is the one shown, not the one beside turnbased.dll (tools/deploy.ps1 takes it out)",
+                     gameSwf ? "swf" : "gfx");
+    }
+    else if (movieFound_)
+    {
+        spdlog::info("the turn bar's screen is added, and its movie found as turnorder.{} beside the plugin",
+                     swf ? "swf" : "gfx");
+    }
+    else
+    {
+        spdlog::warn("the turn bar's screen is added, but no turnorder.swf or .gfx is beside the plugin "
+                     "(tools/deploy.ps1 puts it there, in daolib\\plugins\\turnbased): the bar stays hidden");
+    }
+    return true;
+}
+
 void BarLink::KeepScreen(bool fighting)
 {
     if (!screenAdded_)
     {
-        // False until the GUI system exists, which is from the main menu on.
-        if (!dao::gui::AddScreen(kScreen, kMovie, dao::gui::kLayerHud))
+        if (!AddScreen())
         {
             return;
         }
         screenAdded_ = true;
-        // A plain SWF is looked for first, the game's own GFX after. The
-        // movie is the plugin's own, beside turnbased.dll, since issue 47
-        // (2026-10-05; DAOLib's issue 26, f442300): AddScreen has it served
-        // from the plugin's folder where the game's resource system has none
-        // by the name, and HasMovie answers for both places. The game's
-        // comes first, and the one it could have is a copy a deploy before
-        // then left in the override folder: an older movie shown with this
-        // plugin, when the two are a pair (TB_GetView's fields), so that is
-        // a warning. tools/deploy.ps1 takes the copy out.
-        const bool swf = dao::gui::HasMovie(L"turnorder.swf");
-        const bool gfx = !swf && dao::gui::HasMovie(L"turnorder.gfx");
-        movieFound_ = swf || gfx;
-        const bool gameSwf = dao::resources::Exists(L"turnorder.swf");
-        const bool gameGfx = !gameSwf && dao::resources::Exists(L"turnorder.gfx");
-        if (gameSwf || gameGfx)
-        {
-            spdlog::warn("the turn bar's screen is added, and its movie found as turnorder.{} by the game's own "
-                         "resource system, which comes before the plugin's folder: a copy in the override folder "
-                         "is the one shown, not the one beside turnbased.dll (tools/deploy.ps1 takes it out)",
-                         gameSwf ? "swf" : "gfx");
-        }
-        else if (movieFound_)
-        {
-            spdlog::info("the turn bar's screen is added, and its movie found as turnorder.{} beside the plugin",
-                         swf ? "swf" : "gfx");
-        }
-        else
-        {
-            spdlog::warn("the turn bar's screen is added, but no turnorder.swf or .gfx is beside the plugin "
-                         "(tools/deploy.ps1 puts it there, in daolib\\plugins\\turnbased): the bar stays hidden");
-        }
     }
     if (!movieFound_)
     {
@@ -618,26 +630,12 @@ struct ShotOrder
     bool again = false;      // the renderer it has is the mod's own, to be rendered again in place
 };
 
-// One creature's portrait, got: its ready-made picture, the one it has, or a
-// render framed by the rule (or as `order` tunes it), with everything that
-// was seen on the way, for the log and for a tester. The one place a
-// portrait's camera is given to the engine.
-PortraitReport Shoot(ObjectId id, const ShotOrder &order)
+// What a portrait's creature is, for the report: its name and tag, its
+// appearance and what the table says of its model, where its head is, and
+// the kind of body that makes it (asked for, or by the rule).
+void Describe(PortraitReport &report, ObjectId id, const Looks &looks, const BodyMeasure &body, const ShotOrder &order)
 {
     namespace api = dao::script::api;
-    PortraitReport report;
-    report.id = id;
-    report.source = "none";
-    auto *app = dao::CClientExoApp::Get();
-    dao::CCCreature *creature = app != nullptr ? app->GetCreatureById(id) : nullptr;
-    if (creature == nullptr)
-    {
-        report.lack = PortraitLack::Creature;
-        report.problem = "no creature by that id";
-        return report;
-    }
-    const PortraitTable &table = Table();
-    const Looks looks = LooksOf(id);
     report.name = api::GetName(id);
     report.tag = api::GetTag(id);
     report.appearance = looks.appearance;
@@ -645,7 +643,6 @@ PortraitReport Shoot(ObjectId id, const ShotOrder &order)
     report.personalSpace = looks.personalSpace;
     report.personsModel = looks.person;
     report.terrainFollowPitch = looks.terrainFollowPitch;
-    const BodyMeasure body = MeasureBody(id);
     report.feet = body.feet;
     report.head = body.head;
     report.extent = body.extent.meters;
@@ -659,6 +656,116 @@ PortraitReport Shoot(ObjectId id, const ShotOrder &order)
                                       BodyKindWhy(looks.person, looks.terrainFollowPitch, report.extent),
                                       looks.modelType.empty() ? std::string{"none"} : Utf8(looks.modelType),
                                       looks.terrainFollowPitch, report.extent);
+}
+
+// A portrait's framing, by the rule or as a tester tuned it: the camera,
+// its lights, whether the engine is given any of it, and the rule in words.
+void Frame(PortraitReport &report, const Looks &looks, const BodyMeasure &body, const ShotOrder &order,
+           const PortraitTable &table, const PortraitChoice &choice)
+{
+    // Its framing, looked up (core's FramePortrait, in core/PortraitTable.h's
+    // table): its appearance's own row, else the game's own row for it, else
+    // its kind's default; with what a tester gave over whichever it is.
+    const PortraitCamera *gamesOwn = choice.tableCamera ? TableCameraOf(table, looks.appearance, report.tag) : nullptr;
+    const PortraitFrame frame = FramePortrait(looks.appearance, report.kind, order.tuning.kind.has_value(), gamesOwn,
+                                              body.extent.meters, table.person);
+    const auto light = [&frame](const std::optional<float> &given, float rows) {
+        return given ? given : frame.lit ? std::optional<float>{rows} : std::nullopt;
+    };
+    report.camera = Tuned(frame.camera, order.tuning);
+    report.framedBy = frame.by;
+    report.row = frame.label;
+    report.atMost = frame.atMost && !order.tuning.distance;
+    report.lightX = light(order.tuning.lightX, frame.lightX);
+    report.lightY = light(order.tuning.lightY, frame.lightY);
+    report.lightZ = light(order.tuning.lightZ, frame.lightZ);
+    // What the game's own table frames by itself, its own row for the
+    // creature or its Default row for a person's body, is given nothing: the
+    // engine reads its table as it has, and people's portraits are as they
+    // have been. A row of the mod's table, and anything a tester gave, is
+    // given whole.
+    const bool games = frame.by == FramedBy::PortraitsTable || frame.by == FramedBy::Person;
+    report.cameraGiven = !games || order.tuning.AnyValue();
+    report.rule = FramingRule(frame);
+    if (order.tuning.AnyValue())
+    {
+        report.rule += ", with the values given";
+    }
+    if (!body.head)
+    {
+        report.rule += ", about its root at the scene's origin, its model having no head node";
+    }
+}
+
+// A portrait rendered by the engine with the camera the report has (or the
+// table's own, where none is given), and what came of it. `fresh`: it had
+// no picture before, so a renderer that drew nothing is not left behind.
+void Render(PortraitReport &report, ObjectId id, dao::CCCreature &creature, bool fresh)
+{
+    if (report.cameraGiven)
+    {
+        dao::portraits::Camera camera;
+        camera.pitch = report.camera.pitch;
+        camera.rotation = report.camera.rotation;
+        camera.distance = report.camera.distance;
+        camera.zAdjust = report.camera.zAdjust;
+        camera.xAdjust = report.camera.xAdjust;
+        camera.lightX = report.lightX;
+        camera.lightY = report.lightY;
+        camera.lightZ = report.lightZ;
+        dao::portraits::SetCamera(id, camera);
+    }
+    else
+    {
+        // The table's, and not one given it before (ids are reused).
+        dao::portraits::ClearCamera(id);
+    }
+    report.fresh = fresh;
+    report.image = creature.RenderPortrait();
+    report.rendered = !report.image.empty();
+    if (!report.rendered)
+    {
+        // A renderer made for it now that drew nothing is not left behind
+        // (core/Portraits.h: none is left to die with its creature's area).
+        if (fresh)
+        {
+            creature.ReleasePortrait();
+            dao::portraits::ClearCamera(id);
+        }
+        report.lack = PortraitLack::Render;
+        report.problem = "the engine made no portrait of it";
+        return;
+    }
+    report.source = "rendered";
+    if (PastFarPlane(report.camera))
+    {
+        report.problem = std::format("the camera stands {:.1f} m from its head, past the {:.0f} m it draws to: "
+                                     "nothing of it is drawn",
+                                     kPortraitBackOff * report.camera.distance, kPortraitFarPlane);
+    }
+}
+
+// One creature's portrait, got: its ready-made picture, the one it has, or a
+// render framed by the rule (or as `order` tunes it), with everything that
+// was seen on the way, for the log and for a tester. The one place a
+// portrait's camera is given to the engine.
+PortraitReport Shoot(ObjectId id, const ShotOrder &order)
+{
+    PortraitReport report;
+    report.id = id;
+    report.source = "none";
+    auto *app = dao::CClientExoApp::Get();
+    dao::CCCreature *creature = app != nullptr ? app->GetCreatureById(id) : nullptr;
+    if (creature == nullptr)
+    {
+        report.lack = PortraitLack::Creature;
+        report.problem = "no creature by that id";
+        return report;
+    }
+    const PortraitTable &table = Table();
+    const Looks looks = LooksOf(id);
+    const BodyMeasure body = MeasureBody(id);
+    Describe(report, id, looks, body, order);
     // A tester who gives a kind or a value wants that framing rendered, where
     // the rule would give its kin's ready-made picture. Not where the table
     // names a picture for its own appearance: the engine renders nothing for
@@ -718,38 +825,7 @@ PortraitReport Shoot(ObjectId id, const ShotOrder &order)
             return report;
         }
     }
-    // Its framing, looked up (core's FramePortrait, in core/PortraitTable.h's
-    // table): its appearance's own row, else the game's own row for it, else
-    // its kind's default; with what a tester gave over whichever it is.
-    const PortraitCamera *gamesOwn = choice.tableCamera ? TableCameraOf(table, looks.appearance, report.tag) : nullptr;
-    const PortraitFrame frame = FramePortrait(looks.appearance, report.kind, order.tuning.kind.has_value(), gamesOwn,
-                                              body.extent.meters, table.person);
-    const auto light = [&frame](const std::optional<float> &given, float rows) {
-        return given ? given : frame.lit ? std::optional<float>{rows} : std::nullopt;
-    };
-    report.camera = Tuned(frame.camera, order.tuning);
-    report.framedBy = frame.by;
-    report.row = frame.label;
-    report.atMost = frame.atMost && !order.tuning.distance;
-    report.lightX = light(order.tuning.lightX, frame.lightX);
-    report.lightY = light(order.tuning.lightY, frame.lightY);
-    report.lightZ = light(order.tuning.lightZ, frame.lightZ);
-    // What the game's own table frames by itself, its own row for the
-    // creature or its Default row for a person's body, is given nothing: the
-    // engine reads its table as it has, and people's portraits are as they
-    // have been. A row of the mod's table, and anything a tester gave, is
-    // given whole.
-    const bool games = frame.by == FramedBy::PortraitsTable || frame.by == FramedBy::Person;
-    report.cameraGiven = !games || order.tuning.AnyValue();
-    report.rule = FramingRule(frame);
-    if (order.tuning.AnyValue())
-    {
-        report.rule += ", with the values given";
-    }
-    if (!body.head)
-    {
-        report.rule += ", about its root at the scene's origin, its model having no head node";
-    }
+    Frame(report, looks, body, order, table, choice);
     if (!order.render)
     {
         // What the rule would frame it by is said all the same; nothing is
@@ -758,47 +834,7 @@ PortraitReport Shoot(ObjectId id, const ShotOrder &order)
         report.problem = order.whyNot;
         return report;
     }
-    if (report.cameraGiven)
-    {
-        dao::portraits::Camera camera;
-        camera.pitch = report.camera.pitch;
-        camera.rotation = report.camera.rotation;
-        camera.distance = report.camera.distance;
-        camera.zAdjust = report.camera.zAdjust;
-        camera.xAdjust = report.camera.xAdjust;
-        camera.lightX = report.lightX;
-        camera.lightY = report.lightY;
-        camera.lightZ = report.lightZ;
-        dao::portraits::SetCamera(id, camera);
-    }
-    else
-    {
-        // The table's, and not one given it before (ids are reused).
-        dao::portraits::ClearCamera(id);
-    }
-    report.fresh = had.empty();
-    report.image = creature->RenderPortrait();
-    report.rendered = !report.image.empty();
-    if (!report.rendered)
-    {
-        // A renderer made for it now that drew nothing is not left behind
-        // (core/Portraits.h: none is left to die with its creature's area).
-        if (had.empty())
-        {
-            creature->ReleasePortrait();
-            dao::portraits::ClearCamera(id);
-        }
-        report.lack = PortraitLack::Render;
-        report.problem = "the engine made no portrait of it";
-        return report;
-    }
-    report.source = "rendered";
-    if (PastFarPlane(report.camera))
-    {
-        report.problem = std::format("the camera stands {:.1f} m from its head, past the {:.0f} m it draws to: "
-                                     "nothing of it is drawn",
-                                     kPortraitBackOff * report.camera.distance, kPortraitFarPlane);
-    }
+    Render(report, id, *creature, had.empty());
     return report;
 }
 } // namespace
