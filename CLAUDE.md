@@ -57,7 +57,11 @@ The machine is not thread-safe by itself: `src/plugin/Plugin.cpp` holds a mutex 
 .\tools\build.ps1 -Preset debug -Test           # turnbased.dll, DAOLib's loader, the tests
 .\tools\build.ps1 -Preset debug -Format -Lint   # formatters, then clang-tidy, ruff and PSScriptAnalyzer
 .\tools\deploy.ps1                              # into the game (closed); -Remove takes the plugin out
+.\tools\build.ps1 -Preset release -Test         # optimised, with its pdb: the build to play on
+.\tools\deploy.ps1 -Preset release
 ```
+
+**The game is played on the `release` preset** (RelWithDebInfo; issue 54, 2026-10-05), and the gate stays on the debug ones. A debug `free` validates its pointer under the process heap's lock, which every plugin shares: three stalls of five to seven seconds in one day's play had the frame thread waiting there (DAOLib's hang logs), once inside the mod's own `operator delete`. The pdb is kept, so a crash or hang log still names the mod's frames. Eluvian's session plays on its optimised build too; a debug plugin beside it brings the checks back for both.
 
 `-Test` runs the tests as many at a time as the build's jobs (`ctest --parallel`, since 2026-10-03: each test is a process of its own with nothing shared; 20 s became 8), as the mutants run side by side.
 
