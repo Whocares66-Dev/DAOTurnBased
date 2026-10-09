@@ -3,7 +3,10 @@
 //
 // A combatant who falls stays in the order, marked down, and loses its
 // turns: a party member may be revived, and the view shows the fallen
-// greyed. Fallen enemies and allies are dropped when the next round begins.
+// greyed. Fallen enemies and allies are dropped when the next round begins,
+// and with them whoever has left the fight alive (out of the world, lost to
+// the party, put out of the party: core/Rules.h, InTheRotation), a party
+// member the game has taken out of the world too: nobody is there to show.
 // A combatant who joins mid-fight takes its place by initiative; if that
 // place is before the current turn, its first turn is next round.
 #pragma once
@@ -54,16 +57,23 @@ struct Combatant
     // The engine's perception between it and the party, and of anyone it
     // would fight, as the scan read it (core/Types.h): a hostile that
     // perceives nobody to fight has not noticed, and its turn is skipped
-    // (core/Rules.h, Unaware).
+    // (core/Rules.h, Rotation::Unaware).
     Perception perception;
     // Found by the scan's own rules for who is fighting: in combat within
     // combat_radius of a living party member, or drawn in unawares
     // (src/game/Bridge.cpp, Scan). False only for one of the fight that
     // those rules no longer find, read all the same because the machine
     // named it (Needs::inFight): whether it stays is then the engine's
-    // perception's to say (core/Rules.h, StaysInTheFight). It brings nobody
+    // perception's to say (core/Rules.h, InTheRotation). It brings nobody
     // into a fight.
     bool fighting = true;
+    // The game has made it inactive, as the scan read it (the engine's
+    // GetObjectActive: src/game/Bridge.cpp, Inactive): out of the world, and
+    // so not in the fight, whoever it is (core/Rules.h,
+    // Rotation::OutOfTheWorld; issue 66). In the order it is true of one
+    // that left the fight so, or whose object is gone, until a scan finds
+    // it in the rotation again: it has no card meanwhile.
+    bool inactive = false;
 };
 
 class TurnOrder
@@ -118,6 +128,9 @@ class TurnOrder
 
     // A combatant arriving mid-fight, its initiative rolled.
     void Join(Combatant combatant);
+    // It has a place in the fight to show: standing, or a fallen party
+    // member, who may be revived; not one that is out of the world.
+    [[nodiscard]] static bool Shown(const Combatant &c);
 
     [[nodiscard]] bool AnyStanding(Side side) const;
 

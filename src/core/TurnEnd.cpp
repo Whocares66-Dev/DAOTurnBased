@@ -43,14 +43,15 @@ constexpr std::array kTurnEnds{
     // Not its actor's doing: nothing rolls over.
     //
     // A hostile that has noticed nobody to fight: its turn is skipped
-    // (core/Rules.h, Unaware).
+    // (core/Rules.h, Rotation::Unaware).
     TurnEnd{"unaware", false},
     // One that is not of the party, taken out of combat by the game in its
     // own turn, or found so as its turn came: it has no turn, and what is
     // left of this one is nobody's to save (issue 43).
     TurnEnd{"out of combat", false},
-    // One the game has made inactive, as its turn came or in the middle of
-    // it: out of the world, it has no turn (issue 44).
+    // One the game has made inactive in the middle of its turn: out of the
+    // world, it has no turn (issue 44). (One found so as its turn comes has
+    // left the fight by then, and that turn ends "down": issue 66.)
     TurnEnd{"inactive", false},
     // Told its turn had come, its AI queued nothing within ai_think_ms.
     TurnEnd{"chose nothing", false},
@@ -65,8 +66,9 @@ constexpr std::array kTurnEnds{
     // An AI stopped where its movement ran out. With time the bar is spent
     // by then; an action given back as it was stopped is not time it saved.
     TurnEnd{"out of movement", false},
-    // It fell, or left the world, in its own turn; its turn came while it
-    // was down.
+    // It fell, or left the world, in its own turn; a scan in the middle of
+    // its turn found it gone from the fight (issue 66); its turn came while
+    // it was down, fallen or gone from the fight.
     TurnEnd{"fell", false},
     TurnEnd{"gone", false},
     TurnEnd{"down", false},

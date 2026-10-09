@@ -7,15 +7,10 @@
 namespace tb
 {
 
-namespace
+bool TurnOrder::Shown(const Combatant &c)
 {
-
-bool Shown(const Combatant &c)
-{
-    return !c.down || c.side == Side::Party;
+    return !c.inactive && (!c.down || c.side == Side::Party);
 }
-
-} // namespace
 
 bool TurnOrder::Before(const Combatant &a, const Combatant &b)
 {

@@ -11,6 +11,7 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <vector>
 
 namespace tb
@@ -191,7 +192,7 @@ struct PartyMember
 // Whether a creature that far from the party is within a fight's reach
 // (Settings::combatRadius): within the radius of any living member. What
 // takes a creature in combat into the turns, and nothing else (who stays is
-// StaysInTheFight's, below). The user, 2026-10-04, of issues 42 and 43: "If
+// InTheRotation's, below). The user, 2026-10-04, of issues 42 and 43: "If
 // you run far enough away from the enemies, the fight should end. That's
 // what rtwp does. In that case the enemies should go back to normal. Getting
 // close to them should retrigger a fight." The fight's end is the engine's
@@ -239,13 +240,15 @@ struct Sighting
 // let's do that". A fight that has an enemy grows as the game's own
 // perception makes it grow.
 //
-// One already drawn in (drawnIn) stays in while the party is in combat,
-// though another has since noticed and there is now someone to fight: a
-// card that came would otherwise go and come again as its creature noticed.
-[[nodiscard]] bool FightsUnawares(bool partyInCombat, bool someoneToFight, bool drawnIn, const Sighting &sighting,
+// One drawn in is one of the fight from then, and stays as any of it does:
+// while the engine's perception keeps the two in one fight (InTheRotation).
+[[nodiscard]] bool FightsUnawares(bool partyInCombat, bool someoneToFight, const Sighting &sighting,
                                   const Settings &settings);
 
-// Whether a creature in the fight has not noticed anyone to fight: a hostile
+// The cases of the one rule for who is in a fight's rotation (InTheRotation,
+// below), each with what it was built on.
+//
+// Rotation::Unaware. A creature in the fight has not noticed anyone to fight: a hostile
 // that the game does not have in combat, and that perceives no party member
 // and nobody else hostile to it, by the engine's own words (core/Types.h,
 // Perception). Its turn is skipped: "Unaware" over it, about a second, and
@@ -280,9 +283,9 @@ struct Sighting
 // for that, and nobody has asked for its turn to be skipped. And one that
 // perceives a foe that is not the party's (an ally of the party's it is
 // fighting) is not unaware: it has someone to choose.
-[[nodiscard]] bool Unaware(Side side, const Perception &perception);
-
-// A creature that is not of the party, that the game does not have in combat
+//
+// Rotation::OutOfCombat, and Unaware with it (NobodyToFight). A creature that
+// is not of the party, that the game does not have in combat
 // and that perceives nobody to fight has no turn (issue 43): it is the
 // game's, and what its script has it do is no choice of a turn's. An enemy
 // so is one that is unaware (above); an ally is so when it perceives nobody
@@ -299,9 +302,9 @@ struct Sighting
 // measured in play): that one is about to fight, and "acts from the moment
 // it notices" (issue 29). So, as for unaware, the engine must say on every
 // count that there is nobody for it to fight.
-[[nodiscard]] bool NothingToFight(Side side, const Perception &perception);
-
-// Whether a creature that is in the fight stays in it (issue 29).
+//
+// One of the fight that is found no longer: whether a creature that is in the
+// fight stays in it (issue 29).
 //
 // The game itself ends combat by perception, not by a distance. When a
 // hostile drops out of a party member's perception the scripts ask whether
@@ -329,7 +332,77 @@ struct Sighting
 //   enemy that now stays in the fight.
 // What brings a creature into a fight is not this: one that is not in the
 // fight does not join for being perceived.
-[[nodiscard]] bool StaysInTheFight(Side side, bool fighting, const Perception &perception);
+
+// Who is in a fight's rotation: one rule, asked of every creature the fight
+// knows of and of every one that might join it, at every look, from what the
+// engine says of it now (issue 66). The owner, 2026-10-08: "Let's have some
+// standard way of detecting whether actor should be in rotation or not and
+// avoid things falling through the cracks." Until then the question was
+// answered in six places, each with a test of its own (the fight's first
+// roster, the look for hostiles fighting again, who joins, who waits outside,
+// who stays, and as a turn came whether its creature had one), and a state
+// none of them asked about fell between them.
+//
+// What the game layer observed of one creature, the same facts for everyone
+// (src/game/Bridge.cpp's scan; of the creature whose turn it is, the frame's
+// look at it):
+struct Presence
+{
+    // Whose side it is on, to the party, by the game's word now.
+    Side side = Side::Enemy;
+    // The fight has it, standing, as what it is now. (Not one it had as the
+    // party's that the game has put out of the party: its place was the
+    // party's.) What a member has over anyone else is the user's rule of
+    // 2026-10-04, above: once in the fight it stays for as long as the
+    // engine's perception keeps the two in one fight.
+    bool member = false;
+    bool down = false; // dead or dying
+    // The game has made it inactive: out of the world (the engine's
+    // GetObjectActive; Combatant::inactive, ActorObservation::inactive).
+    bool inactive = false;
+    // Found fighting the party by the rules that bring a creature into a
+    // fight: in combat within combat_radius of a living party member, or
+    // drawn in unawares (WithinReach, FightsUnawares), and in the party's
+    // fight, not only near it (InThePartysFight: join_by_sight, join_radius).
+    // Asked of one of the fight as of anyone.
+    bool found = true;
+    // The engine's perception between it and the party, and of anyone it
+    // would fight, with its combat state.
+    Perception perception;
+};
+
+// The rule's answer: where the creature is, which is also why.
+enum class Rotation : std::uint8_t
+{
+    // In the rotation.
+    Fights,      // the party's own; found fighting the party; or of the fight, kept in it by the engine's perception
+    Fallen,      // one of the party, down: its card stays, greyed, and it may be revived
+    Unaware,     // a hostile that has noticed nobody: a beat, and its turn is skipped (issue 29)
+    OutOfCombat, // an ally the game has out of combat, nobody hostile in its perception: no turn (issue 43)
+    // Not in the rotation.
+    Dead, // not of the party, and dead
+    // Out of the world by the game's own word, whoever it is (issues 44 and
+    // 66). In the Landsmeet (2026-10-08) ten of a brawl the game had ended,
+    // each reading "the party does not perceive it; it perceives a party
+    // member, someone hostile to it" by lists the engine does not clear as it
+    // takes a creature out, held ten cards through a duel of one against one.
+    OutOfTheWorld,
+    // Not found fighting the party, and not kept in its fight by perception:
+    // one fighting near that is not the party's, one the party has lost, one
+    // the game has put out of the party to stand by.
+    NotFighting,
+};
+
+[[nodiscard]] Rotation InTheRotation(const Presence &seen);
+// The fight holds it: it has a place in the order, and a card.
+[[nodiscard]] bool InRotation(Rotation where);
+// The answer in words, for the one line that says a creature leaves a fight
+// or is passed in it: "... leaves the fight: the game has taken it out of the
+// world". By side where the words differ.
+[[nodiscard]] std::string_view Why(Rotation where, Side side);
+// It is in the fight with nobody for it to fight, by the engine's own words:
+// unaware, or out of combat. Its turn is not its AI's to take.
+[[nodiscard]] bool NobodyToFight(Rotation where);
 
 // The ability table's TargetType is a mask (TARGET_TYPE_*, the scripts'
 // constants): self 1, friendly 2, hostile 4, placeable 8, area 16, ground

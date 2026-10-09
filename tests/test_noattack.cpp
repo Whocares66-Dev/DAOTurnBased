@@ -512,7 +512,7 @@ TEST_CASE("an unaware hostile is never told, so it has no attack to refuse; its 
     };
     w.Get(kGenlock).perception = Unnoticing();
     ToGenlock(w);
-    REQUIRE(Logged(w, "Genlock has not noticed the party"));
+    REQUIRE(Logged(w, "Genlock is passed: it has not noticed the party"));
     // Its AI is not told, so nothing of its choosing comes to the gate.
     CHECK(pokes == 0);
     CHECK(Lines(w, "before a step") == 0);

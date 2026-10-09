@@ -48,6 +48,7 @@ add_executable(
     test_perception.cpp
     test_portraits.cpp
     test_preview.cpp
+    test_rotation.cpp
     test_rules.cpp
     test_settings.cpp
     test_text.cpp

@@ -140,7 +140,7 @@ struct Settings
     // its leader alone (issue 42; core/Rules.h, WithinReach). Not a way out
     // of them since 2026-10-04 (issue 29): one in the fight stays in it
     // beyond this while the engine's perception keeps it there (core/Rules.h,
-    // StaysInTheFight), as the game itself ends combat by perception and not
+    // InTheRotation), as the game itself ends combat by perception and not
     // by a distance.
     float combatRadius = 50.0f;
     // Abilities made to cost so many turns' worth of their caster's bar,

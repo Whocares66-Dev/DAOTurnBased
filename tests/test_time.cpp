@@ -332,7 +332,7 @@ TEST_CASE("with time, a kept attack whose target fell is turned on the nearest e
     // stays paid.
     CHECK(w.machine.View().timeLeftMs == 3000);
     CHECK(w.machine.View().pendingPaidMs == 1000);
-    CHECK(Logged(w, "Hero's pending attack is turned on Hurlock: its target has fallen"));
+    CHECK(Logged(w, "Hero's pending attack is turned on Hurlock: its target is not there"));
     CHECK(std::ranges::any_of(events, [](const TurnEvent &e) {
         return e.kind == EventKind::ActionLanded && e.who == kHero && e.detail == "turned on another" &&
                e.note == "Hurlock" && e.command == "attack";
@@ -408,7 +408,7 @@ TEST_CASE("an enemy's kept attack whose target fell is turned on the nearest of 
     CHECK(w.released.front() == Verdict::Allow);
     CHECK(w.Get(kGenlock).current == CommandType::Attack);
     CHECK(w.machine.View().timeLeftMs == 2000); // what it owed paid, and no more
-    CHECK(Logged(w, "Genlock's pending attack is turned on Soldier: its target has fallen"));
+    CHECK(Logged(w, "Genlock's pending attack is turned on Soldier: its target is not there"));
     CHECK(std::ranges::any_of(events, [&](const TurnEvent &e) {
         return e.kind == EventKind::ActionLanded && e.who == kGenlock && e.detail == "turned on another" &&
                e.note == "Soldier";
@@ -2990,7 +2990,7 @@ TEST_CASE("an unaware hostile at an effect's command is not stood out for: its t
     w.Get(kGenlock).perception = Unnoticing();
     HeldAsItsTurnComes(w);
     CHECK_FALSE(w.machine.State().heldByEffect);
-    CHECK(Logged(w, "Genlock has not noticed the party"));
+    CHECK(Logged(w, "Genlock is passed: it has not noticed the party"));
     SECTION("unaware to the end of its beat")
     {
         w.RunFor(1200);

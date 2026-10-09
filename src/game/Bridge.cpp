@@ -553,7 +553,10 @@ std::vector<PartyMember> ReadParty(ObjectId hero)
         const ObjectId id = list.Object(i);
         if (api::IsObjectValid(id) != 0 && std::ranges::find(party, id, &PartyMember::id) == party.end())
         {
-            party.push_back(PartyMember{id, api::IsDead(id) == 0, api::GetCombatState(id) != 0});
+            // (Living: there, and not dead. One the game has made inactive is
+            // not there to measure from, to stand for the party or to be in
+            // combat for it: issue 66.)
+            party.push_back(PartyMember{id, api::IsDead(id) == 0 && !Inactive(id), api::GetCombatState(id) != 0});
         }
     }
     return party;
@@ -683,7 +686,7 @@ Perception Perceived(ObjectId id, const std::vector<ObjectId> &party)
 // fight; and, of those the machine has in the fight already (inFight), the
 // living ones those rules no longer find, each with what the engine's
 // perception says of it, which is what keeps it in the fight or does not
-// (core: StaysInTheFight; issue 29).
+// (core: InTheRotation; issue 29).
 //
 // The user, 2026-10-04, of issues 42 and 43: "If you run far enough away
 // from the enemies, the fight should end. That's what rtwp does. In that
@@ -792,7 +795,7 @@ void Bridge::AddFound(Scanning &scan, ObjectId id, Side side, bool unaware)
     Combatant c = Describe(id, side, false);
     // What it has noticed, and whether the party has noticed it, by the
     // engine's perception: a hostile that perceives nobody to fight has
-    // its turn skipped (core: Unaware). Said at debug for one that
+    // its turn skipped (core: Rotation::Unaware). Said at debug for one that
     // perceives nobody, each scan: a play test reads there when it
     // noticed.
     c.perception = Perceived(id, scan.members);
@@ -848,14 +851,9 @@ bool Bridge::InUnawares(const Scanning &scan, ObjectId id, bool partyInCombat, b
     {
         return false;
     }
-    const bool drawnIn = unawares_.contains(id);
     // The lines of sight are asked only where the answer hangs on them.
-    Sighting sighting;
-    if (!drawnIn && !someoneToFight)
-    {
-        sighting = Sight(id, scan.living, std::nullopt);
-    }
-    return FightsUnawares(partyInCombat, someoneToFight, drawnIn, sighting, settings_);
+    return !someoneToFight &&
+           FightsUnawares(partyInCombat, someoneToFight, Sight(id, scan.living, std::nullopt), settings_);
 }
 
 // Those the machine has in the fight that nothing above found (issue
@@ -867,14 +865,27 @@ bool Bridge::InUnawares(const Scanning &scan, ObjectId id, bool partyInCombat, b
 // game itself keeps a fight by perception, not by a distance
 // (combat_h.nss, Combat_HandleCreatureDisappear), so each is read with
 // the engine's perception between it and the party, and core decides
-// whether it stays (StaysInTheFight). Its side is the game's word as of
+// whether it stays (InTheRotation). Its side is the game's word as of
 // now: one that has surrendered is no enemy. Not yet seen in play.
+//
+// The machine names the fight's own party with them (issue 66). One the
+// game still has in the party was described above as the party's and is
+// passed by here; one it has put out of the party is read here like the
+// rest, with the side the game gives it now (not hostile to the party: an
+// ally, as an onlooker is), and core decides (TurnMachine::Merge). Until
+// then one of the party was the party's for as long as the fight lasted: in
+// the Landsmeet (2026-10-08) the three the game had put out of the party for
+// a duel kept their cards and their turns.
+// The fallen are read too, since then: the facts are the same for everyone,
+// and core's answer for a body that is not the party's is that it has no
+// place. (Left unread, a fallen member put out of the party kept a fallen
+// card as the party's.)
 std::size_t Bridge::AddNotFound(Scanning &scan, const std::vector<ObjectId> &inFight)
 {
     std::size_t afar = 0;
     for (const ObjectId id : inFight)
     {
-        if (scan.seen.contains(id) || api::IsObjectValid(id) == 0 || api::IsDead(id) != 0)
+        if (scan.seen.contains(id) || api::IsObjectValid(id) == 0)
         {
             continue;
         }
@@ -888,11 +899,11 @@ std::size_t Bridge::AddNotFound(Scanning &scan, const std::vector<ObjectId> &inF
         // found fighting", and nothing in the line said why. That the
         // engine's own question for who is near does not answer with an
         // object its scripts have disabled is the reading; this is to show
-        // it. Issue 44.)
+        // it. Issue 44. And dead, since the fallen are read: issue 66.)
         spdlog::debug("{:#x} is in the fight and not found fighting (combat state {}, {:.0f} m from the nearest "
-                      "living party member{}): the party {} it; it perceives {}, {}",
-                      id, api::GetCombatState(id), FromTheParty(id, scan.living), Inactive(id) ? ", inactive" : "",
-                      c.perception.byParty ? "perceives" : "does not perceive",
+                      "living party member{}{}): the party {} it; it perceives {}, {}",
+                      id, api::GetCombatState(id), FromTheParty(id, scan.living), c.inactive ? ", inactive" : "",
+                      c.down ? ", dead" : "", c.perception.byParty ? "perceives" : "does not perceive",
                       c.perception.ofParty ? "a party member" : "no party member",
                       c.perception.ofFoes ? "someone hostile to it" : "nobody hostile to it");
         scan.out.push_back(std::move(c));
@@ -978,8 +989,9 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
     }
     // And a hostile that has not noticed the party, with the party in combat
     // and nobody in its fight to fight (core: FightsUnawares; issues 20 and
-    // 24): seen and within the join radius it is in the fight, and stays in
-    // it once drawn in. Sight is a party member's line here whatever the
+    // 24): seen and within the join radius it is in the fight. (One drawn in
+    // is one of the fight from then, and stays as any of it does, by the
+    // engine's perception: AddNotFound.) Sight is a party member's line here whatever the
     // rooms say: a room the game shows may hold a hostile behind a pillar,
     // and this one is not fighting anyone to be seen by.
     // The party's combat is any living member's (core: PartyIsInCombat): a
@@ -987,24 +999,14 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
     const bool partyInCombat = PartyIsInCombat(party);
     const bool someoneToFight =
         std::ranges::any_of(scan.out, [](const Combatant &c) { return c.side == Side::Enemy && c.engaged; });
-    std::unordered_set<ObjectId> drawn;
     for (const ObjectId id : hostiles)
     {
-        if (!InUnawares(scan, id, partyInCombat, someoneToFight))
+        if (InUnawares(scan, id, partyInCombat, someoneToFight))
         {
-            continue;
+            scan.seen.insert(id);
+            AddFound(scan, id, Side::Enemy, true);
         }
-        scan.seen.insert(id);
-        AddFound(scan, id, Side::Enemy, true);
-        if (!unawares_.contains(id))
-        {
-            spdlog::info("{} ({:#x}) has not noticed the party and is in sight within {:.0f} m, with nobody else to "
-                         "fight: in the fight",
-                         Utf8(Remember(id).name), id, settings_.joinRadius);
-        }
-        drawn.insert(id);
     }
-    unawares_ = std::move(drawn); // who is in the fight unawares now: each said once, and kept in while it is
     // Creatures in combat that are not hostile to the party fight beside it.
     const std::vector<ObjectId> others = NearTheLiving(scan.living, scan.stands, 0);
     for (const ObjectId id : others)
@@ -1193,6 +1195,10 @@ Combatant Bridge::Describe(ObjectId id, Side side, bool hero)
     c.speed = known.speed;
     c.health = Health(id);
     c.down = api::IsDead(id) != 0;
+    // Whether the game has it in the world, of everyone a scan reads, the
+    // party's own too (core: Combatant::inactive; issue 66): one it has
+    // made inactive is in no fight, whatever else is read of it.
+    c.inactive = Inactive(id);
     return c;
 }
 
@@ -1655,9 +1661,13 @@ void Bridge::TellAi(const Effect &e)
     // asked here. A dead creature's own script would hear the event
     // before rules_core discards it, and one gone from the area is no
     // object to signal.
-    if (Gone(e.target))
+    // Nor is one the game has made inactive told (issue 66: it leaves the
+    // fight alive, and is among those the fight owes a telling as it ends):
+    // it is given no AI updates while it is so, and what is sent to it would
+    // wait in its queue for the game to make it active.
+    if (NotThere(e.target))
     {
-        spdlog::debug("{:#010x} is dead or gone: not told to choose", e.target);
+        spdlog::debug("{:#010x} {}: not told to choose", e.target, WhyNotThere(e.target));
         return;
     }
     Poke(e.target);

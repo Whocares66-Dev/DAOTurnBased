@@ -429,30 +429,6 @@ TEST_CASE("an enemy slowed in the middle of a fight has fewer meters from its ne
     CHECK_FALSE(Logged(w, "Hero moves at"));
 }
 
-TEST_CASE("one on its way out of the fight has its turn at the pace it has then", "[pace]")
-{
-    // Not found fighting by the scan, and neither it nor the party
-    // perceiving the other: it is out of the fight kAbsentMs on (issue 29),
-    // and until then the machine keeps what it knew of it. Not its pace: a
-    // turn of its that comes before it is gone is made like anyone's, of the
-    // Haste and slows the look at everyone read on it (the random fights
-    // with strays, seed 16, 2026-10-05).
-    World w(Timed());
-    w.StartFight();
-    REQUIRE(w.Current() == kHero);
-    Creature &genlock = w.Get(kGenlock);
-    genlock.fighting = false;
-    genlock.perception = Unperceived();
-    genlock.movement.debuffs = {kCaltrops};
-    w.onPoke = [](ObjectId) {}; // its AI is waited on: the turn stands
-    (void)w.machine.OnEndTurn();
-    w.RunFor(100);
-    REQUIRE(w.Current() == kGenlock);
-    REQUIRE(Logged(w, "Genlock's turn (enemy, AI)"));
-    CHECK(w.machine.View().paceMps == Approx(3.0f));
-    CHECK(Logged(w, "Genlock moves at 0.60 a person's pace this turn"));
-}
-
 TEST_CASE("one that joins in the middle of a fight has its first turn at the pace it has", "[pace]")
 {
     // A scan brings it into the order and reads nothing of its Haste and

@@ -1,3 +1,5 @@
+#include "World.h"
+
 #include "core/Rules.h"
 
 #include <array>
@@ -321,29 +323,28 @@ TEST_CASE("with the party in combat and nobody to fight, a hostile seen within t
     };
     const bool inCombat = true;
     const bool nobody = false; // nobody in the party's fight to fight
-    const bool fresh = false;  // not drawn in before
-    CHECK(tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, 20.0f), settings));
-    CHECK(tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, 30.0f), settings));
+    CHECK(tb::FightsUnawares(inCombat, nobody, sighting(true, 20.0f), settings));
+    CHECK(tb::FightsUnawares(inCombat, nobody, sighting(true, 30.0f), settings));
     // Not beyond the radius: a second band 40 m down the road is not in
     // the fight just won until the party nears it.
-    CHECK_FALSE(tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, 30.5f), settings));
+    CHECK_FALSE(tb::FightsUnawares(inCombat, nobody, sighting(true, 30.5f), settings));
     // Not unseen: the next room's, behind its door.
-    CHECK_FALSE(tb::FightsUnawares(inCombat, nobody, fresh, sighting(false, 6.0f), settings));
+    CHECK_FALSE(tb::FightsUnawares(inCombat, nobody, sighting(false, 6.0f), settings));
     // Not with the party at peace: walking past a hostile that has not
     // noticed is the game's to make a fight of, not the mod's.
-    CHECK_FALSE(tb::FightsUnawares(false, nobody, fresh, sighting(true, 6.0f), settings));
+    CHECK_FALSE(tb::FightsUnawares(false, nobody, sighting(true, 6.0f), settings));
     // A distance that is none keeps it out.
     CHECK_FALSE(
-        tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, std::numeric_limits<float>::quiet_NaN()), settings));
+        tb::FightsUnawares(inCombat, nobody, sighting(true, std::numeric_limits<float>::quiet_NaN()), settings));
     // Sight is asked for whatever joinBySight says.
     tb::Settings everyone;
     everyone.joinBySight = false;
-    CHECK_FALSE(tb::FightsUnawares(inCombat, nobody, fresh, sighting(false, 6.0f), everyone));
-    CHECK(tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, 6.0f), everyone));
+    CHECK_FALSE(tb::FightsUnawares(inCombat, nobody, sighting(false, 6.0f), everyone));
+    CHECK(tb::FightsUnawares(inCombat, nobody, sighting(true, 6.0f), everyone));
     // The radius is the setting's.
     tb::Settings wide;
     wide.joinRadius = 50.0f;
-    CHECK(tb::FightsUnawares(inCombat, nobody, fresh, sighting(true, 45.0f), wide));
+    CHECK(tb::FightsUnawares(inCombat, nobody, sighting(true, 45.0f), wide));
 }
 
 TEST_CASE("a hostile that has not noticed is left out of a fight that has an enemy, and one drawn in stays in",
@@ -360,15 +361,21 @@ TEST_CASE("a hostile that has not noticed is left out of a fight that has an ene
     near.meters = 12.0f;
     const bool inCombat = true;
     const bool someone = true; // an enemy is in the party's fight already
-    CHECK_FALSE(tb::FightsUnawares(inCombat, someone, false, near, settings));
-    // One drawn in while there was nobody stays in as another notices: its
-    // card does not go and come again. Its sighting is not asked again.
-    CHECK(tb::FightsUnawares(inCombat, someone, true, near, settings));
-    CHECK(tb::FightsUnawares(inCombat, someone, true, tb::Sighting{}, settings));
-    CHECK(tb::FightsUnawares(inCombat, false, true, tb::Sighting{}, settings));
-    // But not past the party's own combat.
-    CHECK_FALSE(tb::FightsUnawares(false, someone, true, near, settings));
-    CHECK_FALSE(tb::FightsUnawares(false, false, true, near, settings));
+    CHECK_FALSE(tb::FightsUnawares(inCombat, someone, near, settings));
+    // One drawn in while there was nobody is one of the fight from then. As
+    // another notices, the rule that drew it in finds it no longer, and it
+    // stays as any of the fight does, by the engine's perception: while the
+    // party perceives it, its card does not go and come again, and its turns
+    // are skipped as an unaware hostile's are.
+    tb::Presence drawn;
+    drawn.side = tb::Side::Enemy;
+    drawn.member = true;
+    drawn.found = false;
+    drawn.perception = tb::test::Unnoticing();
+    CHECK(tb::InTheRotation(drawn) == tb::Rotation::Unaware);
+    // Lost to the party's perception, it has left, as anyone has.
+    drawn.perception.byParty = false;
+    CHECK(tb::InTheRotation(drawn) == tb::Rotation::NotFighting);
 }
 
 TEST_CASE("one not of the party, out of the game's combat and perceiving nobody to fight, has nothing to fight",
@@ -380,34 +387,34 @@ TEST_CASE("one not of the party, out of the game's combat and perceiving nobody 
     nobody.ofParty = false;
     nobody.ofFoes = false;
     nobody.inCombat = false;
-    CHECK(tb::NothingToFight(tb::Side::Enemy, nobody));
-    CHECK(tb::NothingToFight(tb::Side::Ally, nobody));
+    CHECK(tb::test::NothingToFight(tb::Side::Enemy, nobody));
+    CHECK(tb::test::NothingToFight(tb::Side::Ally, nobody));
     // Never one of the party: its turns are the player's.
-    CHECK_FALSE(tb::NothingToFight(tb::Side::Party, nobody));
+    CHECK_FALSE(tb::test::NothingToFight(tb::Side::Party, nobody));
     // In combat by the game's word: it has its turn, whoever it perceives.
     tb::Perception fighting = nobody;
     fighting.inCombat = true;
-    CHECK_FALSE(tb::NothingToFight(tb::Side::Enemy, fighting));
-    CHECK_FALSE(tb::NothingToFight(tb::Side::Ally, fighting));
+    CHECK_FALSE(tb::test::NothingToFight(tb::Side::Enemy, fighting));
+    CHECK_FALSE(tb::test::NothingToFight(tb::Side::Ally, fighting));
     // Out of combat with someone hostile in its perception: about to fight,
     // its script not yet come to what it perceived.
     tb::Perception foe = nobody;
     foe.ofFoes = true;
-    CHECK_FALSE(tb::NothingToFight(tb::Side::Enemy, foe));
-    CHECK_FALSE(tb::NothingToFight(tb::Side::Ally, foe));
+    CHECK_FALSE(tb::test::NothingToFight(tb::Side::Enemy, foe));
+    CHECK_FALSE(tb::test::NothingToFight(tb::Side::Ally, foe));
     // A party member in its perception is someone to fight for an enemy, and
     // nobody to fight for an ally of the party's.
     tb::Perception party = nobody;
     party.ofParty = true;
-    CHECK_FALSE(tb::NothingToFight(tb::Side::Enemy, party));
-    CHECK(tb::NothingToFight(tb::Side::Ally, party));
+    CHECK_FALSE(tb::test::NothingToFight(tb::Side::Enemy, party));
+    CHECK(tb::test::NothingToFight(tb::Side::Ally, party));
     // Whether the party perceives it is not the question.
     nobody.byParty = false;
-    CHECK(tb::NothingToFight(tb::Side::Enemy, nobody));
+    CHECK(tb::test::NothingToFight(tb::Side::Enemy, nobody));
     // An enemy with nothing to fight is unaware, and the other way round.
     for (const tb::Perception &p : {nobody, fighting, foe, party, tb::Perception{}})
     {
-        CHECK(tb::NothingToFight(tb::Side::Enemy, p) == tb::Unaware(tb::Side::Enemy, p));
+        CHECK(tb::test::NothingToFight(tb::Side::Enemy, p) == tb::test::Unaware(tb::Side::Enemy, p));
     }
 }
 
@@ -421,32 +428,32 @@ TEST_CASE("a hostile not in combat that perceives no party member and nobody els
     nobody.ofParty = false;
     nobody.ofFoes = false;
     nobody.inCombat = false;
-    CHECK(tb::Unaware(tb::Side::Enemy, nobody));
+    CHECK(tb::test::Unaware(tb::Side::Enemy, nobody));
     // One the game has in combat is told its turn has come as before,
     // whatever it perceives at this moment: the scripts run its combat AI
     // then, and one with an AI of its own may act all the same.
     tb::Perception fighting = nobody;
     fighting.inCombat = true;
-    CHECK_FALSE(tb::Unaware(tb::Side::Enemy, fighting));
+    CHECK_FALSE(tb::test::Unaware(tb::Side::Enemy, fighting));
     // Whether the party perceives it is not the question: the party's seeing
     // it is how it came to be in the fight.
     nobody.byParty = false;
-    CHECK(tb::Unaware(tb::Side::Enemy, nobody));
+    CHECK(tb::test::Unaware(tb::Side::Enemy, nobody));
     // It perceives a party member: it has noticed.
     tb::Perception party = nobody;
     party.ofParty = true;
-    CHECK_FALSE(tb::Unaware(tb::Side::Enemy, party));
+    CHECK_FALSE(tb::test::Unaware(tb::Side::Enemy, party));
     // It perceives a foe that is not the party's (an ally of the party's it
     // is fighting): it has someone to choose.
     tb::Perception foe = nobody;
     foe.ofFoes = true;
-    CHECK_FALSE(tb::Unaware(tb::Side::Enemy, foe));
+    CHECK_FALSE(tb::test::Unaware(tb::Side::Enemy, foe));
     // Nothing read: everything, and not unaware.
-    CHECK_FALSE(tb::Unaware(tb::Side::Enemy, tb::Perception{}));
+    CHECK_FALSE(tb::test::Unaware(tb::Side::Enemy, tb::Perception{}));
     // A hostile's only: an ally's turn, or a party member's, is not skipped
     // for what it perceives.
-    CHECK_FALSE(tb::Unaware(tb::Side::Ally, nobody));
-    CHECK_FALSE(tb::Unaware(tb::Side::Party, nobody));
+    CHECK_FALSE(tb::test::Unaware(tb::Side::Ally, nobody));
+    CHECK_FALSE(tb::test::Unaware(tb::Side::Party, nobody));
 }
 
 TEST_CASE("one in the fight stays in it while the engine's perception keeps it there", "[rules]")
@@ -461,35 +468,180 @@ TEST_CASE("one in the fight stays in it while the engine's perception keeps it t
     nothing.ofFoes = false;
     // Found fighting, it stays, perceived or not, as it always did: those
     // rules bring it in, and it would come again at once.
-    CHECK(tb::StaysInTheFight(tb::Side::Enemy, found, nothing));
-    CHECK(tb::StaysInTheFight(tb::Side::Ally, found, nothing));
+    CHECK(tb::test::StaysInTheFight(tb::Side::Enemy, found, nothing));
+    CHECK(tb::test::StaysInTheFight(tb::Side::Ally, found, nothing));
     // An enemy not found fighting (out of combat, or beyond the radius):
     // while a party member perceives it, or it perceives a party member.
     tb::Perception watched = nothing;
     watched.byParty = true;
     tb::Perception watching = nothing;
     watching.ofParty = true;
-    CHECK(tb::StaysInTheFight(tb::Side::Enemy, !found, everything));
-    CHECK(tb::StaysInTheFight(tb::Side::Enemy, !found, watched));
-    CHECK(tb::StaysInTheFight(tb::Side::Enemy, !found, watching));
+    CHECK(tb::test::StaysInTheFight(tb::Side::Enemy, !found, everything));
+    CHECK(tb::test::StaysInTheFight(tb::Side::Enemy, !found, watched));
+    CHECK(tb::test::StaysInTheFight(tb::Side::Enemy, !found, watching));
     // Neither: it has left. Whom else it perceives does not make it the
     // party's fight.
-    CHECK_FALSE(tb::StaysInTheFight(tb::Side::Enemy, !found, nothing));
+    CHECK_FALSE(tb::test::StaysInTheFight(tb::Side::Enemy, !found, nothing));
     tb::Perception elsewhere = nothing;
     elsewhere.ofFoes = true;
-    CHECK_FALSE(tb::StaysInTheFight(tb::Side::Enemy, !found, elsewhere));
+    CHECK_FALSE(tb::test::StaysInTheFight(tb::Side::Enemy, !found, elsewhere));
     // An ally of the party's: while it perceives someone hostile to it, the
     // test the game keeps it in combat by. That the party and it perceive
     // each other is no fight.
-    CHECK(tb::StaysInTheFight(tb::Side::Ally, !found, elsewhere));
-    CHECK(tb::StaysInTheFight(tb::Side::Ally, !found, everything));
-    CHECK_FALSE(tb::StaysInTheFight(tb::Side::Ally, !found, nothing));
+    CHECK(tb::test::StaysInTheFight(tb::Side::Ally, !found, elsewhere));
+    CHECK(tb::test::StaysInTheFight(tb::Side::Ally, !found, everything));
+    CHECK_FALSE(tb::test::StaysInTheFight(tb::Side::Ally, !found, nothing));
     tb::Perception friendly = nothing;
     friendly.byParty = true;
     friendly.ofParty = true;
-    CHECK_FALSE(tb::StaysInTheFight(tb::Side::Ally, !found, friendly));
+    CHECK_FALSE(tb::test::StaysInTheFight(tb::Side::Ally, !found, friendly));
     // The party's own are always in its fight.
-    CHECK(tb::StaysInTheFight(tb::Side::Party, !found, nothing));
+    CHECK(tb::test::StaysInTheFight(tb::Side::Party, !found, nothing));
+}
+
+TEST_CASE("who is in a fight's rotation is one rule, of the fight's own and of one that might join", "[rules]")
+{
+    // Issue 66: every place that asked whether a creature is in the fight
+    // asks this, with the same facts, and each answer has a name.
+    using tb::InRotation;
+    using tb::InTheRotation;
+    using tb::Rotation;
+    using tb::Side;
+    const auto seen = [](Side side, bool member) {
+        tb::Presence presence;
+        presence.side = side;
+        presence.member = member;
+        return presence;
+    };
+    const bool member = true;
+    tb::Perception nothing;
+    nothing.byParty = false;
+    nothing.ofParty = false;
+    nothing.ofFoes = false;
+    nothing.inCombat = false;
+
+    SECTION("the party's own are in it, standing or fallen")
+    {
+        CHECK(InTheRotation(seen(Side::Party, member)) == Rotation::Fights);
+        CHECK(InTheRotation(seen(Side::Party, !member)) == Rotation::Fights);
+        tb::Presence fallen = seen(Side::Party, member);
+        fallen.down = true;
+        CHECK(InTheRotation(fallen) == Rotation::Fallen);
+        CHECK(InRotation(Rotation::Fallen));
+        // Whatever else is read of one: not found fighting, perceiving nobody.
+        tb::Presence quiet = seen(Side::Party, !member);
+        quiet.found = false;
+        quiet.perception = nothing;
+        CHECK(InTheRotation(quiet) == Rotation::Fights);
+    }
+    SECTION("one that is not the party's and dead is out of it")
+    {
+        for (const Side side : {Side::Enemy, Side::Ally})
+        {
+            for (const bool of : {true, false})
+            {
+                tb::Presence dead = seen(side, of);
+                dead.down = true;
+                CHECK(InTheRotation(dead) == Rotation::Dead);
+            }
+        }
+        CHECK_FALSE(InRotation(Rotation::Dead));
+    }
+    SECTION("found fighting the party, it is in, whether or not the fight has it yet")
+    {
+        for (const Side side : {Side::Enemy, Side::Ally})
+        {
+            CHECK(InTheRotation(seen(side, !member)) == Rotation::Fights);
+            CHECK(InTheRotation(seen(side, member)) == Rotation::Fights);
+        }
+    }
+    SECTION("not found fighting the party: one of the fight is in it while perception keeps it, and anyone else is "
+            "not")
+    {
+        // Anyone else: being perceived brings nobody in.
+        tb::Presence stranger = seen(Side::Enemy, !member);
+        stranger.found = false;
+        CHECK(InTheRotation(stranger) == Rotation::NotFighting);
+        CHECK_FALSE(InRotation(Rotation::NotFighting));
+        // One of the fight: an enemy while the party perceives it or it the
+        // party, an ally while it perceives an enemy.
+        tb::Presence afar = seen(Side::Enemy, member);
+        afar.found = false;
+        CHECK(InTheRotation(afar) == Rotation::Fights);
+        afar.perception.byParty = false;
+        CHECK(InTheRotation(afar) == Rotation::Fights);
+        afar.perception.ofParty = false;
+        CHECK(InTheRotation(afar) == Rotation::NotFighting);
+        tb::Presence ally = seen(Side::Ally, member);
+        ally.found = false;
+        CHECK(InTheRotation(ally) == Rotation::Fights);
+        ally.perception.ofFoes = false;
+        CHECK(InTheRotation(ally) == Rotation::NotFighting);
+    }
+    SECTION("one in it with nobody to fight is in it, and passed: unaware, an enemy; out of combat, an ally")
+    {
+        tb::Presence hostile = seen(Side::Enemy, member);
+        hostile.perception = nothing;
+        CHECK(InTheRotation(hostile) == Rotation::Unaware);
+        // Drawn into a fight unawares, as it joins.
+        hostile.member = false;
+        CHECK(InTheRotation(hostile) == Rotation::Unaware);
+        tb::Presence ally = seen(Side::Ally, member);
+        ally.perception = nothing;
+        CHECK(InTheRotation(ally) == Rotation::OutOfCombat);
+        CHECK(InRotation(Rotation::Unaware));
+        CHECK(InRotation(Rotation::OutOfCombat));
+        CHECK(tb::NobodyToFight(Rotation::Unaware));
+        CHECK(tb::NobodyToFight(Rotation::OutOfCombat));
+        CHECK_FALSE(tb::NobodyToFight(Rotation::Fights));
+        CHECK_FALSE(tb::NobodyToFight(Rotation::OutOfTheWorld));
+        // An unaware hostile of the fight that is found no longer and that
+        // the party does not perceive is out, not passed.
+        hostile.member = true;
+        hostile.found = false;
+        CHECK(InTheRotation(hostile) == Rotation::NotFighting);
+        // And one the party does perceive is in, by that, and unaware.
+        hostile.perception.byParty = true;
+        CHECK(InTheRotation(hostile) == Rotation::Unaware);
+    }
+    SECTION("one the game has made inactive is out of the world, and of the rotation, whoever it is")
+    {
+        // In the Landsmeet's duel ten of the brawl before it, each inactive,
+        // read "the party does not perceive it; it perceives a party member,
+        // someone hostile to it", and were kept in the fight by that.
+        for (const Side side : {Side::Party, Side::Enemy, Side::Ally})
+        {
+            for (const bool of : {true, false})
+            {
+                tb::Presence under = seen(side, of);
+                under.inactive = true;
+                CHECK(InTheRotation(under) == Rotation::OutOfTheWorld);
+                under.found = false;
+                under.perception = nothing;
+                CHECK(InTheRotation(under) == Rotation::OutOfTheWorld);
+                // Fallen or standing: a body out of the world has no place
+                // either, the party's own neither.
+                under.down = true;
+                CHECK(InTheRotation(under) == Rotation::OutOfTheWorld);
+            }
+        }
+        CHECK_FALSE(InRotation(Rotation::OutOfTheWorld));
+    }
+    SECTION("each answer has its words, for the line that says one leaves or is passed")
+    {
+        CHECK(tb::Why(Rotation::OutOfTheWorld, Side::Enemy) == "the game has taken it out of the world");
+        CHECK(tb::Why(Rotation::NotFighting, Side::Enemy) ==
+              "not found fighting the party, and neither it nor the party perceives the other");
+        CHECK(tb::Why(Rotation::NotFighting, Side::Ally) ==
+              "not found fighting beside the party, and it perceives no enemy");
+        CHECK(tb::Why(Rotation::Unaware, Side::Enemy) == "it has not noticed the party");
+        CHECK(tb::Why(Rotation::OutOfCombat, Side::Ally) ==
+              "out of combat by the game's own word, and perceives nobody to fight");
+        for (int i = 0; i <= static_cast<int>(Rotation::NotFighting); ++i)
+        {
+            CHECK(tb::Why(static_cast<Rotation>(i), Side::Enemy) != "?");
+        }
+    }
 }
 
 TEST_CASE("haste and slows multiply a creature's pace", "[rules]")

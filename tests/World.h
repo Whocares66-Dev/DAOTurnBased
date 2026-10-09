@@ -7,6 +7,7 @@
 #pragma once
 
 #include "core/Facing.h"
+#include "core/Rules.h"
 #include "core/TurnMachine.h"
 
 #include <algorithm>
@@ -196,7 +197,7 @@ struct Creature // NOLINT(bugprone-exception-escape)
 };
 
 // A hostile the party perceives that the game does not have in combat and
-// that perceives nobody to fight: it has not noticed (core/Rules.h, Unaware).
+// that perceives nobody to fight: it has not noticed (core/Rules.h, Rotation::Unaware).
 inline Perception Unnoticing()
 {
     Perception perception;
@@ -216,6 +217,44 @@ inline Perception Unperceived()
     perception.byParty = false;
     perception.ofParty = false;
     return perception;
+}
+
+// The one rule for who is in a fight's rotation (core/Rules.h, InTheRotation;
+// issue 66), asked the three ways the cases and the random fights ask it.
+// Until that issue each was a rule of its own in core, and what was promised
+// of each is promised of the one rule's cases, in the same words.
+//
+// How one of the fight stands in it, found fighting or not, with what the
+// engine's perception says of it.
+inline Rotation InTheFight(Side side, bool fighting, const Perception &perception)
+{
+    Presence seen;
+    seen.side = side;
+    seen.member = true;
+    seen.found = fighting;
+    seen.perception = perception;
+    return InTheRotation(seen);
+}
+
+// A hostile of the fight that has noticed nobody to fight: its turn is
+// skipped (Rotation::Unaware).
+inline bool Unaware(Side side, const Perception &perception)
+{
+    return InTheFight(side, true, perception) == Rotation::Unaware;
+}
+
+// One of the fight that the game does not have in combat and that perceives
+// nobody to fight: it has no turn (Rotation::Unaware, an enemy;
+// Rotation::OutOfCombat, an ally).
+inline bool NothingToFight(Side side, const Perception &perception)
+{
+    return NobodyToFight(InTheFight(side, true, perception));
+}
+
+// Whether one of the fight stays in it (not Rotation::Lost).
+inline bool StaysInTheFight(Side side, bool fighting, const Perception &perception)
+{
+    return InRotation(InTheFight(side, fighting, perception));
 }
 
 inline Creature Make(ObjectId id, Side side, bool hero, std::wstring name, float dexterity)
@@ -823,6 +862,18 @@ class World
             Creature &given = Get(id);
             given.command = ++commands;
             given.atTurnToFace = false;
+            // Nor at a step of the command it took the place of: the step
+            // the engine times is its current command's own. (Left standing,
+            // a walk of the game's own that followed a timed one showed that
+            // one's step, part run, into its creature's turn, and the turn's
+            // limit left the whole of an unaware hostile's beat uncounted
+            // for it: the long run with strays, seed 324, as issue 66 sent
+            // the fights other ways.)
+            given.step = StepTime{};
+            given.stepStands = false;
+            given.stepRenews = 0;
+            given.stepTailMs = 0;
+            given.atTail = false;
         }
         if (verdict == Verdict::Hold)
         {
@@ -1283,14 +1334,19 @@ class World
         std::vector<Combatant> seen;
         for (const Creature &c : creatures)
         {
-            // As the game's scan: the party, and living creatures in
+            // As the game's scan: the party (who the game has in it now is
+            // a creature's side here: a case puts one out by giving it
+            // another), and living creatures in
             // combat. And of those the machine named as in the fight
             // (Needs::inFight), the living ones that are not found so:
             // read all the same, with their perception, which is what
             // keeps them in it or does not (issue 29).
             const bool found =
                 c.side == Side::Party || (!c.down && c.fighting && !c.unfound && !c.inactive && inCombat);
-            const bool named = !c.down && std::ranges::find(needs.inFight, c.id) != needs.inFight.end();
+            // (Fallen or not: the game layer reads everyone named, and one
+            // of the fight's party that is dead and out of the party is
+            // read so. Issue 66.)
+            const bool named = std::ranges::find(needs.inFight, c.id) != needs.inFight.end();
             if (!c.exists || (!found && !named))
             {
                 continue;
@@ -1298,7 +1354,7 @@ class World
             Combatant x;
             x.id = c.id;
             x.side = c.side;
-            x.hero = c.hero;
+            x.hero = c.hero && c.side == Side::Party; // the hero of the party the game has now
             x.name = c.name;
             x.tag = c.tag;
             x.dexterity = c.dexterity;
@@ -1313,6 +1369,7 @@ class World
             x.health = c.down ? 0.0f : c.health;
             x.perception = c.perception;
             x.fighting = found;
+            x.inactive = c.inactive; // the engine's GetObjectActive, read of everyone (Bridge::Describe)
             seen.push_back(x);
         }
         return seen;

@@ -2261,6 +2261,8 @@ TEST_CASE("the fight is over when the last enemy fighting the party falls, other
             answers.push_back(w.Order(id, CommandType::Attack, Source::Script));
         }
     };
+    // In combat and not in the order, the one command it tries is held.
+    CHECK(w.Order(0x202, CommandType::Attack, Source::Script) == Verdict::Block);
     w.Get(kGenlock).down = true;
     w.Get(kHurlock).down = true;
     PassTurns(w, 200);
@@ -2529,13 +2531,12 @@ TEST_CASE("the party runs from a fight: its enemies stand down as the game order
     std::vector<ObjectId> told;
     w.onPoke = [&](ObjectId id) { told.push_back(id); };
     w.applied.clear();
-    // The fight goes on a few seconds more, the genlock's own turn among
-    // them: skipped, as one that has noticed nobody, its walk left to it.
+    // With the next look both have left, and the fight is over: no turn of
+    // theirs comes meanwhile.
     PassTurns(w, 1500);
     REQUIRE_FALSE(w.machine.Active());
-    CHECK(std::ranges::count_if(w.log, [](const std::string &line) {
-              return line.find("Genlock's turn ends: unaware; nothing rolls over") != std::string::npos;
-          }) >= 1);
+    CHECK(std::ranges::none_of(
+        w.log, [](const std::string &line) { return line.find("Genlock's turn (") != std::string::npos; }));
     CHECK(std::ranges::count_if(w.log, [](const std::string &line) {
               return line.ends_with("rounds: no enemy left in the fight, 2 having left it alive");
           }) == 1);
@@ -2688,13 +2689,16 @@ TEST_CASE("taken out of combat in its own turn, its turn ends there: its script'
     w.applied.clear();
     CHECK(w.Wait(kGenlock, 3.0f) == Verdict::Allow);
     CHECK(w.Order(kGenlock, CommandType::MoveToLocation, Source::Script) == Verdict::Allow);
-    CHECK(Lines(w, "Genlock is out of combat by the game's own word, its script's wait coming for it: it has no turn, "
-                   "and is the game's") == 1);
+    CHECK(
+        Lines(
+            w,
+            "Genlock is passed: out of combat by the game's own word, its script's wait coming for it: it has no turn, "
+            "and is the game's") == 1);
     CHECK(Lines(w, "Genlock: wait from script let through out of turn: the game does not have it in combat, and it "
                    "is the game's") == 1);
     CHECK(Lines(w, "Genlock: move to location from script let through out of turn") == 1);
     // Said once, of the first of them: the walk behind it says nothing new.
-    CHECK(Lines(w, "Genlock is out of combat by the game's own word") == 1);
+    CHECK(Lines(w, "Genlock is passed: out of combat by the game's own word") == 1);
     // Neither is its turn's: no wait read as its AI's, nothing taken of its
     // bar, nothing of its movement.
     CHECK(Lines(w, "Genlock's wait of") == 0);
@@ -2712,7 +2716,7 @@ TEST_CASE("taken out of combat in its own turn, its turn ends there: its script'
     CHECK(w.Current() == kCompanion);
     CHECK(Lines(w, "Genlock's turn ends: ") == 1);
     CHECK(Lines(w, "Genlock's turn ends: out of combat; nothing rolls over, its actor not having ended it") == 1);
-    CHECK(Lines(w, "Genlock is out of combat by the game's own word") == 1); // and not again by the look
+    CHECK(Lines(w, "Genlock is passed: out of combat by the game's own word") == 1); // and not again by the look
     // What it was at is the engine's to finish, and its walk is not the
     // turn's to stop.
     CHECK_FALSE(w.Did(EffectKind::ClearCommands, kGenlock));
@@ -2750,15 +2754,16 @@ TEST_CASE("found out of combat with nobody to fight as its turn is looked at, it
         w.Get(kGenlock).perception = StoodDown();
         w.RunFor(100);
         CHECK(w.Current() == kCompanion);
-        CHECK(Lines(w, "Genlock is out of combat by the game's own word, and perceives nobody to fight: it has no "
-                       "turn, and is the game's") == 1);
+        CHECK(Lines(w,
+                    "Genlock is passed: out of combat by the game's own word, and perceives nobody to fight: it has no "
+                    "turn, and is the game's") == 1);
         CHECK(Lines(w, "Genlock's turn ends: out of combat") == 1);
         CHECK_FALSE(w.Did(EffectKind::Explain, kGenlock));
     }
     SECTION("out of combat, and a party member in its perception: about to fight, and its turn is its own")
     {
         // The frame in which it has perceived an enemy and its script has
-        // not yet set its combat state (core/Rules.h, NothingToFight). Its
+        // not yet set its combat state (core/Rules.h, NobodyToFight). Its
         // turn goes on, and its AI's attack, a frame later and in combat, is
         // that turn's.
         Perception noticing = StoodDown();
@@ -2766,7 +2771,7 @@ TEST_CASE("found out of combat with nobody to fight as its turn is looked at, it
         w.Get(kGenlock).perception = noticing;
         w.RunFor(100);
         CHECK(w.Current() == kGenlock);
-        CHECK(Lines(w, "is out of combat by the game's own word") == 0);
+        CHECK(Lines(w, "is passed: out of combat by the game's own word") == 0);
         w.Get(kGenlock).perception = Perception{};
         CHECK(w.Order(kGenlock, CommandType::Attack, Source::Script) == Verdict::Allow);
         w.Frame();
@@ -2785,8 +2790,10 @@ TEST_CASE("found out of combat with nobody to fight as its turn is looked at, it
         w.RunFor(100);
         REQUIRE(w.Current() == kGenlock);
         CHECK(w.Order(kGenlock, CommandType::MoveToObject, Source::Script) == Verdict::Allow);
-        CHECK(Lines(w, "Genlock is out of combat by the game's own word, its script's move to object coming for it: "
-                       "it has no turn, and is the game's") == 1);
+        CHECK(
+            Lines(w,
+                  "Genlock is passed: out of combat by the game's own word, its script's move to object coming for it: "
+                  "it has no turn, and is the game's") == 1);
         w.RunFor(100);
         CHECK(w.Current() == kCompanion);
         CHECK(Lines(w, "Genlock's turn ends: out of combat") == 1);
@@ -2798,7 +2805,7 @@ TEST_CASE("found out of combat with nobody to fight as its turn is looked at, it
         w.RunFor(100);
         CHECK(w.Current() == kCompanion);
         CHECK(Lines(w, "Genlock's turn ends: fell") == 1);
-        CHECK(Lines(w, "is out of combat by the game's own word") == 0);
+        CHECK(Lines(w, "is passed: out of combat by the game's own word") == 0);
     }
 }
 
@@ -2852,7 +2859,7 @@ TEST_CASE("an ally that left the fight alive is no enemy that left it: the fight
     PassTurns(w, 600);
     REQUIRE(w.machine.Active());
     REQUIRE(std::ranges::count_if(
-                w.log, [](const std::string &line) { return line.starts_with("Soldier is no longer fighting"); }) == 1);
+                w.log, [](const std::string &line) { return line.starts_with("Soldier leaves the fight"); }) == 1);
     w.Get(kGenlock).down = true;
     w.Get(kHurlock).down = true;
     PassTurns(w, 600);
@@ -2907,7 +2914,7 @@ TEST_CASE("what the mod itself gives the creature whose turn it is stays the mod
     REQUIRE(w.released.size() == 1);
     CHECK(w.released.front() == Verdict::Allow);
     CHECK(Lines(w, "Genlock's pending attack lands") == 1);
-    CHECK(Lines(w, "is out of combat by the game's own word") == 0);
+    CHECK(Lines(w, "is passed: out of combat by the game's own word") == 0);
     CHECK(Lines(w, "let through out of turn") == 0);
     CHECK(Lines(w, "Genlock's turn ends: out of combat") == 0);
 }
@@ -2963,40 +2970,47 @@ TEST_CASE("a fight dropped with the world owes nobody a telling in the next", "[
     CHECK(told.who.empty());
 }
 
-TEST_CASE("an enemy missing from a scan or two is still in the fight; missing for seconds, it has left",
+TEST_CASE("an enemy the scan finds and loses by turns is in the fight all along, while the engine's perception holds",
           "[machine][engaged]")
 {
-    // The user's eight fights, read off Eluvian's bus: a guard and a
-    // soldier "up again" every three seconds for ten minutes, never having
-    // fallen, losing the turns that came while they were gone.
+    // The user's eight fights (2026-09-30), read off Eluvian's bus: a guard
+    // and a soldier "up again" every three seconds for ten minutes, never
+    // having fallen, losing the turns that came while they were gone. Who
+    // was in a fight then went by the scan's finding alone, and a wait of
+    // four seconds was put over it. Since issue 29 one of the fight that the
+    // scan does not find is in it while the engine's perception keeps it
+    // there, which between two that are fighting it does: the finding may
+    // come and go, and nothing is said or lost.
     World w;
     std::vector<TurnEvent> events;
     w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
-    // Neither it nor the party perceives the other, all along: whether it
-    // is in the fight then goes by whether the scan finds it fighting
-    // (perceived, it would stay: issue 29, test_perception.cpp).
-    w.Get(kGenlock).perception = Unperceived();
     w.StartFight();
     for (int flap = 0; flap < 6; ++flap)
     {
         w.Get(kGenlock).fighting = false;
         PassTurns(w, 100); // 1.6 s, several scans
+        REQUIRE(w.machine.Order().Find(kGenlock) != nullptr);
         CHECK_FALSE(w.machine.Order().Find(kGenlock)->down);
         w.Get(kGenlock).fighting = true;
         PassTurns(w, 100);
     }
     CHECK_FALSE(w.machine.Order().Find(kGenlock)->down);
-    CHECK(std::ranges::none_of(events, [](const TurnEvent &e) { return e.kind == EventKind::UpAgain; }));
-    // Gone for good.
+    CHECK(std::ranges::none_of(
+        events, [](const TurnEvent &e) { return e.kind == EventKind::UpAgain || e.kind == EventKind::Gone; }));
+    CHECK(std::ranges::none_of(
+        w.log, [](const std::string &line) { return line.find("leaves the fight") != std::string::npos; }));
+    // Neither found nor perceived, it has left with that look, and stays
+    // out, alive as it is: its health does not bring it back.
     w.Get(kGenlock).fighting = false;
-    for (int i = 0; i < 1500; ++i) // 24 s: out, and it stays out, alive as it is
+    w.Get(kGenlock).perception = Unperceived();
+    for (int i = 0; i < 1500; ++i) // 24 s
     {
         if (w.machine.GetPhase() == Phase::AwaitingOrder)
         {
             (void)w.machine.OnEndTurn();
         }
         w.Frame();
-        if (i > 400)
+        if (i > 100)
         {
             // Down in the order, or dropped from it with the next round.
             const Combatant *genlock = w.machine.Order().Find(kGenlock);
@@ -3008,14 +3022,13 @@ TEST_CASE("an enemy missing from a scan or two is still in the fight; missing fo
               return e.kind == EventKind::Gone && e.who == kGenlock && e.detail == "no longer fighting";
           }) == 1);
     CHECK(std::ranges::none_of(events, [](const TurnEvent &e) { return e.kind == EventKind::UpAgain; }));
-    // Fighting again: back in, said once, as one that joins or as one back.
+    // Fighting again: back in, said once, as one that joins.
     w.Get(kGenlock).fighting = true;
     PassTurns(w, 200);
     REQUIRE(w.machine.Order().Find(kGenlock) != nullptr);
     CHECK_FALSE(w.machine.Order().Find(kGenlock)->down);
-    CHECK(std::ranges::count_if(events, [](const TurnEvent &e) {
-              return e.who == kGenlock && (e.kind == EventKind::UpAgain || e.kind == EventKind::Joined);
-          }) == 1);
+    CHECK(std::ranges::count_if(
+              events, [](const TurnEvent &e) { return e.kind == EventKind::Joined && e.who == kGenlock; }) == 1);
 }
 
 TEST_CASE("a creature outside the fight trying a command every frame is looked at twice a second", "[machine][engaged]")
@@ -3716,7 +3729,7 @@ TEST_CASE("one that left the fight and is back before the round is out is said t
           }) == 1);
 }
 
-TEST_CASE("a creature that begins to fight near, but not the party, mid-fight is said to wait outside, once",
+TEST_CASE("a creature that begins to fight near, but not the party, mid-fight is not in the fight",
           "[machine][engaged]")
 {
     auto fight = StandardFight();
@@ -3727,17 +3740,11 @@ TEST_CASE("a creature that begins to fight near, but not the party, mid-fight is
     World w(Fixed(), fight);
     w.StartFight();
     REQUIRE(w.Current() == kHero);
-    const auto said = [&] {
-        return std::ranges::count_if(w.log, [](const std::string &line) {
-            return line.find("Shriek is fighting near, but not the party") != std::string::npos;
-        });
-    };
-    CHECK(said() == 0);
     w.Get(0x202).fighting = true; // a guard has found it, rooms away
     UseSomething(w, kHero);
     UseSomething(w, kHero);
-    CHECK(said() == 1);
     CHECK(w.machine.Order().Find(0x202) == nullptr);
+    CHECK(Lines(w, "Shriek") == 0);
 }
 
 TEST_CASE("the same seed gives the same initiative", "[machine]")

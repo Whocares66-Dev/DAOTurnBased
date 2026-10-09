@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string_view>
 
 namespace tb
 {
@@ -380,47 +381,116 @@ bool InThePartysFight(const Sighting &sighting, const Settings &settings)
     return sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;
 }
 
-bool FightsUnawares(bool partyInCombat, bool someoneToFight, bool drawnIn, const Sighting &sighting,
-                    const Settings &settings)
+bool FightsUnawares(bool partyInCombat, bool someoneToFight, const Sighting &sighting, const Settings &settings)
 {
-    if (!partyInCombat)
+    return partyInCombat && !someoneToFight && sighting.seen && std::isfinite(sighting.meters) &&
+           sighting.meters <= settings.joinRadius;
+}
+
+namespace
+{
+
+// Nobody for it to fight, by the engine's own words on every count: the game
+// does not have it in combat, and it perceives nobody hostile to it; nor, an
+// enemy, a party member, its foes being the party's first. (Not asked of the
+// party's own.)
+bool PerceivesNobodyToFight(Side side, const Perception &perception)
+{
+    if (perception.inCombat || perception.ofFoes)
     {
         return false;
     }
-    if (drawnIn)
-    {
-        return true;
-    }
-    return !someoneToFight && sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;
-}
-
-bool Unaware(Side side, const Perception &perception)
-{
-    return side == Side::Enemy && !perception.inCombat && !perception.ofParty && !perception.ofFoes;
-}
-
-bool NothingToFight(Side side, const Perception &perception)
-{
-    if (side == Side::Party || perception.inCombat || perception.ofFoes)
-    {
-        return false;
-    }
-    // An enemy's foes are the party's first: neither a party member nor
-    // anyone else hostile to it (Unaware).
     return side != Side::Enemy || !perception.ofParty;
 }
 
-bool StaysInTheFight(Side side, bool fighting, const Perception &perception)
+// Kept in a fight it is of by the engine's perception alone: an enemy while
+// the party perceives it or it the party; an ally while it perceives someone
+// hostile to it.
+bool KeptByPerception(Side side, const Perception &perception)
 {
-    if (side == Side::Party || fighting)
-    {
-        return true;
-    }
     if (side == Side::Enemy)
     {
         return perception.byParty || perception.ofParty;
     }
     return perception.ofFoes;
+}
+
+} // namespace
+
+Rotation InTheRotation(const Presence &seen)
+{
+    // Out of the world, whoever it is, standing or fallen, and whatever its
+    // perception lists hold: nobody is there to order, to read or to show.
+    if (seen.inactive)
+    {
+        return Rotation::OutOfTheWorld;
+    }
+    // Dead: one of the party keeps its place, and a body that is not the
+    // party's has none.
+    if (seen.down)
+    {
+        return seen.side == Side::Party ? Rotation::Fallen : Rotation::Dead;
+    }
+    // The party's own are always in its fight.
+    if (seen.side == Side::Party)
+    {
+        return Rotation::Fights;
+    }
+    // Not found fighting the party: one of the fight is in it while the
+    // engine's perception keeps it there, and anyone else is not.
+    if (!seen.found && !(seen.member && KeptByPerception(seen.side, seen.perception)))
+    {
+        return Rotation::NotFighting;
+    }
+    if (PerceivesNobodyToFight(seen.side, seen.perception))
+    {
+        return seen.side == Side::Enemy ? Rotation::Unaware : Rotation::OutOfCombat;
+    }
+    return Rotation::Fights;
+}
+
+bool InRotation(Rotation where)
+{
+    switch (where)
+    {
+    case Rotation::Fights:
+    case Rotation::Fallen:
+    case Rotation::Unaware:
+    case Rotation::OutOfCombat:
+        return true;
+    case Rotation::Dead:
+    case Rotation::OutOfTheWorld:
+    case Rotation::NotFighting:
+        return false;
+    }
+    return false;
+}
+
+std::string_view Why(Rotation where, Side side)
+{
+    switch (where)
+    {
+    case Rotation::Fights:
+        return "it is fighting";
+    case Rotation::Fallen:
+    case Rotation::Dead:
+        return "it has fallen";
+    case Rotation::Unaware:
+        return "it has not noticed the party";
+    case Rotation::OutOfCombat:
+        return "out of combat by the game's own word, and perceives nobody to fight";
+    case Rotation::OutOfTheWorld:
+        return "the game has taken it out of the world";
+    case Rotation::NotFighting:
+        return side == Side::Enemy ? "not found fighting the party, and neither it nor the party perceives the other"
+                                   : "not found fighting beside the party, and it perceives no enemy";
+    }
+    return "?";
+}
+
+bool NobodyToFight(Rotation where)
+{
+    return where == Rotation::Unaware || where == Rotation::OutOfCombat;
 }
 
 bool AsksForTarget(std::int32_t targetType, std::int32_t useType)

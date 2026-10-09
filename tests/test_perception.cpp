@@ -138,15 +138,6 @@ void Scanned(World &w, const std::vector<Combatant> &scan)
     (void)w.machine.Step(obs);
 }
 
-// The line said, once, of a combatant that stays in the fight by the
-// engine's perception alone.
-std::string Afar(std::string_view name, std::string_view why)
-{
-    return std::format("{} is not found fighting near the party any more (out of combat, or further than 50 m from "
-                       "its nearest living member), and stays in the fight: {}",
-                       name, why);
-}
-
 } // namespace
 
 TEST_CASE("an unaware hostile's turn is skipped: Unaware over it, about a second, its AI not told", "[perception]")
@@ -169,8 +160,10 @@ TEST_CASE("an unaware hostile's turn is skipped: Unaware over it, about a second
     CHECK(said->colour == kGrey);
     CHECK_FALSE(w.Said(L"Genlock"));
     CHECK_FALSE(w.paused);
-    CHECK(Logged(w, "Genlock has not noticed the party (not in combat, and it perceives nobody to fight): unaware, "
-                    "its AI is not told, and its turn is skipped in 1.0 s"));
+    CHECK(Logged(
+        w,
+        "Genlock is passed: it has not noticed the party (not in combat, and it perceives nobody to fight): unaware, "
+        "its AI is not told, and its turn is skipped in 1.0 s"));
     // Most of a second on it is still its turn...
     w.RunFor(800);
     CHECK(w.Current() == kGenlock);
@@ -250,7 +243,7 @@ TEST_CASE("an unaware hostile that notices in its beat is told at once: it acts 
     // began its turn said unaware; the frame's own look at it says not. The
     // game does not have it in combat yet (its script has not handled the
     // event): it perceives someone to fight all the same, has a turn, and is
-    // told (core/Rules.h, NothingToFight).
+    // told (core/Rules.h, NobodyToFight).
     w.Get(kGenlock).perception.ofParty = true;
     w.Get(kGenlock).perception.ofFoes = true;
     // (Within two frames: it is told on a look at everyone taken with that
@@ -405,8 +398,9 @@ TEST_CASE("an ally the game has in combat is told its turn has come, whoever it 
         // scripts are told of it as of any.
         CHECK(Logged(w, "Soldier's turn (ally, AI)"));
         CHECK_FALSE(w.Said(L"Unaware"));
-        CHECK(Logged(w, "Soldier is out of combat by the game's own word, and perceives nobody to fight: it has no "
-                        "turn, and is the game's"));
+        CHECK(Logged(
+            w, "Soldier is passed: out of combat by the game's own word, and perceives nobody to fight: it has no "
+               "turn, and is the game's"));
     }
 }
 
@@ -457,7 +451,7 @@ TEST_CASE("a wait of its script's in an unaware hostile's beat is no choice of i
                         "it is the game's"));
         // Its turn is being skipped already: nothing more is said of it,
         // and the beat is not cut short.
-        CHECK_FALSE(Logged(w, "is out of combat by the game's own word"));
+        CHECK_FALSE(Logged(w, "is passed: out of combat by the game's own word"));
     }
     SECTION("taken into combat since the machine last looked: its AI's, refused, and the beat goes on")
     {
@@ -625,15 +619,13 @@ TEST_CASE("a hostile the scan no longer finds fighting stays in the fight while 
         PlayOn(w, 1500); // 24 s, a hundred scans and more
         CHECK(InTheFight(w, kGenlock));
         CHECK(heard.Left(kGenlock) == 0);
-        // It has its turns as before, and it is said once.
+        // It has its turns as before.
         CHECK(heard.Count(EventKind::TurnEnded, kGenlock) > 3);
-        CHECK(Said(w, Afar("Genlock", c.why)) == 1);
-        // Found fighting again, and then not: said again.
+        // Found fighting again, and then not: it is of the fight all along.
         w.Get(kGenlock).fighting = true;
         PlayOn(w, 100);
         w.Get(kGenlock).fighting = false;
         PlayOn(w, 100);
-        CHECK(Said(w, Afar("Genlock", c.why)) == 2);
         CHECK(heard.Left(kGenlock) == 0);
         CHECK(heard.Count(EventKind::UpAgain, kGenlock) == 0);
         CHECK(heard.Count(EventKind::Joined, kGenlock) == 0);
@@ -687,16 +679,13 @@ TEST_CASE("running from a fight: an enemy stays in it while either side perceive
     REQUIRE(w.machine.Active());
     CHECK(InTheFight(w, kGenlock));
     CHECK(InTheFight(w, kHurlock));
-    // The genlock loses the party, and the party it. Not at once: one scan
-    // or two without it is not that.
+    // The genlock loses the party, and the party it: with the look that
+    // reads it so, it has left.
     w.Get(kGenlock).perception = Unperceived();
     PlayOn(w, 150); // 2.4 s
-    CHECK(InTheFight(w, kGenlock));
-    CHECK(heard.Left(kGenlock) == 0);
-    PlayOn(w, 250); // past the four seconds
     CHECK_FALSE(InTheFight(w, kGenlock));
     CHECK(heard.Left(kGenlock) == 1);
-    CHECK(Said(w, "Genlock is no longer fighting: out of combat or out of range, and neither it nor the party "
+    CHECK(Said(w, "Genlock leaves the fight: not found fighting the party, and neither it nor the party "
                   "perceives the other") == 1);
     // The hurlock is still after them, and the fight goes on.
     CHECK(w.machine.Active());
@@ -798,13 +787,12 @@ TEST_CASE("an ally the scan no longer finds stays while it perceives an enemy, a
     PlayOn(w, 600);
     CHECK(InTheFight(w, 0x300));
     CHECK(heard.Left(0x300) == 0);
-    CHECK(Said(w, Afar("Soldier", "it perceives an enemy")) == 1);
     // Its enemy lost. That the party and it perceive each other is no fight.
     w.Get(0x300).perception.ofFoes = false;
     PlayOn(w, 400);
     CHECK_FALSE(InTheFight(w, 0x300));
     CHECK(heard.Left(0x300) == 1);
-    CHECK(Said(w, "Soldier is no longer fighting: out of combat or out of range, and it perceives no enemy") == 1);
+    CHECK(Said(w, "Soldier leaves the fight: not found fighting beside the party, and it perceives no enemy") == 1);
     CHECK(w.machine.Active());
 }
 

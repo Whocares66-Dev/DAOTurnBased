@@ -1,25 +1,30 @@
-// A creature the game has made inactive has no turn (issue 44). The engine's
-// word is GetObjectActive, which the game layer reads of everyone with a scan
-// and of the acting creature every frame; its scripts make a creature so with
-// SetObjectActive(FALSE), and the Broodmother's tentacles go under ground by
-// it. In the fight this is from (the Dead Trenches, 2026-10-05) a tentacle
-// under ground was told its turn had come like anyone: 146 of the tentacles'
-// 205 turns ended "chose nothing" after the wait for a choice, and one on
-// which a pin had landed after it went under stood eleven turns running at
-// "still at a invalid after 36000 ms: stopped", something queued on it that
-// the engine does not run for an inactive object. Scripted cases in the
-// stand-in for the game (World.h). What is promised:
+// A creature the game has made inactive has no turn (issue 44), and is not in
+// the fight (issue 66). The engine's word is GetObjectActive, which the game
+// layer reads of everyone with a scan and of the acting creature every frame;
+// its scripts make a creature so with SetObjectActive(FALSE), and the
+// Broodmother's tentacles go under ground by it. In the fight issue 44 is from
+// (the Dead Trenches, 2026-10-05) a tentacle under ground was told its turn
+// had come like anyone: 146 of the tentacles' 205 turns ended "chose nothing"
+// after the wait for a choice, and one on which a pin had landed after it went
+// under stood eleven turns running at "still at a invalid after 36000 ms:
+// stopped", something queued on it that the engine does not run for an
+// inactive object. From then to issue 66 it stayed in the order and its turn
+// was passed over as it came; in the Landsmeet's duel (2026-10-08) that kept
+// ten cards on the bar for a brawl the game had taken out of the world. Now it
+// leaves the fight with the scan that reads it so (core/Rules.h,
+// Rotation::OutOfTheWorld; tests/test_rotation.cpp has the duel). Scripted
+// cases in the stand-in for the game (World.h). What is promised:
 //
-//   - inactive as its turn comes, it is passed over at once: not told to
-//     choose, not waited on, no beat and no word over it, no bar, nothing
-//     rolled over and nothing cleared; the scripts are told of the turn, and
-//     its creature's own clock moves a turn's seconds, which is what brings a
-//     tentacle back up;
+//   - inactive as its turn comes, it has left the fight: not told to choose,
+//     not waited on, no beat and no word over it, no bar, nothing rolled over
+//     and nothing cleared; it has no card, and no place in the order once the
+//     round has turned;
 //   - with something queued on it, the same: a queue the engine does not run
 //     is not an action;
 //   - made inactive in the middle of its turn, an action running, the turn
 //     ends there, and nothing rolls over;
-//   - it stays in the order, and has its turns again when it is active;
+//   - active again, it is found fighting and has its turns, as one that
+//     joins a fight has them;
 //   - whoever it is: a party member is not waited on for an order, and an
 //     unaware hostile has no beat stood out for it;
 //   - what the mod kept for it is not given while it is so, and lands on its
@@ -27,8 +32,8 @@
 //   - what the mod kept for another is not given at it while it is so, as it
 //     is not at one fallen: a plain attack is turned on the nearest enemy in
 //     reach, anything else dropped and what it owed given back;
-//   - a hold on it takes its turns as on anyone, and is paid down as they
-//     pass.
+//   - a hold on it is not paid down by turns it does not have, and is not
+//     lost: back in the fight still held, its turn is the hold's.
 #include "World.h"
 
 #include "core/TurnMachine.h"
@@ -74,6 +79,12 @@ int Signals(const World &w, std::int32_t event, ObjectId target)
     return static_cast<int>(std::ranges::count_if(w.applied, [&](const Effect &e) {
         return e.kind == EffectKind::Signal && e.event == event && e.target == target;
     }));
+}
+
+bool HasCard(const World &w, ObjectId id)
+{
+    const TurnView view = w.machine.View();
+    return std::ranges::find(view.upcoming, id, &CardView::id) != view.upcoming.end();
 }
 
 bool InATurn(const World &w)
@@ -148,7 +159,7 @@ struct Heard
 };
 } // namespace
 
-TEST_CASE("inactive as its turn comes, a creature is passed over at once; active again, it has its turns",
+TEST_CASE("inactive as its turn comes, a creature has left the fight; active again, it has its turns",
           "[machine][inactive]")
 {
     World w;
@@ -160,14 +171,18 @@ TEST_CASE("inactive as its turn comes, a creature is passed over at once; active
     w.SetActive(kGenlock, false);
     w.applied.clear();
     REQUIRE(w.machine.OnEndTurn());
-    // Its turn comes and is gone within a few frames, where a creature told
-    // and choosing nothing is waited on for ai_think_ms, 94 of them.
+    // Its turn does not come: the next is the companion's within a few
+    // frames, where a creature told and choosing nothing is waited on for
+    // ai_think_ms, 94 of them.
     const int frames = UntilTurnOf(w, kCompanion);
     REQUIRE(frames >= 0);
     CHECK(frames < 10);
-    CHECK(Lines(w, "round 1: Genlock is inactive by the game's own word, out of the world: it has no turn") == 1);
-    CHECK(Lines(w, "Genlock's turn ends: inactive") == 1);
-    CHECK(heard.EndsOf(kGenlock) == std::vector<std::string>{"inactive"});
+    CHECK(Lines(w, "Genlock leaves the fight: the game has taken it out of the world") == 1);
+    CHECK(heard.Of(EventKind::Gone, kGenlock) == 1);
+    // The turn that was coming to it ends as one's does whose creature is
+    // down as it comes, with no word of a turn begun.
+    CHECK(heard.EndsOf(kGenlock) == std::vector<std::string>{"down"});
+    CHECK(Lines(w, "Genlock is passed") == 0);
     // No turn was begun for it: nothing told, nothing said or shown over it,
     // nothing of its cleared, and no line of a turn's beginning.
     CHECK(told.Of(kGenlock) == 0);
@@ -179,30 +194,33 @@ TEST_CASE("inactive as its turn comes, a creature is passed over at once; active
     CHECK(Effects(w, EffectKind::ClearCommands, kGenlock) == 0);
     CHECK(Effects(w, EffectKind::CenterCamera, kGenlock) == 0);
     CHECK(Effects(w, EffectKind::Explain, kGenlock) == 0);
-    // The scripts are told of the turn all the same, its start and its end:
-    // a turn passed, as a lost one does.
-    CHECK(Signals(w, events::kTurnStart, kGenlock) == 1);
-    CHECK(Signals(w, events::kTurnEnd, kGenlock) == 1);
-    // It stays in the order, standing, and is passed over again next round.
+    CHECK(Signals(w, events::kTurnStart, kGenlock) == 0);
+    // It has no card, and is down in the order until the round turns.
+    CHECK_FALSE(HasCard(w, kGenlock));
     REQUIRE(w.machine.Order().Find(kGenlock) != nullptr);
-    CHECK_FALSE(w.machine.Order().Find(kGenlock)->down);
+    CHECK(w.machine.Order().Find(kGenlock)->down);
+    // The next round has no place for it, and nothing more is said of it.
     REQUIRE(UntilTurnOf(w, kHero) >= 0);
     REQUIRE(UntilTurnOf(w, kCompanion) >= 0);
     CHECK(w.machine.Order().Round() == 2);
-    CHECK(Lines(w, "round 2: Genlock is inactive by the game's own word") == 1);
+    CHECK(w.machine.Order().Find(kGenlock) == nullptr);
+    CHECK(Lines(w, "Genlock leaves the fight") == 1);
+    CHECK(heard.EndsOf(kGenlock) == std::vector<std::string>{"down"});
     CHECK(told.Of(kGenlock) == 0);
-    // Up again: its next turn is its own, told like anyone.
+    // Up again, it is found fighting and joins: its next turn is its own,
+    // told like anyone.
     w.SetActive(kGenlock, true);
     REQUIRE(UntilTurnOf(w, kHero) >= 0);
     REQUIRE(UntilTurnOf(w, kCompanion) >= 0);
     CHECK(w.machine.Order().Round() == 3);
+    CHECK(Lines(w, "Genlock joins the fight (enemy") == 1);
     CHECK(told.Of(kGenlock) == 1);
     CHECK(Lines(w, "round 3: Genlock's turn (enemy, AI)") == 1);
-    CHECK(Lines(w, "Genlock is inactive") == 2);
     CHECK(heard.Of(EventKind::TurnStarted, kGenlock) == 1);
+    CHECK(HasCard(w, kGenlock));
 }
 
-TEST_CASE("an inactive creature's turn has no bar: nothing rolls over, and its own clock moves a turn's seconds",
+TEST_CASE("an inactive creature has no bar: nothing rolls over into its first turn back, and its own clock stands",
           "[machine][inactive]")
 {
     World w{WithABar()};
@@ -229,19 +247,22 @@ TEST_CASE("an inactive creature's turn has no bar: nothing rolls over, and its o
     const std::int64_t aged = w.agedOwn[kGenlock];
     REQUIRE(UntilTurnOf(w, kHero) >= 0);
     REQUIRE(UntilTurnOf(w, kCompanion) >= 0);
-    // No bar, so no second half to the line; and what it had saved is gone,
-    // as from any turn its actor did not end.
-    CHECK(std::ranges::count(w.log, std::string{"Genlock's turn ends: inactive"}) == 1);
-    CHECK(ends == std::vector<std::string>{"waits", "inactive"});
-    // Its clock moved a turn's seconds: what the game has waiting on it (the
-    // delayed event that brings a tentacle back up) comes by that clock.
-    CHECK(w.agedOwn[kGenlock] - aged == 4000);
+    // It left with the scan the next turn began on, and no turn of its came
+    // in the round it was under for.
+    CHECK(Lines(w, "Genlock leaves the fight: the game has taken it out of the world") == 1);
+    CHECK(ends == std::vector<std::string>{"waits"});
+    // Its own clock has not moved: out of the fight it is on the shared one,
+    // which the rounds move (tests/test_rotation.cpp has what that carries).
+    CHECK(w.agedOwn[kGenlock] == aged);
+    CHECK_FALSE(w.onOwnClock.contains(kGenlock));
     w.SetActive(kGenlock, true);
     REQUIRE(UntilTurnOf(w, kHero) >= 0);
     REQUIRE(UntilTurnOf(w, kCompanion) >= 0);
     // A turn's own four seconds, where the turn after the one it saved from
-    // would have had five.
+    // would have had five: what it had saved is gone, as from any turn its
+    // actor did not end.
     CHECK(bars == std::vector<std::uint32_t>{4000, 4000});
+    CHECK(w.onOwnClock.contains(kGenlock));
 }
 
 TEST_CASE("an inactive creature with something queued on it is not waited on: a queue the engine does not run is not "
@@ -269,7 +290,10 @@ TEST_CASE("an inactive creature with something queued on it is not waited on: a 
         CHECK(frames < 10);
         REQUIRE(UntilTurnOf(w, kHero) >= 0);
     }
-    CHECK(Lines(w, "Genlock's turn ends: inactive") == 3);
+    // It left the fight with the first scan that read it so, and no turn of
+    // its came in any of the three rounds.
+    CHECK(Lines(w, "Genlock leaves the fight: the game has taken it out of the world") == 1);
+    CHECK(Lines(w, "Genlock's turn (") == 0);
     CHECK(Lines(w, "still at a ") == 0);
     CHECK(Lines(w, "took too long") == 0);
     CHECK(Lines(w, "chose nothing") == 0);
@@ -313,10 +337,12 @@ TEST_CASE("made inactive in the middle of its turn, its turn ends there: nothing
         w.applied.clear();
         w.RunFor(50);
         CHECK(w.Current() == kCompanion);
-        CHECK(Lines(w, "Genlock is inactive by the game's own word, out of the world: it has no turn, and what is "
-                       "left of this one is nobody's") == 1);
+        CHECK(Lines(w, "Genlock is passed: the game has taken it out of the world; what is left of its turn is "
+                       "nobody's") == 1);
         CHECK(Lines(w, "Genlock's turn ends: inactive; nothing rolls over, its actor not having ended it (1.00 s "
                        "would have)") == 1);
+        // And with the scan the next turn begins on, it has left the fight.
+        CHECK(Lines(w, "Genlock leaves the fight: the game has taken it out of the world") == 1);
         CHECK(heard.EndsOf(kGenlock) == std::vector<std::string>{"inactive"});
         CHECK(Effects(w, EffectKind::ClearCommands, kGenlock) == 0);
         CHECK(Effects(w, EffectKind::Explain, kGenlock) == 0);
@@ -365,10 +391,11 @@ TEST_CASE("made inactive in the middle of its turn, its turn ends there: nothing
         w.RunFor(100);
         CHECK(told == 1);
         CHECK(w.Current() == kCompanion);
-        CHECK(heard.EndsOf(kGenlock) == std::vector<std::string>{"inactive"});
+        // The fight comes back with a look at everyone: it has left, and its
+        // turn ends as one's does whose creature is down as it comes.
+        CHECK(heard.EndsOf(kGenlock) == std::vector<std::string>{"down"});
         CHECK(Lines(w, "Genlock's turn goes on") == 0);
-        CHECK(Lines(w, "Genlock is inactive by the game's own word, out of the world: it has no turn, and what is "
-                       "left of this one is nobody's") == 1);
+        CHECK(Lines(w, "Genlock leaves the fight: the game has taken it out of the world") == 1);
     }
     SECTION("fallen in the same frame: its turn ends as the fallen's do")
     {
@@ -385,7 +412,7 @@ TEST_CASE("made inactive in the middle of its turn, its turn ends there: nothing
         w.RunFor(50);
         CHECK(w.Current() == kCompanion);
         CHECK(heard.EndsOf(kGenlock) == std::vector<std::string>{"fell"});
-        CHECK(Lines(w, "Genlock is inactive") == 0);
+        CHECK(Lines(w, "Genlock is passed") == 0);
     }
 }
 
@@ -407,8 +434,9 @@ TEST_CASE("a party member the game has made inactive is not waited on for an ord
         REQUIRE(UntilTurnOf(w, kGenlock) >= 0);
         REQUIRE(UntilTurnOf(w, kHero) >= 0);
         CHECK(w.machine.Order().Round() == 2);
-        CHECK(Lines(w, "round 1: Alistair is inactive by the game's own word, out of the world: it has no turn") == 1);
-        CHECK(heard.EndsOf(kCompanion) == std::vector<std::string>{"inactive"});
+        CHECK(Lines(w, "Alistair leaves the fight: the game has taken it out of the world") == 1);
+        // No turn of its came, to begin or to end.
+        CHECK(heard.EndsOf(kCompanion).empty());
         CHECK(heard.Of(EventKind::AwaitingOrder, kCompanion) == 0);
         CHECK(heard.Of(EventKind::TurnStarted, kCompanion) == 0);
         CHECK(Effects(w, EffectKind::Select, kCompanion) == 0);
@@ -424,25 +452,24 @@ TEST_CASE("a party member the game has made inactive is not waited on for an ord
         w.RunFor(50);
         CHECK(w.Current() != kHero);
         CHECK(heard.EndsOf(kHero) == std::vector<std::string>{"inactive"});
-        CHECK(Lines(w, "Hero is inactive by the game's own word, out of the world: it has no turn, and what is left "
-                       "of this one is nobody's") == 1);
+        CHECK(Lines(w, "Hero is passed: the game has taken it out of the world; what is left of its turn is "
+                       "nobody's") == 1);
+        CHECK(Lines(w, "Hero leaves the fight: the game has taken it out of the world") == 1);
     }
 }
 
-TEST_CASE("the fight's first turn is passed over like any, its creature inactive as the fight begins",
-          "[machine][inactive]")
+TEST_CASE("one inactive as the fight begins is not in it: the first turn is the next one's", "[machine][inactive]")
 {
-    // The first turn begins a frame after the fight does, on a look at its
-    // creature like every turn's.
     World w;
     Tellings told{w};
     Heard heard{w};
     w.Get(kHero).inactive = true;
     w.StartFight();
     REQUIRE(UntilTurnOf(w, kCompanion) >= 0);
-    CHECK(Lines(w, "round 1: Hero is inactive by the game's own word, out of the world: it has no turn") == 1);
-    CHECK(Lines(w, "what is left of this one is nobody's") == 0);
-    CHECK(heard.EndsOf(kHero) == std::vector<std::string>{"inactive"});
+    CHECK(Lines(w, "the fight: 3 combatants") == 1);
+    CHECK(w.machine.Order().Find(kHero) == nullptr);
+    CHECK(Lines(w, "Hero") == 0);
+    CHECK(heard.EndsOf(kHero).empty());
     CHECK(heard.Of(EventKind::AwaitingOrder, kHero) == 0);
     CHECK(heard.Of(EventKind::TurnStarted, kHero) == 0);
     CHECK(told.Of(kGenlock) == 1);
@@ -464,7 +491,8 @@ TEST_CASE("an unaware hostile the game has made inactive has no beat: nobody is 
         const int frames = UntilTurnOf(w, kCompanion);
         REQUIRE(frames >= 0);
         CHECK(frames < 10); // not the second its beat would have been
-        CHECK(heard.EndsOf(kGenlock) == std::vector<std::string>{"inactive"});
+        CHECK(heard.EndsOf(kGenlock) == std::vector<std::string>{"down"});
+        CHECK(Lines(w, "Genlock leaves the fight: the game has taken it out of the world") == 1);
         CHECK_FALSE(w.Said(L"Unaware"));
         CHECK(Lines(w, "has not noticed the party") == 0);
     }
@@ -507,7 +535,8 @@ TEST_CASE("what the mod kept for a creature is not given while it is inactive, a
         REQUIRE(UntilTurnOf(w, kHero) >= 0);
         REQUIRE(UntilTurnOf(w, kCompanion) >= 0);
     }
-    CHECK(Lines(w, "Genlock's turn ends: inactive") == 2);
+    CHECK(Lines(w, "Genlock leaves the fight: the game has taken it out of the world") == 1);
+    CHECK(Lines(w, "Genlock's turn (") == 1); // the one it kept the attack in
     CHECK(w.released.empty());
     CHECK(Lines(w, "Genlock's pending attack lands") == 0);
     CHECK(Lines(w, "is dropped") == 0);
@@ -573,8 +602,7 @@ TEST_CASE("a kept action is not given at a target the game has made inactive sin
         REQUIRE(w.released.size() == 1);
         CHECK(w.released.front() == Verdict::Allow);
         CHECK(w.Get(kHero).current == CommandType::Attack);
-        CHECK(Lines(w, "Hero's pending attack is turned on Hurlock: its target is out of the world") == 1);
-        CHECK(Lines(w, "its target has fallen") == 0);
+        CHECK(Lines(w, "Hero's pending attack is turned on Hurlock: its target is not there") == 1);
         // Paid for as it was to be, whoever it lands on.
         CHECK(w.machine.View().timeLeftMs == 3000);
         // And nothing was put on the one under ground.
@@ -588,7 +616,7 @@ TEST_CASE("a kept action is not given at a target the game has made inactive sin
         toHerNextTurn();
         CHECK(w.released.empty());
         CHECK(w.turned.empty());
-        CHECK(Lines(w, "Hero's pending attack is dropped: its target is out of the world, and no enemy is in its "
+        CHECK(Lines(w, "Hero's pending attack is dropped: its target is gone, and no enemy is in its "
                        "reach; the 1.00 s it owed given back") == 1);
         REQUIRE(w.Current() == kHero);
         CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
@@ -613,7 +641,7 @@ TEST_CASE("a kept action is not given at a target the game has made inactive sin
         toHerNextTurn();
         CHECK(w.released.empty());
         CHECK(w.turned.empty());
-        CHECK(Lines(w, "Hero's pending use ability is dropped: its target is out of the world; the 1.00 s it owed "
+        CHECK(Lines(w, "Hero's pending use ability is dropped: its target is gone; the 1.00 s it owed "
                        "given back") == 1);
         CHECK(heard.Of(EventKind::ActionDropped, kHero) == 1);
         REQUIRE(w.Current() == kHero);
@@ -640,14 +668,14 @@ TEST_CASE("a kept action is not given at a target the game has made inactive sin
     }
 }
 
-TEST_CASE("a hold on an inactive creature takes its turns as on anyone, and what is left of it waits for its first "
-          "turn back",
+TEST_CASE("a hold on an inactive creature is not paid down by turns it does not have, and is not lost",
           "[machine][inactive]")
 {
-    // The same tentacle: pinned for 10.2 s after it had gone under. Rounds 7
-    // and 8 were lost to the pin, as they are here; in round 9 the machine
-    // took the 2.2 s left of the bar, ended the pin, and told a creature that
-    // was not in the world.
+    // The same tentacle: pinned for 10.2 s after it had gone under. Until
+    // issue 66 its passed-over turns paid the pin down, rounds 7 and 8 lost
+    // to it. Out of the fight it has no turns to lose; what holds it is the
+    // engine's, on the shared clock, and if it still holds as the creature
+    // comes back, its turn is the hold's as anyone's is.
     World w{WithABar()};
     Tellings told{w};
     Heard heard{w};
@@ -656,14 +684,24 @@ TEST_CASE("a hold on an inactive creature takes its turns as on anyone, and what
     w.Get(kGenlock).condition = Condition::Disabled;
     w.Get(kGenlock).conditionSeconds = 10.2f;
     w.applied.clear();
-    for (int round = 0; round < 3; ++round)
+    for (int round = 0; round < 2; ++round)
     {
         REQUIRE(UntilTurnOf(w, kCompanion) >= 0);
         REQUIRE(UntilTurnOf(w, kHero) >= 0);
     }
-    CHECK(heard.EndsOf(kGenlock) ==
-          std::vector<std::string>{"held by its condition", "held by its condition", "inactive"});
+    CHECK(heard.EndsOf(kGenlock) == std::vector<std::string>{"down"});
+    CHECK(heard.Of(EventKind::TurnLost, kGenlock) == 0);
     CHECK(Lines(w, "Genlock's condition has had its turns: ended") == 0);
     CHECK(Effects(w, EffectKind::EndConditions, kGenlock) == 0);
+    CHECK(told.Of(kGenlock) == 0);
+    // Up again, the pin still on it: its first turn back is lost to it, and
+    // its AI is not told.
+    w.SetActive(kGenlock, true);
+    REQUIRE(UntilTurnOf(w, kCompanion) >= 0);
+    REQUIRE(UntilTurnOf(w, kHero) >= 0);
+    REQUIRE(UntilTurnOf(w, kCompanion) >= 0);
+    CHECK(Lines(w, "Genlock joins the fight (enemy") == 1);
+    CHECK(heard.Of(EventKind::TurnLost, kGenlock) == 1);
+    CHECK(heard.EndsOf(kGenlock).back() == "held by its condition");
     CHECK(told.Of(kGenlock) == 0);
 }

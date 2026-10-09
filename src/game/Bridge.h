@@ -74,8 +74,6 @@ class Bridge
     std::optional<bool> speedTook_;
     std::optional<bool> byRooms_; // whether the last scan went by the rooms seen (Scan)
     bool leaderStands_ = true;    // whether the party's leader stood for it at the last scan (SayWhoStands)
-    std::unordered_set<ObjectId>
-        unawares_; // hostiles in the fight though they have not noticed, as of the last scan (Scan)
     // The party as the last scan found it: whose perception of the acting
     // creature, and its of them, is read each frame (Actor).
     std::vector<ObjectId> party_;

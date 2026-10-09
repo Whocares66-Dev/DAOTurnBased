@@ -82,8 +82,12 @@ struct Needs
     // who is fighting still find it (Combatant::fighting says which), with
     // the engine's perception between it and the party: one out of combat or
     // beyond combat_radius stays in the fight while that perception holds
-    // (core/Rules.h, StaysInTheFight; issue 29). The machine names who, the
+    // (core/Rules.h, InTheRotation; issue 29). The machine names who, the
     // game says what is so of each, and core decides.
+    // And the fight's own party, standing or fallen (issue 66): one of them
+    // the game still has in its party is in the scan as the party's whoever
+    // names it, and one it has put out of the party is read as the rest
+    // here are, with the side the game gives it now.
     std::vector<ObjectId> inFight;
     // Whose commands to look at for a turn to face that stalls: the fight's
     // standing creatures, every frame of a fight that is on and not under a
@@ -137,7 +141,7 @@ struct ActorObservation
     // would fight, as of this frame (core/Types.h; the scan reads the same
     // of everyone as a turn begins, Combatant::perception): a hostile that
     // perceives nobody to fight is unaware, and is not told its turn has
-    // come (core/Rules.h, Unaware). Read each frame so that it acts from the
+    // come (core/Rules.h, Rotation::Unaware). Read each frame so that it acts from the
     // moment it notices.
     Perception perception;
     // At an effect's command: the effects standing on the creature as the
@@ -178,6 +182,8 @@ struct ActorObservation
     // object": script.ldf). It has no turn while it is so, and one made so in
     // the middle of its turn has that turn end there (issue 44;
     // TurnMachine::InactiveNow). Anyone's: a party member's is read the same.
+    // The scan reads it of everyone (Combatant::inactive), and one that is
+    // so is out of the fight from that look (issue 66).
     bool inactive = false;
     // At an effect's command: the mode of its own whose command that is, its
     // ability; kNoMode where the command is another's doing (a knockback, a
@@ -968,7 +974,8 @@ class TurnMachine
     };
 
     std::uint32_t Delta(std::uint32_t nowMs);
-    void StepIdle(const Observation &obs, std::vector<Effect> &fx);
+    [[nodiscard]] bool MayBegin() const;
+    void StepIdle(const Observation &obs, Mode was, std::vector<Effect> &fx);
     void StepSuspended(const Observation &obs, std::vector<Effect> &fx);
     void StepStarting(const Observation &obs, std::vector<Effect> &fx);
     void StepTurnStart(const Observation &obs, std::vector<Effect> &fx);
@@ -980,12 +987,11 @@ class TurnMachine
     void StepPadding(std::vector<Effect> &fx);
     [[nodiscard]] Verdict Judge(const CommandRequest &request);
     [[nodiscard]] bool LoseTurn(const Combatant &who, std::vector<Effect> &fx);
-    // A creature the game has made inactive has no turn (issue 44): whether
-    // it is so now, and its turn passed over as it comes. True if it was.
+    // A creature the game has made inactive has no turn (issue 44) and is
+    // not in the fight (issue 66; Merge takes it out of the order): whether
+    // the one whose turn it is is so now, by this frame's look at it, and its
+    // turn, already begun, ended there.
     [[nodiscard]] bool InactiveNow(const Combatant &who) const;
-    [[nodiscard]] bool InactiveTurn(const Combatant &who, std::vector<Effect> &fx);
-    // And a turn already begun ended there, its creature made inactive in the
-    // middle of it.
     void EndInactive(const Combatant &who, std::vector<Effect> &fx);
     // An action kept for a later turn (PayAction): a turn of its creature's
     // spent whole on what it still owes; the action given again at the start
@@ -1014,11 +1020,6 @@ class TurnMachine
     void GiveActionBack();
     [[nodiscard]] std::string BudgetLeft() const;
     void KeptVoid(ObjectId who);
-    // Whether the target of the kept action being given stands in the fight
-    // by the machine's own word, though the game layer did not find it there
-    // to be struck: one the game has made inactive (issue 44). For the log's
-    // word of why the action was turned or dropped, and nothing else.
-    [[nodiscard]] bool KeptTargetStands() const;
     // With time: an action that has run owes `ms` more to its creature's
     // next turns.
     void Owe(ObjectId who, std::uint32_t ms, CommandType type, std::int32_t ability);
@@ -1127,9 +1128,21 @@ class TurnMachine
     void End(std::vector<Effect> &fx, std::string_view why);
     // The fight lets the world go: those that left it alive (left_) and
     // whoever the gate turned away outside it (turnedAway_) are told to
-    // choose, once each, unless told with this step already.
+    // choose, once each.
     void LetGo(std::vector<Effect> &fx);
     void Merge(const std::vector<Combatant> &scan, std::vector<Effect> &fx);
+    // The facts the one rule for who is in the rotation takes (core/Rules.h,
+    // InTheRotation; issue 66): of a creature a scan read, with the place the
+    // order has for it, if any; and the rule's answer for the creature whose
+    // turn it is, by this frame's look at it.
+    [[nodiscard]] static Presence Scanned(const Combatant &seen, bool member);
+    [[nodiscard]] Rotation RotationNow(const Combatant &who) const;
+    // One of the order is out of the fight alive, from now (left_), said in
+    // one line with why, and with the event's detail: what Merge does for it
+    // whichever way it left. And a fighter's clock made its own, or the
+    // shared one's again.
+    void Leaves(Combatant &who, std::string_view why, std::string_view detail, std::vector<Effect> &fx);
+    void SetOwnClock(ObjectId who, bool own, std::vector<Effect> &fx) const;
     void ApplyStatuses(const std::vector<CombatantStatus> &statuses, std::vector<Effect> &fx);
     void TrackMovement(const ActorObservation &actor, std::vector<Effect> &fx);
     void EnforcePause(const Observation &obs, std::vector<Effect> &fx) const;
@@ -1196,7 +1209,7 @@ class TurnMachine
     // its own doing, and no hold.
     bool heldByEffect_ = false;
     // The current combatant is a hostile that has noticed nobody to fight
-    // (core/Rules.h, Unaware), in the beat its turn is skipped after
+    // (core/Rules.h, Rotation::Unaware), in the beat its turn is skipped after
     // (kUnawareMs): "Unaware" is over it, its AI has not been told its turn
     // has come, and the world runs. Over as it notices (its AI is told
     // then), as a command of its own is let through all the same (a
@@ -1210,7 +1223,7 @@ class TurnMachine
     // turn is skipped after its beat (unaware_). It is so through the turn:
     // found out of combat while its turn is being played, by a script's
     // command for it at the gate (Judge) or by the frame's look at it (Step;
-    // core/Rules.h, NothingToFight), its turn ends there and then, "out of
+    // core/Rules.h, NobodyToFight), its turn ends there and then, "out of
     // combat", nothing rolled over; and what its script has it do is the
     // game's, let through and charged to nothing. An action of its own still
     // running is the engine's to finish. Back in combat by its next turn, it
@@ -1361,14 +1374,7 @@ class TurnMachine
     // (Budget::begun).
     PartyTactics partyTactics_;
 
-    bool latch_ = false;     // a fight ended while the game still says combat: no new one until hostiles are seen
     bool stoodDown_ = false; // after an error (StandDown): no turns until the game has left combat
-    // Combatants a scan did not find, and since when: one is out of the
-    // fight only after kAbsentMs of it. In the user's eight fights a guard
-    // and a soldier were gone from one scan and back in the next every three
-    // seconds for ten minutes (311 "up again" against 39 falls, read off
-    // Eluvian's bus, 2026-09-30), losing whatever turn came while gone.
-    std::unordered_map<ObjectId, std::uint32_t> absentSince_;
     // With time: what each creature's last turn left over, to its cap.
     std::unordered_map<ObjectId, std::uint32_t> rollover_;
     // With time: how long each creature was held by another's action
@@ -1380,17 +1386,15 @@ class TurnMachine
     // time, as they changed in it. Its pace is said as it changes, and once
     // more as its effects end (SayPace, FollowPace; issue 49). This fight's.
     std::unordered_map<ObjectId, float> paceRates_;
-    static constexpr std::uint32_t kAbsentMs = 4000;
-    // Those that left the fight alive (missing from the scans for
-    // kAbsentMs): down in the order, and only a scan that finds one again
-    // brings it back. Its status, read every frame, said "alive", which
-    // brought it up again until the next scan put it down: the flapping.
-    // Each with the side it left as: a fight that ends with no enemy
-    // standing says whether they fell or left it (NoEnemyLeft). In the Dead
-    // Trenches (2026-10-05) "the turn-based fight is over after 11 rounds: no
-    // enemy left standing" was said of six that the party had run from, all
-    // alive. One dropped from the order as the round turns has no side there
-    // any more.
+    // Those that left the fight alive (Merge), each with the side it left as,
+    // until one is back in it: so that one back within the round is said to
+    // be so and stops what it took up meanwhile, and for the fight's end,
+    // where each that is not the party's is told to choose, having
+    // had no turn to tell it since (LetGo; issue 43), and a fight that ends
+    // with no enemy standing says whether they fell or left it (NoEnemyLeft).
+    // In the Dead Trenches (2026-10-05) "the turn-based fight is over after
+    // 11 rounds: no enemy left standing" was said of six that the party had
+    // run from, all alive.
     std::unordered_map<ObjectId, Side> left_;
     [[nodiscard]] std::string NoEnemyLeft() const;
     // The last refusal an event was emitted for, and when: the same one
@@ -1407,8 +1411,6 @@ class TurnMachine
     };
     std::optional<RefusedEvent> refusedEvent_;
     static constexpr std::uint32_t kRefusedEventMs = 1000;
-    // Fighting near, but not the party (Combatant::engaged): said once each.
-    std::unordered_set<ObjectId> outside_;
     // Those in combat whose command the gate turned away while they were not
     // in the order: one no scan has found, or found yet; one dropped from it
     // since it left. A command turned away never ends, and for a creature
@@ -1460,10 +1462,6 @@ class TurnMachine
     // ends, if any were. A play test's log then says how often the rule had
     // anything to do, without its debug lines.
     std::uint32_t facedFirst_ = 0;
-    // In the fight by the engine's perception alone, the scan's rules for
-    // who is fighting no longer finding them (Combatant::fighting false,
-    // StaysInTheFight): said once each, and again if it happens again.
-    std::unordered_set<ObjectId> afar_;
     // A scan asked for by a creature outside the order, and when: one
     // waiting outside the fight asks with every command it tries.
     std::optional<std::uint32_t> outsiderScanNow_;
@@ -1545,7 +1543,7 @@ class TurnMachine
     // has nothing it can get to: its turn ends.
     static constexpr int kGivenBackEnough = 2;
     std::uint32_t lastStatusNow_ = 0;
-    std::uint32_t lastLatchScanNow_ = 0;
+    std::uint32_t lastIdleLookNow_ = 0;
     std::uint32_t lastRefusalNow_ = 0;
 
     std::vector<Effect> pending_; // from the gate, handed out by the next Step
