@@ -1656,67 +1656,6 @@ def raise_fallen(notes: dict) -> None:
         )
 
 
-REVIVAL = 10504
-
-
-def revive(notes: dict) -> None:
-    """While someone of the party is down, the driver plays the turns of one who has Revival.
-
-    The game's tactics have no condition for a fallen ally (the choices for
-    Ally are a status, health, mana, the nearest, any), so a healer whose
-    tactics play its turns never casts it: in real time the player does. Seen
-    in the Alienage, 2026-10-09, the user watching: "Doesn't wynne have any
-    revival skills? Two-party members are down". Its tactics have its turns
-    back when everyone stands.
-    """
-    party = tool(
-        "inspect", {"kind": "creatures", "side": "party", "includeDead": True}
-    ).get("creatures", [])
-    dead = [c for c in party if c.get("dead")]
-    held = notes.get("reviver")
-    if not dead:
-        if held:
-            tool("turnbased_auto", {"id": held, "on": True})
-            notes.pop("reviver", None)
-        return
-    if held and any(c["id"] == held and not c.get("dead") for c in party):
-        return
-    notes.pop("reviver", None)
-    for c in party:
-        if c.get("dead") or c["id"] == HERO:
-            continue
-        spells = tool("inspect", {"kind": "abilities", "id": c["id"]}).get("spells", [])
-        if any(a.get("id") == REVIVAL for a in spells):
-            tool("turnbased_auto", {"id": c["id"], "on": False})
-            notes["reviver"] = c["id"]
-            say(
-                f"  {c.get('name')} has Revival and {dead[0].get('name')} is down: its turns are the driver's"
-            )
-            return
-
-
-def cast_revival(who: str, name: str) -> None:
-    """Revival at the nearest of the fallen, if it is ready."""
-    party = tool(
-        "inspect", {"kind": "creatures", "side": "party", "includeDead": True}
-    ).get("creatures", [])
-    me = next((c for c in party if c["id"] == who), None)
-    dead = [c for c in party if c.get("dead")]
-    spells = tool("inspect", {"kind": "abilities", "id": who}).get("spells", [])
-    ready = any(a.get("id") == REVIVAL and a.get("ready") for a in spells)
-    if not me or not dead or not ready:
-        return
-    down = min(dead, key=lambda c: apart(me, c))
-    answer = tool(
-        "order",
-        {"action": "ability", "id": who, "ability": REVIVAL, "target": down["id"]},
-    )
-    say(
-        f"    {name} casts Revival on {down.get('name')}: {str(answer.get('error') or 'ordered')[:80]}"
-    )
-    settle(who, answer.get("cursor"))
-
-
 def fight(minutes: float) -> int:
     """Plays the fight on: the party's turns by `player_turn`, the rest watched."""
     deadline = time.time() + 60 * minutes
@@ -1824,9 +1763,6 @@ def fight(minutes: float) -> int:
                 say("     the hero selected by hand")
         if current.get("yours"):
             if s.get("phase") == "awaiting order":
-                revive(notes)
-                if current["id"] == notes.get("reviver"):
-                    cast_revival(current["id"], current.get("name", "?"))
                 player_turn(current["id"], current.get("name", "?"), notes)
             else:
                 time.sleep(0.15)
