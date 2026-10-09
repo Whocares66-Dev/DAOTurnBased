@@ -19,8 +19,8 @@ last time is run first, the rest only if it passes: tools\\mutants.caught.json
 has it for each, and a run brings that file up to date, saying of a mutant
 whose kept test did not catch it that another did (it is news: a test may
 have stopped holding that promise). Six at a time on a machine at full load,
-a sample of 42 mutants was 26.0 s a mutant and is 7.9, and all 836 are 15
-minutes: 4.8 s for a .cpp's mutant, most of it the compiler, 27 for a
+a sample of 42 mutants was 26.0 s a mutant and is 7.9, and all 786 are 11
+minutes: 3.4 s for a .cpp's mutant, most of it the compiler, 23 for a
 header's.
 
 The mutants run side by side (the user, 2026-10-02: "do the mutants all run
@@ -229,12 +229,6 @@ MUTANTS = [
         "500 * ((bounded + 1) / 2)",
     ),
     Mutant(
-        "the gate lets anyone act",
-        MACHINE,
-        "if (current == nullptr || current->id != request.object)",
-        "if (current == nullptr)",
-    ),
-    Mutant(
         "the gate never checks movement",
         MACHINE,
         "if (budget_.outOfMovement || budget_.MovementLeft() < kMinStep)",
@@ -251,12 +245,6 @@ MUTANTS = [
         MACHINE,
         "return phase == Phase::Starting || phase == Phase::TurnStart ||",
         "(void)settings;\n    return phase == Phase::Idle &&",
-    ),
-    Mutant(
-        "the world idles on the player's turn though pause_on_player_turn says hold it",
-        MACHINE,
-        "(phase == Phase::AwaitingOrder && settings.pauseOnPlayerTurn);",
-        "(phase == Phase::AwaitingOrder && !settings.pauseOnPlayerTurn);",
     ),
     Mutant(
         "an action is given back every time",
@@ -295,22 +283,10 @@ MUTANTS = [
         "            (void)fx;\n",
     ),
     Mutant(
-        "an action may run forever",
-        MACHINE,
-        "        if (!heldByEffect_ && counted > limit)",
-        "        if (false)",
-    ),
-    Mutant(
         "an AI may think forever",
         MACHINE,
         "    if (clock_ >= deadline_)\n    {\n        // What its AI saw",
         "    if (false)\n    {\n        // What its AI saw",
-    ),
-    Mutant(
-        "an AI's wait does not end its turn",
-        MACHINE,
-        "        if (!player)\n        {\n            passRequested_ = true;\n",
-        "        if (!player)\n        {\n",
     ),
     Mutant(
         "what happens to a creature is refused out of turn",
@@ -343,12 +319,6 @@ MUTANTS = [
     ),
     # A turn an AI plays has a time limit, max_turn_ms (issue 38): what ends
     # a turn of steps that take nothing, with nothing counting its commands.
-    Mutant(
-        "limit: a turn an AI plays may go on for ever",
-        MACHINE,
-        "    if (counted <= limit)",
-        "    if (counted <= limit || counted > limit)",
-    ),
     Mutant(
         "limit: a turn the player plays is ended at max_turn_ms too",
         MACHINE,
@@ -443,22 +413,10 @@ MUTANTS = [
         "if (settings_.cameraFollow)",
     ),
     Mutant(
-        "a stun costs no turn",
-        MACHINE,
-        "    const bool owes = held.kind == Condition::Disabled && held.owedMs >= turn;",
-        "    const bool owes = held.kind == Condition::Disabled && held.owedMs >= turn * 99;",
-    ),
-    Mutant(
         "a condition that has had its time is never ended",
         MACHINE,
         "    if (held.owedMs == 0 && held.seen != Condition::None)",
         "    if (held.owedMs > 4000000000U && held.seen != Condition::None)",
-    ),
-    Mutant(
-        "End waits out what the engine holds the creature in",
-        MACHINE,
-        "        if (endTurnRequested_)\n        {\n            const bool queued = actor.current == CommandType::Invalid;",
-        "        if (endTurnRequested_ && Classify(actor.current) != CommandKind::Involuntary)\n        {\n            const bool queued = actor.current == CommandType::Invalid;",
     ),
     Mutant(
         "a condition on the game's clock costs no turn",
@@ -482,12 +440,6 @@ MUTANTS = [
         "    if (budget_.heldMs < 4000000000U)\n    {\n        return false;\n    }\n    Log(LogLevel::Info,",
     ),
     Mutant(
-        "time: a hold takes nothing of the bar",
-        MACHINE,
-        "    (void)budget_.spend.HoldClock(ran);",
-        "    (void)budget_.spend.HoldClock(0);",
-    ),
-    Mutant(
         "time: a hold takes its time of the bar as an action does, not of the clock by the turn's ratio",
         MACHINE,
         "    (void)budget_.spend.HoldClock(ran);",
@@ -498,12 +450,6 @@ MUTANTS = [
         MACHINE,
         "    budget_.holdBarMs += before - budget_.spend.CapacityLeftMs();\n    MoveClock(fx);",
         "    budget_.holdBarMs += before - budget_.spend.CapacityLeftMs();",
-    ),
-    Mutant(
-        "one clock for everyone's effects stands still for a hold",
-        MACHINE,
-        "    if (!timeHeld_ || OwnClocks())\n    {\n        return;\n    }\n    // Where effects are on the one clock",
-        "    if (!timeHeld_ || !OwnClocks())\n    {\n        return;\n    }\n    // Where effects are on the one clock",
     ),
     Mutant(
         "with own clocks, a hold moves the clock everything else is on too",
@@ -566,12 +512,6 @@ MUTANTS = [
         "    const std::uint32_t ran = counted.value_or(0);\n    (void)held;\n    (void)since;",
     ),
     Mutant(
-        "hold: what its timed step still had to run as its command ended is not charged",
-        MACHINE,
-        "        if (!actor.busy && ++idleTicks_ < 2)\n        {\n            ChargeHold(fx, false);\n            return;\n        }",
-        "        if (!actor.busy && ++idleTicks_ < 2)\n        {\n            return;\n        }",
-    ),
-    Mutant(
         "hold: what a step ran while a conversation played is taken of the bar as the fight goes on",
         MACHINE,
         '    budget_.step = StepWatch{};\n    if (seenActor_ && seenActor_->id == who.id)\n    {\n        (void)budget_.step.Look(seenActor_->step, clock_);\n    }\n    Log(LogLevel::Info, std::format("{}\'s turn goes on: {}"',
@@ -614,22 +554,10 @@ MUTANTS = [
         "    const bool further = now.elapsedMs > before.elapsedMs;",
     ),
     Mutant(
-        "hold: a step gone with time left ran nothing",
-        TIMEDSTEP,
-        "    if (HasTimeLeft(before) && gone)",
-        "    if (HasTimeLeft(before) && gone && since == 0)",
-    ),
-    Mutant(
         "hold: a step gone ran all it had left, however little of the watcher's time went by",
         TIMEDSTEP,
         "        return std::min(static_cast<std::uint32_t>(before.durationMs - before.elapsedMs), since);",
         "        (void)since;\n        return static_cast<std::uint32_t>(before.durationMs - before.elapsedMs);",
-    ),
-    Mutant(
-        "hold: a step gone ran the whole of the watcher's time since, not what it had left",
-        TIMEDSTEP,
-        "        return std::min(static_cast<std::uint32_t>(before.durationMs - before.elapsedMs), since);",
-        "        return since;",
     ),
     Mutant(
         "hold: a step begun anew is not one gone: the one before it ran nothing more",
@@ -713,28 +641,10 @@ MUTANTS = [
         "    if (heldByEffect_ && kind != CommandKind::Free && request.noAttack == NoAttack::None)",
     ),
     Mutant(
-        "an order queues behind the effect that holds its creature",
-        MACHINE,
-        "    if (heldByEffect_ && kind != CommandKind::Free)",
-        "    if (heldByEffect_ && kind == CommandKind::Free)",
-    ),
-    Mutant(
         "a creature an effect let go stays held",
         MACHINE,
         "        heldByEffect_ = false; // let go: the turn is its own again, with what the hold left of it",
         "        // let go",
-    ),
-    Mutant(
-        "an AI held by an effect is told its turn has come",
-        MACHINE,
-        "        seenActor_->current == CommandType::ExecuteEffect)\n    {\n        heldByEffect_ = true;",
-        "        seenActor_->current == CommandType::Invalid)\n    {\n        heldByEffect_ = true;",
-    ),
-    Mutant(
-        "an AI an effect let go is never told",
-        MACHINE,
-        "            Handover(*current, fx);\n            return;\n        }\n    }\n    // Standing at a walk it does not take (kStoodMs)",
-        "            return;\n        }\n    }\n    // Standing at a walk it does not take (kStoodMs)",
     ),
     Mutant(
         "a conversation before the fight has started skips its start",
@@ -767,12 +677,6 @@ MUTANTS = [
         "        Field(out, false);",
     ),
     Mutant(
-        "a creature falls unsaid",
-        MACHINE,
-        "        if (c->down != wasDown)",
-        "        if (c->down != wasDown && c->down == wasDown)",
-    ),
-    Mutant(
         "an AI's waits count real time at an enemy's speed",
         MACHINE,
         "static_cast<float>(dt) * speedSet_",
@@ -789,12 +693,6 @@ MUTANTS = [
         MACHINE,
         "        Emit(EventKind::TurnEnded, current->id, std::string{why});",
         "",
-    ),
-    Mutant(
-        "a refusal goes unheard",
-        MACHINE,
-        "    Emit(EventKind::Refused, target, Utf8(text), 0, Name(command), std::move(note));",
-        "    Emit(EventKind::SpeedSet, target, Utf8(text), 0, Name(command), std::move(note));",
     ),
     Mutant(
         "a fall is heard as a creature gone",
@@ -861,12 +759,6 @@ MUTANTS = [
         MACHINE,
         "    state.lastRefusal = lastPlayerRefusal_;",
         "    state.lastRefusal = lastRefusal_;",
-    ),
-    Mutant(
-        "a hold taken off before its victim's turn still costs the turn",
-        MACHINE,
-        "            if (takenOff && held.owedMs > 0)",
-        "            if (takenOff && held.owedMs > 4000000000U)",
     ),
     Mutant(
         "a hold run out on the clock gives its turns back",
@@ -998,12 +890,6 @@ MUTANTS = [
         "            if (in == nullptr || !stays(seen))",
     ),
     Mutant(
-        "one kept in the fight by perception is said so with every scan",
-        MACHINE,
-        "            if (afar_.insert(seen.id).second)",
-        "            if (!seen.fighting)",
-    ),
-    Mutant(
         "one back in the fight goes on with what it took up while it was out of it",
         MACHINE,
         "                // seed 165, 2026-10-04).\n                fx.push_back(Effect::Of(EffectKind::ClearCommands, seen.id));",
@@ -1070,18 +956,6 @@ MUTANTS = [
         "    if (person || appearance > 0)\n    {\n        return {PortraitSource::Render, {}, false};",
     ),
     Mutant(
-        "a creature gets the picture of another family",
-        PORTRAITS,
-        "PortraitFamily(row.label) != family)",
-        "PortraitFamily(row.label) == family)",
-    ),
-    Mutant(
-        "an action's own effect never gets its time",
-        MACHINE,
-        "ran >= kOwnEffectStepMs)",
-        "ran >= kOwnEffectStepMs * 100000)",
-    ),
-    Mutant(
         "an action's effect time is spent again at the round's end",
         MACHINE,
         "            else\n            {\n                roundAgedMs_ += ran;",
@@ -1124,12 +998,6 @@ MUTANTS = [
     # Nothing of a no is remembered: the rule that did ("ruled out for the
     # rest of its turn") was withdrawn after play, and its mutants with it.
     Mutant(
-        "an attack on a target with no place left at it is let through",
-        MACHINE,
-        "    if (request.noAttack == NoAttack::None)\n",
-        "    if (request.noAttack == NoAttack::None || request.noAttack == NoAttack::NoPlace)\n",
-    ),
-    Mutant(
         "an attack with no path to its target is let through",
         MACHINE,
         "    if (request.noAttack == NoAttack::None)\n",
@@ -1158,12 +1026,6 @@ MUTANTS = [
         MACHINE,
         "        notice_ = Notice{RefusedLine(words, who.name, request.type), lastNow_};\n",
         "",
-    ),
-    Mutant(
-        "an AI refused before a step stands out its thinking time",
-        MACHINE,
-        "    if (phase_ == Phase::AiThinking)\n    {\n        phase_ = Phase::Settling;\n    }\n    return true;\n",
-        "    return true;\n",
     ),
     Mutant(
         "an AI refused before a step is not told to choose again",
@@ -1244,18 +1106,6 @@ MUTANTS = [
         MACHINE,
         '    Emit(EventKind::FightBegan);\n    Log(LogLevel::Info, std::format("the fight: {} combatants; {}"',
         '    Log(LogLevel::Info, std::format("the fight: {} combatants; {}"',
-    ),
-    Mutant(
-        "a charged cast given again is taken for an order of the turn's",
-        MACHINE,
-        "    const bool landing = landing_ && landing_->caster == who->id && request.type == landing_->type &&",
-        "    const bool landing = landing_ && landing_->caster != who->id && request.type == landing_->type &&",
-    ),
-    Mutant(
-        "a caster held keeps its charge",
-        MACHINE,
-        "        if (!status.exists || status.down || status.condition == Condition::Disabled)",
-        "        if (!status.exists || status.down)",
     ),
     Mutant(
         "a caster fallen keeps its charge",
@@ -1455,14 +1305,6 @@ MUTANTS = [
         "    (void)fx;",
     ),
     Mutant(
-        "a cooldown is held at its own seconds, where waiting brings it back",
-        MACHINE,
-        "    return CooldownOf(h.creature, h.ability, h.item, kCooldownHoldSeconds,\n"
-        "                      static_cast<std::int32_t>(std::clamp<std::uint64_t>(total, kCooldownHoldSeconds, kMost)));",
-        "    return CooldownOf(h.creature, h.ability, h.item, static_cast<std::int32_t>((h.leftMs + 999) / 1000),\n"
-        "                      static_cast<std::int32_t>((h.ofMs + 999 + (total * 0) + (kMost * 0)) / 1000));",
-    ),
-    Mutant(
         "a hold is its hour for the total and what is left its share: one with little left is back by waiting",
         MACHINE,
         "    return CooldownOf(h.creature, h.ability, h.item, kCooldownHoldSeconds,\n"
@@ -1497,18 +1339,6 @@ MUTANTS = [
         "                return e.kind == EffectKind::Cooldown && e.target == who.id && e.a == r.ability && e.text == r.item;\n"
         "            });",
         "            (void)fx;",
-    ),
-    Mutant(
-        "a hold no fight wrote back is taken, at what is left of its hour",
-        MACHINE,
-        "        if (r.total >= static_cast<float>(kCooldownHoldSeconds))",
-        "        if (r.total >= static_cast<float>(kCooldownHoldSeconds) && r.total < 0.0f)",
-    ),
-    Mutant(
-        "a hold no fight wrote back is known only where its total is the hour exactly",
-        MACHINE,
-        "        if (r.total >= static_cast<float>(kCooldownHoldSeconds))",
-        "        if (r.total == static_cast<float>(kCooldownHoldSeconds))",
     ),
     Mutant(
         "a hold no fight wrote back is left at its hour",
@@ -1563,12 +1393,6 @@ MUTANTS = [
         MACHINE,
         "    approach_ = false;\n    ReleaseCooldowns(fx);",
         "    approach_ = false;",
-    ),
-    Mutant(
-        "a character's own AI spends the player's turn",
-        MACHINE,
-        "    if (player && !landing && !approaching && request.source == Source::Script &&",
-        "    if (player && !landing && !approaching && request.source == Source::Unknown &&",
     ),
     Mutant(
         "a character's own AI changes its weapons on the player's turn",
@@ -1731,12 +1555,6 @@ MUTANTS = [
         "        if (c.side != Side::Party && c.down && !held)",
     ),
     Mutant(
-        "the party's own AI is told the fight is over",
-        MACHINE,
-        "        if (c.side != Side::Party && !c.down && !held)",
-        "        if (!c.down && !held)",
-    ),
-    Mutant(
         "a turn that goes on after its action does not say it waits on an order",
         MACHINE,
         '    AwaitOrder("after its action");',
@@ -1806,12 +1624,6 @@ MUTANTS = [
     # where one creature must, who a scan measures from, whether it is in
     # combat, and how far a creature is from it.
     Mutant(
-        "a fallen leader stands for the party",
-        RULES,
-        "return member.id == id && member.alive; });",
-        "return member.id == id; });",
-    ),
-    Mutant(
         "a living leader gives way to the one the player controls",
         RULES,
         "    if (living(leader))\n    {\n        return leader;",
@@ -1840,12 +1652,6 @@ MUTANTS = [
         RULES,
         "        if (member.alive && std::ranges::find(living, member.id) == living.end())",
         "        if (std::ranges::find(living, member.id) == living.end())",
-    ),
-    Mutant(
-        "the party is measured from the one who stands for it alone",
-        RULES,
-        "            living.push_back(member.id);",
-        "            (void)member;",
     ),
     Mutant(
         "the one who stands for the party is not the first a scan asks",
@@ -1885,12 +1691,6 @@ MUTANTS = [
     ),
     # And where the machine reaches for the hero, who may have fallen.
     Mutant(
-        "a fallen hero is the one selected while a companion's tactics play its turn",
-        MACHINE,
-        "hero != nullptr && standing(*hero))\n    {\n        return hero_;",
-        "hero != nullptr && hero->id != except)\n    {\n        return hero_;",
-    ),
-    Mutant(
         "with the hero down nobody is selected in a companion's place, and a fight's banner is over nobody",
         MACHINE,
         "    return other != all.end() ? other->id : kNoObject;",
@@ -1901,12 +1701,6 @@ MUTANTS = [
         MACHINE,
         "return c.side == Side::Party && !c.down && c.id != except; };",
         "return c.side == Side::Party && !c.down && (c.id != except || true); };",
-    ),
-    Mutant(
-        "with the hero down an enemy is selected in her place",
-        MACHINE,
-        "return c.side == Side::Party && !c.down && c.id != except; };",
-        "return !c.down && c.id != except; };",
     ),
     Mutant(
         "a fight's banner floats over the hero's body",
@@ -2115,12 +1909,6 @@ MUTANTS = [
         "    rendered_.clear();\n    urls_.clear();\n",
         "    rendered_.clear();\n",
     ),
-    Mutant(
-        "the bar's string leaves the portraits out",
-        BAR,
-        "        Field(out, std::wstring_view{TextureName(portraits.Of(card.id))});\n",
-        "        (void)portraits;\n",
-    ),
     # A turn as a bar of time (dev/REBALANCE.md).
     Mutant(
         "turnbudget lets a kept action's creature walk its free meter",
@@ -2159,22 +1947,10 @@ MUTANTS = [
         "        chargeBegan_ = true;",
     ),
     Mutant(
-        "time: a kept attack is not known as it lands",
-        MACHINE,
-        "request.type == landing_->type &&",
-        "request.type == CommandType::UseAbility &&",
-    ),
-    Mutant(
         "time: what a kept action owes is not paid as its turn begins",
         MACHINE,
         "        (void)budget_.spend.SpendAction(owed);\n        budget_.pendingPaidMs = owed;",
         "        budget_.pendingPaidMs = owed;",
-    ),
-    Mutant(
-        "time: nothing rolls over",
-        MACHINE,
-        "            rollover_[current->id] = rolled;",
-        "            rollover_[current->id] = 0;",
     ),
     Mutant(
         "time: rollover's cap ignores Combat Tactics",
@@ -2281,12 +2057,6 @@ MUTANTS = [
         "        if (!player && PayWait(*who, request))\n        {\n            return Verdict::Allow;",
     ),
     Mutant(
-        "time: a wait takes nothing of the bar",
-        MACHINE,
-        "    (void)budget_.spend.SpendAction(cost); // it fits: nothing of it is owed\n",
-        "\n",
-    ),
-    Mutant(
         "time: a wait longer than what is left is paid for with what there is",
         MACHINE,
         "    if (cost > left)\n    {",
@@ -2377,12 +2147,6 @@ MUTANTS = [
         "        const bool approach = walk >= 9999.0f;",
     ),
     Mutant(
-        "time: the walk to a kept attack's target is held as a script's on the player's turn",
-        MACHINE,
-        "    const bool approaching = approach_ && kind == CommandKind::Move && request.source == Source::Script;",
-        "    const bool approaching = approach_ && kind == CommandKind::Action && request.source == Source::Script;",
-    ),
-    Mutant(
         "time: a kept action whose target is gone keeps what it was paid",
         MACHINE,
         "        budget_.spend.GiveActionBack(paid);\n        budget_.pendingPaidMs = 0;",
@@ -2401,18 +2165,6 @@ MUTANTS = [
         RULES,
         "        if (!foe.inReach || !std::isfinite(foe.meters))",
         "        if (!foe.inReach)",
-    ),
-    Mutant(
-        "time: a kept attack is turned on one its creature cannot see",
-        RULES,
-        "        if (!foe.standing || !foe.hostile || !foe.seen)",
-        "        if (!foe.standing || !foe.hostile)",
-    ),
-    Mutant(
-        "time: a kept attack is turned on the fallen",
-        RULES,
-        "        if (!foe.standing || !foe.hostile || !foe.seen)",
-        "        if (!foe.hostile || !foe.seen)",
     ),
     Mutant(
         "time: a kept attack is turned on one the game does not call hostile",
@@ -2451,12 +2203,6 @@ MUTANTS = [
         "            if (Opposed(who.side, c.side))",
     ),
     Mutant(
-        "time: a kept attack may be turned on anyone standing, friend or foe",
-        MACHINE,
-        "            if (!c.down && Opposed(who.side, c.side))",
-        "            if (!c.down && c.id != who.id)",
-    ),
-    Mutant(
         "time: a kept attack turned on another is not said",
         MACHINE,
         "            const bool turned = request.type == CommandType::Attack && request.target != kNoObject &&\n"
@@ -2493,12 +2239,6 @@ MUTANTS = [
         MACHINE,
         '    if (why == "held" || why == "struck" || why == kConjureCleared)',
         '    if (why == "held" || why == "struck" || why == kConjureCleared || why == "the fight over")',
-    ),
-    Mutant(
-        "time: a cooldown does not move with its user's clock",
-        MACHINE,
-        "        h.leftMs -= std::min(h.leftMs, clockMs);",
-        "        h.leftMs -= std::min(h.leftMs, clockMs) * 0;",
     ),
     Mutant(
         "time: a turn's end does not move the clock the rest of the way",
@@ -2541,12 +2281,6 @@ MUTANTS = [
         MACHINE,
         "            if (takenOff && held.owedMs > 0)",
         "            if (takenOff && held.owedMs > 999999)",
-    ),
-    Mutant(
-        "preview: an order's cost forgets its walk",
-        PREVIEW,
-        "    const float walk = std::max(0.0f, walkMeters - view.paidMeters) / view.paceMps;",
-        "    const float walk = 0.0f * std::max(0.0f, walkMeters - view.paidMeters) / view.paceMps;",
     ),
     Mutant(
         "preview: an order that does not fit is not said to spill",
@@ -2704,12 +2438,6 @@ MUTANTS = [
         MACHINE,
         "    return Active() && ((charge != charges_.end() && charge->kept && charge->spell) ||",
         "    return Active() && ((charge != charges_.end() && charge->kept) ||",
-    ),
-    Mutant(
-        "rules: a party member's threshold forgets Combat Training",
-        RULES,
-        "    return party ? (10.0f * ranks) + 5.0f + (levels / 2.0f) : (10.0f * ranks) + levels;",
-        "    return party ? (0.0f * ranks) + 5.0f + (levels / 2.0f) : (10.0f * ranks) + levels;",
     ),
     Mutant(
         "rules: a boss is interrupted as a critter is",
@@ -2951,18 +2679,6 @@ MUTANTS = [
         '        Floaty(fx, who, spell ? L"Spell lost" : L"Action lost", kGold);',
         '        Floaty(fx, who, spell ? L"Spell lost" : L"Action lost", kGrey);',
     ),
-    Mutant(
-        "an attack standing short of its target is left to stand",
-        MACHINE,
-        "    if (actor.busy && !heldByEffect_ && (at == CommandKind::Move || at == CommandKind::Free || short_))",
-        "    if (actor.busy && !heldByEffect_ && (at == CommandKind::Move || at == CommandKind::Free))",
-    ),
-    Mutant(
-        "an attack swinging where it stands is taken for one that cannot get there",
-        MACHINE,
-        "    const bool short_ = attacking && actor.approaching;",
-        "    const bool short_ = attacking;",
-    ),
     # Issue 11: an attack that stands still is judged by whether the engine
     # has its command still at its approach, as the game layer reads it each
     # frame, and by how long it has stood at that command alone; and a kept
@@ -3149,22 +2865,10 @@ MUTANTS = [
         "    if (!player && budget_.givenBack >= kGivenBackEnough - 1)",
     ),
     Mutant(
-        "an attack standing short of its target is given as long as a walk",
-        MACHINE,
-        "        const std::uint32_t limit = Patience(short_ ? kStuckMs : kStoodMs);",
-        "        const std::uint32_t limit = Patience(short_ ? kStoodMs + 1000 : kStoodMs);",
-    ),
-    Mutant(
         "an attack standing short of its target is stopped at once",
         MACHINE,
         "        const std::uint32_t limit = Patience(short_ ? kStuckMs : kStoodMs);",
         "        const std::uint32_t limit = Patience(short_ ? kStuckMs / 4 : kStoodMs);",
-    ),
-    Mutant(
-        "an attack still at its approach is taken for one at its blow",
-        MACHINE,
-        "    const bool short_ = attacking && actor.approaching;",
-        "    const bool short_ = attacking && !actor.approaching;",
     ),
     Mutant(
         "how long a creature has stood is carried over from the command before",
@@ -3293,28 +2997,10 @@ MUTANTS = [
         "    default: // a critter, and what has no rank\n        return 1;",
     ),
     Mutant(
-        "an effect not seen as the turn began holds its creature for max_action_ms",
-        MACHINE,
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0)",
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands < 0)",
-    ),
-    Mutant(
-        "its own action's effect is taken for one that holds it",
-        MACHINE,
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0)",
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect)",
-    ),
-    Mutant(
         "own clocks: a creature's effects do not move as its bar is spent",
         MACHINE,
         "    if (clockMs == 0 || !OwnClocks() || !timeHeld_ || ownEffectSince_)\n    {\n        return;\n    }\n    Effect age = Effect::Of(EffectKind::AgeTime, who);",
         "    if (clockMs < 100000 || !OwnClocks() || !timeHeld_ || ownEffectSince_)\n    {\n        return;\n    }\n    Effect age = Effect::Of(EffectKind::AgeTime, who);",
-    ),
-    Mutant(
-        "own clocks: a turn's end does not move its creature's effects the rest of the way",
-        MACHINE,
-        "; rest > 0 && OwnClocks() && timeHeld_)",
-        "; rest > 0 && OwnClocks() && timeHeld_ && rest > turn)",
     ),
     Mutant(
         "own clocks: a turn's end moves its creature's effects a whole turn again",
@@ -3345,12 +3031,6 @@ MUTANTS = [
         MACHINE,
         "    return settings_.ownClocks;",
         "    return true;",
-    ),
-    Mutant(
-        "own clocks: its action's own effect moves everyone's",
-        MACHINE,
-        "            const bool own = OwnClocks() && acting != nullptr;",
-        "            const bool own = false && acting != nullptr;",
     ),
     Mutant(
         "own clocks: an action's own effect does not move its target's clock",
@@ -3423,12 +3103,6 @@ MUTANTS = [
         MACHINE,
         "grabbed != grabbedMs_.end() && grabbed->second >= TurnMs())",
         "grabbed != grabbedMs_.end() && grabbed->second >= TurnMs() * 100)",
-    ),
-    Mutant(
-        "held by another's action, its share is not taken of its bar",
-        MACHINE,
-        "    const std::uint32_t clock = budget_.spend.HoldClock(owed);\n    AgeCooldowns(who.id, clock, fx);",
-        "    const std::uint32_t clock = budget_.spend.HoldClock(0);\n    AgeCooldowns(who.id, clock, fx);",
     ),
     Mutant(
         "held by another's action, its effects are moved again at its turn",
@@ -3528,12 +3202,6 @@ MUTANTS = [
         "    return PortraitFrame{PortraitCamera{row.pitch, row.rotation, row.distance, row.aside, row.up},",
     ),
     Mutant(
-        "a default's distance does not follow the creature's size",
-        PORTRAITS,
-        "    const float bySize = std::isfinite(extent) ? row.distance * std::max(extent, 0.0f) : 0.0f;",
-        "    const float bySize = std::isfinite(extent) ? row.distance : 0.0f;",
-    ),
-    Mutant(
         "a default frames from past the far plane, where nothing is drawn",
         PORTRAITS,
         "    const float distance = std::clamp(bySize, kFramedFromLeast, kFramedFromMost);",
@@ -3586,18 +3254,6 @@ MUTANTS = [
         "        const float size = length;",
     ),
     Mutant(
-        "a body's length is taken against a person's height: 3.8 m, which did not clear the giant spider",
-        PORTRAITS,
-        "        const float length = std::max(box->x, box->y) / kPersonAcross;",
-        "        const float length = std::max(box->x, box->y) / kPersonHeight;",
-    ),
-    Mutant(
-        "a body's height is taken against a person's across: a person is seen from further than the party",
-        PORTRAITS,
-        "        const float height = box->z / kPersonHeight;",
-        "        const float height = box->z / kPersonAcross;",
-    ),
-    Mutant(
         "a body's length is its box's first side across, whichever way the model lies in it",
         PORTRAITS,
         "        const float length = std::max(box->x, box->y) / kPersonAcross;",
@@ -3634,12 +3290,6 @@ MUTANTS = [
         "length > height ? CloseBy::Height : CloseBy::Length",
     ),
     Mutant(
-        "a box with a side that is not a number is taken for a creature's measure",
-        PORTRAITS,
-        "    if (box && std::isfinite(box->x) && std::isfinite(box->y) && std::isfinite(box->z))",
-        "    if (box)",
-    ),
-    Mutant(
         "a creature with a head node goes by its feet to its head, whatever its box: the giant spider's turn again",
         PORTRAITS,
         "    if (box && std::isfinite(box->x) && std::isfinite(box->y) && std::isfinite(box->z))",
@@ -3665,12 +3315,6 @@ MUTANTS = [
     # the three in front only with no place behind; with none at all, with
     # the party, looking at it.
     Mutant(
-        "a line cut short of the whole distance is taken for clear: a frame of a wall, as on the ogre's turn",
-        PORTRAITS,
-        "        if (place.ground && place.clear >= whole)",
-        "        if (place.ground && place.clear > 0.0f)",
-    ),
-    Mutant(
         "a place clear the whole way is taken with no ground under it: the frame from inside the Broodmother's rock",
         PORTRAITS,
         "        if (place.ground && place.clear >= whole)",
@@ -3687,18 +3331,6 @@ MUTANTS = [
         PORTRAITS,
         "            return ViewStand{ViewAnswer::Stand, place.side, whole, asked};",
         "            return ViewStand{ViewAnswer::Stand, place.side, whole, std::nullopt};",
-    ),
-    Mutant(
-        "the whole distance is the game's own, whatever the creature's size asks",
-        PORTRAITS,
-        "    const float whole = OrbitDistance(zoom, asked.value_or(kCloseGame));",
-        "    const float whole = OrbitDistance(zoom, kCloseGame);",
-    ),
-    Mutant(
-        "with no side clear the whole distance the camera stands where its line is clear the least",
-        PORTRAITS,
-        "        if (place.ground && (best == nullptr || place.clear > best->clear))",
-        "        if (place.ground && (best == nullptr || place.clear < best->clear))",
     ),
     Mutant(
         "of two lines clear alike the later side is taken",
@@ -3729,12 +3361,6 @@ MUTANTS = [
         PORTRAITS,
         "    if (sane >= wanted)\n    {\n        return wanted;",
         "    if (sane >= wanted + 100.0f)\n    {\n        return wanted;",
-    ),
-    Mutant(
-        "where the camera would stand at a place is by the game's own distance, whatever the creature's size asks",
-        PORTRAITS,
-        "    const float wanted = OrbitDistance(zoom, asked.value_or(kCloseGame));\n    const float least",
-        "    const float wanted = OrbitDistance(zoom, asked.value_or(kCloseGame) * 0.0f + kCloseGame);\n    const float least",
     ),
     Mutant(
         "a stand at the game's own distance is given a close distance of its own",
@@ -3771,12 +3397,6 @@ MUTANTS = [
         PORTRAITS,
         "            ChooseOf(zoom, asked, *front, {ViewSide::FrontRight, ViewSide::FrontLeft, ViewSide::Front}))",
         "            ChooseOf(zoom, asked, *front, {ViewSide::Right, ViewSide::Left, ViewSide::Behind}))",
-    ),
-    Mutant(
-        "the three places in front are chosen among though a place behind stands",
-        PORTRAITS,
-        "            ChooseOf(zoom, asked, back, {ViewSide::Right, ViewSide::Left, ViewSide::Behind}))",
-        "            ChooseOf(zoom, asked, front.value_or(back), {ViewSide::Right, ViewSide::Left, ViewSide::Behind}))",
     ),
     Mutant(
         "a place over no ground is a place to stand",
@@ -3905,12 +3525,6 @@ MUTANTS = [
         '    AppendText(out, "row", std::string_view{});',
     ),
     Mutant(
-        "the portrait tool's answer says nothing of the camera against the creature's size",
-        PORTRAITS,
-        "                       report.atMost, sized ? report.camera.distance / report.extent : 0.0f,",
-        "                       report.atMost, sized ? 0.0f : 0.0f,",
-    ),
-    Mutant(
         "the log's line for a portrait leaves out what was measured of its creature",
         PORTRAITS,
         "                           MeasureWords(report));\n        if (!report.problem.empty())",
@@ -3959,12 +3573,6 @@ MUTANTS = [
         PORTRAITS,
         "                       report.lack == PortraitLack::Nothing || report.rendered, PortraitLackName(report.lack),",
         "                       report.lack == PortraitLack::Nothing, PortraitLackName(report.lack),",
-    ),
-    Mutant(
-        "what a portrait's camera was set about is said the wrong way round",
-        PORTRAITS,
-        '    const std::string_view aimedAt = !report.rendered ? "" : report.head ? "head_node" : "scene_origin";',
-        '    const std::string_view aimedAt = !report.rendered ? "" : report.head ? "scene_origin" : "head_node";',
     ),
     Mutant(
         "the deepstalker is turned as the rest are, and its round mouth is edge on",
@@ -4065,12 +3673,6 @@ MUTANTS = [
         MACHINE,
         "    const bool actionKept = chargeBegan_ || pendingEndNow_;",
         "    const bool actionKept = (chargeBegan_ || pendingEndNow_) && kind == CommandKind::Action;",
-    ),
-    Mutant(
-        "a door costs nothing of the bar",
-        MACHINE,
-        "        if (UsesAnObject(request.type) && settings_.objectSeconds > 0.0f)",
-        "        if (UsesAnObject(request.type) && settings_.objectSeconds > 100.0f)",
     ),
     Mutant(
         "a door's cost that does not fit is not owed",
@@ -4179,22 +3781,10 @@ MUTANTS = [
     # A creature that is not of the party and that the game does not have in
     # combat has no turn: found so in its own turn, that turn ends.
     Mutant(
-        "the walk to a kept attack's target is taken for the game's sending its creature somewhere",
-        MACHINE,
-        "        !(itsTurn && (landing || approaching)))",
-        "        !(itsTurn && landing))",
-    ),
-    Mutant(
         "a kept attack given to its creature is taken for the game's sending it something",
         MACHINE,
         "        !(itsTurn && (landing || approaching)))",
         "        !(itsTurn && approaching))",
-    ),
-    Mutant(
-        "a script's command for one out of combat in its own turn does not end that turn",
-        MACHINE,
-        "        if (itsTurn && !unaware_ && !outOfCombat_)\n        {\n            outOfCombat_ = true;",
-        "        if (itsTurn && !unaware_ && !outOfCombat_)\n        {",
     ),
     Mutant(
         "a script's command for one out of combat ends the turn of whoever's turn it is",
@@ -4306,12 +3896,6 @@ MUTANTS = [
         "    return who.side != Side::Party && seenActor_ && seenActor_->id == who.id && seenActor_->exists &&\n           seenActor_->inactive;",
     ),
     Mutant(
-        "made inactive in the middle of its turn, a creature's turn goes on",
-        MACHINE,
-        "        current != nullptr && InTurn() && !ActorGone(obs) && InactiveNow(*current))",
-        "        current != nullptr && InTurn() && !ActorGone(obs) && InactiveNow(*current) && false)",
-    ),
-    Mutant(
         "a turn a conversation came in the middle of goes on, its creature made inactive meanwhile: it is told again",
         MACHINE,
         "        if (InactiveNow(*current))\n        {\n            EndInactive(*current, fx);\n            return;\n        }\n        ResumeTurn(*current, fx);",
@@ -4370,12 +3954,6 @@ MUTANTS = [
         MACHINE,
         "    return target != nullptr && !target->down;\n}\n\n// The game layer did not give a kept cast",
         "    return target != nullptr;\n}\n\n// The game layer did not give a kept cast",
-    ),
-    Mutant(
-        "a command the gate let through and the engine has not yet begun is taken for over",
-        MACHINE,
-        "    if (actor.busy)\n    {\n        idleTicks_ = 0;",
-        "    if (actor.busy && actor.current != CommandType::Invalid)\n    {\n        idleTicks_ = 0;",
     ),
     Mutant(
         "one that waited outside and was turned away is told twice as the fight ends",
@@ -4597,12 +4175,6 @@ MUTANTS = [
         "        out += kOn;",
     ),
     Mutant(
-        "the save's file is written with no end, and reads as cut short",
-        PARTYTACTICS,
-        "    out += kEnd;\n    out += '\\n';\n    return out;",
-        "    return out;",
-    ),
-    Mutant(
         "a file of another version is read as this build's",
         PARTYTACTICS,
         "    if (*version != static_cast<std::uint64_t>(kPartyTacticsVersion))",
@@ -4710,12 +4282,6 @@ MUTANTS = [
         '    const char *underWay = answer.turnIsTactics ? "AI" : "yours";',
         '    const char *underWay = "yours";',
     ),
-    Mutant(
-        "the tool's answer never says a turn is under way",
-        PARTYTACTICS,
-        '    out += R"(,"turn_under_way":)";\n    if (answer.turnUnderWay)',
-        '    out += R"(,"turn_under_way":)";\n    if (answer.turnUnderWay && false)',
-    ),
     # The tactics page's box, "Use when turn-based" (issue 46's second step):
     # what it shows of whom, what its movie asks and says.
     Mutant(
@@ -4729,12 +4295,6 @@ MUTANTS = [
         PARTYTACTICS,
         "    if (who.hero || !Keepable(who.tag))",
         "    if (who.hero)",
-    ),
-    Mutant(
-        "a box shows ticked for a companion whose turns wait, and not for one whose tactics play them",
-        PARTYTACTICS,
-        "    return answer.on ? BoxState::On : BoxState::Off;",
-        "    return answer.on ? BoxState::Off : BoxState::On;",
     ),
     Mutant(
         "a box shows whether anything was chosen for its companion, not what its turns go by",
@@ -4813,12 +4373,6 @@ MUTANTS = [
         MACHINE,
         "        boxes.Set(who.id, BoxFor(who, TacticsOf(who)));",
         "        boxes.Set(who.id, BoxFor(who, TacticsAnswer{}));",
-    ),
-    Mutant(
-        "the tactics page's boxes are of the first of the party alone",
-        MACHINE,
-        "    for (const Follower &who : party)\n    {\n        boxes.Set(who.id, BoxFor(who, TacticsOf(who)));",
-        "    for (const Follower &who : party.first(party.empty() ? 0 : 1))\n    {\n        boxes.Set(who.id, BoxFor(who, TacticsOf(who)));",
     ),
     Mutant(
         "text written longer than it need be is read from a file as text",
@@ -4923,12 +4477,6 @@ MUTANTS = [
         "src/core/TurnBudget.cpp",
         "    if (!bar_ || !(paceMps > 0.0f) || !std::isfinite(paceMps))",
         "    if (!bar_)",
-    ),
-    Mutant(
-        "a pace changed within a turn is said at every look",
-        MACHINE,
-        "    if (pace == budget_.pace)\n    {\n        return;\n    }\n",
-        "",
     ),
     Mutant(
         "a pace changed within a turn is said again as a change when the next turn begins",
@@ -5057,24 +4605,6 @@ MUTANTS = [
         "        if (!TurnsToFace(look.type))",
     ),
     Mutant(
-        "a creature the engine would turn is faced all the same",
-        MACHINE,
-        "        if (look.turn.stalls)\n",
-        "        if (!look.turn.done)\n",
-    ),
-    Mutant(
-        "a creature whose turn waits is faced, where the engine would have turned it",
-        MACHINE,
-        "        if (look.turn.stalls)\n",
-        "        if (look.turn.stalls || look.turn.waits)\n",
-    ),
-    Mutant(
-        "a facing is asked for from the second look on, and with every frame",
-        MACHINE,
-        "            if (!std::exchange(turning.asked, true))",
-        "            if (std::exchange(turning.asked, true))",
-    ),
-    Mutant(
         "a facing that did not come off is asked for again with every frame",
         MACHINE,
         "            if (!std::exchange(turning.asked, true))",
@@ -5117,22 +4647,10 @@ MUTANTS = [
         "    if (!faced.now || !faced.now->done)",
     ),
     Mutant(
-        "a facing the engine does not have for done after is said and counted as one",
-        MACHINE,
-        "    if (!faced.taken || !faced.now || !faced.now->done)",
-        "    if (!faced.taken || !faced.now)",
-    ),
-    Mutant(
         "a facing that did not come off is said with the angle it stood at, and not what the engine has now",
         MACHINE,
         ': std::format("still has it {:.2f} deg off: not done", std::abs(faced.now->degrees)),',
         ': std::format("still has it {:.2f} deg off: not done", faced.stood),',
-    ),
-    Mutant(
-        "what the engine still has a creature off is said as less than nothing, one way round",
-        MACHINE,
-        ': std::format("still has it {:.2f} deg off: not done", std::abs(faced.now->degrees)),',
-        ': std::format("still has it {:.2f} deg off: not done", faced.now->degrees),',
     ),
     Mutant(
         "a facing made that the engine does not have for done after is said not to have been made",
@@ -5163,12 +4681,6 @@ MUTANTS = [
         MACHINE,
         "    if (facedFirst_ > 0)",
         "    if (facedFirst_ + 1 > 0)",
-    ),
-    Mutant(
-        "an ability's caster faced is said to have been at an attack",
-        MACHINE,
-        '    const char *what = faced.type == CommandType::Attack ? "attack" : "ability";',
-        '    const char *what = faced.type != CommandType::Invalid ? "attack" : "ability";',
     ),
     # No clock on the player's turn, and a mode that keeps its user at a
     # command (issue 51). How its own mode's command is told from another's
@@ -5291,12 +4803,6 @@ MUTANTS = [
     ),
     # The gate, at its own mode's command.
     Mutant(
-        "ownmode: an action is let through at its creature's own mode's command, to wait behind it",
-        MACHINE,
-        "mode != kNoMode && !landing && !approaching && (kind == CommandKind::Action || kind == CommandKind::Move))",
-        "mode != kNoMode && !landing && !approaching && (kind == CommandKind::Move))",
-    ),
-    Mutant(
         "ownmode: a move is let through at its creature's own mode's command, to wait behind it",
         MACHINE,
         "mode != kNoMode && !landing && !approaching && (kind == CommandKind::Action || kind == CommandKind::Move))",
@@ -5307,12 +4813,6 @@ MUTANTS = [
         MACHINE,
         "mode != kNoMode && !landing && !approaching && (kind == CommandKind::Action || kind == CommandKind::Move))",
         "mode != kNoMode && !landing && !approaching)",
-    ),
-    Mutant(
-        "ownmode: the player is not told why an order at its creature's own mode's command is refused",
-        MACHINE,
-        "        if (player && asked)\n        {\n            Refuse(who->id, std::wstring{kModeFirst}, request.type,",
-        "        if (false)\n        {\n            Refuse(who->id, std::wstring{kModeFirst}, request.type,",
     ),
     Mutant(
         "ownmode: its own AI's order refused at its creature's mode is said to the player",
@@ -5353,12 +4853,6 @@ MUTANTS = [
     ),
     # Whatever ends a turn by force stops what its creature was at.
     Mutant(
-        "End: End waits for an action of the turn's that is still running",
-        MACHINE,
-        "        if (endTurnRequested_)\n        {\n            const bool queued = actor.current == CommandType::Invalid;",
-        "        if (endTurnRequested_ && Classify(actor.current) == CommandKind::Involuntary)\n        {\n            const bool queued = false;",
-    ),
-    Mutant(
         "End: an action End stopped is left running into the next creature's turn",
         MACHINE,
         "                fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));\n                const Combatant *current = order_.Current();\n                Log(LogLevel::Info,\n                    std::format(\"{}'s {} is stopped",
@@ -5392,12 +4886,6 @@ MUTANTS = [
         "    return step.durationMs > 0 && step.elapsedMs <= step.durationMs;",
     ),
     Mutant(
-        "long: a timed step that stands advances at every look",
-        TIMEDSTEP,
-        "    const bool advanced = HasTimeLeft(last_) && step.elapsedMs != last_.elapsedMs;",
-        "    const bool advanced = HasTimeLeft(last_);\n    (void)step;",
-    ),
-    Mutant(
         "long: a step with no time left advances if its count moves",
         TIMEDSTEP,
         "    const bool advanced = HasTimeLeft(last_) && step.elapsedMs != last_.elapsedMs;",
@@ -5408,12 +4896,6 @@ MUTANTS = [
         TIMEDSTEP,
         "    const bool advanced = HasTimeLeft(last_) && step.elapsedMs != last_.elapsedMs;",
         "    const bool advanced = HasTimeLeft(last_) && (step.elapsedMs != last_.elapsedMs || step.durationMs != last_.durationMs);",
-    ),
-    Mutant(
-        "long: a step that advanced answers none of the time, and one that stood all of it",
-        TIMEDSTEP,
-        "    return advanced ? since : 0;",
-        "    return advanced ? 0 : since;",
     ),
     Mutant(
         "long: the time since the look before is counted from the watch's first look, not its last",
