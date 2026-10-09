@@ -4,8 +4,11 @@
 
 .DESCRIPTION
     The build's format, format-check and tidy targets call this (cmake/Quality.cmake),
-    and it runs the same by hand. The scripts are whatever git tracks or would track --
-    tracked, and untracked but not ignored -- so one in a new folder is not missed.
+    and it runs the same by hand. The scripts are what git tracks, a new one from the
+    moment it is added (git add): a script lying in the tree that is nobody's to commit
+    is not this repository's to rewrite or to fail on. It took those too until
+    2026-10-09, "so one in a new folder is not missed": a gate's -Format rewrote six
+    untracked scripts of the user's in dev\, and its lint failed on them.
 
     -Mode Format       rewrite each script with Invoke-Formatter
     -Mode FormatCheck  fail if any script would be rewritten
@@ -29,7 +32,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'console.ps1')
 $repo = Split-Path -Parent $PSScriptRoot
 
-$files = @(git -C $repo ls-files --cached --others --exclude-standard -- '*.ps1' '*.psm1' '*.psd1' |
+$files = @(git -C $repo ls-files --cached -- '*.ps1' '*.psm1' '*.psd1' |
         ForEach-Object { Join-Path $repo $_ } | Where-Object { Test-Path $_ })
 if ($LASTEXITCODE -ne 0) { throw 'git ls-files failed; is this a git checkout?' }
 
