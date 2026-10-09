@@ -4,9 +4,24 @@ SkyrimFollowerTactics' rule (its dev/PRINCIPLES.md, "Check that the tests
 would catch a bug"): a green suite can pass while testing nothing, and
 breaking the code on purpose shows what is never checked. Each mutant below
 is one promise of dev/DESIGN.md broken by a small edit. The tool applies it,
-builds the core preset, runs the tests, and puts the file back. A mutant is
-caught if a test fails (or the run hangs past the timeout), and survives if
-every test passes. A survivor is a promise no test holds.
+builds the core and its tests, and runs the tests. A mutant is caught if a
+test fails (or the run hangs past the timeout), and survives if every test
+passes. A survivor is a promise no test holds.
+
+A mutant's time was its build, not its tests (issue 67, 2026-10-09: 85% of
+23.5 s; the user: "I think the way we currently test mutants is way too
+slow. We apply a mutant, then build, then run all the tests"), so the tool
+builds as little as it can and runs as few tests as say the verdict. A
+worker's build has no debug information (FLAGS). The mutants go to the
+workers file by file, each written straight over the last, so a mutant's
+build is of its own file alone (Pool). And the test that caught a mutant
+last time is run first, the rest only if it passes: tools\\mutants.caught.json
+has it for each, and a run brings that file up to date, saying of a mutant
+whose kept test did not catch it that another did (it is news: a test may
+have stopped holding that promise). Six at a time on a machine at full load,
+a sample of 42 mutants was 26.0 s a mutant and is 7.9, and all 836 are 15
+minutes: 4.8 s for a .cpp's mutant, most of it the compiler, 27 for a
+header's.
 
 The mutants run side by side (the user, 2026-10-02: "do the mutants all run
 serially? can we parallelize them? on low-priority threads like the build?").
@@ -31,19 +46,46 @@ vcpkg packages):
     python tools\\mutants.py -j 4          four at a time (by default one a core)
 
 Exits non-zero if any mutant survives or fails to compile.
+
+Whether each mutant earns its keep is another run's to say (the user: "Do we
+need all the mutants? Make sure each mutant earns its keep"):
+
+    python tools\\mutants.py --matrix build\\matrix.json
+
+runs every test against each mutant, without stopping at the first that
+fails or asking the kept one first, and writes to the file what failed for
+each: every assertion that failed, by its test case and its place (for a
+random fight, the promise that was broken). It ends with what that says of
+the list (report): the mutants that failed the same assertions in the same
+tests as another, for a reader who knows the promises to judge; the mutants
+that failed all that another of the same function did and more, which go,
+each the same promise broken more crudely than the one that stands for it
+and caught whenever that one is; and the mutants only the fights caught. A
+new mutant that is the crude twin of a fine one is not wanted.
+
+The file is written as the run goes and a mutant it has is not run again, so
+a stopped run goes on where it was and a finished one only says its report;
+a new record is a new file, and a record is of the tree it was made over.
+A kept test that is not among those that failed is replaced by the
+first that did: the way to see that a mutant the fights alone caught now has
+a scripted case.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import msvcrt
 import os
-import queue
+import re
 import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from html import unescape
+from pathlib import Path, PureWindowsPath
+from typing import IO, NamedTuple
 
 REPO = Path(__file__).resolve().parent.parent
 WORK = REPO / "build" / "mutants"
@@ -5449,6 +5491,31 @@ MUTANTS = [
 ]
 
 
+# The test that caught each mutant last time, by the mutant's name: run first,
+# alone, and the rest only if it passes. Of a mutant's 23.5 s, 3.6 were the
+# scripted tests run to the one that catches it, in whatever order Catch2 drew
+# (issue 67, 2026-10-09: caught after 10 cases or after 603), and a mutant only
+# the fights catch ran every scripted test first and then the fights. In the
+# repository, so that a fresh clone has it; sorted and written only when it
+# changes, so that a run that catches everything as before leaves no diff.
+CAUGHT = Path(__file__).with_name("mutants.caught.json")
+# What a worker's build has over the core preset's: no debug information and
+# no listing of the tests after the link. Nobody reads a mutant's symbols, and
+# CTest, which the listing is for, is not what runs a mutant's tests: of the
+# turn machine's 20 s a mutant, 14 were the library and the link (issue 67,
+# 2026-10-09, one worker on a machine at full load; with these the build was
+# 7.0 s where it was 11.6). The tree's own presets are as they were.
+FLAGS = {
+    "CMAKE_CXX_FLAGS_DEBUG": "/Ob0 /Od /RTC1",
+    "CMAKE_EXE_LINKER_FLAGS_DEBUG": "/INCREMENTAL:NO",
+    "CMAKE_CATCH_DISCOVER_TESTS_DISCOVERY_MODE": "PRE_TEST",
+}
+# The random fights' tag, and where a test case failed that a crash or a hang
+# left without a result.
+FIGHTS = "[fights]"
+STOPPED = "stopped"
+
+
 def run(
     command: list[str], cwd: Path, timeout: int | None = None
 ) -> subprocess.CompletedProcess[str]:
@@ -5468,22 +5535,24 @@ def run(
     )
 
 
-def sync(worker: Path) -> None:
+def sync(worker: Path, tree: Path = REPO) -> None:
     """Brings a worker's copy up to the tree: a file is written only where it
-    differs, so what did not change is not built again."""
+    differs, so what did not change is not built again. By what the files
+    hold, not their dates: a copy a stopped run left with a mutant in it is
+    mended here, at the next run's start."""
     wanted: set[Path] = set()
-    sources = [REPO / name for name in FILES if (REPO / name).exists()]
-    for tree in TREES:
-        sources += [f for f in (REPO / tree).rglob("*") if f.is_file()]
+    sources = [tree / name for name in FILES if (tree / name).exists()]
+    for part in TREES:
+        sources += [f for f in (tree / part).rglob("*") if f.is_file()]
     for source in sources:
-        target = worker / source.relative_to(REPO)
+        target = worker / source.relative_to(tree)
         wanted.add(target)
         data = source.read_bytes()
         if not target.exists() or target.read_bytes() != data:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
-    for tree in TREES:
-        for stale in (worker / tree).rglob("*"):
+    for part in TREES:
+        for stale in (worker / part).rglob("*"):
             if stale.is_file() and stale not in wanted:
                 stale.unlink()
 
@@ -5502,17 +5571,34 @@ def tests_of(worker: Path) -> Path:
     return worker / "build" / "core" / "tests" / "tb_tests.exe"
 
 
+def has_flags(cache: str) -> bool:
+    """Whether a build, by its CMakeCache.txt, was configured with the
+    workers' flags: a copy an earlier tool configured is configured again."""
+    found = {}
+    for line in cache.splitlines():
+        name, _, value = line.partition("=")
+        found[name.partition(":")[0]] = value
+    return all(found.get(name) == value for name, value in FLAGS.items())
+
+
 def prepare(worker: Path, jobs: int) -> str:
-    """A worker's copy, configured and built as the tree is. Answers what went
-    wrong, or nothing."""
+    """A worker's copy, configured and built. Answers what went wrong, or
+    nothing."""
     sync(worker)
-    if not (worker / "build" / "core" / "build.ninja").exists():
+    made = worker / "build" / "core"
+    cache = made / "CMakeCache.txt"
+    if not (
+        (made / "build.ninja").exists()
+        and cache.exists()
+        and has_flags(cache.read_text(encoding="utf-8", errors="replace"))
+    ):
         command = [
             "cmake",
             "--preset",
             "core",
             f"-DVCPKG_INSTALLED_DIR={PACKAGES.as_posix()}",
             "-DVCPKG_MANIFEST_INSTALL=OFF",
+            *(f"-D{name}={value}" for name, value in FLAGS.items()),
         ]
         # Ninja as the tree's own build found it: it need not be on the path
         # of the shell this runs in.
@@ -5533,41 +5619,352 @@ def build(worker: Path, jobs: int) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test(mutant: Mutant, worker: Path) -> str:
-    """One mutant, in a worker's copy, from the copy as it was made: an edit to
-    the tree while mutants run is not taken up half way (it was, read from the
-    tree each time: a run whose mutants "did not compile" by the dozen,
-    2026-10-02)."""
-    original = (worker / mutant.file).read_text(encoding="utf-8")
-    if original.count(mutant.old) != 1:
-        return f"not applied: the text is in {mutant.file} {original.count(mutant.old)} times"
-    path = worker / mutant.file
+def ready(workers: list[Path], jobs: int) -> str:
+    """The workers' copies made ready side by side, each with so many
+    compilers. Answers what went wrong, or nothing."""
+    problems: dict[Path, str] = {}
+
+    def one(worker: Path) -> None:
+        problems[worker] = prepare(worker, jobs)
+
+    threads = [threading.Thread(target=one, args=(w,)) for w in workers]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    for worker, problem in problems.items():
+        if problem:
+            return f"{worker.name} does not configure or build:\n{problem}"
+    if run([str(tests_of(workers[0]))], workers[0]).returncode != 0:
+        return "the unmutated core does not pass its tests; fix that first"
+    return ""
+
+
+class Pool:
+    """The mutants still to run, handed to the workers file by file. A worker
+    is given the next mutant of the file it is at, and writes it straight
+    over the last: a file is put back, and compiled once more beside the next
+    mutant's, only as its worker leaves it. Put back after every mutant, each
+    mutant compiled two files, and the one after a header's paid for the
+    header's includers again (issue 67, 2026-10-09).
+
+    The headers' mutants are one lot, header by header: a header's build is
+    every file that includes it (Settings.h: 33 steps and 132 s with one
+    compiler on a machine at full load, 2026-10-09; a .cpp's is three steps
+    and 6 s), so one worker at them, with its share of the cores, is what the
+    machine has to spare, and from one header to the next the files both
+    have are built once.
+
+    A worker whose lot is done takes the lot with the most left that no
+    worker is at, and when every lot has a worker, the one with the most
+    left."""
+
+    HEADERS = "the headers"
+
+    def __init__(self, mutants: list[Mutant]) -> None:
+        self.left: dict[str, list[Mutant]] = {}
+        for mutant in mutants:
+            lot = mutant.file if mutant.file.endswith(".cpp") else self.HEADERS
+            self.left.setdefault(lot, []).append(mutant)
+        self.left.get(self.HEADERS, []).sort(key=lambda mutant: mutant.file)
+        self.at: dict[Path, str] = {}
+        self.lock = threading.Lock()
+
+    def take(self, worker: Path) -> Mutant | None:
+        with self.lock:
+            lot = self.at.get(worker, "")
+            if lot not in self.left:
+                if not self.left:
+                    return None
+                taken = set(self.at.values())
+                lot = max(self.left, key=lambda n: (n not in taken, len(self.left[n])))
+                self.at[worker] = lot
+            mutant = self.left[lot].pop(0)
+            if not self.left[lot]:
+                del self.left[lot]
+            return mutant
+
+
+class Failure(NamedTuple):
+    case: str  # the test case
+    where: str  # an assertion of it that failed: file:line, and what a FAIL said
+    fight: bool  # whether it is one of the random fights
+
+
+CASE = re.compile(r'<TestCase name="([^"]*)"(?: tags="([^"]*)")?')
+RESULT = re.compile(r'<OverallResult success="(true|false)"')
+# Whatever the reporter writes of an assertion is one that failed: it is not
+# asked for those that passed (-s).
+ASSERTION = re.compile(
+    r"<(?:Expression|Failure|Exception|FatalErrorCondition)\b[^>]*?"
+    r'filename="([^"]*)" line="(\d+)"[^>]*>\s*([^<\r\n]*)'
+)
+
+
+def failures(xml: str) -> list[Failure]:
+    """The assertions that failed, by what Catch2's XML reporter wrote: of
+    each test case that failed, the place of every assertion that did, once
+    each, in the order they failed.
+
+    Every one and not the first alone: of the 31 groups of mutants that
+    failed their cases at the same first assertions, 18 failed different
+    ones after it, which a test that goes on past a failed CHECK tells
+    apart (issue 67, 2026-10-09). An assertion with words of its own (a
+    FAIL) has them beside its place, since the random fights say every
+    broken promise from one line (Must, tests/test_fights.cpp): the words up
+    to the round it was broken in, which are the promise's. A case with no
+    result is where a crash or a hang stopped the run, and is said after
+    what had failed in it; a reader that waited for the document's end would
+    lose it."""
+    found = []
+    parts = CASE.split(xml)
+    for name, tags, body in zip(parts[1::3], parts[2::3], parts[3::3], strict=True):
+        result = RESULT.search(body)
+        if result and result[1] == "true":
+            continue
+        places = {}
+        for at in ASSERTION.finditer(body):
+            where = f"{PureWindowsPath(at[1]).name}:{at[2]}"
+            if words := unescape(at[3]).partition(" (round ")[0].strip():
+                where += f": {words}"
+            places[where] = None
+        if not (result and places):
+            places[STOPPED] = None
+        fight = FIGHTS in (tags or "")
+        found += [Failure(unescape(name), where, fight) for where in places]
+    return found
+
+
+def spec_of(case: str) -> str:
+    """Catch2's test spec for one test case by its name: a comma would part
+    the name into two specs and a bracket begin a tag (380 of the 626
+    scripted cases' names have one, 2026-10-09, each found alone by this)."""
+    return re.sub(r'([\\,\[\]"])', r"\\\1", case)
+
+
+def tests(worker: Path, spec: str, *more: str) -> tuple[int | None, list[Failure]]:
+    """Runs what a spec names of a worker's tests. Answers the program's exit
+    code, none if it hung past the timeout, and what failed.
+
+    In the order the tests are written: Catch2's own order is drawn anew each
+    run (3.11, whatever its help says of the default; seen 2026-10-09), and
+    the first test to fail is the one kept. A spec that names no test is no
+    failure, so a kept test that was renamed catches nothing and the whole
+    run finds the mutant another."""
+    command = [str(tests_of(worker)), spec, "--order", "decl", "-r", "xml"]
     try:
-        path.write_text(original.replace(mutant.old, mutant.new), encoding="utf-8")
-        # One file changed: one compiler.
-        if build(worker, 1).returncode != 0:
-            return "did not compile"
-        # The scripted cases first, and the random fights only for a mutant
-        # they let pass: of a mutant's 30 s, 22 were the two random fights'
-        # tests, run to their end whatever had failed before them, and the
-        # 533 scripted ones take under 3 (timed 2026-10-04, when three gates
-        # at once made a full run an hour; the user: "Why does a full mutant
-        # run take an hour?"). The verdict is the same: caught if any test
-        # fails, and both halves together are every test the binary runs by
-        # default. Which half caught it is said, since a mutant only the
-        # fights catch is a promise with no scripted case of its own.
-        for spec, by in (("~[fights]", ""), ("[fights]", " (by the fights)")):
-            try:
-                result = run(
-                    [str(tests_of(worker)), spec, "--abort"], worker, timeout=TIMEOUT_S
-                )
-            except subprocess.TimeoutExpired:
-                return "caught (the tests hung)"
-            if result.returncode != 0:
-                return f"caught{by}"
-        return "SURVIVED"
-    finally:
-        path.write_text(original, encoding="utf-8")
+        result = run(
+            [*command, "--allow-running-no-tests", *more], worker, timeout=TIMEOUT_S
+        )
+    except subprocess.TimeoutExpired as hung:
+        return None, failures(hung.stdout or "")
+    return result.returncode, failures(result.stdout)
+
+
+def test(
+    mutant: Mutant, text: str, worker: Path, jobs: int, first: str, every: bool
+) -> tuple[str, list[Failure]]:
+    """One mutant, written into a worker's copy over the text its file had as
+    the copy was made: an edit to the tree while mutants run is not taken up
+    half way (it was, read from the tree each time: a run whose mutants "did
+    not compile" by the dozen, 2026-10-02). Answers the verdict and what
+    failed: the first assertion to fail, or with `every` all that did.
+
+    The test that caught it last time first, if one is named, then the
+    scripted cases, and the random fights only for a mutant those let pass:
+    of a mutant's 30 s, 22
+    were the fights' tests, run to their end whatever had failed before them
+    (timed 2026-10-04, when three gates at once made a full run an hour; the
+    user: "Why does a full mutant run take an hour?"). The verdict is the
+    same whichever catches it: caught if any test fails, and the two halves
+    together are every test the binary runs by default. Which half caught it
+    is said, since a mutant only the fights catch is a promise with no
+    scripted case of its own."""
+    if text.count(mutant.old) != 1:
+        return (
+            f"not applied: the text is in {mutant.file} {text.count(mutant.old)} times",
+            [],
+        )
+    path = worker / mutant.file
+    path.write_text(text.replace(mutant.old, mutant.new), encoding="utf-8")
+    if build(worker, jobs).returncode != 0:
+        return "did not compile", []
+    for spec in [*([spec_of(first)] if first else []), f"~{FIGHTS}", FIGHTS]:
+        code, failed = tests(worker, spec, *(() if every else ("--abort",)))
+        if code is None:
+            return "caught (the tests hung)", failed
+        if code != 0:
+            by = " (by the fights)" if failed and failed[0].fight else ""
+            return f"caught{by}", failed
+    return "SURVIVED", []
+
+
+def kept(file: Path = CAUGHT) -> dict[str, str]:
+    """The test that caught each mutant last time."""
+    return json.loads(file.read_text(encoding="utf-8")) if file.exists() else {}
+
+
+def keep(caught: dict[str, str], file: Path = CAUGHT) -> None:
+    """Writes the record of which test caught each mutant, if it changed: in
+    the mutants' order by name, a line each, so that a run's changes are the
+    lines of the mutants it changed. A mutant the list has no more, or that
+    nothing caught, has no line."""
+    names = {mutant.name for mutant in MUTANTS}
+    caught = {name: case for name, case in caught.items() if case and name in names}
+    if caught != kept(file):
+        text = json.dumps(caught, indent=0, sort_keys=True, ensure_ascii=False)
+        file.write_text(text + "\n", encoding="utf-8", newline="\n")
+
+
+def prints(rows: dict[str, dict]) -> dict[str, frozenset[tuple[str, str]]]:
+    """Of a record of every test against each mutant, what each mutant
+    failed: the assertions, each by its test case and its place. A mutant
+    nothing failed for has none."""
+    return {
+        name: frozenset((case, where) for case, where in row["failed"])
+        for name, row in rows.items()
+        if row["failed"]
+    }
+
+
+def same(failed: dict[str, frozenset[tuple[str, str]]]) -> list[list[str]]:
+    """The mutants that failed the same assertions in the same tests as
+    another, in their groups: by the tests, each group checks one thing."""
+    groups: dict[frozenset[tuple[str, str]], list[str]] = {}
+    for name, places in failed.items():
+        groups.setdefault(places, []).append(name)
+    return [names for names in groups.values() if len(names) > 1]
+
+
+def above(
+    failed: dict[str, frozenset[tuple[str, str]]], place: dict[str, object]
+) -> dict[str, str]:
+    """Each mutant that failed all that another of the same place did and
+    more, with the one of those that failed the least, which is above none
+    of them itself. The tests that catch the lesser one catch this one."""
+    found = {}
+    for name, places in failed.items():
+        less = [
+            other
+            for other, theirs in failed.items()
+            if theirs < places and place[other] == place[name]
+        ]
+        if less:
+            found[name] = min(less, key=lambda other: len(failed[other]))
+    return found
+
+
+def place(text: str, old: str) -> int:
+    """Where in a file an edit is, for saying that two are in one function:
+    the first line of the function it is in, which is the last line before
+    it that begins a declaration at the margin, if that one opens a
+    definition with a parenthesis. An edit in no function (a table's row, a
+    header's constant, a structure's member) is at its own line: two rows of
+    a table are two promises."""
+    at = text.index(old) + len(old) - len(old.lstrip())
+    own = head = text.rfind("\n", 0, at) + 1
+    while head and not text[head].isalpha():
+        head = text.rfind("\n", 0, head - 1) + 1
+    line = text[head : text.find("\n", head)]
+    if line[:1].isalpha() and "(" in line and not line.endswith(";"):
+        return head
+    return own
+
+
+def within(mutants: list[Mutant]) -> dict[str, object]:
+    """The file and the place in it of each mutant's edit, by the tree."""
+    sources = {
+        file: (REPO / file).read_text(encoding="utf-8")
+        for file in {mutant.file for mutant in mutants}
+    }
+    return {
+        mutant.name: (mutant.file, place(sources[mutant.file], mutant.old))
+        for mutant in mutants
+    }
+
+
+def report(rows: dict[str, dict]) -> list[str]:
+    """What a record of every test against each mutant says of whether each
+    earns its keep, of the mutants the list still has, in the tree the
+    record was made over.
+
+    Two things are said to go by. Mutants that failed the same assertions in
+    the same tests: evidence for a reader, who judges by the names and the
+    design's promises, since two mutants one broad assertion catches may be
+    two promises, and a coarse test. And a rule a reader can check (the
+    user's, 2026-10-09: everything earns its keep, and what does not is
+    removed): a mutant that failed all that another of the same function did
+    and more is the same promise broken more crudely, caught whenever the
+    finer one is, and goes; the finer one stands for it. One above a mutant
+    of another function only is another promise that trips some of the same
+    assertions, and stays; and so does one that stops the test program,
+    whose failures are not known whole."""
+    edits = {mutant.name: mutant for mutant in MUTANTS}
+    rows = {name: row for name, row in rows.items() if name in edits}
+    failed = prints(rows)
+
+    def size(name: str) -> int:
+        return len(edits[name].old) + len(edits[name].new)
+
+    groups = same(failed)
+    lines = [
+        f"{sum(map(len, groups))} mutants in {len(groups)} groups failed the same"
+        + " assertions in the same tests as another (the smallest edit first):"
+    ]
+    for group in groups:
+        case, where = min(failed[group[0]])
+        lines.append(f"  {len(failed[group[0]])} failed, as {where} ({case})")
+        lines += [
+            f"    {size(name):5} {edits[name].file}: {name}"
+            for name in sorted(group, key=size)
+        ]
+    whole = {
+        name: places
+        for name, places in failed.items()
+        if STOPPED not in {where for _, where in places}
+    }
+    crude = above(whole, within([edits[name] for name in whole]))
+    lines.append(
+        f"{len(crude)} failed all that another mutant of the same function did and"
+        + " more, the same promise broken more crudely: each goes, for the one named:"
+    )
+    lines += [
+        f"  {edits[name].file}: {name} ({len(whole[name])}), for {finer} ({len(whole[finer])})"
+        for name, finer in crude.items()
+    ]
+    elsewhere = len(above(whole, dict.fromkeys(whole))) - len(crude)
+    lines.append(
+        f"{elsewhere} failed all that a mutant of another function did and more:"
+        + " another promise that trips some of the same assertions, and stays"
+    )
+    lines.append(
+        f"{len(failed) - len(whole)} stop the test program: what they fail is not"
+        + " known whole, and they stay"
+    )
+    fights = [name for name, row in rows.items() if "fights" in row["verdict"]]
+    lines.append(
+        f"{len(fights)} caught by the random fights alone, with no scripted case:"
+    )
+    for name in fights:
+        lines.append(f"  {name}")
+        lines += [f"    {where} ({case})" for case, where in rows[name]["failed"]]
+    return lines
+
+
+def alone(work: Path = WORK) -> IO[str] | None:
+    """The lock on a tree's copies, held while it is open or this process
+    lives, or nothing if another run holds it. A second run in a tree wrote
+    into the copies the first was building, and neither's verdicts were of
+    the mutants they named (2026-10-09: a record's reprint, asked for while
+    the record was being made, ran the mutants it lacked)."""
+    work.mkdir(parents=True, exist_ok=True)
+    lock = (work / "lock").open("w")
+    try:
+        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        lock.close()
+        return None
+    return lock
 
 
 def main() -> int:
@@ -5582,79 +5979,115 @@ def main() -> int:
         default=os.cpu_count() or 2,
         help="how many mutants at a time (by default one a core)",
     )
+    parser.add_argument(
+        "--matrix",
+        type=Path,
+        metavar="FILE",
+        help="run every test against each mutant, and record in FILE what"
+        " failed; a mutant FILE already has is not run again",
+    )
     args = parser.parse_args()
     chosen = [
         m for m in MUTANTS if not args.names or any(w in m.name for w in args.names)
     ]
+    rows: dict[str, dict] = {}
+    if args.matrix and args.matrix.exists():
+        rows = json.loads(args.matrix.read_text(encoding="utf-8"))
+        chosen = [m for m in chosen if m.name not in rows]
+        if not chosen:
+            print("\n".join(report(rows)))
+            return 0
     if not PACKAGES.exists():
         print(
             f"no {PACKAGES}: build the core preset once (tools\\build.ps1 -Preset core)"
         )
         return 1
-    count = max(1, min(args.jobs, len(chosen)))
-    workers = [WORK / f"w{n}" for n in range(count)]
+    # Held until this returns, however it does.
+    lock = alone()
+    if lock is None:
+        print(f"another run is using {WORK}: one at a time in a tree")
+        return 1
+    workers = [WORK / f"w{n}" for n in range(max(1, min(args.jobs, len(chosen))))]
+    # A worker's share of the cores, for its builds: a mutant's own uses one
+    # compiler, or two as its worker leaves a file, unless it is a header's.
+    share = max(1, (os.cpu_count() or 2) // len(workers))
     started = time.monotonic()
-
-    # The copies, built side by side: each with its share of the cores.
-    share = max(1, (os.cpu_count() or 2) // count)
-    problems: dict[Path, str] = {}
-
-    def ready(worker: Path) -> None:
-        problems[worker] = prepare(worker, share)
-
-    threads = [threading.Thread(target=ready, args=(w,)) for w in workers]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    for worker, problem in problems.items():
-        if problem:
-            print(f"{worker.name} does not configure or build:\n{problem}")
-            return 1
-    if run([str(tests_of(workers[0]))], workers[0]).returncode != 0:
-        print("the unmutated core does not pass its tests; fix that first")
+    if problem := ready(workers, share):
+        print(problem)
         return 1
     print(
-        f"{count} at a time, in {WORK} ({time.monotonic() - started:.0f} s to make ready)",
+        f"{len(workers)} at a time, in {WORK} ({time.monotonic() - started:.0f} s to make ready)",
         flush=True,
     )
 
-    todo: queue.Queue[Mutant] = queue.Queue()
-    for mutant in chosen:
-        todo.put(mutant)
+    pool = Pool(chosen)
+    before = kept()
+    caught = dict(before)
     verdicts: dict[str, str] = {}
     said = threading.Lock()
 
     def work(worker: Path) -> None:
-        while True:
-            try:
-                mutant = todo.get_nowait()
-            except queue.Empty:
-                return
-            start = time.monotonic()
-            # Whatever goes wrong is said, and counted as not caught.
-            try:
-                verdict = test(mutant, worker)
-            except Exception as error:  # noqa: BLE001
-                verdict = f"failed: {error}"
-            with said:
-                verdicts[mutant.name] = verdict
-                print(
-                    f"{verdict:<32} {mutant.name} ({time.monotonic() - start:.0f} s)",
-                    flush=True,
-                )
+        # The file of the copy that holds a mutant, and what it held before.
+        file, held = "", b""
+        try:
+            while mutant := pool.take(worker):
+                start = time.monotonic()
+                was = before.get(mutant.name, "")
+                # Whatever goes wrong is said, and counted as not caught.
+                try:
+                    if mutant.file != file:
+                        if file:
+                            (worker / file).write_bytes(held)
+                        file = ""
+                        held = (worker / mutant.file).read_bytes()
+                        file = mutant.file
+                    text = held.decode("utf-8").replace("\r\n", "\n")
+                    first = "" if args.matrix else was
+                    verdict, failed = test(
+                        mutant, text, worker, share, first, bool(args.matrix)
+                    )
+                except Exception as error:  # noqa: BLE001
+                    verdict, failed = f"failed: {error}", []
+                cases = [failure.case for failure in failed]
+                with said:
+                    verdicts[mutant.name] = verdict
+                    caught[mutant.name] = was if was in cases else "".join(cases[:1])
+                    print(
+                        f"{verdict:<32} {mutant.name} ({time.monotonic() - start:.0f} s)",
+                        flush=True,
+                    )
+                    if args.matrix:
+                        rows[mutant.name] = {
+                            "file": mutant.file,
+                            "verdict": verdict,
+                            "failed": [[f.case, f.where] for f in failed],
+                        }
+                        # As it goes: a run that is stopped keeps what it has.
+                        args.matrix.write_text(
+                            json.dumps(rows, indent=1), encoding="utf-8"
+                        )
+        finally:
+            if file:
+                (worker / file).write_bytes(held)
 
     threads = [threading.Thread(target=work, args=(w,)) for w in workers]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
+    keep(caught)
+    if args.matrix:
+        print("\n".join(report(rows)))
     bad = [
         name for name, verdict in verdicts.items() if not verdict.startswith("caught")
     ]
     hung = [name for name, verdict in verdicts.items() if "hung" in verdict]
     for name in hung:
         print(f"hung, and counted as caught: {name}")
+    # News: a test that held a promise may have stopped holding it.
+    for name, case in before.items():
+        if caught.get(name) not in ("", case):
+            print(f"caught, but not by the test kept for it ({case}): {name}")
     fights = sum(1 for verdict in verdicts.values() if "by the fights" in verdict)
     print(f"{fights} caught by the random fights alone, with no scripted case")
     print(
