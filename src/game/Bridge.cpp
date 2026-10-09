@@ -516,6 +516,24 @@ Observation Bridge::Observe(const Needs &needs, std::uint32_t nowMs)
             obs.turns.push_back(*look);
         }
     }
+    // What was cooling on those come into the fight, read once each
+    // (Needs::cooling; issue 57): every record the engine has running on the
+    // creature (DAOLib's dao::abilities::Cooldowns, its issue 38: the list
+    // the engine's cooldown manager ticks each frame, an item's ability's
+    // record among the rest, with the item's tag). The one read of them
+    // there is: what the engine sets from then on it says as it sets it
+    // (core: TurnMachine::OnCooldownSet).
+    for (const ObjectId id : needs.cooling)
+    {
+        CoolingLook look;
+        look.id = id;
+        for (dao::abilities::RunningCooldown &running : dao::abilities::Cooldowns(id))
+        {
+            look.running.push_back(
+                {running.ability, std::move(running.itemTag), running.cooldown.remaining, running.cooldown.total});
+        }
+        obs.cooling.push_back(std::move(look));
+    }
     return obs;
 }
 
@@ -1864,21 +1882,23 @@ void Bridge::AgeEffects(const Effect &e)
 // An ability's cooldown held, released, or set back to seconds.
 void Bridge::SetCooldown(const Effect &e)
 {
-    // Held, released, or back to seconds (core: "Cooldowns in turns").
-    // With what the sweep is drawn against (c), through DAOLib
-    // (dao/Abilities.h, b51d676): the scripts' SetCooldown sets what
-    // is left and what it was set to as one, so a hold showed a full
-    // sweep that never moved, where the user wants the turns shown.
-    // DAOLib's refuses a creature with no record for the ability
-    // (an item's, by its tag): the scripts' then, as before.
-    if (e.c <= 0 || !dao::abilities::SetCooldown(e.target, e.a, static_cast<float>(e.b), static_cast<float>(e.c)))
+    // Held, released (nothing left), or back to seconds (core:
+    // "Cooldowns in turns"). With what the sweep is drawn against
+    // (c), through DAOLib (dao/Abilities.h, b51d676): the scripts'
+    // SetCooldown sets what is left and what it was set to as one, so
+    // a hold showed a full sweep that never moved, where the user
+    // wants the turns shown. By the item's tag for an item's ability
+    // (the effect's text; issue 57): the record was read of the
+    // engine by that tag, so there is one to set. Until then an
+    // item's had no tag here, DAOLib found no record, and it was set
+    // as the scripts do with none, which was never seen to reach it.
+    // One that is not set now (its creature gone since) is said: the
+    // machine's next look at the creature finds what the engine has.
+    if (!dao::abilities::SetCooldown(e.target, e.a, static_cast<float>(e.b), static_cast<float>(e.c), e.text) &&
+        api::IsObjectValid(e.target) != 0)
     {
-        if (e.c > 0)
-        {
-            spdlog::debug("ability {} of {:#010x}: no cooldown record to set {} of {} s on; set as the scripts do", e.a,
-                          e.target, e.b, e.c);
-        }
-        api::SetCooldown(e.target, e.a, static_cast<float>(e.b));
+        spdlog::warn("ability {} of {:#010x}{}: its cooldown was not set to {} of {} s (no record of it)", e.a,
+                     e.target, e.text.empty() ? std::string{} : std::format(" (item {})", Utf8(e.text)), e.b, e.c);
     }
 }
 

@@ -372,7 +372,7 @@ TEST_CASE("the failure's line names no target where the game layer gave none", "
     World w(Timed());
     w.onPoke = [&](ObjectId) { CHECK(Swing(w, kHero) == Verdict::Allow); };
     ToGenlock(w);
-    CHECK(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, kNoSpace));
+    CHECK(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, kNoSpace));
     CHECK(Logged(w, "Genlock's attack failed (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING): its action is given back"));
 }
 

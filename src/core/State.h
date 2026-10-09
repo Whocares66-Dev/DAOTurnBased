@@ -25,7 +25,8 @@ namespace tb
 //  only: its tactics play its turns, from its next one; core/PartyTactics.h)},
 //  ...],"held":[{"id":"0x...",
 //  "name":"...","condition":"disabled","on_clock":false,"owed_ms":2500}],
-//  "cooldowns":[{"id":"0x...","ability":617,"left_ms":12000,"of_ms":20000}],
+//  "cooldowns":[{"id":"0x...","ability":617,"left_ms":12000,"of_ms":20000,
+//  "item":"..." (an item's ability's only: the item's tag)}],
 //  "charging":[{"id":"0x...","ability":10002,"owed_ms":1500}]}
 // (Until issue 50 it also had "timed" and "actions_left", a held one's
 // "turns_owed", a cooldown's "turns" and "of" and a charge's "turns": the

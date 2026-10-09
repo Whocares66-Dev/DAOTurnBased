@@ -29,6 +29,7 @@ add_executable(
     test_actiontime.cpp
     test_bar.cpp
     test_barwindow.cpp
+    test_cooldowns.cpp
     test_delay.cpp
     test_pause.cpp
     test_events.cpp

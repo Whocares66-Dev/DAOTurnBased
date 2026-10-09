@@ -82,7 +82,23 @@
 //      or as the world settles after a command of its creature's that was
 //      already over. An action still running then is stopped, so that
 //      nothing of the turn runs on into another's (2), and the turn ends
-//      "ended by the player" only when End was pressed (issue 51).
+//      "ended by the player" only when End was pressed (issue 51);
+//  22. what the engine has cooling on one of the fight is on its creature's
+//      own clock, and never on the wall, whatever started it and whenever:
+//      an ability's own use, a script with no command at all, an item's
+//      ability's by its tag, one running as its creature came into the
+//      fight. The machine is told as the engine sets one, so a cooldown that
+//      is the engine's own stands on a fighter for a frame or two and no
+//      longer, whoever's turn it is and whatever its creature is at. Of
+//      every fighter, what the machine holds in the engine is on its book
+//      and what is on its book the engine has, each for no longer than the
+//      engine set it: one the engine sets again over the hold is taken
+//      again, one it sets to nothing is let go. A cooldown is released only
+//      in its user's own turn, as its seconds have run there. And as the
+//      fight lets the world go, nothing is left held: each has its own
+//      seconds back. In every other fight an item's ability's record keeps
+//      its own total under the hold, as one did in play: the machine reads
+//      none of its holds back (issue 57).
 //
 // The promises were checked on two clocks until issue 50 (2026-10-05): the
 // bar of time, and one action and an allowance of meters a turn, which is
@@ -94,8 +110,9 @@
 // makes it; a command walks, then works; attacks kill now and then; others
 // try to act out of turn; the player gives orders, gives orders nothing comes
 // of, opens menus and ends turns; conversations interrupt; reinforcements
-// arrive. Fixed seeds, so a failure is a fight to replay: its seed is in the
-// message.
+// arrive; an ability that has run cools, in the stand-in's engine, and a
+// script sets a cooldown, sets one anew or ends them. Fixed seeds, so a
+// failure is a fight to replay: its seed is in the message.
 #include "World.h"
 
 #include "core/Rules.h"
@@ -115,6 +132,8 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -128,6 +147,17 @@ namespace
 constexpr std::uint32_t kFrameMs = 16;
 constexpr float kRunSpeed = 5.0f;  // meters a second, about a character running
 constexpr int kMaxFrames = 200000; // 53 minutes of fight: far past any that works
+// Cooldowns (22; issue 57). The longest the arena's engine ever sets one, in
+// seconds (Try, Scripted); how soon one the engine has on a fighter is the
+// machine's, in frames the machine steps the fight in: told as it is set,
+// the machine holds it with its next step's effects, and one already running
+// on a creature as it joins is read with the step after; and an item's
+// ability, with its item's tag. (Whether a record is held is the stand-in's
+// own word, World::MachineHolds: what the machine set last, to hold it.)
+constexpr float kLongestCooldown = 60.0f;
+constexpr int kTakenWithinFrames = 3;
+constexpr std::int32_t kPoultice = 500;
+constexpr std::wstring_view kPoulticeTag = L"gen_im_qck_health_101";
 
 double Unit(Rng &rng)
 {
@@ -190,8 +220,14 @@ struct Coverage
     int speedChanges = 0; // the game's speed set for an AI's turn and back
     long long events = 0; // typed events heard
     int conditionsEnded = 0;
-    int cooldownsHeld = 0;
-    int cooldownsReleased = 0;
+    int cooldownsHeld = 0;      // cooldowns the engine had running, taken onto their creatures' own clocks (22)
+    int cooldownsReleased = 0;  // and released, their seconds run there
+    int cooldownsScripted = 0;  // cooldowns a script started with no command at all (issue 57)
+    int cooldownsOfItems = 0;   // of those taken, an item's ability's, by the item's tag
+    int cooldownsAtStart = 0;   // and those found running on a creature as it came into the fight
+    int cooldownsSetAnew = 0;   // a held cooldown the game set anew over the hold, taken again
+    int cooldownsEndedByIt = 0; // a held cooldown the game ended, let go
+    int cooldownLooks = 0;      // times the machine's book was checked against the engine's, every half second or so
     int roundsAged = 0;
     int ownAged = 0; // a creature's own clock moved (Settings::ownClocks)
     // With a turn a bar of time.
@@ -275,11 +311,27 @@ class Arena
     Arena(std::uint64_t seed, Coverage &coverage, bool strays = false, bool choices = false)
         : rng_(seed), reach_(seed ^ 0x22EAC4ull), waits_(seed ^ 0x3A175ull), notice_(seed ^ 0x29A11ull),
           asks_(seed ^ 0x45C5ull), burrows_(seed ^ 0x44B0ull), chooses_(seed ^ 0x46C4ull), paces_(seed ^ 0x49FA57ull),
-          sings_(seed ^ 0x5150ull), settings_(RandomSettings(rng_)), world_(settings_, RandomFight(rng_), seed),
-          coverage_(coverage), runners_(strays), choices_(choices)
+          sings_(seed ^ 0x5150ull), cools_(seed ^ 0x57C001ull), settings_(RandomSettings(rng_)),
+          world_(settings_, RandomFight(rng_), seed), coverage_(coverage), runners_(strays), choices_(choices)
     {
         ComeAsStrays();
         world_.record = false;
+        // In every other fight an item's ability's record keeps its own
+        // total under the machine's hold, as play showed of one (22; issue
+        // 57, 2026-10-06): the machine reads none of its holds back.
+        // By the seed, with no draw.
+        world_.itemTotalsStay = seed % 2 == 1;
+        // And what some come into the fight with (22): a cooldown already
+        // running, set before any fight's machine could be told of it. On
+        // the cooldowns' own stream.
+        for (const Creature &c : world_.creatures)
+        {
+            if (Chance(cools_, 0.3))
+            {
+                world_.Cool(c.id, static_cast<std::int32_t>(cools_.Next() % 4),
+                            Between(cools_, 1.0f, kLongestCooldown));
+            }
+        }
         world_.machine.SetLogLevel(LogLevel::Info); // the turns, for a failure's message
         if (choices_)
         {
@@ -493,6 +545,7 @@ class Arena
         {
             SaidNoticed();
         }
+        SaidOfACooldown(line);
         recent_.emplace_back(line);
         if (recent_.size() > 40)
         {
@@ -541,6 +594,24 @@ class Arena
         {
             ++coverage_.rolledOver;
         }
+    }
+
+    // What the engine had cooling, taken onto its creature's own clock (22):
+    // whose, from which look, and set anew or ended by the game while held.
+    // And never a hold of the machine's own that it did not know of.
+    void SaidOfACooldown(std::string_view line)
+    {
+        const auto says = [line](std::string_view words) { return line.find(words) != std::string_view::npos; };
+        if (says(" is cooling in the engine, "))
+        {
+            ++coverage_.cooldownsHeld;
+            coverage_.cooldownsOfItems += says(" (item ") ? 1 : 0;
+            coverage_.cooldownsAtStart += line.ends_with("(found running on it)") ? 1 : 0;
+            coverage_.cooldownsSetAnew += says(", set anew by the game over ") ? 1 : 0;
+        }
+        coverage_.cooldownsEndedByIt += says(", and the game has ended its cooldown: ") ? 1 : 0;
+        Must(!says(" is held in the engine at the machine's own scale "),
+             "the machine found a hold of its own that it did not know of");
     }
 
     // Ended at its time limit (14): an AI's, and not before the
@@ -680,13 +751,15 @@ class Arena
             // A look at everyone the machine took up with this frame (not a
             // menu's first frame nor a conversation's, which it lets lie):
             // each creature's pace as it was then is what a bar of time
-            // walks at until the next (19).
+            // walks at until the next (19). And what the engine has cooling
+            // on each is the machine's from it (22).
             if (world_.statusReads != looks && world_.mode == Mode::Combat)
             {
                 for (const Creature &c : world_.creatures)
                 {
                     looked_[c.id] = Pace(c.speed, c.movement);
                 }
+                CooldownsAgree();
             }
             Check();
             held = held || world_.machine.Active();
@@ -1010,7 +1083,10 @@ class Arena
         asked.active = world_.machine.Active();
         asked.current = world_.Current();
         // An ability: one of a few, with a cooldown, now and then a sustained
-        // one turned on or off, which costs nothing.
+        // one turned on or off, which costs nothing. (Used whether or not
+        // the engine has it cooling, as no creature of the game's would: the
+        // stand-in's engine then sets its cooldown anew over the machine's
+        // hold, which the machine is to take again, 22.)
         asked.ability = static_cast<std::int32_t>(rng_.Next() % 4);
         asked.sustained = type == CommandType::UseAbility && Chance(rng_, 0.25);
         asked.on = Chance(rng_, 0.5);
@@ -1114,7 +1190,11 @@ class Arena
             spell.source = asked.source;
             spell.inCombat = world_.InCombat(asked.id);
             spell.ability = asked.ability;
-            spell.cooldownSeconds = asked.cooldown;
+            // What the ability cools for once it has run is the engine's to
+            // start, as its command ends (World::Finish), by the stand-in's
+            // ability table: the gate is told nothing of it (22; issue 57).
+            // The same draw as when the gate was. (UseAbility writes its own.)
+            world_.cooldownOf[spell.ability] = asked.cooldown;
             spell.abilityType = kAbilitySpell;
             spell.conjureAnim = 245;
             spell.conjureSeconds = 1.0f;
@@ -1129,7 +1209,7 @@ class Arena
             grab.source = asked.source;
             grab.inCombat = world_.InCombat(asked.id);
             grab.ability = 90036;
-            grab.cooldownSeconds = asked.cooldown;
+            world_.cooldownOf[grab.ability] = asked.cooldown;
             grab.actionSeconds = 1.0f;
             grab.target = asked.grabbed;
             return world_.Queue(grab);
@@ -1586,15 +1666,20 @@ class Arena
         // long run with the party's tactics chosen, seed 39, 2026-10-05:
         // the lot's first two hundred and fifty fights on the bar with
         // nobody unaware, issue 50).
+        // (A hold the game ended is let go with no effect: there is
+        // nothing left in the engine to set.)
         if (e.b == 0)
         {
             Must(e.target == lastTurnStart_ || e.target == world_.Current() || e.target == currentBefore_,
                  "a cooldown released out of its user's turn");
             ++coverage_.cooldownsReleased;
         }
-        else if (e.b == TurnMachine::kCooldownHoldSeconds)
+        else if (world_.machine.Active())
         {
-            ++coverage_.cooldownsHeld;
+            // Held, in a fight: the hold's own hour left, of a total no
+            // less, whatever is left of it on its creature's clock. (Out of
+            // one, the fight's end gives each back its own seconds.)
+            Must(e.b == TurnMachine::kCooldownHoldSeconds && e.c >= e.b, "a cooldown held for other than its hour");
         }
     }
 
@@ -1652,9 +1737,165 @@ class Arena
             Burrowing();
             Pacing();
             Singing();
+            Scripted();
         }
         Player();
         Happenings();
+    }
+
+    // Now and then a script does something to a cooldown with no command of
+    // anyone's (22; issue 57), to anyone of the fight and in anyone's turn:
+    // sets one cooling (a trap's, a plot's; now and then an item's ability's,
+    // which the engine keeps by the item's tag), sets one of its creature's
+    // anew, or ends all it has (SetCooldown at 0, as the game's plot scripts
+    // do for a boss). On a stream of its own: what it does changes nothing
+    // the machine decides, and a fight is draw for draw the fight it was.
+    void Scripted()
+    {
+        if (!Chance(cools_, 0.004))
+        {
+            return;
+        }
+        const auto about = Living(&Arena::Anyone);
+        if (about.empty())
+        {
+            return;
+        }
+        Creature &c = world_.Get(Pick(cools_, about));
+        const double what = Unit(cools_);
+        if (what < 0.2 && !c.cooldowns.empty())
+        {
+            const std::vector<RunningCooldown> all = c.cooldowns;
+            for (const RunningCooldown &one : all)
+            {
+                world_.Cool(c.id, one.ability, 0.0f, one.item);
+            }
+        }
+        else if (what < 0.4 && !c.cooldowns.empty())
+        {
+            const RunningCooldown again = c.cooldowns[static_cast<std::size_t>(cools_.Next() % c.cooldowns.size())];
+            world_.Cool(c.id, again.ability, Between(cools_, 0.3f, kLongestCooldown), again.item);
+        }
+        else
+        {
+            const bool item = Chance(cools_, 0.3);
+            world_.Cool(c.id, item ? kPoultice : static_cast<std::int32_t>(cools_.Next() % 4),
+                        Between(cools_, 0.3f, kLongestCooldown), item ? kPoulticeTag : std::wstring_view{});
+            ++coverage_.cooldownsScripted;
+        }
+    }
+
+    // The cooldowns' own promise (22; issue 57), as each frame ends: what the
+    // engine has cooling on one of the fight does not run on the wall. A
+    // record that is the engine's own (not one the machine set, to hold it)
+    // stands on a fighter for a frame or two and no longer: the machine is
+    // told as the engine sets one, and holds it with its next step's effects,
+    // whatever its creature is at and whoever's turn it is; and one already
+    // running on a creature as it comes into the fight is read with the step
+    // after. Not counted in a frame the machine does not step the fight in.
+    using Cooling = std::tuple<ObjectId, std::int32_t, std::wstring>;
+    bool OfTheFight(const Creature &c) const
+    {
+        return c.exists && world_.machine.Order().Find(c.id) != nullptr;
+    }
+    void CheckCooldowns()
+    {
+        if (!world_.machine.Active() || world_.mode != Mode::Combat)
+        {
+            return;
+        }
+        std::map<Cooling, int> onWall;
+        for (const Creature &c : world_.creatures)
+        {
+            if (!OfTheFight(c))
+            {
+                continue;
+            }
+            for (const RunningCooldown &r : c.cooldowns)
+            {
+                if (!world_.MachineHolds(c.id, r.ability, r.item))
+                {
+                    const Cooling key{c.id, r.ability, r.item};
+                    const auto before = onWall_.find(key);
+                    const int frames = (before != onWall_.end() ? before->second : 0) + 1;
+                    Must(frames <= kTakenWithinFrames, "a cooldown ran on the wall, on one of the fight");
+                    onWall.emplace(key, frames);
+                }
+            }
+        }
+        onWall_ = std::move(onWall);
+    }
+
+    // And as the fight lets the world go, every cooldown it held has its own
+    // seconds back (22): the machine held them, and nothing else would ever
+    // end a hold.
+    void CheckCooldownsGivenBack(Phase phase)
+    {
+        if (phaseBefore_ == Phase::Idle || phase != Phase::Idle)
+        {
+            return;
+        }
+        for (const Creature &c : world_.creatures)
+        {
+            Must(!c.exists || std::ranges::none_of(c.cooldowns,
+                                                   [&](const RunningCooldown &r) {
+                                                       return world_.MachineHolds(c.id, r.ability, r.item) ||
+                                                              r.remaining > kLongestCooldown;
+                                                   }),
+                 "a cooldown left held as the fight let the world go");
+        }
+        onWall_.clear();
+        lettingGo_.clear();
+    }
+
+    // And every half second or so, as the machine looks at everyone (22):
+    // of every fighter, each cooldown the machine holds in the engine is on
+    // its book, and each on its book is one the engine has, none for longer
+    // than the engine ever set one. (One held in the engine that the book
+    // does not have is one it let go at the gate since, the effect to come
+    // with the next step: never two of these running.)
+    void CooldownsAgree()
+    {
+        if (!world_.machine.Active())
+        {
+            return; // the fight ended with this step, and gave each back its seconds (Check)
+        }
+        ++coverage_.cooldownLooks;
+        const std::vector<CooldownView> held = world_.machine.State().cooldowns;
+        const auto holds = [&](ObjectId id, const RunningCooldown &r) {
+            return std::ranges::any_of(
+                held, [&](const CooldownView &h) { return h.id == id && h.ability == r.ability && h.item == r.item; });
+        };
+        std::set<Cooling> lettingGo;
+        for (const Creature &c : world_.creatures)
+        {
+            if (!OfTheFight(c))
+            {
+                continue;
+            }
+            for (const RunningCooldown &r : c.cooldowns)
+            {
+                if (world_.MachineHolds(c.id, r.ability, r.item) && !holds(c.id, r))
+                {
+                    const Cooling key{c.id, r.ability, r.item};
+                    Must(!lettingGo_.contains(key), "an ability held in the engine that the machine does not hold");
+                    lettingGo.insert(key);
+                }
+            }
+            for (const CooldownView &h : held)
+            {
+                if (h.id != c.id)
+                {
+                    continue;
+                }
+                Must(world_.Cooling(c.id, h.ability, h.item) != nullptr,
+                     "the machine holds a cooldown the engine has ended");
+                Must(h.leftMs > 0 && h.leftMs <= h.ofMs &&
+                         h.ofMs <= static_cast<std::uint32_t>(kLongestCooldown * 1000.0f),
+                     "a cooldown held for longer than the engine ever set one");
+            }
+        }
+        lettingGo_ = std::move(lettingGo);
     }
 
     // At its own mode's command, as the world has it (20; issue 51): a song
@@ -2113,7 +2354,7 @@ class Arena
         Creature &c = world_.Get(id);
         if (c.down)
         {
-            world_.Finish(id);
+            world_.Stop(id); // fallen at it: what it was to do was not done
             tasks_.erase(found);
             return;
         }
@@ -2156,7 +2397,7 @@ class Arena
                 tasks_.erase(found);
                 world_.heldConjures.erase(id);
                 c.conjureHeld = false;
-                world_.Finish(id);
+                world_.Stop(id); // cleared before its cast: it cools for nothing
                 Must(world_.machine.OnConjureCleared(id), "a held conjure cleared that the machine did not know");
                 ++coverage_.conjureCleared;
             }
@@ -2184,7 +2425,7 @@ class Arena
             {
                 return false;
             }
-            world_.Finish(entry.first);
+            world_.Stop(entry.first);
             return true;
         });
     }
@@ -2309,7 +2550,7 @@ class Arena
         // creature is held all the same.
         ConjureBroken(id);
         tasks_.erase(id);
-        world_.Finish(id);
+        world_.Stop(id);
         const bool already = world_.Get(id).condition == Condition::Disabled;
         const float before = world_.Get(id).conditionSeconds;
         world_.Get(id).condition = Chance(rng_, 0.2) ? Condition::None : Condition::Disabled;
@@ -2919,6 +3160,8 @@ class Arena
             }
         }
         CheckTheFightsEnd(phase);
+        CheckCooldowns();
+        CheckCooldownsGivenBack(phase);
         CheckWhoWasTold(phase);
         toldIdle_.clear();
         phaseBefore_ = phase;
@@ -3212,11 +3455,14 @@ class Arena
     Rng chooses_; // whose tactics the player chooses to play its turns, and when (Choosing; issue 46): its own stream
     Rng paces_;   // on whom Haste or a slow is put, or ends, and when (Pacing; issue 49): its own stream
     Rng sings_; // who has a song on that keeps it at its command, and when it turns (Singing; issue 51): its own stream
+    Rng cools_; // what a script sets cooling, sets anew or ends, on whom and when (Scripted; issue 57): its own stream
     Settings settings_;
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
     std::set<ObjectId> secondsKnown_;             // held with seconds the machine could read, and not yet ended by it
     ObjectId lastTurnStart_ = kNoObject;          // whose turn began last (its event)
     ObjectId currentBefore_ = kNoObject;          // whose turn it was as the frame began
+    std::map<Cooling, int> onWall_;               // the engine's own cooldowns on fighters, and the frames each has run
+    std::set<Cooling> lettingGo_;                 // held in the engine and not by the machine, at its last look (22)
     bool timeHeld_ = false;                       // effects' time, as the machine left it
     std::unordered_set<ObjectId> ownClock_;       // creatures put on their own clocks
     std::unordered_set<ObjectId> turnsThisFrame_; // whose turn opened or closed in this frame
@@ -3351,6 +3597,12 @@ void Count(const Coverage &c, std::uint64_t count, bool strays, bool choices)
         {"conditionsEnded", c.conditionsEnded},
         {"cooldownsHeld", c.cooldownsHeld},
         {"cooldownsReleased", c.cooldownsReleased},
+        {"cooldownsScripted", c.cooldownsScripted},
+        {"cooldownsOfItems", c.cooldownsOfItems},
+        {"cooldownsAtStart", c.cooldownsAtStart},
+        {"cooldownsSetAnew", c.cooldownsSetAnew},
+        {"cooldownsEndedByIt", c.cooldownsEndedByIt},
+        {"cooldownLooks", c.cooldownLooks},
         {"roundsAged", c.roundsAged},
         {"ownAged", c.ownAged},
         {"kept", c.kept},
@@ -3488,7 +3740,26 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     CHECK(coverage.stunned > 290);
     CHECK(coverage.lostOnClock > 20);
     CHECK(coverage.conditionsEnded > 110);
-    CHECK(coverage.cooldownsReleased > 11);
+    // Cooldowns, as the engine sets them (22; issue 57). The fights are turn
+    // for turn the ones they were, 3285 turns in 672 rounds: nothing the
+    // machine decides goes by a cooldown, and what a script does to one is
+    // drawn on a stream of its own. 2026-10-08, the machine told as the
+    // engine sets each: 1226 taken onto their creatures' clocks (90 had been
+    // reckoned from the commands let through, until issue 57), 886 of them a
+    // script's with no command, 275 an item's ability's by its tag, 168
+    // found running on a creature as it came into the fight, 276 set again
+    // by the engine over the machine's hold and taken again; 138 holds the
+    // engine set to nothing were let go, 200 ran out on their creatures'
+    // clocks and were released; and the machine's book was checked against
+    // the engine's 20,943 times. (In every other fight an item's record
+    // keeps its own total under the hold, as one did in play.)
+    CHECK(coverage.cooldownsReleased > 65);
+    CHECK(coverage.cooldownsScripted > 290);
+    CHECK(coverage.cooldownsOfItems > 85);
+    CHECK(coverage.cooldownsAtStart > 55);
+    CHECK(coverage.cooldownsSetAnew > 90);
+    CHECK(coverage.cooldownsEndedByIt > 45);
+    CHECK(coverage.cooldownLooks > 6900);
     CHECK(coverage.kept > 250);
     CHECK(coverage.landed > 170);
     // Spells the engine conjured, held: some let complete as their time was
@@ -3539,7 +3810,7 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     CHECK(coverage.arrivals > 30);
     CHECK(coverage.tooFar > 5);
     CHECK(coverage.lostTurns > 60); // whole turns: most holds are shorter (193)
-    CHECK(coverage.cooldownsHeld > 35);
+    CHECK(coverage.cooldownsHeld > 400);
     CHECK(coverage.delays > 40); // 95, and 84 taken
     CHECK(coverage.delayedTurns > 30);
     // An AI's wait taken of its bar, its creature told to choose again, and

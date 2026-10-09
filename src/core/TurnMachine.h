@@ -91,6 +91,12 @@ struct Needs
     // the turn's own alone: a command the gate let through out of turn (the
     // game's own, for one it has out of combat) turns its creature too.
     std::vector<ObjectId> turning;
+    // Whose running cooldowns to read, once each: those come into the fight
+    // and not yet read, everyone as a fight begins and a joiner as it joins
+    // (Observation::cooling). What was cooling on a creature before the fight
+    // held it is found so; what the engine sets from then on the machine is
+    // told as it is set (TurnMachine::OnCooldownSet; issue 57).
+    std::vector<ObjectId> cooling;
 };
 
 struct ActorObservation
@@ -202,6 +208,27 @@ enum class Condition : std::uint8_t
     Disabled,
 };
 
+// A cooldown running on a creature, as the engine has it: one record of the
+// list its cooldown manager ticks every frame (the game layer reads DAOLib's
+// dao::abilities::Cooldowns). Which ability, the tag of the item it comes
+// from (none: the creature's own), and the seconds left of the seconds it was
+// last set to.
+struct RunningCooldown
+{
+    std::int32_t ability = -1;
+    std::wstring item;
+    float remaining = 0.0f;
+    float total = 0.0f;
+};
+
+// What cools on one who has come into the fight, as the game layer read it
+// when asked (Needs::cooling): every record the engine has running on it.
+struct CoolingLook
+{
+    ObjectId id = kNoObject;
+    std::vector<RunningCooldown> running;
+};
+
 struct CombatantStatus
 {
     ObjectId id = kNoObject;
@@ -243,6 +270,8 @@ struct Observation
     // What came of each facing the machine asked for with its last step
     // (EffectKind::FaceTarget).
     std::vector<FacedLook> faced;
+    // Of those named (Needs::cooling): what the engine has cooling on each.
+    std::vector<CoolingLook> cooling;
 };
 
 enum class EffectKind : std::uint8_t
@@ -257,7 +286,8 @@ enum class EffectKind : std::uint8_t
     CenterCamera,  // the camera turns to target (game/Camera.h)
     Explain,       // log what target's AI sees: it chose nothing on its turn
     EndConditions, // take target's stuns, paralysis, sleep and pins off: their turns are spent
-    Cooldown,      // target's ability a gets b seconds of cooldown (held, released, or back to seconds)
+    Cooldown,      // target's ability a (of the item tagged `text`, if any) has b seconds of cooldown left of c: held,
+                   // released (b 0), or back to its own seconds
     HoldTime,      // every temporary effect's time held still (a 1) or let run (a 0)
     AgeTime,       // every temporary effect aged b milliseconds, once; with a target, that creature's alone
     OwnClock,      // target's effects, regeneration and timers on a clock of its own (a 1), or the shared one (a 0)
@@ -275,13 +305,15 @@ struct Effect
 {
     EffectKind kind = EffectKind::Pause;
     ObjectId target = kNoObject;
+    // A floaty's words; a cooldown's item tag (none: the creature's own
+    // ability), by which the engine keeps an item's record.
     std::wstring text;
     std::uint32_t colour = 0xFFFFFF;
     std::int32_t event = 0;
     std::int32_t a = 0;
     std::int32_t b = 0;
     // A cooldown's: the seconds its sweep is drawn against, b the seconds
-    // left of them (0: as the scripts set one, both the same).
+    // left of them.
     std::int32_t c = 0;
     // A kept plain attack's release (ReleaseCast): those it may be turned on
     // if its target has fallen, the standing combatants of the other side,
@@ -327,11 +359,13 @@ struct CommandRequest
     // 2026-10-01). Opening the door first costs its own half second
     // ([costs] object), and no more.
     bool doorInTheWay = false;
-    // For a use of an ability: which, its cooldown in seconds (the ability
-    // table's), and whether it is a sustained one (UseType 2) and already
-    // on, so that this use turns it off.
+    // For a use of an ability: which, and whether it is a sustained one
+    // (UseType 2) and already on, so that this use turns it off. (Not its
+    // cooldown: what cools, and for how long, is read of the engine once the
+    // command has run, CombatantStatus::cooldowns. Until issue 57 the gate
+    // read the ability table's seconds here and the machine reckoned from
+    // them what the engine would start.)
     std::int32_t ability = -1;
-    float cooldownSeconds = 0.0f;
     bool sustained = false;
     bool sustainedOn = false;
     // And its conjuring time in seconds (the ability's Speed, through the
@@ -508,6 +542,9 @@ struct CooldownView
     // down from, in milliseconds.
     std::uint32_t leftMs = 0;
     std::uint32_t ofMs = 0;
+    // The tag of the item the ability comes from; none for the creature's
+    // own.
+    std::wstring item;
 };
 
 struct ChargeView
@@ -688,8 +725,22 @@ class TurnMachine
     // what the failed command was aimed at, when the game layer says: for
     // the log's line alone ("X's attack on Y failed"), and nothing is
     // decided by it (issue 27).
-    bool OnCommandFailed(ObjectId who, CommandType type, std::int32_t ability, std::string_view why,
-                         ObjectId target = kNoObject);
+    bool OnCommandFailed(ObjectId who, CommandType type, std::string_view why, ObjectId target = kNoObject);
+
+    // From the game (DAOLib's dao::abilities::OnCooldownSet): the engine has
+    // just set a cooldown on a creature, so many seconds, left and in all,
+    // for an ability of its own or of the item tagged `item`; no seconds
+    // ends one. Every cooldown the engine or a script starts goes through
+    // that one function of the engine's, whatever started it and whenever: an
+    // ability's own use, a mode the engine would not let stand, a mode
+    // switched off, a script with no command, a trap, an item's. Of one of a
+    // fight it is taken onto its creature's own clock at once, whoever's turn
+    // it is and whatever its creature is at (dev/DESIGN.md, "Cooldowns in
+    // turns"; issue 57): the hold is set with the next step's effects. One
+    // set on a creature of no fight is the engine's, on the wall as ever.
+    // Not what the machine sets itself: the game layer does not tell it of
+    // its own holds.
+    void OnCooldownSet(ObjectId creature, std::int32_t ability, std::wstring_view item, float seconds);
 
     // How long the bar's caption says that a party member's action was
     // given back and why (TurnView::notice), of the real clock: the world
@@ -745,9 +796,15 @@ class TurnMachine
     // (and with `order_run_ms` is dispatched: the game runs until a command
     // comes, or that long has passed).
     static constexpr std::uint32_t kDispatchAfterMs = 100;
-    // An ability held on cooldown is given this many seconds: longer than any
-    // turn waits in real time. Released on its user's turn, or turned back
-    // into seconds when the fight ends.
+    // An ability held on cooldown is set to this many seconds left in the
+    // engine: longer than any turn waits in real time, whatever its creature's
+    // clock has left of it. What the quickbar's sweep shows is what is left
+    // over the total, so the total is set to as many times this as the
+    // cooldown is of what is left of it (HoldIt): never less than this.
+    // Released as its seconds have run on its user's clock, or turned back
+    // into seconds when the fight ends. And the mark of a hold no fight wrote
+    // back, met as its creature comes into a fight: no ability of the game's
+    // cools for an hour.
     static constexpr std::int32_t kCooldownHoldSeconds = 3600;
     // (No length of the mod's for a creature at an effect's command: until
     // 2026-10-04 a turn waited two seconds on one, kEffectGraceMs, and was
@@ -1036,7 +1093,10 @@ class TurnMachine
     void PutOnOwnClocks(std::vector<Effect> &fx);
     [[nodiscard]] bool LandCast(const Combatant &who, std::vector<Effect> &fx);
     void Interrupt(ObjectId who, std::string_view why, std::vector<Effect> &fx);
-    void HoldUsed(std::vector<Effect> &fx);
+    void TakeCooldown(const Combatant &who, const RunningCooldown &r, std::string_view when, std::vector<Effect> &fx);
+    void TakeRunning(const CoolingLook &look, std::vector<Effect> &fx);
+    struct Hold;
+    [[nodiscard]] static Effect HoldIt(const Hold &h);
     void ReleaseCooldowns(std::vector<Effect> &fx);
     void HoldTime(bool held, std::vector<Effect> &fx);
     void SetSpeed(float speed, std::vector<Effect> &fx);
@@ -1223,13 +1283,15 @@ class TurnMachine
     // With time: a turn is on whose creature's clock runs through it (taken,
     // lost or spent on a pending action; not a fallen one's, passed over).
     bool clockRuns_ = false;
-    // Cooldowns in turns (dev/DESIGN.md): the abilities used in the action
-    // under way, held once it has run; and those held, with what each still
-    // waits of its user's own clock.
+    // Cooldowns in turns (dev/DESIGN.md): the cooldowns the machine holds,
+    // each a record of the engine's taken as the engine set it, or found
+    // running as its creature came into the fight (TakeCooldown), with what
+    // it still waits of its user's own clock.
     struct Hold
     {
         ObjectId creature = kNoObject;
         std::int32_t ability = -1;
+        std::wstring item; // the engine keeps an item's ability's record by the item's tag
         // The cooldown counts on its user's own clock, which moves a turn's
         // seconds a turn of its user's, as its bar is spent
         // (dev/REBALANCE.md, "The creature's own clock"): it lifts at the
@@ -1238,8 +1300,10 @@ class TurnMachine
         std::uint32_t leftMs = 0;
         std::uint32_t ofMs = 0;
     };
-    std::vector<Hold> usedNow_;
     std::vector<Hold> holds_;
+    // Whose running cooldowns have been read since they came into the fight
+    // (Needs::cooling): once each.
+    std::unordered_set<ObjectId> cooled_;
     // Actions kept: one that does not fit what is left of its creature's
     // bar (PayAction) lands as a later turn has paid what it owes, and its
     // walk to its target (an attack's), paid for in that, is walked for

@@ -301,6 +301,15 @@ Needs TurnMachine::WhatToObserve(std::uint32_t nowMs)
                 needs.turning.push_back(standing.id);
             }
         }
+        // And whose running cooldowns to read, once each as they come into
+        // the fight (TakeRunning; issue 57).
+        for (const Combatant &fighter : order_.All())
+        {
+            if (!cooled_.contains(fighter.id))
+            {
+                needs.cooling.push_back(fighter.id);
+            }
+        }
     }
     // Every half second; fresh at every turn start: whether a creature is
     // stunned decides whether its turn is taken at all; and when asked for
@@ -338,7 +347,6 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         {
             Log(LogLevel::Info, std::format("the game went to {}: the fight is dropped", ModeName(obs.mode)));
             order_.Clear();
-            usedNow_.clear();
             holds_.clear();
             phase_ = Phase::Idle;
         }
@@ -426,6 +434,10 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         const auto worldDt = static_cast<std::uint32_t>(std::lround(static_cast<float>(dt) * speedSet_));
         clock_ += worldDt;
         roundRunMs_ += worldDt;
+    }
+    for (const CoolingLook &look : obs.cooling)
+    {
+        TakeRunning(look, fx);
     }
     ApplyStatuses(obs.statuses, fx);
     FollowPace();
@@ -669,8 +681,8 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     held_.clear();
     notice_.reset(); // what the caption said of the last fight's order is not this one's
     currentStunned_ = false;
-    usedNow_.clear();
     holds_.clear();
+    cooled_.clear();
     absentSince_.clear();
     outside_.clear();
     afar_.clear();
@@ -1543,8 +1555,8 @@ bool TurnMachine::OnDamaged(ObjectId target, float damage, bool physical, float 
 // said of it (nothing: no failure came). Lyna's Chain Lightning, 4.99 s on a
 // bar of 5.0, was over in 0.4 s with no bolt, no stamina spent, and her
 // whole turn charged for it (play test 29: its target had not yet joined
-// the fight). Its time is given back, as a failed command's is, and its
-// cooldown not held.
+// the fight). Its time is given back, as a failed command's is. (Whether it
+// cooled is the engine's to say, as of any command: OnCooldownSet.)
 void TurnMachine::OverAtOnce(std::vector<Effect> &fx)
 {
     const Combatant *current = order_.Current();
@@ -1556,7 +1568,7 @@ void TurnMachine::OverAtOnce(std::vector<Effect> &fx)
     }
     // (OnCommandFailed says "Nothing happened" over the player's own.)
     (void)fx;
-    (void)OnCommandFailed(current->id, budget_.lastType, budget_.lastAbility, "over at once: it did nothing");
+    (void)OnCommandFailed(current->id, budget_.lastType, "over at once: it did nothing");
 }
 
 void TurnMachine::Owe(ObjectId who, std::uint32_t ms, CommandType type, std::int32_t ability)
@@ -1937,35 +1949,219 @@ void TurnMachine::HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx)
 
 namespace
 {
-Effect CooldownOf(ObjectId creature, std::int32_t ability, std::int32_t seconds, std::int32_t of = 0)
+// An ability of a creature's, by the engine's own key for its cooldown's
+// record: the ability, and the tag of the item it comes from, if it is an
+// item's.
+Effect CooldownOf(ObjectId creature, std::int32_t ability, const std::wstring &item, std::int32_t seconds,
+                  std::int32_t of)
 {
     Effect e = Effect::Of(EffectKind::Cooldown, creature);
     e.a = ability;
+    e.text = item;
     e.b = seconds;
     e.c = of;
     return e;
 }
+
+// For the log: "ability 10400", or "ability 500012 (item gen_im_qck_health_101)".
+std::string Named(std::int32_t ability, const std::wstring &item)
+{
+    return item.empty() ? std::format("ability {}", ability) : std::format("ability {} (item {})", ability, Utf8(item));
+}
+
+std::uint32_t Milliseconds(float seconds)
+{
+    constexpr float kLongest = 86400.0f; // a day: more than any cooldown, and far from the 32 bits' end
+    return std::isfinite(seconds)
+               ? static_cast<std::uint32_t>(std::lround(std::clamp(seconds, 0.0f, kLongest) * 1000.0f))
+               : 0u;
+}
 } // namespace
 
-// Cooldowns in turns (dev/DESIGN.md, "Cooldowns in turns"): the abilities
-// the last action used are held, in the engine, where waiting in real time
-// cannot bring them back.
-void TurnMachine::HoldUsed(std::vector<Effect> &fx)
+// What a held cooldown is set to in the engine. Left, the hold's own
+// seconds, an hour, whatever its creature's clock has left of it: so that
+// no hold comes back by waiting, however little is left. And the total as
+// many times that as the cooldown is of what is left of it, since what the
+// quickbar's sweep shows is the one over the other: with 8 s of 12 left the
+// total is an hour and a half, and the sweep a third recovered. (Until
+// 2026-10-08 it was the other way about, the total the hour and what was
+// left its share of it: a cooldown with a hundredth of itself to wait was
+// held for 36 s of the wall, which the looks that read every record then
+// set again. Nothing reads them now.)
+Effect TurnMachine::HoldIt(const Hold &h)
 {
-    for (const Hold &used : usedNow_)
+    constexpr std::uint64_t kMost = 2000000000; // seconds: what the effect's number holds
+    const std::uint64_t total = static_cast<std::uint64_t>(kCooldownHoldSeconds) * h.ofMs / std::max(h.leftMs, 1u);
+    return CooldownOf(h.creature, h.ability, h.item, kCooldownHoldSeconds,
+                      static_cast<std::int32_t>(std::clamp<std::uint64_t>(total, kCooldownHoldSeconds, kMost)));
+}
+
+// Cooldowns in turns (dev/DESIGN.md, "Cooldowns in turns"; issue 57): the
+// engine has just set a cooldown on a creature of the fight, and the game
+// layer says so (DAOLib's dao::abilities::OnCooldownSet). It is taken onto
+// its creature's own clock there and then: its seconds go into the book, and
+// the record is held in the engine, where waiting in real time cannot bring
+// it back, with the next step's effects. The engine says what cools, and
+// when; the machine keeps no list of why, and looks for nothing. Every
+// cooldown of the engine's and of the scripts' goes through the one function
+// of the engine's that the callback is on, so the one rule covers whatever
+// started it and whenever: the ability's own use, a mode the engine would
+// not let stand, a mode switched off, a script's SetCooldown with no command
+// at all, a trap, an item's, in its creature's turn or out of it, in the
+// middle of its command or after it.
+//
+// It had two forms before this one, and each missed what it was not looking
+// at.
+// - Until 2026-10-06 the machine reckoned what the engine would start from
+//   each command it let through (the ability table's seconds; a mode turned
+//   off, a turn's worth; a mode turned on, nothing), and a cooldown started
+//   for any reason not on that list ran on the wall. A Cultist Overseer
+//   ordered a sustained spell that would not stand 47 times in one turn. The
+//   user: "Shouldn't everything automatically keep its cooldown? If we do so
+//   in a general way, we shouldn't miss anything."
+// - Until 2026-10-08 it read every fighter's running cooldowns at each look
+//   at everyone, and took what it found; not of a creature at a command of
+//   its own turn, which was looked at when the command was over. Everything
+//   else was right in play, and the Overseer looped as before, 83 orders in
+//   a turn and not one record ever found: its spell's cooldown, the second
+//   and a half the scripts set as an AI's cast of a mode starts, is over
+//   before the command of some 1.7 s is, and its script orders again as each
+//   command ends, so that its turn never came out of that command to be
+//   looked at (seen in real time with the mod off, 2026-10-08). Looking
+//   oftener would have found that one; a cooldown set by what is no command,
+//   and over between two looks, it would not. The engine's own word as it
+//   sets one is exact where a look is not.
+//
+// A cooldown the machine holds that the engine sets again (a script; the
+// ability run again by one; a mode's, which the scripts set twice in one
+// command: ability_core.nss, a second and a half as an AI's cast starts,
+// then the ability table's own as its upkeep effect comes off,
+// effect_upkeep_h.nss) is taken again at the engine's new word, the book's
+// seconds replaced. One the engine sets to nothing is ended by the game (a
+// script's reset): the book lets go of it, and whatever the machine had
+// still to say of it is not said.
+void TurnMachine::OnCooldownSet(ObjectId creature, std::int32_t ability, std::wstring_view item, float seconds)
+{
+    const Combatant *who = phase_ != Phase::Idle ? order_.Find(creature) : nullptr;
+    if (who == nullptr)
     {
-        std::erase_if(holds_, [&](const Hold &h) { return h.creature == used.creature && h.ability == used.ability; });
-        holds_.push_back(used);
-        fx.push_back(CooldownOf(used.creature, used.ability, kCooldownHoldSeconds, kCooldownHoldSeconds));
-        if (Logs(LogLevel::Debug))
-        {
-            Log(LogLevel::Debug, std::format("ability {} of {:#010x} held for {:.1f} s of its user's clock",
-                                             used.ability, used.creature, static_cast<float>(used.ofMs) / 1000.0f));
-        }
-        Emit(EventKind::CooldownHeld, used.creature, std::format("{:.1f} s", static_cast<float>(used.ofMs) / 1000.0f),
-             used.ability);
+        // Of no fight, or gone from this one's order: the engine's, on the
+        // wall as ever. A hold the book still had of it, from while its
+        // creature was of the fight, the engine has just written over, and
+        // is no hold any more.
+        std::erase_if(holds_,
+                      [&](const Hold &h) { return h.creature == creature && h.ability == ability && h.item == item; });
+        return;
     }
-    usedNow_.clear();
+    TakeCooldown(*who, RunningCooldown{ability, std::wstring{item}, seconds, seconds}, "set by the engine now",
+                 pending_);
+}
+
+// And what was cooling on a creature before the fight held it, read once as
+// it comes into the fight (Needs::cooling). A record the machine holds
+// already was set by the engine since its creature came in, and taken then.
+// One with an hour or more for its total is no cooldown of the game's: a
+// hold no fight wrote back (the world dropped under one), with nothing to
+// say what it had left; ended, and said.
+//
+// It is the one read there is. Until 2026-10-09 a creature's were read once
+// more after each command of its turn, for an item's ability's, whose
+// cooldown the exe did not plainly say would be told; play showed a drink
+// calling back as any other does (Wynne's lyrium potion, `(set by the engine
+// now)`, that day), and the read went.
+void TurnMachine::TakeRunning(const CoolingLook &look, std::vector<Effect> &fx)
+{
+    cooled_.insert(look.id);
+    const Combatant *who = order_.Find(look.id);
+    if (who == nullptr)
+    {
+        return;
+    }
+    for (const RunningCooldown &r : look.running)
+    {
+        const bool held = std::ranges::any_of(
+            holds_, [&](const Hold &h) { return h.creature == look.id && h.ability == r.ability && h.item == r.item; });
+        if (held)
+        {
+            continue;
+        }
+        if (r.total >= static_cast<float>(kCooldownHoldSeconds))
+        {
+            Log(LogLevel::Warn,
+                std::format("{}'s {} is held in the engine at the machine's own scale ({:.0f} s left of {:.0f}), and "
+                            "the machine holds no such cooldown: left by a fight that did not end (the world "
+                            "dropped, a save made in one), what it had left is not known, and it is ended: ready",
+                            Utf8(who->name), Named(r.ability, r.item), r.remaining, r.total));
+            fx.push_back(CooldownOf(look.id, r.ability, r.item, 0, 0));
+            continue;
+        }
+        if (r.remaining > 0.0f)
+        {
+            TakeCooldown(*who, r, "found running on it", fx);
+        }
+    }
+}
+
+// One cooldown of the engine's, onto its creature's own clock: what the
+// engine has left of it, of what it was set to. Never for more than that
+// total: the engine sets the two as one and only takes from what is left, so
+// more left than the total is the machine's own writing met by a machine
+// that does not know it (a hold no fight wrote back, on a record that kept
+// its own total: an item's did, in play, 2026-10-06), taken at the total and
+// said at warning. Nothing left ends it.
+void TurnMachine::TakeCooldown(const Combatant &who, const RunningCooldown &r, std::string_view when,
+                               std::vector<Effect> &fx)
+{
+    const auto held = std::ranges::find_if(
+        holds_, [&](const Hold &h) { return h.creature == who.id && h.ability == r.ability && h.item == r.item; });
+    const bool anew = held != holds_.end();
+    const std::uint32_t totalMs = Milliseconds(r.total);
+    std::uint32_t leftMs = Milliseconds(r.remaining);
+    if (leftMs == 0)
+    {
+        if (anew)
+        {
+            Log(LogLevel::Info,
+                std::format("{}'s {} was held with {:.2f} s of its own clock to wait, and the game has ended its "
+                            "cooldown: let go, it is ready",
+                            Utf8(who.name), Named(r.ability, r.item), static_cast<float>(held->leftMs) / 1000.0f));
+            Emit(EventKind::CooldownReleased, who.id, "ended by the game", r.ability, {}, Utf8(r.item));
+            holds_.erase(held);
+            std::erase_if(fx, [&](const Effect &e) {
+                return e.kind == EffectKind::Cooldown && e.target == who.id && e.a == r.ability && e.text == r.item;
+            });
+        }
+        return;
+    }
+    if (totalMs > 0 && leftMs > totalMs)
+    {
+        Log(LogLevel::Warn,
+            std::format("{}'s {} has {:.2f} s left in the engine of the {:.2f} s it was set to, which the engine "
+                        "does not do: a hold of the machine's that it does not know for its own; taken at what "
+                        "it was set to, and no more",
+                        Utf8(who.name), Named(r.ability, r.item), r.remaining, r.total));
+        leftMs = totalMs;
+    }
+    Hold taken{who.id, r.ability, r.item, leftMs, std::max(leftMs, totalMs)};
+    Log(LogLevel::Info,
+        std::format("{}'s {} is cooling in the engine, {:.2f} s left of {:.2f}{}: taken onto its own clock, and "
+                    "held ({})",
+                    Utf8(who.name), Named(r.ability, r.item), r.remaining, r.total,
+                    anew ? std::format(", set anew by the game over the {:.2f} s the machine held",
+                                       static_cast<float>(held->leftMs) / 1000.0f)
+                         : std::string{},
+                    when));
+    fx.push_back(HoldIt(taken));
+    Emit(EventKind::CooldownHeld, who.id, std::format("{:.1f} s", static_cast<float>(leftMs) / 1000.0f), r.ability, {},
+         Utf8(r.item));
+    if (anew)
+    {
+        *held = std::move(taken);
+    }
+    else
+    {
+        holds_.push_back(std::move(taken));
+    }
 }
 
 // A turn of its user passes (taken or lost): what has waited its turns is
@@ -2013,30 +2209,29 @@ void TurnMachine::AgeCooldowns(ObjectId who, std::uint32_t clockMs, std::vector<
         h.leftMs -= std::min(h.leftMs, clockMs);
         if (h.leftMs == 0)
         {
-            fx.push_back(CooldownOf(h.creature, h.ability, 0));
+            fx.push_back(CooldownOf(h.creature, h.ability, h.item, 0, 0));
             const Combatant *c = order_.Find(who);
-            Log(LogLevel::Info,
-                std::format("{}'s ability {} is ready again", c != nullptr ? Utf8(c->name) : "?", h.ability));
-            Emit(EventKind::CooldownReleased, who, {}, h.ability);
+            Log(LogLevel::Info, std::format("{}'s {} is ready again: its cooldown has run on its own clock",
+                                            c != nullptr ? Utf8(c->name) : "?", Named(h.ability, h.item)));
+            Emit(EventKind::CooldownReleased, who, {}, h.ability, {}, Utf8(h.item));
         }
         else if (static_cast<std::uint64_t>(before) * kSweepSteps / h.ofMs !=
                  static_cast<std::uint64_t>(h.leftMs) * kSweepSteps / h.ofMs)
         {
-            fx.push_back(CooldownOf(
-                h.creature, h.ability,
-                static_cast<std::int32_t>(static_cast<std::uint64_t>(kCooldownHoldSeconds) * h.leftMs / h.ofMs),
-                kCooldownHoldSeconds));
+            fx.push_back(HoldIt(h));
         }
     }
     std::erase_if(holds_, [&](const Hold &h) { return h.creature == who && h.leftMs == 0; });
 }
 
-// The fight is over: what still waits goes back to seconds, what it has left.
+// The fight is over: what still waits goes back to seconds, what it has
+// left. The machine held them, so it is the machine's to write: left as
+// they are, each would wait out the hold's hour on the wall.
 void TurnMachine::ReleaseCooldowns(std::vector<Effect> &fx)
 {
     for (const Hold &h : holds_)
     {
-        fx.push_back(CooldownOf(h.creature, h.ability, static_cast<std::int32_t>((h.leftMs + 999) / 1000),
+        fx.push_back(CooldownOf(h.creature, h.ability, h.item, static_cast<std::int32_t>((h.leftMs + 999) / 1000),
                                 static_cast<std::int32_t>((h.ofMs + 999) / 1000)));
     }
     holds_.clear();
@@ -3082,7 +3277,6 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
 
 void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
 {
-    HoldUsed(fx); // the action has run: its abilities' cooldowns are the turns'
     if (ActorGone(obs))
     {
         EndTurn(fx, "fell");
@@ -3300,13 +3494,10 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
         GiveActionBack();
         budget_.refunded = true;
     }
-    // Nor is the talent it was on its way to use held on cooldown: chosen,
-    // walked towards and never reached, it was wasted (the user,
-    // 2026-09-30). Given back or not, the command never ran.
-    const bool unused = budget_.lastKind == CommandKind::Action && budget_.lastAbility >= 0 &&
-                        std::erase_if(usedNow_, [&](const Hold &h) {
-                            return h.creature == actor.id && h.ability == budget_.lastAbility;
-                        }) > 0;
+    // (Nor is the talent it was on its way to use on cooldown: chosen,
+    // walked towards and never reached, it never ran, and the engine started
+    // none. The user, 2026-09-30, of one wasted so while the machine
+    // reckoned cooldowns itself.)
     budget_.outOfMovement = true;
     const Combatant *current = order_.Current();
     if (budget_.approachWalk)
@@ -3327,9 +3518,7 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
     Log(LogLevel::Info,
         std::format("{} is out of movement ({:.1f} of {:.1f} m){}",
                     current != nullptr ? Utf8(current->name) : std::string{"?"}, budget_.spend.Walked(),
-                    budget_.spend.MovementMax(), refund ? "; the action it was moving for is kept" : "") +
-            (unused ? std::format("; ability {}, not reached, is not held on cooldown", budget_.lastAbility)
-                    : std::string{}));
+                    budget_.spend.MovementMax(), refund ? "; the action it was moving for is kept" : ""));
     if (current != nullptr && !PlayerControls(*current))
     {
         EndTurn(fx, "out of movement");
@@ -3338,7 +3527,6 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
 
 void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
 {
-    HoldUsed(fx);
     // A walk to its kept attack's target, asked for with this step's effects
     // and not yet given, is not given: the turn is over (its creature thrown
     // as the walk was to begin, its bar spent on the attack: the long run of
@@ -3524,7 +3712,6 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
     }
     chargeBegan_ = false;
     approach_ = false;
-    HoldUsed(fx);
     ReleaseCooldowns(fx);
     HoldTime(false, fx);
     SetSpeed(1.0f, fx);
@@ -3806,6 +3993,7 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
             const ObjectId joined = joining.id;
             const int initiative = joining.initiative;
             order_.Join(std::move(joining));
+            cooled_.erase(joined); // what cools on it is read as it comes in, this time too
             if (OwnClocks() && timeHeld_)
             {
                 Effect own = Effect::Of(EffectKind::OwnClock, joined);
@@ -5014,21 +5202,9 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     case CommandKind::Involuntary:
         break;
     }
-    if (request.type == CommandType::UseAbility && request.ability >= 0)
-    {
-        // Held once the action has run (HoldUsed): a cooldown set before
-        // the ability runs might stop it running. Its own seconds on its
-        // user's clock; a mode turned off, a turn's worth; a mode turned on,
-        // and an ability with no cooldown, nothing.
-        const auto ms =
-            request.sustained
-                ? (request.sustainedOn ? TurnMs() : 0u)
-                : static_cast<std::uint32_t>(std::lround(std::clamp(request.cooldownSeconds, 0.0f, 3600.0f) * 1000.0f));
-        if (ms > 0)
-        {
-            usedNow_.push_back(Hold{who->id, request.ability, ms, ms});
-        }
-    }
+    // (Nothing is reckoned here of the cooldown an ability's use will start:
+    // the engine says what it started, once the command has run
+    // (OnCooldownSet; issue 57).)
     if (settings_.cameraFollow && !player && budget_.commands == 0)
     {
         // Applied with the next frame's effects, after the AI's call into
@@ -5158,7 +5334,7 @@ MachineState TurnMachine::State() const
     }
     for (const Hold &h : holds_)
     {
-        state.cooldowns.push_back({h.creature, h.ability, h.leftMs, h.ofMs});
+        state.cooldowns.push_back({h.creature, h.ability, h.leftMs, h.ofMs, h.item});
     }
     for (const Charge &c : charges_)
     {
@@ -5174,8 +5350,7 @@ MachineState TurnMachine::State() const
 // A companion's AI spent her action twice on an attack the engine then
 // failed with COMMAND_FAILED_INVALID_PATH, in a doorway (the third play
 // test, 2026-09-30).
-bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t ability, std::string_view why,
-                                  ObjectId target)
+bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::string_view why, ObjectId target)
 {
     const Combatant *current = order_.Current();
     if (!Active() || current == nullptr || current->id != who)
@@ -5202,14 +5377,11 @@ bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::int32_t a
         }
         return true;
     }
-    // A talent that never ran is not held on cooldown: an archer's was, for
-    // a shot nobody took (the fourth play test, 19:21:52).
-    if (type == CommandType::UseAbility &&
-        std::erase_if(usedNow_, [&](const Hold &h) { return h.creature == who && h.ability == ability; }) > 0)
-    {
-        Log(LogLevel::Info,
-            std::format("{}'s ability {} failed ({}): not held on cooldown", Utf8(current->name), ability, why));
-    }
+    // (A talent that never ran started no cooldown in the engine, and there
+    // is none to take: until issue 57 the machine had reckoned one as the
+    // command was let through, and took it back here. Before that an
+    // archer's was held for a shot nobody took: the fourth play test,
+    // 19:21:52.)
     // Every time, not once a turn (as it was with one action a turn):
     // three dagger attacks at a spider she could not get to, each over at
     // once, and the second and third were charged 1.5 s each with no swing

@@ -809,7 +809,7 @@ TEST_CASE("with time, an AI stopped with nothing it can get to rolls nothing ove
     // and its turn is ended for it.
     for (int tries = 0; tries < 2; ++tries)
     {
-        REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+        REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
         w.Finish(kGenlock);
         w.RunFor(1500);
     }
@@ -1337,12 +1337,12 @@ TEST_CASE("with time, an action that failed without acting gives its time back",
     REQUIRE(w.Current() == kHero);
     CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
     CHECK(w.machine.View().timeLeftMs == 2000);
-    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "no room in the melee ring"));
+    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, "no room in the melee ring"));
     CHECK(w.machine.View().timeLeftMs == 4000);
     // And every time it fails so: nothing is charged for what did not
     // happen.
     CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
-    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "no room in the melee ring"));
+    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, "no room in the melee ring"));
     CHECK(w.machine.View().timeLeftMs == 4000);
 }
 
@@ -1472,15 +1472,18 @@ TEST_CASE("with time, a cooldown counts on its user's clock and lifts in the mid
     constexpr std::int32_t kTalent = 617;
     w.StartFight();
     REQUIRE(w.Current() == kHero);
-    // A talent of 5 s' cooldown (2 s, the stand-in): held as it ends, its
-    // own time not counted against it.
+    // A talent of 5 s' cooldown (2 s, the stand-in): held as the look after
+    // its command finds it, at what the engine has left of it then, all but
+    // the frames since.
     CHECK(w.UseAbility(kHero, Source::Player, kTalent, 5.0f) == Verdict::Allow);
     Done(w, kHero);
     REQUIRE(left());
-    CHECK(*left() == 5000);
+    const std::uint32_t taken = left().value_or(0);
+    CHECK(taken > 4900);
+    CHECK(taken <= 5000);
     // A swing of 1.5 s moves her clock 1.5 s.
     CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 1.5f, 0.0f) == Verdict::Allow);
-    CHECK(*left() == 3500);
+    CHECK(*left() == taken - 1500);
     Done(w, kHero);
     // The last half second walked (a free meter, and 2.5 m at 5 m/s): the
     // bar is spent, and her turn ends by itself, nothing rolled over. (A
@@ -1492,13 +1495,13 @@ TEST_CASE("with time, a cooldown counts on its user's clock and lifts in the mid
     Done(w, kHero);
     UntilTurnOf(w, kHero);
     REQUIRE(left());
-    CHECK(*left() >= 2990);
-    CHECK(*left() <= 3010);
+    CHECK(*left() >= taken - 2010);
+    CHECK(*left() <= taken - 1990);
     REQUIRE(w.machine.View().timeMs == 4000);
     CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 1.5f, 0.0f) == Verdict::Allow);
     Done(w, kHero);
-    CHECK(*left() >= 1490);
-    CHECK(*left() <= 1510);
+    CHECK(*left() >= taken - 3510);
+    CHECK(*left() <= taken - 3490);
     // The second swing brings it to nothing: ready again, her turn still
     // hers with a second left.
     CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 1.5f, 0.0f) == Verdict::Allow);
@@ -1533,6 +1536,11 @@ TEST_CASE("with time, walking moves the clock too, and a turn lost moves it a wh
     CHECK(w.UseAbility(kHero, Source::Player, 617, 9.0f) == Verdict::Allow);
     Done(w, kHero);
     REQUIRE(left(kHero));
+    // (Taken at what the engine had left of its 9 s as the look after its
+    // command found it: all but the frames since.)
+    const std::uint32_t taken = left(kHero).value_or(0);
+    CHECK(taken > 8900);
+    CHECK(taken <= 9000);
     // 6 m: a meter free, a second at 5 m/s.
     CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player, 6.0f) == Verdict::Allow);
     w.Frame();
@@ -1543,8 +1551,8 @@ TEST_CASE("with time, walking moves the clock too, and a turn lost moves it a wh
     // value nobody had set.
     REQUIRE(left(kHero));
     const std::uint32_t afterTheWalk = left(kHero).value_or(0);
-    CHECK(afterTheWalk >= 7990);
-    CHECK(afterTheWalk <= 8010);
+    CHECK(afterTheWalk >= taken - 1010);
+    CHECK(afterTheWalk <= taken - 990);
     // Stunned through her next turn: the turn is lost, and her clock moves
     // through it.
     (void)w.machine.OnEndTurn();
@@ -1562,8 +1570,8 @@ TEST_CASE("with time, walking moves the clock too, and a turn lost moves it a wh
     // turn's 2 s after the talent) and the whole of the lost turn 2.
     REQUIRE(left(kHero));
     const std::uint32_t afterTheLostTurn = left(kHero).value_or(0);
-    CHECK(afterTheLostTurn >= 2990);
-    CHECK(afterTheLostTurn <= 3010);
+    CHECK(afterTheLostTurn >= taken - 6010);
+    CHECK(afterTheLostTurn <= taken - 5990);
 }
 
 namespace
@@ -2087,8 +2095,12 @@ TEST_CASE("a pending attack is no ability's", "[time][bar]")
     CHECK(hero->pendingAbility == -1);
 }
 
-TEST_CASE("with time, an action over at once did not play: its time is given back, and its cooldown not held", "[time]")
+TEST_CASE("with time, an action over at once did not play: its time is given back", "[time]")
 {
+    // (And nothing of it is held on cooldown, the engine having started
+    // none: the machine holds what the engine has cooling, and reckons none
+    // itself. The stand-in's command is stopped, not finished: it did not
+    // run.)
     Settings on = Timed();
     on.giveBackUnplayed = true;
     constexpr std::int32_t kChainLightning = 10211;
@@ -2100,7 +2112,7 @@ TEST_CASE("with time, an action over at once did not play: its time is given bac
         spell.inCombat = true;
         spell.ability = kChainLightning;
         spell.abilityType = kAbilitySpell;
-        spell.cooldownSeconds = 40.0f;
+        w.cooldownOf[kChainLightning] = 40.0f;
         spell.actionSeconds = seconds;
         return w.Queue(spell);
     };
@@ -2113,7 +2125,7 @@ TEST_CASE("with time, an action over at once did not play: its time is given bac
         REQUIRE(cast(w, 3.9f) == Verdict::Allow);
         CHECK(w.machine.View().timeLeftMs == 100);
         w.RunFor(400);
-        w.Finish(kHero);
+        w.Stop(kHero);
         w.RunFor(600);
         // Her bar again, said over her, and the turn waits on her order.
         CHECK(w.machine.View().timeLeftMs == 4000);
@@ -2133,7 +2145,7 @@ TEST_CASE("with time, an action over at once did not play: its time is given bac
             w.applied.clear();
             REQUIRE(cast(w, 3.9f) == Verdict::Allow);
             w.RunFor(400);
-            w.Finish(kHero);
+            w.Stop(kHero);
             w.RunFor(600);
             CHECK(w.machine.View().timeLeftMs == 4000);
             CHECK(w.Said(L"Nothing happened"));
@@ -3245,7 +3257,7 @@ TEST_CASE("an action given back is said over the player's own, by why, in gold",
         World w(Timed());
         w.StartFight();
         REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
-        REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, why));
+        REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, why));
         w.Frame();
         CAPTURE(why);
         const auto floaty = said(w, words);
@@ -3260,7 +3272,7 @@ TEST_CASE("an action given back is said over the player's own, by why, in gold",
     (void)w.machine.OnEndTurn();
     w.RunFor(200);
     REQUIRE(w.Current() == kGenlock);
-    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH"));
+    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH"));
     w.Frame();
     CHECK(said(w, L"No way through") == w.applied.end());
 }
@@ -3276,7 +3288,7 @@ TEST_CASE("an action given back is said on the bar's caption, for long enough to
     CHECK(w.machine.View().notice.empty());
     REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
     CHECK(w.machine.View().notice.empty());
-    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
     w.Finish(kHero);
     const std::wstring line = L"No room at the target: Hero's attack is given back";
     CHECK(w.machine.View().notice == line);
@@ -3303,7 +3315,7 @@ TEST_CASE("the caption's line of an action given back goes when the player's nex
     World w(Timed());
     w.StartFight();
     REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
-    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH"));
+    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH"));
     w.Finish(kHero);
     w.RunFor(600);
     REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
@@ -3311,7 +3323,7 @@ TEST_CASE("the caption's line of an action given back goes when the player's nex
     // Another try that comes to nothing has its own line, by its own reason.
     REQUIRE(Act(w, kHero, CommandType::UseAbility, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
     CHECK(w.machine.View().notice.empty()); // the order before's is gone as this one begins
-    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::UseAbility, 617, "COMMAND_FAILED_NO_LINE_OF_SIGHT"));
+    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::UseAbility, "COMMAND_FAILED_NO_LINE_OF_SIGHT"));
     w.Finish(kHero);
     w.RunFor(600);
     CHECK(w.machine.View().notice == L"No line of sight: Hero's ability is given back");
@@ -3331,7 +3343,7 @@ TEST_CASE("the caption's line is for the player: an enemy's action given back is
     };
     w.StartFight();
     REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
-    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
     w.Finish(kHero);
     w.RunFor(300);
     const std::wstring line = L"No room at the target: Hero's attack is given back";
@@ -3345,7 +3357,7 @@ TEST_CASE("the caption's line is for the player: an enemy's action given back is
     CHECK(w.machine.View().notice == line);
     // The genlock's own attack comes to nothing: given back, and no word of
     // it on the caption, which is the player's.
-    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH"));
+    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH"));
     w.Frame();
     CHECK(w.machine.View().notice == line);
 }
@@ -3355,7 +3367,7 @@ TEST_CASE("a new fight begins with nothing on the caption from the last one", "[
     World w(Timed());
     w.StartFight();
     REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
-    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH"));
+    REQUIRE(w.machine.OnCommandFailed(kHero, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH"));
     w.Finish(kHero);
     w.RunFor(300);
     REQUIRE_FALSE(w.machine.View().notice.empty());
@@ -3401,13 +3413,13 @@ TEST_CASE("an AI whose actions were given back twice in a turn has nothing it ca
     REQUIRE(w.Current() == kGenlock);
     REQUIRE(pokes == 1);
     // No room at its target: given back, and it chooses again.
-    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
     w.Finish(kGenlock);
     w.RunFor(1500);
     REQUIRE(pokes == 2);
     REQUIRE(w.Current() == kGenlock);
     // The same again: it is not asked a third time.
-    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
     w.Finish(kGenlock);
     w.RunFor(1500);
     CHECK(pokes == 2);
@@ -3455,7 +3467,7 @@ TEST_CASE("an AI whose action was given back is told so at once, once: what it d
     w.RunFor(200);
     REQUIRE(w.Current() == kGenlock);
     REQUIRE(pokes == 1);
-    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    REQUIRE(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
     w.Finish(kGenlock);
     // Told at once: within the frames its command's end takes to be seen,
     // not after the follow-up time.
@@ -3823,7 +3835,7 @@ TEST_CASE("the engine's own conjuring that fails before it conjures is not pendi
     // A shut door on the way to its target: the engine fails it before its
     // conjure.
     w.Get(kHero).conjureHeld = false;
-    CHECK(w.machine.OnCommandFailed(kHero, CommandType::UseAbility, 10211, "COMMAND_FAILED_PATH_ACTION_REQUIRED"));
+    CHECK(w.machine.OnCommandFailed(kHero, CommandType::UseAbility, "COMMAND_FAILED_PATH_ACTION_REQUIRED"));
     w.Finish(kHero);
     w.RunFor(300);
     CHECK(w.Said(L"A door is in the way"));

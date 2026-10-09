@@ -3,6 +3,7 @@
 #include "core/Rules.h"
 #include "core/Text.h"
 
+#include "dao/Abilities.h"
 #include "dao/Addresses.h"
 #include "dao/Animation.h"
 #include "dao/Attack.h"
@@ -508,16 +509,17 @@ void SayAiAttack(const dao::CCObject &self, const dao::Command &command, const s
     }
 }
 
-// What cooldowns in turns and sustained abilities need of an ability used
-// (core/TurnMachine.h, CommandRequest): its cooldown and use type from the
-// ability table (UseType 2 is sustained: Shield Wall, Powerful Swings,
-// Flaming Weapons, Stealth; 4 activated; read 2026-09-30), and whether a
-// sustained one is on already, so that this use turns it off.
+// What the machine needs of an ability used (core/TurnMachine.h,
+// CommandRequest): its use type from the ability table (UseType 2 is
+// sustained: Shield Wall, Powerful Swings, Flaming Weapons, Stealth; 4
+// activated; read 2026-09-30), and whether a sustained one is on already, so
+// that this use turns it off. (Not its cooldown: until issue 57 the table's
+// seconds were read here, for the machine to reckon what the engine would
+// start. What the engine did start is read of the engine: Bridge.cpp,
+// Status.)
 void DescribeAbilityOf(ObjectId user, std::int32_t ability, CommandRequest &request)
 {
     request.ability = ability;
-    request.cooldownSeconds =
-        dao::gda::GetFloat(dao::script::Table::AbilitiesTalents, ability, "Cooldown").value_or(0.0f);
     constexpr std::int32_t kSustained = 2;
     request.sustained =
         dao::gda::GetInt(dao::script::Table::AbilitiesTalents, ability, "UseType").value_or(0) == kSustained;
@@ -1306,8 +1308,7 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
             return;
         }
         // Every failure, to read what a command that seemed to do nothing
-        // ended with (an archer's shot charged its cooldown for nothing, the
-        // fourth play test).
+        // ended with (an archer's shot nobody took, the fourth play test).
         // A result DAOLib has no name for by its number (-1 for a use of
         // an object, 2 for an animation): the line ended in nothing.
         const std::string_view named = dao::commands::ResultName(result);
@@ -1317,14 +1318,13 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
         {
             return;
         }
-        const std::int32_t ability = command.Ability().value_or(-1);
         // With what it was aimed at, for the machine's line of it ("X's
         // attack on Y failed"): in a crowd the names alone do not say which
         // attack on whom. Seen in play 2026-10-04: the target is still on
         // the command as it ends, the right one in each of 18 failures.
         const ObjectId target = command.Target().value_or(dao::kInvalidObject);
         const std::lock_guard lock(mutex);
-        (void)machine.OnCommandFailed(object, type, ability, why, target);
+        (void)machine.OnCommandFailed(object, type, why, target);
     });
 }
 
@@ -1474,12 +1474,58 @@ void WatchDamage(TurnMachine &machine, std::mutex &mutex)
     });
 }
 
+// The engine has set a cooldown (DAOLib's dao::abilities::OnCooldownSet, its
+// issue 41): the machine is told, and takes it onto its creature's own clock
+// if its creature is of a fight (core: TurnMachine::OnCooldownSet; issue
+// 57). Every cooldown the game starts goes through the one function the
+// callback is on, whatever command or none is running (DAOLib's reading of
+// the exe, 2026-10-08: the manager's Set has one caller, and that one the
+// scripts' SetCooldown): the mod looks for none. Not the mod's own holds:
+// DAOLib does not call back for its own SetCooldown.
+//
+// On the game's thread, the engine's write done, inside whatever script set
+// it: the machine only keeps what it is told and says what it wants done
+// with its next step's effects, as for a command at the gate. The mutex is
+// never held while the mod calls the engine, so a script the mod's own
+// effect runs (an AI told to choose) may set one too.
+//
+// Each is said at debug with its item's tag and whether the engine's write
+// acted (`took`): the engine's Set was read as leaving an item's record
+// unwritten (DAOLib's issue 38), and a drink's cooldown is told here and
+// took all the same (seen in play 2026-10-09: Wynne's lyrium potion, by its
+// item's tag). One that did not take changed nothing, and the machine is
+// told nothing of it.
+void WatchCooldowns(TurnMachine &machine, std::mutex &mutex)
+{
+    dao::abilities::OnCooldownSet([&machine, &mutex](const dao::abilities::CooldownSet &set) {
+        try
+        {
+            spdlog::debug("the engine set {:#x}'s ability {}{} to cool {:.2f} s: its record reads {:.2f} s left of "
+                          "{:.2f}, the write {}",
+                          set.creature, set.ability,
+                          set.itemTag.empty() ? std::string{} : std::format(" (item {})", Utf8(set.itemTag)),
+                          set.seconds, set.cooldown.remaining, set.cooldown.total,
+                          set.took ? "took" : "did not take: nothing is made of it");
+            if (set.took)
+            {
+                const std::lock_guard lock(mutex);
+                machine.OnCooldownSet(set.creature, set.ability, set.itemTag, set.seconds);
+            }
+        }
+        catch (...)
+        {
+            Report("a cooldown the engine set");
+        }
+    });
+}
+
 } // namespace
 
 bool InstallGate(TurnMachine &machine, std::mutex &mutex)
 {
     WatchCommandEnds(machine, mutex);
     WatchDamage(machine, mutex);
+    WatchCooldowns(machine, mutex);
     WatchAttacksBegin();
     g_machine = &machine;
     g_mutex = &mutex;

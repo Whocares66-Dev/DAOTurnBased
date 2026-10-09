@@ -18,6 +18,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -31,6 +32,10 @@ namespace tb::test
 // ABILITY_TALENT_CAPTIVATE. Every other mode leaves its user free (Shield
 // Wall): World::binding says which do.
 inline constexpr std::int32_t kSong = 1000;
+
+// What the game's scripts set a mode cooling for as an AI's cast of it
+// starts, in seconds (ability_core.nss, EVENT_TYPE_ABILITY_CAST_START).
+inline constexpr float kModeCastSeconds = 1.5f;
 
 // (Its implicit move constructor may throw, by the standard library's own
 // doing: MSVC's unordered_set allocates as it is moved, for `modes`. Nothing
@@ -166,6 +171,19 @@ struct Creature // NOLINT(bugprone-exception-escape)
     std::int32_t stepTailMs = 0;
     bool stepStands = false;
     bool atTail = false; // its timed step has ended, and its command is at its tail
+    // What the engine has cooling on it: the list its cooldown manager ticks
+    // every frame, which the game layer reads of a creature once, as it
+    // comes into a fight (DAOLib's dao::abilities::Cooldowns;
+    // Observation::cooling). The stand-in's engine starts one as an ability's
+    // command ends having run (World::Finish), or as its cast begins for a
+    // mode it will not let stand (World::Queue), a case starts one with no
+    // command at all (World::Cool, the scripts' SetCooldown), and every one
+    // goes through the engine's one Set, which tells the machine of it as
+    // the game layer's callback does (TurnMachine::OnCooldownSet). Each runs
+    // down on the wall, a frame's time a frame, whoever's turn it is and
+    // paused or not, unless something sets it again: the machine's hold does
+    // (EffectKind::Cooldown), at its hour (issue 57).
+    std::vector<RunningCooldown> cooldowns;
 };
 
 // A hostile the party perceives that the game does not have in combat and
@@ -330,6 +348,13 @@ class World
         for (Creature &c : creatures)
         {
             Bind(c);
+            // The engine's cooldown manager's tick: the frame's time off
+            // each, and one that has run out dropped from the list.
+            for (RunningCooldown &cooling : c.cooldowns)
+            {
+                cooling.remaining -= static_cast<float>(ms) / 1000.0f;
+            }
+            std::erase_if(c.cooldowns, [](const RunningCooldown &cooling) { return cooling.remaining <= 0.0f; });
         }
         const Needs needs = machine.WhatToObserve(now);
         Observation obs;
@@ -371,6 +396,13 @@ class World
             const Creature &c = Get(id);
             obs.statuses.push_back({id, c.exists, c.down, c.down ? 0.0f : c.health, c.condition, c.energy, c.mana,
                                     c.condition != Condition::None ? c.conditionSeconds : 0.0f, c.movement});
+        }
+        // What cools on those come into the fight, read once each as the
+        // machine asks (Bridge.cpp, Observe).
+        for (const ObjectId id : needs.cooling)
+        {
+            obs.cooling.push_back({id, Get(id).cooldowns});
+            ++coolingReads;
         }
         statusReads += needs.statuses.empty() ? 0 : 1;
         obs.keptVoid = std::exchange(keptVoid, {});
@@ -484,43 +516,141 @@ class World
         return Queue(request);
     }
 
-    // An ability used: its cooldown in seconds, and whether it is a
-    // sustained one and on (so that this turns it off).
+    // An ability used, and its cooldown in seconds: the stand-in's ability
+    // table's (cooldownOf), which its engine starts as the command ends
+    // having run (Finish). The gate is told nothing of it: the machine is
+    // told what the engine set, as it sets it (issue 57).
     // An ability with a conjuring time, which it costs of the bar: what does
     // not fit what is left is kept.
     Verdict Cast(ObjectId id, Source source, std::int32_t ability, float conjureSeconds, float cooldownSeconds = 20.0f)
     {
+        cooldownOf[ability] = cooldownSeconds;
         CommandRequest request;
         request.object = id;
         request.type = CommandType::UseAbility;
         request.source = source;
         request.inCombat = InCombat(id);
         request.ability = ability;
-        request.cooldownSeconds = cooldownSeconds;
         request.conjureSeconds = conjureSeconds;
         return Queue(request);
     }
 
+    // And whether it is a sustained one and on (so that this turns it off).
     Verdict UseAbility(ObjectId id, Source source, std::int32_t ability, float cooldownSeconds, bool sustained = false,
                        bool on = false)
     {
+        cooldownOf[ability] = cooldownSeconds;
         CommandRequest request;
         request.object = id;
         request.type = CommandType::UseAbility;
         request.source = source;
         request.inCombat = InCombat(id);
         request.ability = ability;
-        request.cooldownSeconds = cooldownSeconds;
         request.sustained = sustained;
         request.sustainedOn = on;
         return Queue(request);
     }
 
     // A mode switched: on, or off if its creature has it on, as the gate
-    // reads that of the creature (the scripts' IsModalAbilityActive).
+    // reads that of the creature (the scripts' IsModalAbilityActive). Its
+    // cooldown is the stand-in's table's, as a case left it (none unless one
+    // did).
     Verdict Switch(ObjectId id, Source source, std::int32_t ability)
     {
-        return UseAbility(id, source, ability, 0.0f, true, Get(id).modes.contains(ability));
+        CommandRequest request;
+        request.object = id;
+        request.type = CommandType::UseAbility;
+        request.source = source;
+        request.inCombat = InCombat(id);
+        request.ability = ability;
+        request.sustained = true;
+        request.sustainedOn = Get(id).modes.contains(ability);
+        return Queue(request);
+    }
+
+    // The engine's own cooldown Set, which the scripts' SetCooldown and
+    // every cooldown of the engine's go through: the ability's record on the
+    // creature (an item's ability's by the item's tag) set to so many
+    // seconds, left and in all, and ticking from the next frame; at no
+    // seconds its cooldown is ended. With no command: a script's own, a
+    // trap's. And the game layer's callback on it, once the record is
+    // written (DAOLib's dao::abilities::OnCooldownSet): the machine is told,
+    // there and then, between two frames or in the middle of one's effects.
+    void Cool(ObjectId id, std::int32_t ability, float seconds, std::wstring_view item = {})
+    {
+        std::vector<RunningCooldown> &list = Get(id).cooldowns;
+        std::erase_if(list, [&](const RunningCooldown &c) { return c.ability == ability && c.item == item; });
+        if (seconds > 0.0f)
+        {
+            list.push_back({ability, std::wstring{item}, seconds, seconds});
+        }
+        machines.erase({id, ability, std::wstring{item}}); // the game's word now, whoever had it
+        machine.OnCooldownSet(id, ability, item, seconds);
+    }
+
+    // DAOLib's dao::abilities::SetCooldown: what is left, and what it is
+    // drawn against, set apart. What the game layer does with the machine's
+    // EffectKind::Cooldown, and what a case plants a record with. The
+    // machine is not told of it: DAOLib does not call back for its own.
+    //
+    // With itemTotalsStay, a record of an item's ability's that is running
+    // takes what is left and keeps its own total, as play showed of DAOLib
+    // 737cd89: Alistair's poultice, held at 2,896 s of 3,600, read back
+    // `2895.73 s left of 5.00` (2026-10-06). The engine's own Set acts only
+    // on a creature's own abilities' records, and an item's took only what
+    // DAOLib wrote itself; DAOLib 0191cbd writes the total too, so the
+    // switch is off unless a case or the arena turns it on. It stays for
+    // what it stands for: a record that does not read back as it was set,
+    // which the machine is not to lean on (it reads none of its own back).
+    void SetCooldown(ObjectId id, std::int32_t ability, float remaining, float total, std::wstring_view item = {})
+    {
+        std::vector<RunningCooldown> &list = Get(id).cooldowns;
+        const auto cooling = std::ranges::find_if(
+            list, [&](const RunningCooldown &c) { return c.ability == ability && c.item == item; });
+        const float kept = cooling != list.end() && !item.empty() && itemTotalsStay ? cooling->total : total;
+        if (cooling != list.end())
+        {
+            list.erase(cooling);
+        }
+        if (remaining > 0.0f)
+        {
+            list.push_back({ability, std::wstring{item}, remaining, kept});
+        }
+    }
+
+    // Whether a cooldown running on a creature is as the machine last set it
+    // to hold it (an EffectKind::Cooldown with the hold's hour left), nothing
+    // of the game's having set it since: the stand-in's own word for "held",
+    // which needs no reading back of the record.
+    bool MachineHolds(ObjectId id, std::int32_t ability, std::wstring_view item = {}) const
+    {
+        return Cooling(id, ability, item) != nullptr && machines.contains({id, ability, std::wstring{item}});
+    }
+
+    // The engine's record of an ability's cooldown on a creature, while it
+    // runs: what the quickbar draws, what an AI reads before it orders the
+    // ability (ai_main_h_2.nss, _AI_IsAbilityValid: "Can't trigger ability
+    // (Cooldown running)"), and what the engine's own check refuses a use
+    // by.
+    const RunningCooldown *Cooling(ObjectId id, std::int32_t ability, std::wstring_view item = {}) const
+    {
+        const std::vector<RunningCooldown> &list = Get(id).cooldowns;
+        const auto found = std::ranges::find_if(
+            list, [&](const RunningCooldown &c) { return c.ability == ability && c.item == item; });
+        return found != list.end() ? &*found : nullptr;
+    }
+
+    // What the machine holds of an ability's cooldown, by its state.
+    std::optional<CooldownView> Held(ObjectId id, std::int32_t ability, std::wstring_view item = {}) const
+    {
+        for (const CooldownView &held : machine.State().cooldowns)
+        {
+            if (held.id == id && held.ability == ability && held.item == item)
+            {
+                return held;
+            }
+        }
+        return std::nullopt;
     }
 
     // The way from a creature to where the engine aims it at another: the
@@ -666,23 +796,46 @@ class World
             conjuring.current = type;
             conjuring.conjureHeld = true;
             heldConjures.insert(id);
+            used[id] = request.ability;
         }
         if (verdict == Verdict::Allow)
         {
             Creature &started = Get(id);
             started.busy = true;
             running[id] = request;
-            // A sustained ability's use switches its mode (Creature::modes).
-            if (type == CommandType::UseAbility && request.sustained)
+            // The ability its command is to use, whose cooldown the engine
+            // starts as the command ends having run (Finish).
+            used.erase(id);
+            if (type == CommandType::UseAbility)
             {
-                if (request.sustainedOn)
-                {
-                    started.modes.erase(request.ability);
-                }
-                else
+                used[id] = request.ability;
+            }
+            // A sustained ability's use switches its mode (Creature::modes).
+            // One that comes on and stays starts no cooldown here. One the
+            // engine will not let stand (wontStand) never comes on, and what
+            // it leaves is what the scripts set as an AI's cast of a mode
+            // starts, a second and a half ("so the AI does not try to re-run
+            // this ability again": ability_core.nss), and nothing as its
+            // command ends: the ability table's cooldown starts as a mode's
+            // upkeep effect comes off, and there was none to come off. Seen
+            // in real time, the mod off, of a Cultist Overseer's three
+            // spells (issue 57, 2026-10-08): 1.5 s on each, a command of
+            // some 1.7 s, no mana spent.
+            if (type == CommandType::UseAbility && request.sustained && !request.sustainedOn)
+            {
+                used.erase(id);
+                if (!wontStand.contains(request.ability))
                 {
                     started.modes.insert(request.ability);
                 }
+                else if (request.source != Source::Player)
+                {
+                    Cool(id, request.ability, kModeCastSeconds);
+                }
+            }
+            else if (type == CommandType::UseAbility && request.sustained)
+            {
+                started.modes.erase(request.ability);
             }
             if (started.inactive)
             {
@@ -711,7 +864,7 @@ class World
         c.inactive = !active;
         if (!active)
         {
-            Finish(id);
+            Stop(id);
             running.erase(id);
             c.conjureHeld = false;
             heldConjures.erase(id);
@@ -766,9 +919,10 @@ class World
         return Queue(request);
     }
 
-    // A creature's command over, or cleared: it is at nothing. But for one
-    // its own mode binds, which is at the mode's command still (Bind).
-    void Finish(ObjectId id)
+    // A creature's command cleared, or failed: it is at nothing, and what it
+    // was to do was not done. But for one its own mode binds, which is at the
+    // mode's command still (Bind).
+    void Stop(ObjectId id)
     {
         Creature &c = Get(id);
         c.busy = false;
@@ -781,7 +935,28 @@ class World
         c.stepRenews = 0;
         c.stepTailMs = 0;
         c.atTail = false;
+        used.erase(id);
         Bind(c);
+    }
+
+    // A creature's command over, having run: an ability it used cools from
+    // here, for its seconds in the stand-in's ability table (cooldownOf; none
+    // there: it does not cool), an item's ability's by the item's tag
+    // (itemOf). The engine's own doing, by its scripts, through its one Set
+    // (Cool).
+    void Finish(ObjectId id)
+    {
+        if (const auto ran = used.find(id); ran != used.end())
+        {
+            const std::int32_t ability = ran->second;
+            const auto seconds = cooldownOf.find(ability);
+            const auto item = itemOf.find(ability);
+            if (seconds != cooldownOf.end() && seconds->second > 0.0f)
+            {
+                Cool(id, ability, seconds->second, item != itemOf.end() ? item->second : std::wstring{});
+            }
+        }
+        Stop(id);
     }
 
     // The engine fails a creature's command without acting, by its own name
@@ -793,8 +968,8 @@ class World
     {
         const auto found = running.find(id);
         const CommandRequest failed = found != running.end() ? found->second : CommandRequest{};
-        const bool givenBack = machine.OnCommandFailed(id, failed.type, failed.ability, why, failed.target);
-        Finish(id);
+        const bool givenBack = machine.OnCommandFailed(id, failed.type, why, failed.target);
+        Stop(id);
         return givenBack;
     }
 
@@ -866,11 +1041,30 @@ class World
     std::unordered_map<ObjectId, CommandRequest> heldCasts; // casts the game layer keeps while they charge
     std::unordered_map<ObjectId, CommandRequest> running;   // each creature's last command let through (Fail)
     std::unordered_set<ObjectId> heldConjures;              // the engine's casts, held in their conjure
-    std::function<void(ObjectId)> onConjureReleased;        // a held conjure let complete
-    std::vector<Verdict> released;                          // what each cast given again was answered
-    std::function<void(ObjectId)> onPoke;                   // what an AI does when told to choose
-    std::function<void(const Effect &)> onEffect;           // sees every effect as it is applied
-    std::function<void(std::string_view)> onLog;            // sees every line the machine logs
+    // The stand-in's ability table: each ability's cooldown in seconds
+    // (UseAbility and Cast write theirs here), and the tag of the item an
+    // item's ability comes from. The ability each creature's command under
+    // way is to use, which cools as that command ends having run. And the
+    // modes the engine will not let stand, as a Cultist Overseer's Spell
+    // Shield would not under its own Antimagic Ward (issue 57).
+    std::unordered_map<std::int32_t, float> cooldownOf;
+    std::unordered_map<std::int32_t, std::wstring> itemOf;
+    std::unordered_map<ObjectId, std::int32_t> used;
+    std::unordered_set<std::int32_t> wontStand;
+    // An item's ability's record keeps its own total when DAOLib's
+    // SetCooldown sets it (above): as seen in play before DAOLib 0191cbd. A
+    // case turns it on, and the arena does in every other fight.
+    bool itemTotalsStay = false;
+    // How many times a creature's running cooldowns were read.
+    int coolingReads = 0;
+    // The records the machine set last, to hold them (MachineHolds): by
+    // creature, ability and item's tag.
+    std::set<std::tuple<ObjectId, std::int32_t, std::wstring>> machines;
+    std::function<void(ObjectId)> onConjureReleased; // a held conjure let complete
+    std::vector<Verdict> released;                   // what each cast given again was answered
+    std::function<void(ObjectId)> onPoke;            // what an AI does when told to choose
+    std::function<void(const Effect &)> onEffect;    // sees every effect as it is applied
+    std::function<void(std::string_view)> onLog;     // sees every line the machine logs
     std::function<void(ObjectId, const CommandRequest &, Verdict)> onReleased; // a kept cast or action given again
     std::function<void(ObjectId)> onApproach; // the walk to a kept attack's target, when not World's own
     int approaches = 0;
@@ -937,6 +1131,22 @@ class World
                 break;
             case EffectKind::EndConditions:
                 Get(e.target).condition = Condition::None;
+                break;
+            case EffectKind::Cooldown:
+                // Held, released, or back to seconds: set in the engine's
+                // record, by the item's tag for an item's ability.
+                SetCooldown(e.target, e.a, static_cast<float>(e.b), static_cast<float>(e.c), e.text);
+                // A hold is the machine's (MachineHolds): the hold's hour
+                // left, of a total no less. A release, or its own seconds
+                // given back, is not.
+                if (e.b == TurnMachine::kCooldownHoldSeconds && e.c >= e.b)
+                {
+                    machines.insert({e.target, e.a, e.text});
+                }
+                else
+                {
+                    machines.erase({e.target, e.a, e.text});
+                }
                 break;
             case EffectKind::HoldTime:
                 timeHeld = e.a != 0;
@@ -1054,7 +1264,7 @@ class World
         {
             return;
         }
-        Finish(e.target);
+        Stop(e.target);
         if (heldConjures.erase(e.target) > 0)
         {
             // A held conjure's command cleared: the game layer hears
@@ -1189,7 +1399,7 @@ class World
             if (heldConjures.erase(e.target) > 0)
             {
                 Get(e.target).conjureHeld = false;
-                Finish(e.target); // its command cleared
+                Stop(e.target); // its command cleared
             }
         }
     }

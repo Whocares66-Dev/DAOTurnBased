@@ -121,7 +121,13 @@ std::string ToJson(const MachineState &state)
         out += i == 0 ? R"({"id":)" : R"(,{"id":)";
         Id(out, cooldown.id);
         out +=
-            std::format(R"(,"ability":{},"left_ms":{},"of_ms":{}}})", cooldown.ability, cooldown.leftMs, cooldown.ofMs);
+            std::format(R"(,"ability":{},"left_ms":{},"of_ms":{})", cooldown.ability, cooldown.leftMs, cooldown.ofMs);
+        if (!cooldown.item.empty())
+        {
+            out += R"(,"item":)";
+            Text(out, Utf8(cooldown.item));
+        }
+        out += '}';
     }
     out += R"(],"charging":[)";
     for (std::size_t i = 0; i < state.charging.size(); ++i)

@@ -191,19 +191,21 @@ EventDescription Describe(EventKind kind)
                 nullptr,
                 nullptr};
     case EventKind::CooldownHeld:
-        return {"An ability used is held on cooldown, its seconds to run on its user's clock.",
+        return {"A cooldown the engine has set on a creature, whatever started it, is taken onto its user's own "
+                "clock and held: the seconds the engine had left of it run there.",
                 true,
-                "its seconds",
+                "the seconds it had left",
                 "the ability",
                 nullptr,
-                nullptr};
+                "the item's tag, for an item's ability"};
     case EventKind::CooldownReleased:
-        return {"An ability held on cooldown is ready again: its seconds have run on its user's clock.",
+        return {"An ability held on cooldown is ready again: its seconds have run on its user's clock, or the game "
+                "ended its cooldown while it was held.",
                 true,
-                nullptr,
+                "\"ended by the game\" where it was",
                 "the ability",
                 nullptr,
-                nullptr};
+                "the item's tag, for an item's ability"};
     case EventKind::SpeedSet:
         return {"The game's speed was set: the fight's speed ([turns] speed) through its turns; 1 outside them.",
                 false,

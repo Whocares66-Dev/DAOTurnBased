@@ -1312,57 +1312,24 @@ void UntilHerosTurn(World &w)
 }
 } // namespace
 
-TEST_CASE("an ability's cooldown is held once it has run, for its seconds of its user's clock, then released",
-          "[machine][cooldowns]")
+// (What an ability cools for, and that it does so on its user's own clock,
+// whatever started it: test_cooldowns.cpp, issue 57.)
+
+TEST_CASE("a sustained ability turned on or off costs nothing and keeps the turn", "[machine][cooldowns]")
 {
-    World w;
-    w.StartFight();
-    CHECK(w.UseAbility(kHero, Source::Player, kShieldBash, 20.0f) == Verdict::Allow);
-    w.RunFor(100);
-    CHECK_FALSE(Cooled(w, kHero, kShieldBash, TurnMachine::kCooldownHoldSeconds)); // not before it has run
-    w.Finish(kHero);
-    w.RunFor(600);
-    CHECK(Cooled(w, kHero, kShieldBash, TurnMachine::kCooldownHoldSeconds));
-    w.applied.clear();
-    // The rest of this turn, 2 s after the talent's own 2, and four turns
-    // more of 4 s: 18 s of its 20.
-    for (int turn = 0; turn < 5; ++turn)
+    for (const bool on : {false, true})
     {
-        UntilHerosTurn(w);
+        World w;
+        w.StartFight();
+        CHECK(w.UseAbility(kHero, Source::Player, kShieldWall, 15.0f, true, on) == Verdict::Allow);
+        w.RunFor(100);
+        w.Finish(kHero);
+        w.RunFor(600);
+        CHECK(w.Current() == kHero);
+        CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+        CHECK(w.machine.View().timeLeftMs == 4000); // nothing of the bar went to it
+        CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
     }
-    CHECK_FALSE(Cooled(w, kHero, kShieldBash, 0));
-    UntilHerosTurn(w); // and the turn that brings the last 2 s
-    CHECK(Cooled(w, kHero, kShieldBash, 0));
-}
-
-TEST_CASE("a sustained ability turned on costs nothing and keeps the turn", "[machine][cooldowns]")
-{
-    World w;
-    w.StartFight();
-    CHECK(w.UseAbility(kHero, Source::Player, kShieldWall, 15.0f, true, false) == Verdict::Allow);
-    w.RunFor(100);
-    w.Finish(kHero);
-    w.RunFor(600);
-    CHECK(w.Current() == kHero);
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK_FALSE(Cooled(w, kHero, kShieldWall, TurnMachine::kCooldownHoldSeconds));
-    CHECK(w.machine.View().timeLeftMs == 4000); // nothing of the bar went to it
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
-}
-
-TEST_CASE("a sustained ability turned off waits for its user's next turn", "[machine][cooldowns]")
-{
-    World w;
-    w.StartFight();
-    CHECK(w.UseAbility(kHero, Source::Player, kShieldWall, 15.0f, true, true) == Verdict::Allow);
-    w.RunFor(100);
-    w.Finish(kHero);
-    w.RunFor(600);
-    CHECK(w.Current() == kHero); // free: the turn goes on
-    CHECK(Cooled(w, kHero, kShieldWall, TurnMachine::kCooldownHoldSeconds));
-    w.applied.clear();
-    UntilHerosTurn(w);
-    CHECK(Cooled(w, kHero, kShieldWall, 0));
 }
 
 TEST_CASE("at the fight's end, cooldowns still held go back to seconds", "[machine][cooldowns]")
@@ -1796,10 +1763,10 @@ TEST_CASE("a command that failed without acting gives its action back: the actin
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Allow);
     REQUIRE(w.machine.View().timeLeftMs == 2000);
     CHECK_FALSE(
-        w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH")); // not its turn
-    CHECK_FALSE(w.machine.OnCommandFailed(kHero, CommandType::MoveToLocation, -1, "COMMAND_FAILED_INVALID_PATH"));
+        w.machine.OnCommandFailed(kGenlock, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH")); // not its turn
+    CHECK_FALSE(w.machine.OnCommandFailed(kHero, CommandType::MoveToLocation, "COMMAND_FAILED_INVALID_PATH"));
     CHECK(w.machine.View().timeLeftMs == 2000);
-    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_INVALID_PATH"));
+    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, "COMMAND_FAILED_INVALID_PATH"));
     CHECK(w.machine.View().timeLeftMs == 4000);
 }
 
@@ -1947,13 +1914,16 @@ TEST_CASE("the last enemy fallen outside anyone's attack ends the fight on the p
 
 TEST_CASE("a talent that failed without running is not held on cooldown", "[machine]")
 {
+    // The engine started none (it never ran), and the machine holds only
+    // what the engine has cooling: until issue 57 it had reckoned one as the
+    // command was let through, and took it back as the command failed.
     World w;
     w.StartFight();
     CHECK(w.UseAbility(kHero, Source::Player, 803, 20.0f, false, false) == Verdict::Allow);
-    CHECK(w.machine.OnCommandFailed(kHero, CommandType::UseAbility, 803, "COMMAND_FAILED_INVALID_DATA"));
-    w.Finish(kHero);
+    CHECK(w.Fail(kHero, "COMMAND_FAILED_INVALID_DATA"));
     w.RunFor(1200);
     CHECK_FALSE(w.Did(EffectKind::Cooldown, kHero));
+    CHECK(w.machine.State().cooldowns.empty());
 }
 
 TEST_CASE("the state's last refusal is the player's, with its command and numbers", "[machine]")
@@ -3115,26 +3085,43 @@ TEST_CASE("a held cooldown's sweep shows what is left of it over what it was hel
     w.RunFor(100);
     w.Finish(kHero);
     w.RunFor(600);
-    const auto shown = [&](std::int32_t left, std::int32_t of) {
-        return std::ranges::any_of(w.applied, [&](const Effect &e) {
-            return e.kind == EffectKind::Cooldown && e.target == kHero && e.a == kShieldBash && e.b == left &&
-                   e.c == of;
-        });
+    // The sweep as the game layer was last told to draw it, in thousandths:
+    // what is left over the total. What is left is the hold's own hour,
+    // whatever its creature's clock has left of it, and the total as many
+    // times that as the cooldown is of what is left of it.
+    const auto shown = [&]() {
+        std::int32_t share = -1;
+        for (const Effect &e : w.applied)
+        {
+            if (e.kind == EffectKind::Cooldown && e.target == kHero && e.a == kShieldBash)
+            {
+                CHECK((e.b == 0 || e.b == TurnMachine::kCooldownHoldSeconds));
+                share = e.b == 0 ? 0 : static_cast<std::int32_t>(1000ll * e.b / e.c);
+            }
+        }
+        return share;
     };
-    CHECK(shown(3600, 3600)); // held: none of it recovered
-    UntilHerosTurn(w);        // her bar spent, that turn ended by itself
+    // Held as the engine set it, its command ending: all of its 12 s.
+    REQUIRE(w.Held(kHero, kShieldBash));
+    CHECK(w.Held(kHero, kShieldBash).value_or(CooldownView{}).leftMs == 12000);
+    CHECK(w.Held(kHero, kShieldBash).value_or(CooldownView{}).ofMs == 12000);
+    CHECK(shown() == 1000); // none of it recovered
+    UntilHerosTurn(w);      // her bar spent, that turn ended by itself
     w.applied.clear();
     UntilHerosTurn(w);
-    CHECK(shown(2400, 3600)); // 2 of 3 left: a third recovered
-    REQUIRE(w.machine.State().cooldowns.size() == 1);
-    CHECK(w.machine.State().cooldowns[0].leftMs == 8000);
-    CHECK(w.machine.State().cooldowns[0].ofMs == 12000);
+    // 2 of 3 turns left: a third recovered.
+    CHECK(w.Held(kHero, kShieldBash).value_or(CooldownView{}).leftMs == 8000);
+    CHECK(shown() == 666);
+    REQUIRE(w.Cooling(kHero, kShieldBash) != nullptr);
+    CHECK(w.Cooling(kHero, kShieldBash)->remaining > 3500.0f); // and an hour of the wall to wait, as ever
     w.applied.clear();
     UntilHerosTurn(w);
-    CHECK(shown(1200, 3600));
+    CHECK(shown() == 333);
     w.applied.clear();
     UntilHerosTurn(w);
-    CHECK(Cooled(w, kHero, kShieldBash, 0)); // ready
+    CHECK(shown() == 0); // ready
+    CHECK_FALSE(w.Held(kHero, kShieldBash));
+    CHECK(w.Cooling(kHero, kShieldBash) == nullptr);
 }
 
 TEST_CASE("a fight's end gives a held cooldown back in seconds, left and in all", "[machine][cooldowns]")
@@ -3179,7 +3166,7 @@ TEST_CASE("an AI whose action failed without acting chooses again, once", "[mach
     w.Frame();
     REQUIRE(pokes == 1);
     // No room at its target: the command ends at once, nothing done.
-    CHECK(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    CHECK(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
     w.Finish(kGenlock);
     w.Frame();
     w.Frame();
@@ -3188,7 +3175,7 @@ TEST_CASE("an AI whose action failed without acting chooses again, once", "[mach
     CHECK(pokes == 2);              // told again: it chose again
     // The second fails too, and is given back too: no third try, the turn
     // ends.
-    CHECK(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, -1, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
+    CHECK(w.machine.OnCommandFailed(kGenlock, CommandType::Attack, "COMMAND_FAILED_NO_SPACE_IN_MELEE_RING"));
     w.Finish(kGenlock);
     w.RunFor(1000);
     CHECK(w.Current() != kGenlock);
@@ -3346,7 +3333,7 @@ TEST_CASE("an action whose own effect holds its creature gets that effect's time
         pounce.source = Source::Script;
         pounce.inCombat = true;
         pounce.ability = 90133;
-        pounce.cooldownSeconds = 60.0f;
+        w.cooldownOf[pounce.ability] = 60.0f;
         pounce.actionSeconds = 4.0f;
         CHECK(w.Queue(pounce) == Verdict::Allow);
     };
@@ -3564,7 +3551,7 @@ TEST_CASE("standing at a door's use without a step, a creature is stopped; the p
     REQUIRE(w.Current() == kHero);
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 2.0f) == Verdict::Allow);
     w.RunFor(100);
-    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, -1, "COMMAND_FAILED_PATH_ACTION_REQUIRED"));
+    CHECK(w.machine.OnCommandFailed(kHero, CommandType::Attack, "COMMAND_FAILED_PATH_ACTION_REQUIRED"));
     CHECK(w.Order(kHero, CommandType::UseObject, Source::Script) == Verdict::Allow);
     const std::uint32_t before = w.machine.View().timeLeftMs;
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 2.0f) == Verdict::Allow);
@@ -3795,7 +3782,7 @@ Verdict Use(World &w, ObjectId id, Source source, std::int32_t ability, float se
     request.source = source;
     request.inCombat = w.InCombat(id);
     request.ability = ability;
-    request.cooldownSeconds = 20.0f;
+    w.cooldownOf[ability] = 20.0f;
     request.actionSeconds = seconds;
     return w.Queue(request);
 }

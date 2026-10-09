@@ -356,7 +356,7 @@ TEST_CASE("an ability aimed at another is as an attack: faced at its turn to fac
     cast.source = Source::Player;
     cast.inCombat = true;
     cast.ability = 11;
-    cast.cooldownSeconds = 10.0f;
+    w.cooldownOf[cast.ability] = 10.0f;
     SECTION("at another")
     {
         cast.target = kGenlock;

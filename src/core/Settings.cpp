@@ -565,8 +565,8 @@ ai_poke = command_complete
 ; not spent rolls over a little. It is also what everything timed counts
 ; in. A creature's turn is this many seconds of its own clock: of its
 ; cooldowns (Shield Bash's 20 s is five turns at 4; waiting in real time
-; does not bring it back; a sustained ability costs nothing to turn on, and
-; turned off it waits a turn) and of what wears off, burns or regenerates
+; does not bring it back; a sustained ability costs nothing to turn on or
+; off, and cools as any other) and of what wears off, burns or regenerates
 ; on it. And a round is this many seconds of everything else: lasting
 ; areas, the scripts' timers.
 seconds_per_turn = 4

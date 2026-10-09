@@ -884,8 +884,9 @@ void LookForEluvian()
             R"(held_by_effect; last_refusal. order: the turns to come, current first, each {id, name, side, rank, )"
             R"(health, energy, mana, down, current, yours, round, and for a party member auto: its tactics play its )"
             R"(turns, from its next one (turnbased_auto chooses)}. held: conditions holding creatures {id, name, )"
-            R"(condition, on_clock, owed_ms}. cooldowns: abilities held on their users' clocks {id, ability, )"
-            R"(left_ms, of_ms}. charging: actions begun and not yet paid for {id, ability, owed_ms}. Ids are 0x... )"
+            R"(condition, on_clock, owed_ms}. cooldowns: every cooldown the engine has set on a fighter, held on )"
+            R"(its user's own clock {id, ability, left_ms, of_ms, and item: the item's tag, for an item's ability}. )"
+            R"(charging: actions begun and not yet paid for {id, ability, owed_ms}. Ids are 0x... )"
             R"(strings."})",
             &InspectState, nullptr, ELUVIAN_READ_ONLY),
         "turnbased.state");

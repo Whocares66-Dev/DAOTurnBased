@@ -31,8 +31,8 @@ enum class EventKind : std::uint8_t
     ConditionHeld,      // who; value: turns it costs (0: as long as it lasts)
     ConditionEnded,     // who: its turns spent, the machine ends it
     ConditionStillHeld, // who: ended, and the engine holds it still
-    CooldownHeld,       // who; value: the ability; detail: the turns, as text
-    CooldownReleased,   // who; value: the ability
+    CooldownHeld,       // who; value: the ability; detail: the seconds, as text; note: an item's tag
+    CooldownReleased,   // who; value: the ability; detail: "ended by the game" where it was; note: an item's tag
     SpeedSet,           // value: the game's speed, thousandths
     TurnHandedOver,     // who: party control changed mid-turn; detail: "the player's" or "its AI's"
     SettingsChanged,    // the settings were set anew (a reload, a tool)

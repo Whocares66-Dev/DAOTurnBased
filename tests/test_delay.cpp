@@ -272,7 +272,7 @@ TEST_CASE("with time, a turn put off keeps its bar, and its creature's clock mov
     talent.source = Source::Player;
     talent.inCombat = true;
     talent.ability = kTalent;
-    talent.cooldownSeconds = 30.0f;
+    w.cooldownOf[kTalent] = 30.0f;
     talent.actionSeconds = 2.0f;
     REQUIRE(w.Queue(talent) == Verdict::Allow);
     w.RunFor(100);

@@ -87,6 +87,7 @@ PARTYTACTICS = "src/core/PartyTactics.cpp"
 FACING = "src/core/Facing.cpp"
 TIMEDSTEP = "src/core/TimedStep.cpp"
 TEXT = "src/core/Text.h"
+STATE = "src/core/State.cpp"
 
 MUTANTS = [
     Mutant(
@@ -712,12 +713,6 @@ MUTANTS = [
         "        if (false)\n        {\n            End(fx, NoEnemyLeft());",
     ),
     Mutant(
-        "a talent that never ran is held on cooldown",
-        MACHINE,
-        "return h.creature == who && h.ability == ability;",
-        "return h.creature == who && h.ability == -12345;",
-    ),
-    Mutant(
         "the state's last refusal is anyone's",
         MACHINE,
         "    state.lastRefusal = lastPlayerRefusal_;",
@@ -764,12 +759,6 @@ MUTANTS = [
         JSON,
         " || got.ptr != text.data() + text.size()",
         "",
-    ),
-    Mutant(
-        "a talent never reached is held on cooldown",
-        MACHINE,
-        "budget_.lastAbility >= 0 &&",
-        "budget_.lastAbility >= 999999 &&",
     ),
     Mutant(
         "an enemy not fighting the party joins the fight mid-way",
@@ -893,12 +882,6 @@ MUTANTS = [
         MACHINE,
         "            if (!outsiderScanNow_ || lastNow_ - *outsiderScanNow_ >= kOutsiderScanMs)",
         "            if (!outsiderScanNow_ || lastNow_ - *outsiderScanNow_ >= kOutsiderScanMs / 1000)",
-    ),
-    Mutant(
-        "a held cooldown's sweep stays full",
-        MACHINE,
-        "                static_cast<std::int32_t>(static_cast<std::uint64_t>(kCooldownHoldSeconds) * h.leftMs / h.ofMs),",
-        "                static_cast<std::int32_t>(static_cast<std::uint64_t>(kCooldownHoldSeconds) * h.ofMs / h.ofMs),",
     ),
     Mutant(
         "an AI whose action was given back is not told to choose again",
@@ -1262,11 +1245,168 @@ MUTANTS = [
         "stunned as the fight began is held.\n    phase_ = Phase::TurnStart;\n    wantScan_ = true;",
         "stunned as the fight began is held.\n    phase_ = Phase::TurnStart;\n    StartNextTurn(fx);",
     ),
+    # Cooldowns in turns, as the engine sets them (issue 57): the machine
+    # reckons none and looks for none. It is told as the engine sets one, and
+    # reads what is cooling on a creature once, as it comes into a fight.
     Mutant(
-        "an ability's cooldown is never held",
+        "the machine is not told as the engine sets a cooldown: the Overseer orders its spell again and again",
         MACHINE,
-        "        if (ms > 0)\n        {\n            usedNow_.push_back(Hold{who->id, request.ability, ms, ms});",
-        "        if (ms > 4000000000U)\n        {\n            usedNow_.push_back(Hold{who->id, request.ability, ms, ms});",
+        "    const Combatant *who = phase_ != Phase::Idle ? order_.Find(creature) : nullptr;",
+        "    const Combatant *who = phase_ == Phase::Idle ? order_.Find(creature) : nullptr;",
+    ),
+    Mutant(
+        "a hold of one gone from the fight's order outlives the engine's setting its cooldown again",
+        MACHINE,
+        "        std::erase_if(holds_,\n"
+        "                      [&](const Hold &h) { return h.creature == creature && h.ability == ability && h.item == item; });\n"
+        "        return;",
+        "        return;",
+    ),
+    Mutant(
+        "what was cooling on a creature as it came into the fight is never read",
+        MACHINE,
+        "            if (!cooled_.contains(fighter.id))",
+        "            if (!cooled_.contains(fighter.id) && fighter.id == kNoObject)",
+    ),
+    Mutant(
+        "a creature's cooldowns are read at every look, and not once",
+        MACHINE,
+        "    cooled_.insert(look.id);",
+        "    (void)cooled_;",
+    ),
+    Mutant(
+        "one that comes back into the fight is not read again",
+        MACHINE,
+        "            cooled_.erase(joined); // what cools on it is read as it comes in, this time too\n",
+        "",
+    ),
+    Mutant(
+        "the next fight reads nobody the last one read",
+        MACHINE,
+        "    holds_.clear();\n    cooled_.clear();",
+        "    holds_.clear();",
+    ),
+    Mutant(
+        "a cooldown the machine holds already is taken again as its creature's are read",
+        MACHINE,
+        "        if (held)\n        {\n            continue;",
+        "        if (held && r.total < 0.0f)\n        {\n            continue;",
+    ),
+    Mutant(
+        "a cooldown found running is taken at what it was set to, not at what the engine has left of it",
+        MACHINE,
+        "    Hold taken{who.id, r.ability, r.item, leftMs, std::max(leftMs, totalMs)};",
+        "    Hold taken{who.id, r.ability, r.item, std::max(leftMs, totalMs), std::max(leftMs, totalMs)};",
+    ),
+    Mutant(
+        "a cooldown shorter than a turn waits a turn's worth all the same",
+        MACHINE,
+        "    Hold taken{who.id, r.ability, r.item, leftMs, std::max(leftMs, totalMs)};",
+        "    Hold taken{who.id, r.ability, r.item, std::max(leftMs, TurnMs()), std::max({leftMs, totalMs, TurnMs()})};",
+    ),
+    Mutant(
+        "a cooldown taken is not held in the engine",
+        MACHINE,
+        "    fx.push_back(HoldIt(taken));",
+        "    (void)fx;",
+    ),
+    Mutant(
+        "a cooldown is held at its own seconds, where waiting brings it back",
+        MACHINE,
+        "    return CooldownOf(h.creature, h.ability, h.item, kCooldownHoldSeconds,\n"
+        "                      static_cast<std::int32_t>(std::clamp<std::uint64_t>(total, kCooldownHoldSeconds, kMost)));",
+        "    return CooldownOf(h.creature, h.ability, h.item, static_cast<std::int32_t>((h.leftMs + 999) / 1000),\n"
+        "                      static_cast<std::int32_t>((h.ofMs + 999 + (total * 0) + (kMost * 0)) / 1000));",
+    ),
+    Mutant(
+        "a hold is its hour for the total and what is left its share: one with little left is back by waiting",
+        MACHINE,
+        "    return CooldownOf(h.creature, h.ability, h.item, kCooldownHoldSeconds,\n"
+        "                      static_cast<std::int32_t>(std::clamp<std::uint64_t>(total, kCooldownHoldSeconds, kMost)));",
+        "    return CooldownOf(h.creature, h.ability, h.item,\n"
+        "                      static_cast<std::int32_t>(std::max<std::uint64_t>(\n"
+        "                          2, static_cast<std::uint64_t>(kCooldownHoldSeconds) * h.leftMs / std::max(h.ofMs, 1u))),\n"
+        "                      kCooldownHoldSeconds + static_cast<std::int32_t>((total * 0) + (kMost * 0)));",
+    ),
+    Mutant(
+        "a held cooldown's sweep stays full",
+        MACHINE,
+        "static_cast<std::uint64_t>(kCooldownHoldSeconds) * h.ofMs / std::max(h.leftMs, 1u);",
+        "static_cast<std::uint64_t>(kCooldownHoldSeconds) * h.ofMs / std::max(h.ofMs, 1u);",
+    ),
+    Mutant(
+        "a held cooldown the engine set again keeps the seconds the machine had",
+        MACHINE,
+        "    if (anew)\n    {\n        *held = std::move(taken);",
+        "    if (anew)\n    {\n        (void)taken;",
+    ),
+    Mutant(
+        "a held cooldown the engine set to nothing stays on the machine's book",
+        MACHINE,
+        "            holds_.erase(held);\n",
+        "",
+    ),
+    Mutant(
+        "a hold the engine ended has the sweep the machine had still to set, set all the same",
+        MACHINE,
+        "            std::erase_if(fx, [&](const Effect &e) {\n"
+        "                return e.kind == EffectKind::Cooldown && e.target == who.id && e.a == r.ability && e.text == r.item;\n"
+        "            });",
+        "            (void)fx;",
+    ),
+    Mutant(
+        "a hold no fight wrote back is taken, at what is left of its hour",
+        MACHINE,
+        "        if (r.total >= static_cast<float>(kCooldownHoldSeconds))",
+        "        if (r.total >= static_cast<float>(kCooldownHoldSeconds) && r.total < 0.0f)",
+    ),
+    Mutant(
+        "a hold no fight wrote back is known only where its total is the hour exactly",
+        MACHINE,
+        "        if (r.total >= static_cast<float>(kCooldownHoldSeconds))",
+        "        if (r.total == static_cast<float>(kCooldownHoldSeconds))",
+    ),
+    Mutant(
+        "a hold no fight wrote back is left at its hour",
+        MACHINE,
+        "            fx.push_back(CooldownOf(look.id, r.ability, r.item, 0, 0));\n            continue;",
+        "            continue;",
+    ),
+    Mutant(
+        "a hold grows: more left than the engine's own total is taken as it stands",
+        MACHINE,
+        "        leftMs = totalMs;\n",
+        "        leftMs = std::max(leftMs, totalMs);\n",
+    ),
+    Mutant(
+        "an item's ability's cooldown is set with no item's tag",
+        MACHINE,
+        "    e.a = ability;\n    e.text = item;",
+        "    e.a = ability;\n    (void)item;",
+    ),
+    Mutant(
+        "an item's ability's cooldown is taken for the creature's own of that number",
+        MACHINE,
+        "holds_, [&](const Hold &h) { return h.creature == who.id && h.ability == r.ability && h.item == r.item; });",
+        "holds_, [&](const Hold &h) { return h.creature == who.id && h.ability == r.ability; });",
+    ),
+    Mutant(
+        "an item's ability's cooldown is released with no item's tag",
+        MACHINE,
+        "            fx.push_back(CooldownOf(h.creature, h.ability, h.item, 0, 0));",
+        "            fx.push_back(CooldownOf(h.creature, h.ability, {}, 0, 0));",
+    ),
+    Mutant(
+        "the fight's end gives an item's ability's cooldown back with no item's tag",
+        MACHINE,
+        "        fx.push_back(CooldownOf(h.creature, h.ability, h.item, static_cast<std::int32_t>((h.leftMs + 999) / 1000),",
+        "        fx.push_back(CooldownOf(h.creature, h.ability, {}, static_cast<std::int32_t>((h.leftMs + 999) / 1000),",
+    ),
+    Mutant(
+        "the state says an item's ability's cooldown without its item",
+        STATE,
+        "        if (!cooldown.item.empty())",
+        "        if (cooldown.item.empty())",
     ),
     Mutant(
         "a sustained ability's toggle costs the action",
@@ -1275,16 +1415,10 @@ MUTANTS = [
         "    {\n        kind = CommandKind::Action;\n    }",
     ),
     Mutant(
-        "a sustained ability turned off can be turned on again in the same turn",
-        MACHINE,
-        "? (request.sustainedOn ? TurnMs() : 0u)",
-        "? 0u",
-    ),
-    Mutant(
         "held cooldowns stay held after the fight",
         MACHINE,
-        "    HoldUsed(fx);\n    ReleaseCooldowns(fx);",
-        "    HoldUsed(fx);",
+        "    approach_ = false;\n    ReleaseCooldowns(fx);",
+        "    approach_ = false;",
     ),
     Mutant(
         "a character's own AI spends the player's turn",

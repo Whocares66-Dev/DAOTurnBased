@@ -9,6 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <format>
 #include <string>
 
 using namespace tb;
@@ -61,13 +62,27 @@ TEST_CASE("the machine's state says whose turn, what is held and what cools down
     CHECK(json.find(R"("player_turn":true)") != std::string::npos);
     CHECK(json.find(R"({"id":"0x100","name":"Hero","side":"party")") != std::string::npos);
     // A hold whose seconds were not read: a turn's worth of its time. And the
-    // talent's 20 s, none of them passed as it ends.
+    // talent's 20 s as the engine had them when the machine took them: all
+    // but the frames since its command ended.
     CHECK(json.find(
               R"("held":[{"id":"0x200","name":"Genlock","condition":"disabled","on_clock":false,"owed_ms":4000}])") !=
           std::string::npos);
-    CHECK(json.find(R"("cooldowns":[{"id":"0x100","ability":617,"left_ms":20000,"of_ms":20000}],"charging":[]})") !=
-          std::string::npos);
+    REQUIRE(state.cooldowns.size() == 1);
+    CHECK(state.cooldowns[0].leftMs > 19900);
+    CHECK(json.find(std::format(R"("cooldowns":[{{"id":"0x100","ability":617,"left_ms":{},"of_ms":20000}}],)"
+                                R"("charging":[]}})",
+                                state.cooldowns[0].leftMs)) != std::string::npos);
     CHECK(json.ends_with("]}"));
+}
+
+TEST_CASE("an item's ability's cooldown is said with its item's tag", "[json]")
+{
+    MachineState state;
+    state.cooldowns.push_back({0x100, 617, 12000, 20000, {}});
+    state.cooldowns.push_back({0x100, 500, 3000, 5000, L"gen_im_qck_health_101"});
+    CHECK(ToJson(state).find(R"("cooldowns":[{"id":"0x100","ability":617,"left_ms":12000,"of_ms":20000},)"
+                             R"({"id":"0x100","ability":500,"left_ms":3000,"of_ms":5000,)"
+                             R"("item":"gen_im_qck_health_101"}],"charging":[]})") != std::string::npos);
 }
 
 TEST_CASE("outside a fight the state says so", "[json]")
