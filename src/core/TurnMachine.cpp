@@ -691,6 +691,14 @@ void TurnMachine::StepSuspended(const Observation &obs, std::vector<Effect> &fx)
         phase_ = std::exchange(startInterrupted_, false) ? Phase::Starting : Phase::TurnStart;
         wantScan_ = true;
         fx.push_back(Effect::Of(EffectKind::Pause));
+        // The fight's speed, which the machine took back for the conversation
+        // (Step), given back as it ends and not left to the turn's beginning:
+        // a turn that waited to be handed over as the conversation came (its
+        // kept action not given, KeptVoid) is handed over with the first look
+        // after it and never comes to that beginning (test_fights.cpp's long
+        // run, seed 359, 2026-10-09: the rest of an AI's turn at the game's
+        // own speed).
+        SetSpeed(TurnSpeed(), fx);
     }
     else if (obs.mode == Mode::Explore || obs.mode == Mode::Dead)
     {
@@ -806,13 +814,46 @@ void TurnMachine::StepTurnStart(const Observation &obs, std::vector<Effect> &fx)
         return;
     }
     landFromNow_.reset();
+    if (AsATurnBegins(obs, fx))
+    {
+        StartNextTurn(fx);
+    }
+}
+
+// As a turn begins: the machine's exchange with the game once a turn, in one
+// place (dev/DESIGN.md, "As a turn begins"). What the mod reads of the game
+// once a turn is taken here, and what it has said to the game and goes on
+// relying on is said again here, whatever it believes it said: the game
+// writes its own state too, and a thing said once and remembered is wrong
+// from the moment the game changes it (the fight's speed, issue 71). The next
+// thing of either kind goes into this list, or its reason for not being here
+// into the design. None of it is in the frame's loop: the phase is come to
+// once a turn (and once more where a turn is passed over or a round padded),
+// and its looks are asked for a frame ahead, the scan beside every step into
+// the phase (wantScan_) and the look at everyone by the phase itself
+// (WhatToObserve). False while the scan has not come.
+bool TurnMachine::AsATurnBegins(const Observation &obs, std::vector<Effect> &fx)
+{
+    // Who is in the rotation: the scan, by the one rule, on the engine's
+    // present word (Merge; core/Rules.h, InTheRotation).
     if (!obs.scan)
     {
         wantScan_ = true;
-        return;
+        return false;
     }
     Merge(*obs.scan, fx);
-    StartNextTurn(fx);
+    // Everyone's health, conditions and effects: the look at everyone, which
+    // comes with every frame of this phase and is taken as each step begins
+    // (ApplyStatuses), so that whether a creature is down or stunned as its
+    // turn is begun, lost or passed is this frame's word.
+    //
+    // The fight's speed, which the game writes too (SetSpeed), and before the
+    // camera moves: when an AI's turn had a speed of its own, twice the pan
+    // to the hero, issued before the speed went back to 1, never arrived
+    // (play tests 2 and 5, 2026-09-30). The camera says whether a pan got
+    // there (src/game/Camera.cpp).
+    SetSpeed(TurnSpeed(), fx);
+    return true;
 }
 
 void TurnMachine::StartNextTurn(std::vector<Effect> &fx)
@@ -996,12 +1037,6 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
 
     HoldAtTurnStart(who, fx);
     GrabAtTurnStart(who, fx);
-    // The fight's speed, set as its first turn begins and again after a
-    // conversation, before the camera moves: when an AI's turn had a speed
-    // of its own, twice the pan to the hero, issued before the speed went
-    // back to 1, never arrived (play tests 2 and 5, 2026-09-30). The camera
-    // says whether a pan got there (src/game/Camera.cpp).
-    SetSpeed(TurnSpeed(), fx);
 
     Log(LogLevel::Info, std::format("round {}: {}'s turn ({}, {}), a bar of {:.2f} s{}: {}", order_.Round(),
                                     Utf8(who.name), Name(who.side), PlayerControls(who) ? "yours" : "AI",
@@ -2234,16 +2269,23 @@ void TurnMachine::ReleaseCooldowns(std::vector<Effect> &fx)
     holds_.clear();
 }
 
-// Effects' time in rounds: the clock every temporary effect ages on (DAOLib's
-// dao/Effects.h) held through a fight, so none wears off while someone
-// thinks or the world idles, and moved on a round's worth at each new round.
 // The game's speed (DAOLib's dao::clock::SetSpeed): a fight's turns at the
 // fight's speed ([turns] speed), conversations and everything else at 1.
-// Written only when it changes, so at the default of 1 never: another
-// plugin setting it (DAOLib's examples/speed) is left alone.
+// Said whenever it is asked, not only as it changes: the speed is the game's
+// to write too, and what the machine last said is not what the game has. A
+// death blow's animation writes it for its slow motion, and as the blow's
+// command ends the engine puts it to 1, not to what it was (read in the exe,
+// 2026-10-09: CSCommandHandler's for the end of a Deathblow command,
+// 0x00747360, through 0x005D8240), so that a fight at three times the speed
+// ran at the game's own from its first death blow to its end (issue 71,
+// Denerim's market, 2026-10-09). It is asked as each turn begins
+// (AsATurnBegins) and not every frame, which leaves the blow its slow motion
+// while it lasts. A speed of 1 is said only to take back one of the mod's
+// own, so at the default of 1 never: another plugin setting it (DAOLib's
+// examples/speed) is left alone.
 void TurnMachine::SetSpeed(float speed, std::vector<Effect> &fx)
 {
-    if (speed == speedSet_)
+    if (speed == 1.0f && speedSet_ == 1.0f)
     {
         return;
     }
@@ -2254,6 +2296,9 @@ void TurnMachine::SetSpeed(float speed, std::vector<Effect> &fx)
     fx.push_back(e);
 }
 
+// Effects' time in rounds: the clock every temporary effect ages on (DAOLib's
+// dao/Effects.h) held through a fight, so none wears off while someone
+// thinks or the world idles, and moved on a round's worth at each new round.
 void TurnMachine::HoldTime(bool held, std::vector<Effect> &fx)
 {
     if (held == timeHeld_)
@@ -2594,8 +2639,6 @@ void TurnMachine::AwaitOrder(std::string_view why)
 
 void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
 {
-    // Set already as the turn began; again for a turn handed over mid-way.
-    SetSpeed(TurnSpeed(), fx);
     if (PlayerControls(who))
     {
         fx.push_back(Effect::Of(EffectKind::Select, who.id));

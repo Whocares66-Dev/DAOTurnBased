@@ -207,7 +207,8 @@ EventDescription Describe(EventKind kind)
                 nullptr,
                 "the item's tag, for an item's ability"};
     case EventKind::SpeedSet:
-        return {"The game's speed was set: the fight's speed ([turns] speed) through its turns; 1 outside them.",
+        return {"The game's speed was said: the fight's speed ([turns] speed) as each of its turns comes; 1 outside "
+                "them, to take that back.",
                 false,
                 nullptr,
                 "the speed, thousandths",

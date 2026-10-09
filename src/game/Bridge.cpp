@@ -1853,20 +1853,31 @@ void Bridge::HoldEffectsTime(const Effect &e)
 // The game run at so many thousandths of its speed.
 void Bridge::SetGameSpeed(const Effect &e)
 {
+    const float speed = static_cast<float>(e.b) / 1000.0f;
+    // What the game has as it is said: the machine says the fight's speed as
+    // each turn comes, since the game writes it too (a death blow's slow
+    // motion, and 1 as the blow ends: issue 71, TurnMachine::SetSpeed), and
+    // the log says at info what it was where that was something else, so
+    // that a fight's log counts the times the game had changed it.
+    const float had = dao::clock::Speed();
     // Game logic and animation together (DAOLib's dao/Clock.h,
     // 4e0032e); the Flash UI keeps its own clock.
     // Whether the world's timer took it and the frame's hook is placed
     // (DAOLib ed55ab8): an archer's shot took as long at 2 as at 1 in
     // the second play test, the mod's own waits aside.
-    speedTook_ = dao::clock::SetSpeed(static_cast<float>(e.b) / 1000.0f);
-    camera_.SetSpeed(static_cast<float>(e.b) / 1000.0f);
+    speedTook_ = dao::clock::SetSpeed(speed);
+    camera_.SetSpeed(speed);
     if (!*speedTook_)
     {
-        spdlog::warn("the game's speed {:.2f} did not take", static_cast<float>(e.b) / 1000.0f);
+        spdlog::warn("the game's speed {:.2f} did not take", speed);
+    }
+    else if (had != speed)
+    {
+        spdlog::info("the game's speed is {:.2f}: the game had it at {:.2f}", speed, had);
     }
     else
     {
-        spdlog::debug("the game's speed is {:.2f}", static_cast<float>(e.b) / 1000.0f);
+        spdlog::debug("the game's speed is {:.2f}", speed);
     }
 }
 

@@ -246,7 +246,7 @@ struct Coverage
     int heldFreed = 0;    // holds that let go within the turn, which went on with the rest
     int heldPaid = 0;     // of them, with time, those held from the turn's start: their time checked against the bar
     int heldTimed = 0;    // and of those, the holds the engine timed: checked against its step's own count (issue 64)
-    int speedChanges = 0; // the game's speed set for an AI's turn and back
+    int speedChanges = 0; // the game's speed said: the fight's as each turn comes, and 1 after
     long long events = 0; // typed events heard
     int conditionsEnded = 0;
     int cooldownsHeld = 0;      // cooldowns the engine had running, taken onto their creatures' own clocks (22)

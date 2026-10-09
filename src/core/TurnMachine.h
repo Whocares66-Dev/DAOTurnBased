@@ -1117,6 +1117,9 @@ class TurnMachine
     void GrabAtTurnStart(const Combatant &who, std::vector<Effect> &fx);
 
     void StartFight(std::vector<Combatant> roster, std::vector<Effect> &fx);
+    // The exchange with the game once a turn: what is read of it then, and
+    // what is said to it again (dev/DESIGN.md, "As a turn begins").
+    [[nodiscard]] bool AsATurnBegins(const Observation &obs, std::vector<Effect> &fx);
     void StartNextTurn(std::vector<Effect> &fx);
     void BeginTurn(const Combatant &who, std::vector<Effect> &fx);
     void ResumeTurn(const Combatant &who, std::vector<Effect> &fx);
@@ -1360,7 +1363,7 @@ class TurnMachine
     // Effects' time in rounds (dev/DESIGN.md, "Everything in turns"):
     // whether the fight holds it.
     bool timeHeld_ = false;
-    float speedSet_ = 1.0f; // the game's speed as the machine last set it
+    float speedSet_ = 1.0f; // the game's speed as the machine last said it, which the game may have changed since
     Rng rng_;
     LogSink log_;
     LogLevel logLevel_ = LogLevel::Debug;

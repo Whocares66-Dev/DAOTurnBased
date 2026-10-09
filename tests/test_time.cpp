@@ -524,6 +524,49 @@ TEST_CASE("an AI whose kept attack has nobody in reach to be turned on is told t
     CHECK_FALSE(Logged(w, "Genlock chooses again"));
 }
 
+TEST_CASE("a conversation before a turn whose kept action was not given is handed over: the fight's speed is back",
+          "[time][speed]")
+{
+    // test_fights.cpp's long run, seed 359 (2026-10-09, as issue 71 took the
+    // speed's write out of the handover): such a turn is handed over with the
+    // first look after the conversation and never comes to a turn's
+    // beginning, where the speed is said; the rest of it ran at the game's
+    // own. The machine took the speed back for the conversation, and gives it
+    // back as the conversation ends.
+    Settings s = Timed();
+    s.fightSpeed = 3.0f;
+    World w(s);
+    w.Get(kHero).position = {10.0f, 0.0f, 0.0f};
+    w.Get(kCompanion).position = {1.0f, 0.0f, 0.0f};
+    int pokes = 0;
+    w.onPoke = [&](ObjectId id) {
+        if (id == kGenlock && ++pokes == 1)
+        {
+            CHECK(Strike(w, kGenlock, kCompanion, Source::Script, 6.0f) == Verdict::Hold);
+        }
+    };
+    w.StartFight();
+    UntilTurnOf(w, kGenlock);
+    w.RunFor(200);
+    REQUIRE(w.heldCasts.contains(kGenlock));
+    w.Get(kCompanion).down = true; // its target falls, and the hero is far
+    w.targetGone.insert(kGenlock);
+    UntilTurnOf(w, kGenlock);
+    REQUIRE(w.Current() == kGenlock);
+    w.Frame(); // the step that hears its attack was not given
+    REQUIRE(pokes == 1);
+    w.mode = Mode::Dialog;
+    w.Frame();
+    REQUIRE(w.speed == 1000);
+    w.mode = Mode::Combat;
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    REQUIRE(pokes == 2); // handed over, with no turn begun or gone on with
+    CHECK_FALSE(Logged(w, "Genlock's turn goes on"));
+    CHECK(w.speed == 3000);
+}
+
 TEST_CASE("with time, a kept action is said over the player's own, and nothing is interrupted as a fight ends",
           "[time]")
 {

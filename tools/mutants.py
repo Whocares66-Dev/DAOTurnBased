@@ -659,10 +659,22 @@ MUTANTS = [
         "        playerPaused_ = false;\n        return fx;\n    }\n    if (obs.mode == Mode::Gui)",
     ),
     Mutant(
-        "the speed is written though it has not changed",
+        "the speed is written at 1 with none of the mod's own to take back",
         MACHINE,
-        "    if (speed == speedSet_)\n    {\n        return;\n    }\n    speedSet_ = speed;",
+        "    if (speed == 1.0f && speedSet_ == 1.0f)\n    {\n        return;\n    }\n    speedSet_ = speed;",
         "    speedSet_ = speed;",
+    ),
+    Mutant(
+        "the speed is said only as the machine's belief of it changes: put back to 1 by the game, it stays there (issue 71)",
+        MACHINE,
+        "    if (speed == 1.0f && speedSet_ == 1.0f)",
+        "    if (speed == speedSet_)",
+    ),
+    Mutant(
+        "the fight's speed is said every frame, over the game's own slow motion (issue 71)",
+        MACHINE,
+        "        clock_ += worldDt;\n        roundRunMs_ += worldDt;",
+        "        clock_ += worldDt;\n        roundRunMs_ += worldDt;\n        SetSpeed(TurnSpeed(), fx);",
     ),
     Mutant(
         "a creature's mana or stamina never reaches the bar",
@@ -769,8 +781,14 @@ MUTANTS = [
     Mutant(
         "a turn does not set the fight's speed",
         MACHINE,
-        "    // says whether a pan got there (src/game/Camera.cpp).\n    SetSpeed(TurnSpeed(), fx);",
-        "    // says whether a pan got there (src/game/Camera.cpp).",
+        "    // there (src/game/Camera.cpp).\n    SetSpeed(TurnSpeed(), fx);",
+        "    // there (src/game/Camera.cpp).",
+    ),
+    Mutant(
+        "a conversation's end leaves the fight's speed to a turn's beginning, which a turn handed over at once never comes to (issue 71)",
+        MACHINE,
+        "        // own speed).\n        SetSpeed(TurnSpeed(), fx);",
+        "        // own speed).",
     ),
     Mutant(
         "a fight stood down begins again while the game still says combat",

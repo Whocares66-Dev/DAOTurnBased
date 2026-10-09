@@ -1580,6 +1580,37 @@ TEST_CASE("at speed 1 the game's speed is never written", "[machine][speed]")
     CHECK_FALSE(w.Did(EffectKind::GameSpeed));
 }
 
+TEST_CASE("the speed is the game's to change in a turn, and the fight's again as the next turn comes",
+          "[machine][speed]")
+{
+    // Issue 71 (Denerim's market, 2026-10-09): a death blow's animation
+    // writes the game's speed for its slow motion, and the engine puts it to
+    // 1 as the blow's command ends. The machine had said 3 as the fight
+    // began and, remembering that, never said it again: the fight ran at the
+    // game's own speed from the first death blow to its end.
+    Settings s = Fixed();
+    s.fightSpeed = 3.0f;
+    World w{s};
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    REQUIRE(w.speed == 3000);
+    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
+    w.RunFor(300);
+    w.speed = 1000; // the game's own doing, in the middle of her blow
+    w.applied.clear();
+    w.RunFor(300);
+    // Left to the game while the blow lasts: nothing is said over it.
+    CHECK_FALSE(w.Did(EffectKind::GameSpeed));
+    CHECK(w.speed == 1000);
+    w.Finish(kHero);
+    w.RunFor(500);
+    CHECK(w.machine.OnEndTurn());
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.Current() == kGenlock);
+    CHECK(w.speed == 3000);
+}
+
 TEST_CASE("a conversation as combat begins: the fight starts afresh after it", "[machine]")
 {
     // Seen in the long run of random fights (seed 256): the fight's start
@@ -1993,9 +2024,9 @@ TEST_CASE("the game's speed is set for a turn before its camera moves", "[machin
 {
     // Play tests 2 and 5, when an AI's turn had a speed of its own: at twice
     // the speed the pan to the hero, issued before the speed went back to 1,
-    // never arrived. A fight has one speed now, and it does not change
-    // between two turns; what is held is that nothing writes it after the
-    // camera is moved.
+    // never arrived. A fight has one speed now, said as each turn comes
+    // (issue 71); what is held is that nothing writes it after the camera is
+    // moved.
     Settings s = Fixed();
     s.fightSpeed = 2.0f;
     s.cameraFollow = true;
@@ -2023,8 +2054,6 @@ TEST_CASE("the game's speed is set for a turn before its camera moves", "[machin
     REQUIRE(camera != w.applied.end());
     CHECK(std::none_of(camera, w.applied.end(), [](const Effect &e) { return e.kind == EffectKind::GameSpeed; }));
     CHECK(w.machine.State().speed == 2.0f);
-    // Nor between the turns before it: the speed was the fight's all along.
-    CHECK_FALSE(w.Did(EffectKind::GameSpeed));
 }
 
 TEST_CASE("an error in a frame stands the fight down: the game let go, no turns until the next fight", "[machine]")
@@ -4178,24 +4207,6 @@ TEST_CASE("held by an effect on the fight's first turn, a creature loses it at a
     CHECK(std::ranges::none_of(own.log, [](const std::string &line) {
         return line.find("is held by an effect's command") != std::string::npos;
     }));
-}
-
-TEST_CASE("the fight's speed is set as a turn begins, before the camera moves to it", "[machine]")
-{
-    // Twice, the pan to the hero's turn, issued before the speed changed,
-    // never arrived (play tests 2 and 5, 2026-09-30): the speed first.
-    Settings s = Fixed();
-    s.fightSpeed = 2.0f;
-    s.cameraFollow = true;
-    World w(s);
-    w.StartFight();
-    w.Frame();
-    const auto speed = std::ranges::find_if(w.applied, [](const Effect &e) { return e.kind == EffectKind::GameSpeed; });
-    const auto camera =
-        std::ranges::find_if(w.applied, [](const Effect &e) { return e.kind == EffectKind::CenterCamera; });
-    REQUIRE(speed != w.applied.end());
-    REQUIRE(camera != w.applied.end());
-    CHECK(speed < camera);
 }
 
 namespace
