@@ -50,6 +50,8 @@ extern/DAOLib the submodule
 
 The machine is not thread-safe by itself: `src/plugin/Plugin.cpp` holds a mutex over every call into it, and never holds it while calling the engine, since applying an effect (an AI told to choose) can queue a command that comes back through the gate.
 
+**Every line of the mod's own logic earns its keep, and what a change makes unnecessary is removed in that change.** The user's rule, said four times before it was written here (2026-10-06: "if we're going to implement our own thing, it better be something the engine doesn't already handle. Every line of code we add must earn its keep"; 2026-10-09: "All the custom logic that goes into our code base needs to earn its keep. If new logic obsoletes old logic, remove old logic"). Start from the simplest rule, on the engine's own present word wherever it has one. A special case (a timer, a latch, a state remembered against what the engine says now, a second reading of the same thing) stays only if a test fails without it and a sentence in `dev/DESIGN.md` says what it buys; one that guards against another of the mod's own mechanisms is a sign that mechanism is wrong. Old logic kept beside the new that replaces it, as an input, a fallback or "to be safe", is not kept: it goes, with its tests and its mutants, in the same branch. This is not a question to bring to the user each time; only their own design choices (their settings, their stated rules) are theirs to change.
+
 ## Building
 
 ```powershell
