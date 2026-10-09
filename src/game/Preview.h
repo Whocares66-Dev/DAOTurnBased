@@ -21,13 +21,16 @@
 // the effect the game puts where a move click lands, placed in the world at
 // the path's end and moved after the cursor (src/game/Preview.cpp). Past
 // the movement left the path is red from where the movement runs out, so
-// that how far the creature can go is seen (the user), and its end has a
-// red ring and no marker: the marker could not be made red. The path
-// itself is small rings on the ground, a dotted line of the game's own
-// selection rings, or with the setting off a line the movie draws. Over an
-// enemy the path is an attack's walk: to where the attacker can strike, by
-// the reach the gate judges the attack by, gold if that is within the
-// movement left and red if not.
+// that how far the creature can go is seen (the user), and its end has the
+// same marker in red. The path itself is small rings on the ground, a
+// dotted line of the party's own selection ring, gold and then red, or
+// with the setting off a line the movie draws. The marks' rings and the
+// red marker are the game's art made again, the rings' band widened and
+// the red ones red, files of the mod's in its folder's override subfolder
+// (issue 72); where the game has not got them the path is the movie's
+// line. Over an enemy the path is an attack's walk: to where the attacker
+// can strike, by the reach the gate judges the attack by, gold if that is
+// within the movement left and red if not.
 #pragma once
 
 #include "core/Preview.h"
@@ -65,7 +68,7 @@ class Preview
     // laid along the path in the world.
     void Draw(const TurnView &view, std::uint32_t nowMs, bool onGround, float walk, const std::vector<Vec3> &walked,
               bool attack);
-    void MarkOnGround(ObjectId area, const PathSplit &split, const std::vector<Vec3> &walked, bool attack);
+    void MarkOnGround(ObjectId area, const PathSplit &split, bool attack);
     // And its two ways of having nothing to draw.
     void NoWalk();
     void NoPath();
@@ -79,9 +82,9 @@ class Preview
         std::vector<Vec3> at;
     };
 
-    void ShowMarker(const Vec3 &at);
+    void ShowMarker(std::int32_t row, const Vec3 &at);
     void HideMarker();
-    static void Lay(Marks &marks, std::int32_t row, float scale, const std::vector<Vec3> &at);
+    static void Lay(Marks &marks, std::int32_t row, const std::vector<Vec3> &at);
     void HideMarks();
 
     std::mutex mutex_;
@@ -102,20 +105,21 @@ class Preview
     std::optional<float> strike_; // to a creature: the walk the engine's approach for an attack on it would make
     Vec3 routeEnd_;               // the last of them
     int logged_ = 0;
-    // The game's movement marker at the path's end, while one is placed,
-    // and the area it was placed in: an effect goes with its area, and its
-    // id is not asked after in another.
+    // Whether the game has the marks' rings and the red marker to place;
+    // not yet looked for until a game is loaded.
+    std::optional<bool> art_;
+    // The movement marker at the path's end, while one is placed, the row
+    // it is of (the game's, or the red one) and the area it was placed in:
+    // an effect goes with its area, and its id is not asked after in
+    // another.
     ObjectId marker_ = kNoObject;
+    std::int32_t markerRow_ = 0;
     ObjectId markerArea_ = kNoObject;
-    bool markerSaid_ = false;
 
-    // The path's marks on the ground, in reach and beyond, and the ring
-    // round a too-far end: effects placed once and moved, of the marker's
-    // area.
+    // The path's marks on the ground, in reach and beyond: effects placed
+    // once and moved, of the marker's area.
     Marks reachMarks_;
     Marks beyondMarks_;
-    Marks endMarks_;
-    bool marksSaid_ = false;
 
     // The path last shown, kept a moment after: if its creature then
     // walks, where it goes is measured against it (Compare).

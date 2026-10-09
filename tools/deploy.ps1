@@ -30,11 +30,19 @@
     goes the same way and is held the same way: the plugin loads it from its own folder
     into the game's tactics screen as that opens, and without it the page has no box.
 
+    The movement preview's red ring and red marker, build\art (python tools\reticles.py: the
+    game's own art made again in red; issue 72), go with the folder too, in its override\
+    subfolder, which the game reads as it reads its own override folder (DAOLib's issue 43,
+    7bedb3b). Without them the deploy says so and goes on: the preview then shows a path as
+    the movie's line.
+
     What deploys before that left is taken out, by a deploy and by -Remove: turnbased.dll
     and its .pdb loose in bin_ship\daolib\plugins, and in
     Documents\BioWare\Dragon Age\packages\core\override\ the movie turnorder.swf, which
     the game's resource system would find before the plugin's own, and the two material
-    objects a deploy of 2026-10-01 put there, where they are the mod's own.
+    objects a deploy of 2026-10-01 put there, where they are the mod's own. And by a
+    deploy, any texture, material object, model or table loose beside the dll, where the
+    first build of issue 72 had the red ring's files.
 
     -Remove deletes the plugin's folder and those; the loader and the address files stay
     for other plugins. DAOLib's own `deploy.ps1 -Remove` returns the game to stock. The
@@ -252,6 +260,36 @@ foreach ($m in $movies) {
     else {
         Show-Warn "no $($m.Name) beside the built dll (python tools\movie.py, then a build): $($m.Without)"
     }
+}
+# The movement preview's rings and red marker (issue 72): the game's own art made again by
+# tools\reticles.py, which the build copies into the folder's override\ subfolder
+# (CMakeLists.txt, OVERRIDE) and which went with the folder just now. The game reads that
+# subfolder as it reads its own override folder (DAOLib's issue 43, 7bedb3b), and the plugin
+# says at start whether it finds them. The subfolder is the build's and nothing else: a file
+# an earlier deploy left under a name the tool has given up would be read by the game all the
+# same. Their table is the last file the tool writes, so it stands for all of them.
+$art = Join-Path $pluginFolder 'override'
+if (Test-Path -LiteralPath $art) {
+    foreach ($f in @(Get-ChildItem -LiteralPath $art -File)) {
+        if (-not (Test-Path -LiteralPath (Join-Path $builtFolder "override\$($f.Name)"))) {
+            Remove-Item -LiteralPath $f.FullName -Force
+            Show-Ok "removed $($f.FullName) (the build has no such file)"
+        }
+    }
+}
+if (-not (Test-Path (Join-Path $art 'vfx_base_turnbased.gda'))) {
+    Show-Warn "no vfx_base_turnbased.gda in $art (python tools\reticles.py, then a build and this again): the preview has no rings or red marker of its own, and shows a path as the movie's line"
+}
+# And nowhere but there. The first build of issue 72 (on DAOLib's first form of its issue 43,
+# which made the plugin's whole folder a source) had the thirteen files loose beside the dll:
+# a deploy of it left them there, and a build tree of that day still has them for the copy
+# above to bring. Nothing reads them, so a file of the game's kinds loose in the plugin's own
+# folder is taken out.
+$loose = Get-ChildItem -LiteralPath $pluginFolder -File |
+    Where-Object { $_.Extension -in '.dds', '.mao', '.mmh', '.gda' }
+foreach ($f in @($loose)) {
+    Remove-Item -LiteralPath $f.FullName -Force
+    Show-Ok "removed $($f.FullName) (loose beside the dll: the layout before override\)"
 }
 Clear-Leftover
 # The address files beside the loader, as DAOLib's own deploy.ps1 puts them.

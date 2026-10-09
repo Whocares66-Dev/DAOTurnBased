@@ -7,7 +7,9 @@ plugin's own (issue 47). A deploy that leaves any of that as it was shows in
 the game as a mod that is not there, or as a bar a version behind, so what the
 script copies, what it takes out and what it leaves is checked here. And since
 issue 46 there are two movies beside the dll, the second the tactics page's
-box's, which goes and is held to its own sources as the first is.
+box's, which goes and is held to its own sources as the first is; and since
+issue 72 the movement preview's red ring and marker, which go in the folder's
+override subfolder, are missed aloud, and are left loose nowhere.
 
 Nothing of the real game is touched: the script takes its repository from
 where it stands, so a copy of it runs in a made-up one (a built plugin's
@@ -17,7 +19,7 @@ naming a made-up game beside it, in the layout a deploy before 2026-10-05
 left.
 
 Each run starts a PowerShell, so a case has as few as tell what it is for,
-eighteen in all, and they are Windows PowerShell's where it is there: it
+nineteen in all, and they are Windows PowerShell's where it is there: it
 starts in half the time of PowerShell 7 (0.18 s against 0.30 here), and is the
 stricter of the two to write for. The script ran the same under both,
 2026-10-05.
@@ -50,6 +52,8 @@ LEFT = [
     "daolib/plugins/probe.dll",
 ]
 KEPT = ["daolib/turnbased.ini", "packages/core/override/another.swf"]
+# The plugin's own folder after a deploy, the red ring's subfolder apart.
+PLUGIN = ["turnbased.dll", "turnbased.pdb", BOX, BAR]
 # A material object as the deploys of 2026-10-01 wrote the mod's two into the
 # override folder (dda42c9, ui/override): the game's, with a comment at its
 # head that says whose it is.
@@ -207,7 +211,8 @@ class Deploy(unittest.TestCase):
         self.addCleanup(lambda: os.path.lexists(link) and os.rmdir(link))
 
     def test_a_deploy_makes_the_folder_and_takes_the_old_layout_out(self) -> None:
-        self.done()
+        # With no red ring and marker built (tools/reticles.py), which it says.
+        self.assertIn("reticles.py", self.done())
         self.assertEqual(
             files(self.game),
             [
@@ -299,6 +304,29 @@ class Deploy(unittest.TestCase):
         self.assertIn("the tactics page has no box", told)
         self.assertNotIn("no movie to show", told)
         self.assertEqual(files(self.there), ["turnbased.dll", "turnbased.pdb", BAR])
+
+    def test_the_previews_rings_and_marker_go_in_the_override_subfolder(
+        self,
+    ) -> None:
+        # As a build leaves them (issue 72), in the subfolder the game reads:
+        # the table of their rows, and a texture for the rest. And loose
+        # beside the dll, as the issue's first build had them: one a deploy
+        # of it left in the game, one its build left in the build's folder.
+        # And in the game's subfolder, one under a name the tool has given up.
+        art = ["tb_red_selparty.dds", "vfx_base_turnbased.gda"]
+        for name in art:
+            write(self.built / "override" / name, "the game's art in red")
+        write(self.there / "tb_pty.mmh", "loose, of a deploy before")
+        write(self.built / "tbred.mao", "loose, of a build before")
+        write(self.there / "override" / "tb_pty.mmh", "of a deploy before")
+        told = self.done()
+        self.assertNotIn("reticles.py", told)
+        self.assertIn("the layout before override", told)
+        self.assertIn("the build has no such file", told)
+        self.assertEqual(
+            files(self.there),
+            sorted([*(f"override/{name}" for name in art), *PLUGIN]),
+        )
 
     def test_with_no_plugin_built_nothing_is_taken_out(self) -> None:
         (self.built / "turnbased.dll").unlink()

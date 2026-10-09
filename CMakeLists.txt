@@ -199,6 +199,16 @@ include("${TB_DAOLIB}/cmake/Quality.cmake")
 # not the dll links, and one not built yet warns and is skipped. So after a
 # build the folder is the whole of the mod, which tools/deploy.ps1 copies as
 # it is.
+#
+# And the movement preview's rings and red marker (issue 72), the game's own
+# art made again by python tools\reticles.py, into build\art (the party's
+# ring for the path's marks, its band widened, in gold and in red, and the
+# movement marker in red): textures, material objects, models and the three
+# rows of vfx_base that name them. They go by OVERRIDE into the folder's override\ subfolder, which
+# DAOLib's loader makes a source of the game's resources as its own override
+# folder is (DAOLib's issue 43, 7bedb3b; seen in play 2026-10-09). They
+# follow as the movies do; what the tool makes and what is copied here are
+# held together by tools/test_reticles.py.
 # ---------------------------------------------------------------------------
 add_daolib_plugin(
     turnbased
@@ -214,6 +224,27 @@ add_daolib_plugin(
         src/game/Targeting.cpp
         src/plugin/Plugin.cpp
     FILES build/ui/turnorder.swf build/ui/turnbased_tactics.swf
+    OVERRIDE
+        build/art/tb_gold_selparty.dds
+        build/art/tb_gold_selparty_med.dds
+        build/art/tb_red_selparty.dds
+        build/art/tb_red_selparty_med.dds
+        build/art/tb_red_movetarget.dds
+        build/art/tb_red_movearrow.dds
+        build/art/tbgld.mao
+        build/art/tbgld_med.mao
+        build/art/tbred.mao
+        build/art/tbred_med.mao
+        build/art/tbred_movemark.mao
+        build/art/tbred_arw.mao
+        build/art/tb_gld.mmh
+        build/art/tb_gld_m.mmh
+        build/art/tb_gld_l.mmh
+        build/art/tb_red.mmh
+        build/art/tb_red_m.mmh
+        build/art/tb_red_l.mmh
+        build/art/tb_mov.mmh
+        build/art/vfx_base_turnbased.gda
 )
 tb_apply_warnings(turnbased)
 target_link_libraries(turnbased PRIVATE tb_core)

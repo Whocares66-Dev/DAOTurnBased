@@ -494,7 +494,7 @@ Turn-based combat is turned on or off only outside combat ("can't change during 
 | `[feedback] turn_bar` | false | The turn order bar; off until seen in play |
 | `[feedback] portraits` | true | With the bar: render portraits for combatants the game has none for |
 | `[feedback] move_preview` | true | With the bar: the path to the cursor, gold in reach and red beyond (`dev/UI.md`) |
-| `[feedback] move_preview_ground` | true | The path as small rings on the ground; off, a line over the scene (`dev/UI.md`) |
+| `[feedback] move_preview_ground` | true | The path as small rings on the ground, gold and then red; off, a line over the scene (`dev/UI.md`). The rings are files of the mod's built apart from its dll (issue 72: the party's ring with its band widened for so small a mark, in gold and in the red of the ring under an enemy): in a game that has not got them the path is the line whatever this says |
 | `[keys] toggle` | None | the toggle's key: none until bound in the game's controls, or written here (Ctrl+T until 2026-10-03) |
 | `[keys] end_turn` | Enter | End turn's key until bound in the game's controls (Options, Controls, under Turn-based); `None` lists it there with no key |
 | `[keys] delay` | None | Delay's key: none until bound in the game's controls, or written here (the user, 2026-10-03: "Delay should have no key binding by default, end turn is enter") |

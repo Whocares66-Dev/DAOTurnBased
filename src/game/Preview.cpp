@@ -2,25 +2,33 @@
 
 #include "core/Preview.h"
 #include "core/Rules.h"
+#include "core/Text.h"
 #include "game/Gate.h"
 
 #include "dao/Attack.h"
 #include "dao/ClientExoApp.h"
 #include "dao/GameModes.h"
+#include "dao/Gda.h"
 #include "dao/Gui.h"
 #include "dao/Log.h"
+#include "dao/Resources.h"
 #include "dao/Script.h"
 #include "dao/Vfx.h"
 #include "dao/World.h"
+#include "dao/core/GdaHash.h"
 #include "dao/generated/ScriptApi.h"
 
 #include <Windows.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <exception>
+#include <format>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace tb::game
@@ -52,7 +60,7 @@ constexpr std::uint32_t kSearchEveryMs = 150;
 // vfx_base's row 30000, "Movement Indicator", the star the game puts where
 // a move click lands (model SR_MOV, beside the selection rings' SR_PTY and
 // SR_EMY; its art vfx_movetarget.dds; a lasting effect laid on the ground).
-// Placed in the world at an end in reach through DAOLib's dao/Vfx.h, moved
+// Placed in the world at the path's end through DAOLib's dao/Vfx.h, moved
 // after the cursor, taken away with the preview.
 //
 // It is left out of the cursor's pick (SetPickable): SR_MOV is a selection
@@ -63,48 +71,82 @@ constexpr std::uint32_t kSearchEveryMs = 150;
 // part the effect had was not told apart.
 constexpr std::int32_t kMoveMarker = 30000;
 
-// Past the movement left there is no marker. The user asked for a red one
-// there ("how about red rings and a red marker after the move limit? Then
-// it's easy to see how long player can move"), and it was tried: the same
-// row placed in a colour (DAOLib's tint for a placed effect, 61e471e). The
-// call was made and the star stayed gold (the twentieth play test,
-// 2026-10-01): its material, GeneralGui.mat, takes no tint. A gold star at
-// an end too far says "it will walk here" of a move the machine refuses,
-// so there is none: the end has a red ring, and a red star wants a texture
-// and a row of our own.
-
 // The path on the ground (`[feedback] move_preview_ground`; the user,
 // 2026-10-01: "should the line be drawn on the ground as well?"). A line
 // in the world is not to be had: an effect is scaled by one number, so no
 // row can be stretched along a step, and a model of our own is days of
-// work (lib-agent's reading). So marks: the game's own selection rings
-// made small, one every so often along the path, the party's gold ring in
-// reach and the enemy's red one beyond, each left out of the cursor's
+// work (lib-agent's reading). So marks: the party's selection ring made
+// small, one every so often along the path, each left out of the cursor's
 // pick. They begin outside the walker's own ring and stop short of the
-// marker; a too-far end has the red ring at its size. If a path is long
-// the marks are spread to keep their number down.
-constexpr std::int32_t kPartyRing = 30005; // "Party Member", SR_PTY
-// The red is the enemy's ring as it is when targeted: by their textures
-// the plain enemy ring (30011, vfx_selbad.dds) is two and a half times
-// dimmer than the party's gold one and thin, and as small marks it was a
-// faint smudge (the twentieth play test); the targeted one (vfx_selbad2.dds)
-// is half as bright again, wider, and has pale highlights.
-constexpr std::int32_t kEnemyRing = 30012; // "Enemy Targeted", SR_EMYt
+// marker. If a path is long the marks are spread to keep their number
+// down.
+//
+// Past the movement left the marks and the marker are the same two in red
+// (the user, 2026-10-01: "how about red rings and a red marker after the
+// move limit? Then it's easy to see how long player can move"; and
+// 2026-10-09, of the enemy's ring that was both until then: "replace the
+// red walk circles with the regular gold circle by red color instead of
+// the enemy circle indicator", and "the end circle with a red version of
+// the regular gold compass marker to indicate you can't walk there"). No
+// reticle takes a colour from its caller: the marker placed with DAOLib's
+// tint stayed gold, twice (the twentieth and twenty-first play tests,
+// 2026-10-01; dao/Vfx.h has what was read). So each is the game's own made
+// again, the way the game makes an effect: a row of vfx_base of the mod's
+// own names the game's model under a name of ours, which names the game's
+// material object under a name of ours, which names the game's texture
+// with its gold turned to the red of the enemy's ring (issue 72).
+//
+// And the gold marks are a row of the mod's own too, not the game's 30005:
+// a mark is the ring at a tenth of its size, its band a tenth as wide,
+// under a pixel on the screen (the user, 2026-10-09, of the marks beside
+// the rings under the characters: "thin and faint"), so the marks' ring,
+// gold and red, is the game's art with its band widened: twice as wide
+// (tools/reticles.py's BAND; seen in play that day).
+//
+// tools/reticles.py makes the files from the game's, the build puts them
+// in the plugin's folder's override subfolder, and DAOLib's loader has the
+// game read that as it reads its own override folder (DAOLib's issue 43).
+constexpr std::int32_t kRedRing = 1000000;   // row 30005 again, its models tb_red and its two larger
+constexpr std::int32_t kRedMarker = 1000001; // row 30000 again, its model tb_mov
+constexpr std::int32_t kGoldRing = 1000002;  // row 30005 again, its models tb_gld and its two larger
+constexpr std::wstring_view kRedRingModel = L"tb_red";
+constexpr std::wstring_view kRedMarkerModel = L"tb_mov";
+constexpr std::wstring_view kGoldRingModel = L"tb_gld";
+// Every file the three rows come to, as tools/reticles.py names them
+// (tools/test_reticles.py holds the two lists together).
+constexpr std::array<std::wstring_view, 20> kArt = {
+    L"tb_gold_selparty.dds",
+    L"tb_gold_selparty_med.dds",
+    L"tb_red_selparty.dds",
+    L"tb_red_selparty_med.dds",
+    L"tb_red_movetarget.dds",
+    L"tb_red_movearrow.dds",
+    L"tbgld.mao",
+    L"tbgld_med.mao",
+    L"tbred.mao",
+    L"tbred_med.mao",
+    L"tbred_movemark.mao",
+    L"tbred_arw.mao",
+    L"tb_gld.mmh",
+    L"tb_gld_m.mmh",
+    L"tb_gld_l.mmh",
+    L"tb_red.mmh",
+    L"tb_red_m.mmh",
+    L"tb_red_l.mmh",
+    L"tb_mov.mmh",
+    L"vfx_base_turnbased.gda",
+};
+constexpr std::int32_t kVfxTable = 8; // "Visual Effects", vfx_base and all named after it (m2da_base.gda)
+
 // Small and many, a dotted line (the user, 2026-10-01, of rings 0.21 of a
 // creature's every 0.5 m: "wonder if we can make the rings smaller. A
 // larger number of smaller rings is basically a dotted line"). At 0.14
 // every 0.4 m the trail was too slight far off (the nineteenth play test);
 // closer together, it is the line of them that is seen, not each.
 constexpr float kMarkScale = 0.10f;
-constexpr float kRedMarkScale = 0.13f; // the red ones a little larger, being dimmer
 constexpr float kMarkEvery = 0.2f;
 constexpr float kMarksFrom = 0.7f;    // meters along: clear of the walker's ring
 constexpr float kMarksShortOf = 0.4f; // of the end: clear of the marker there
-// The ring round a too-far end, which has no marker: half a creature's.
-// At a creature's size it was seen, but it is an enemy's ring, pointed
-// mark and all, and at a glance an enemy stood there; and it hid the red
-// marks leading to it (the nineteenth play test's second look).
-constexpr float kEndRingScale = 0.5f;
 constexpr std::size_t kMostMarks = 150;
 
 // The movie's line begins at the edge of the walker's own selection ring,
@@ -179,6 +221,47 @@ std::vector<ScreenDot> RingOnScreen(const Vec3 &centre, float radius)
     return dots;
 }
 
+// Whether the marks' rings and the red marker are the game's to place:
+// every file of theirs found by its resource system, and their three rows
+// in its table naming their models. Looked for once and said, since they
+// are built apart from the dll, as the movies are, and a plugin deployed
+// without them, or under a loader from before DAOLib's issue 43, would
+// place rows the game has not.
+bool FindArt()
+{
+    std::string found;
+    std::string missing;
+    for (const std::wstring_view file : kArt)
+    {
+        std::string &list = dao::resources::Exists(file) ? found : missing;
+        list += (list.empty() ? "" : ", ") + Utf8(file);
+    }
+    std::string rows;
+    bool named = true;
+    for (const auto &[row, wanted] : {std::pair{kRedRing, kRedRingModel}, std::pair{kRedMarker, kRedMarkerModel},
+                                      std::pair{kGoldRing, kGoldRingModel}})
+    {
+        const std::wstring model =
+            dao::gda::GetString(kVfxTable, row, dao::core::GdaColumnHash("ModelName")).value_or(std::wstring{});
+        named = named && model == wanted;
+        rows +=
+            std::format("{}row {} names '{}' ({} wanted)", rows.empty() ? "" : ", ", row, Utf8(model), Utf8(wanted));
+    }
+    if (missing.empty() && named)
+    {
+        spdlog::info("the preview's rings and red marker are the game's to place: all {} of their files found by "
+                     "the game ({}), and of vfx_base {}",
+                     kArt.size(), found, rows);
+        return true;
+    }
+    spdlog::warn("the preview's rings and red marker are not the game's to place: of their {} files the game finds "
+                 "[{}] and not [{}], and of vfx_base {}. python tools\\reticles.py makes them, a build puts them in "
+                 "override\\ beside turnbased.dll and DAOLib's loader of its issue 43 has the game read them there: "
+                 "without them a path is the movie's line, not marks on the ground",
+                 kArt.size(), found, missing, rows);
+    return false;
+}
+
 } // namespace
 
 void Preview::Install()
@@ -208,8 +291,9 @@ void Preview::Install()
     });
 }
 
-// The game's marker at the path's end, where the move would go.
-void Preview::ShowMarker(const Vec3 &at)
+// The marker at the path's end, where the move would go: `row` is the
+// game's, or the red one for an end the move would not reach.
+void Preview::ShowMarker(std::int32_t row, const Vec3 &at)
 {
     const dao::CCArea *area = dao::world::CurrentArea();
     if (area == nullptr)
@@ -217,22 +301,22 @@ void Preview::ShowMarker(const Vec3 &at)
         marker_ = kNoObject;
         return;
     }
-    if (marker_ != kNoObject && markerArea_ == area->Id() && dao::vfx::Move(marker_, Of(at)))
+    if (marker_ != kNoObject && markerRow_ == row && markerArea_ == area->Id() && dao::vfx::Move(marker_, Of(at)))
     {
         return;
     }
-    // None yet, or it went with its area.
-    marker_ = dao::vfx::Place(kMoveMarker, Of(at));
+    // None yet, or it went with its area, or the other of the two stands.
+    HideMarker();
+    marker_ = dao::vfx::Place(row, Of(at));
+    markerRow_ = row;
     markerArea_ = area->Id();
     if (marker_ != kNoObject)
     {
         dao::vfx::SetPickable(marker_, false);
     }
-    if (!std::exchange(markerSaid_, true))
-    {
-        spdlog::debug("the preview's end is the game's movement marker (effect {:#x}), left out of the cursor's pick",
-                      marker_);
-    }
+    spdlog::debug("the preview's end is vfx_base's row {} (effect {:#x}), {}, left out of the cursor's pick", row,
+                  marker_,
+                  row == kRedMarker ? "the movement marker in red: beyond reach" : "the game's movement marker");
 }
 
 void Preview::HideMarker()
@@ -253,8 +337,13 @@ void Preview::HideMarker()
 
 // `marks` made to lie at `at`: those there are moved if their place has
 // changed, more are placed, the rest are taken away.
-void Preview::Lay(Marks &marks, std::int32_t row, float scale, const std::vector<Vec3> &at)
+void Preview::Lay(Marks &marks, std::int32_t row, const std::vector<Vec3> &at)
 {
+    if (marks.ids.empty() && !at.empty())
+    {
+        spdlog::debug("the preview lays {} mark(s) of vfx_base's row {}, {}", at.size(), row,
+                      row == kRedRing ? "the party's ring in red: beyond reach" : "the party's ring in gold");
+    }
     for (std::size_t i = 0; i < at.size(); ++i)
     {
         if (i < marks.ids.size())
@@ -270,7 +359,7 @@ void Preview::Lay(Marks &marks, std::int32_t row, float scale, const std::vector
                 continue;
             }
         }
-        const ObjectId placed = dao::vfx::Place(row, Of(at[i]), scale);
+        const ObjectId placed = dao::vfx::Place(row, Of(at[i]), kMarkScale);
         if (placed != kNoObject)
         {
             dao::vfx::SetPickable(placed, false);
@@ -296,14 +385,14 @@ void Preview::Lay(Marks &marks, std::int32_t row, float scale, const std::vector
 
 void Preview::HideMarks()
 {
-    if (reachMarks_.ids.empty() && beyondMarks_.ids.empty() && endMarks_.ids.empty())
+    if (reachMarks_.ids.empty() && beyondMarks_.ids.empty())
     {
         return;
     }
     // As the marker: in their own area only.
     const dao::CCArea *area = dao::world::CurrentArea();
     const bool here = area != nullptr && markerArea_ == area->Id();
-    for (Marks *marks : {&reachMarks_, &beyondMarks_, &endMarks_})
+    for (Marks *marks : {&reachMarks_, &beyondMarks_})
     {
         if (here)
         {
@@ -514,14 +603,13 @@ bool LivingCreature(ObjectId object)
 } // namespace
 
 // The path marked in the world: gold marks along what can be walked this
-// turn, red ones on from where they end, and a ring where a move too far
-// would have gone.
-void Preview::MarkOnGround(ObjectId area, const PathSplit &split, const std::vector<Vec3> &walked, bool attack)
+// turn, and red ones on from where they end.
+void Preview::MarkOnGround(ObjectId area, const PathSplit &split, bool attack)
 {
     if (markerArea_ != area)
     {
         // Another area than the marks were laid in: they went with it.
-        for (Marks *marks : {&reachMarks_, &beyondMarks_, &endMarks_})
+        for (Marks *marks : {&reachMarks_, &beyondMarks_})
         {
             marks->ids.clear();
             marks->at.clear();
@@ -532,22 +620,14 @@ void Preview::MarkOnGround(ObjectId area, const PathSplit &split, const std::vec
     const float beyondEnd = PathLength(split.beyond);
     // Spread, if they would be too many.
     const float every = std::max(kMarkEvery, (reachEnd + beyondEnd) / static_cast<float>(kMostMarks));
-    // Short of the marker at a move's end, and of the ring round a
-    // too-far one; an attack's walk has neither.
+    // Short of the marker at a move's end, gold or red; an attack's walk
+    // has none.
     const float reachTo = split.TooFar() || attack ? reachEnd : reachEnd - kMarksShortOf;
     const float beyondTo = attack ? beyondEnd : beyondEnd - kMarksShortOf;
-    Lay(reachMarks_, kPartyRing, kMarkScale, AlongPath(split.reach, every, kMarksFrom, reachTo));
+    Lay(reachMarks_, kGoldRing, AlongPath(split.reach, every, kMarksFrom, reachTo));
     // The red ones go on in step from where the gold ones end.
     const float into = every - std::fmod(std::max(0.0f, reachEnd - kMarksFrom), every);
-    Lay(beyondMarks_, kEnemyRing, kRedMarkScale,
-        split.TooFar() ? AlongPath(split.beyond, every, into, beyondTo) : std::vector<Vec3>{});
-    Lay(endMarks_, kEnemyRing, kEndRingScale,
-        split.TooFar() && !attack ? std::vector<Vec3>{walked.back()} : std::vector<Vec3>{});
-    if (!std::exchange(marksSaid_, true))
-    {
-        spdlog::debug("the preview's path is marked on the ground: {} in reach, {} beyond, one every {:.2f} m",
-                      reachMarks_.ids.size(), beyondMarks_.ids.size(), every);
-    }
+    Lay(beyondMarks_, kRedRing, split.TooFar() ? AlongPath(split.beyond, every, into, beyondTo) : std::vector<Vec3>{});
 }
 
 // The walk drawn: the plate's numbers, the line on the screen or the marks
@@ -581,27 +661,30 @@ void Preview::Draw(const TurnView &view, std::uint32_t nowMs, bool onGround, flo
     const std::vector<Vec3> &lineReach = outside.TooFar() ? outside.beyond : split.reach;
     shown.reach = OnScreen(lineReach);
     // Where the move would go, the game's marker; past the movement left
-    // none, since it says "it will walk here" and it would not. An attack's
-    // walk ends at its target, which has its own ring.
-    if (split.TooFar() || attack)
+    // the red one, since the gold says "it will walk here" and it would
+    // not. An attack's walk ends at its target, which has its own ring.
+    const bool art = art_.value_or(false);
+    if (attack || (split.TooFar() && !art))
     {
         HideMarker();
     }
     else
     {
-        ShowMarker(walked.back());
+        ShowMarker(split.TooFar() ? kRedMarker : kMoveMarker, walked.back());
     }
     // The path in the world: marks along it, in the marker's area (which
     // ShowMarker keeps; with no marker placed the area is asked here).
+    // Without the mod's rings the path is the movie's line, which is whole
+    // by itself, gold and red.
     const dao::CCArea *area = dao::world::CurrentArea();
-    shown.line = !onGround || area == nullptr;
+    shown.line = !onGround || !art || area == nullptr;
     if (shown.line)
     {
         HideMarks();
     }
     else
     {
-        MarkOnGround(area->Id(), split, walked, attack);
+        MarkOnGround(area->Id(), split, attack);
     }
     // Only if the reach is whole: a line broken behind the camera has no
     // second half to join.
@@ -612,8 +695,7 @@ void Preview::Draw(const TurnView &view, std::uint32_t nowMs, bool onGround, flo
         {
             shown.stopRing = RingOnScreen(split.reach.back(), kStopRing);
         }
-        if (shown.line && !attack && shown.beyond.size() == split.beyond.size() &&
-            (split.TooFar() || marker_ == kNoObject))
+        if (shown.line && !attack && shown.beyond.size() == split.beyond.size() && marker_ == kNoObject)
         {
             shown.endRing = RingOnScreen(walked.back(), kEndRing);
         }
@@ -663,6 +745,11 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     if (!installed_)
     {
         return;
+    }
+    // Once there is an area, so a game loaded and its tables read.
+    if (!art_.has_value() && dao::world::CurrentArea() != nullptr)
+    {
+        art_ = FindArt();
     }
     Compare(nowMs);
     // With less than a step left a move is held whatever its length
