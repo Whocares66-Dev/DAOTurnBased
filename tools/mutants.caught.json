@@ -331,7 +331,6 @@
 "an enemy beyond the radius leaves the fight though the party perceives it": "a hostile the scan no longer finds fighting stays in the fight while the party perceives it or it the party",
 "an enemy not fighting the party begins the turns again": "the fight is over when the last enemy fighting the party falls, others fighting near or not",
 "an enemy not fighting the party is in the fight from its start": "an enemy fighting near, but not the party, waits outside the fight until it is",
-"an enemy not fighting the party joins the fight mid-way": "an enemy fighting near, but not the party, waits outside the fight until it is",
 "an enemy out of combat that perceives a party member has nothing to fight, and no turn": "found out of combat with nobody to fight as its turn is looked at, its turn ends there, whatever its script says or does not",
 "an enemy stays in the party's fight for perceiving someone else": "one that left the fight, came back and fell in it is not told when it is over",
 "an enemy's card says its tactics play its turns": "with nothing chosen and the setting as shipped, every party member's turn waits for the player",

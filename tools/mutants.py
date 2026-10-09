@@ -797,12 +797,6 @@ MUTANTS = [
         "",
     ),
     Mutant(
-        "an enemy not fighting the party joins the fight mid-way",
-        RULES,
-        "    if (!seen.found && !(seen.member && KeptByPerception(seen.side, seen.perception)))",
-        "    if (!seen.found && seen.member && !KeptByPerception(seen.side, seen.perception))",
-    ),
-    Mutant(
         "an enemy not fighting the party is in the fight from its start",
         MACHINE,
         "    std::erase_if(roster, [&](const Combatant &c) { return !in(c); });",
