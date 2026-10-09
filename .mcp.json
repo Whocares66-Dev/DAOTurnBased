@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "eluvian": {
+      "command": "python",
+      "args": ["${ELUVIAN_DIR:-C:/project/DAOEluvianMCP}/tools/eluvian_bridge.py"]
+    }
+  }
+}
