@@ -71,6 +71,16 @@ The machine is not thread-safe by itself: `src/plugin/Plugin.cpp` holds a mutex 
 
 ```powershell
 .\tools\build.ps1 -Preset debug -Test -Format -Lint
+```
+
+That is all a commit on a feature branch needs (`-Preset core -Test` is the faster loop while the work is in the core). The rest is the merge's (the user, 2026-10-09: "We should only run them when ready to merge to master. If we find an issue later in dev, we can just fix it on the dev branch. We squash before merging to master anyway"; until then the whole of it ran before every commit, and three branches gated side by side kept the machine at full load for a night).
+
+## Before a merge to master
+
+Once, on the squashed commit that will merge:
+
+```powershell
+.\tools\build.ps1 -Preset debug -Test -Format -Lint
 .\tools\build.ps1 -Preset debug-asan -Test
 .\tools\build.ps1 -Preset debug-analyze
 ```
