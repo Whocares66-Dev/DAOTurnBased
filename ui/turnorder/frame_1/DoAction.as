@@ -137,7 +137,34 @@ var BUTTON_CLICK = 1;
 // constant in SoundEvents. The same sound file as the book's arrows, as it
 // happens (gui_button2).
 var SELECT_CHARACTER = 43;
-var RANK_WORDS = ["", "", "", "a lieutenant", "a boss", "an elite boss"];
+// A fighter's name under the bar has the colour its name has over its head in
+// the world: the game's own for its rank (issue 65; the user, 2026-10-08: "No
+// need to say \"a boss\" when enemy is a boss. That can already be
+// distinguished from the color of their name text above the actor. Actually
+// we should color the name text under the portrait the same"). The game's
+// floating names ask its table of ranks for it (Floaty.GetCreatureRankColour:
+// ExternalCommands.Get2DAValue(TABLE_CREATURERANKS, rank, HASH_COLOR)), and so
+// does this: white for the common, yellow a lieutenant, orange a boss, as the
+// table has them (read in the running game, 2026-10-08). A rank the table has
+// no row for (the party's own) keeps the caption's parchment.
+var TABLE_CREATURERANKS = 174;
+var HASH_COLOR = "3521861138";
+var rankColours = [];
+function rankColour(rank)
+{
+    if (!inGame || rank == undefined)
+    {
+        return PARCHMENT;
+    }
+    if (rankColours[rank] == undefined)
+    {
+        _root.fsc_retval = "";
+        fscommand("Get2DAValue", TABLE_CREATURERANKS + " " + rank + " " + HASH_COLOR);
+        var answer = Number(_root.fsc_retval);
+        rankColours[rank] = String(_root.fsc_retval).length > 0 && !isNaN(answer) && answer > 0 ? answer : PARCHMENT;
+    }
+    return rankColours[rank];
+}
 
 // Whether the plugin is there to ask. In the game the call answers; in a
 // Flash player on its own, ExternalInterface is not available, or the
@@ -514,7 +541,8 @@ function drawCard(bar, card, index, x)
     // Under the pointer: its name, and its rank (a gem of the rank's colour
     // said it until 2026-10-02: "a yellow dot under it I did not
     // understand", play test 29).
-    clip.fullName = card.name + (RANK_WORDS[card.rank] ? ", " + RANK_WORDS[card.rank] : "");
+    clip.fullName = card.name;
+    clip.nameColour = rankColour(card.rank);
     var mid = CARD_W / 2;
     var orb = 74 * ART;
     var orbAt = 20 * ART;
@@ -654,6 +682,7 @@ function drawCard(bar, card, index, x)
     clip.onRollOver = function()
     {
         _root.hovered = this.fullName;
+        _root.hoveredColour = this.nameColour;
         caption();
     };
     clip.onRollOut = function()
@@ -801,6 +830,7 @@ function drawArrow(bar, later, x, count)
     {
         this.arrow.art2._visible = true;
         _root.hovered = this.words;
+        _root.hoveredColour = undefined;
         caption();
     };
     hand.onRollOut = function()
@@ -1136,7 +1166,8 @@ function caption()
     strip.text.text = line;
     // After the text, as the preview's plate sets its own, which was seen so
     // in play.
-    strip.text.textColor = !pointed && captionNotice ? GOLD : PARCHMENT;
+    strip.text.textColor = pointed ? (_root.hoveredColour != undefined ? _root.hoveredColour : PARCHMENT)
+                                   : (captionNotice ? GOLD : PARCHMENT);
     var w = Math.max(CAPTION_W, strip.text.textWidth + 44);
     strip.plate.removeMovieClip();
     panel(strip.createEmptyMovieClip("plate", 1), strip.middle - w / 2, strip.top, w, CAPTION_H, 8);
