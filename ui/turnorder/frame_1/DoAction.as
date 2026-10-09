@@ -107,6 +107,36 @@ var INK = 0x14100C;
 // of the game. By side, so a companion playing by its tactics has it too,
 // where the arrow was for the cards the player commands.
 var SIDE_GLOW = [0xFFD21E, 0x3C9CF0, 0xE82C1C]; // party, ally, enemy (core's Side)
+// The glow itself is the side's colour whole as far as the medallion's rim,
+// then fading to nothing by a radial gradient (sideGlow(), below; issue 63; the user, 2026-10-08: "The colors around the portraits
+// seem pixelated ... Aren't they supposed to be Flash?"). Until then it was
+// five circles drawn wider and fainter outwards, and the game smooths no
+// vector edge as a Flash player does: seen in its own screenshot at four
+// times the size, each glow had stepped edges and five bands beside the
+// textures' soft ones. (Tried first and taken out the
+// same evening: the party bar's glow for its selected member, Portraits_I60,
+// in the side's colour. The colour took, and the user: "Every portrait looks
+// selected now".)
+var SIDE_GLOW_FULL = 26.5; // the medallion's rim, in the card's pixels
+var SIDE_GLOW_OUT = 34;    // where the glow has faded to nothing
+var SIDE_GLOW_ALPHA = 80;
+// The game's interface sounds, by their rows of its table of them (sound_gui,
+// table 152: read in the running game, 2026-10-08), played as its own movies
+// play theirs: fscommand("PlayGUISound", row + " Click").
+// "book arrow click", SoundEvents.ST_BOOK_ARROW_CLICK in the movies: the
+// arrows that page from one character to the next in the book screens.
+var BOOK_ARROW_CLICK = 100;
+// "button": the click of the game's every plain button (its Behaviour.PushButton
+// has SoundEvents.ST_BUTTON unless told otherwise), for End and Delay (the
+// user, 2026-10-08: "The delay and end buttons should also play sounds same
+// as other button clicks").
+var BUTTON_CLICK = 1;
+// "select character": what the engine plays as a click on a portrait of the
+// party bar makes that member the one selected. No movie of the game's names
+// it (the party bar's portraits leave the click to the engine), so it has no
+// constant in SoundEvents. The same sound file as the book's arrows, as it
+// happens (gui_button2).
+var SELECT_CHARACTER = 43;
 var RANK_WORDS = ["", "", "", "a lieutenant", "a boss", "an elite boss"];
 
 // Whether the plugin is there to ask. In the game the call answers; in a
@@ -452,11 +482,27 @@ function circle(clip, cx, cy, r, fill, alpha)
     clip.endFill();
 }
 
-function ring(clip, cx, cy, r, thickness, colour, alpha)
+// A side's glow: a disc of one colour, whole to `full` from its centre and
+// fading to nothing at `out`, by a radial gradient. A gradient has no steps to
+// show as bands, and a shape whose rim has faded to nothing has no rim to be
+// jagged.
+function sideGlow(clip, cx, cy, full, out, colour, alpha)
 {
-    clip.lineStyle(thickness, colour, alpha);
-    circle(clip, cx, cy, r, 0, 0);
-    clip.lineStyle();
+    var box = {matrixType: "box", x: cx - out, y: cy - out, w: 2 * out, h: 2 * out, r: 0};
+    clip.beginGradientFill("radial", [colour, colour, colour], [alpha, alpha, 0],
+                           [0, Math.round(255 * full / out), 255], box);
+    var k = 0.4142 * out;
+    var d = 0.7071 * out;
+    clip.moveTo(cx + out, cy);
+    clip.curveTo(cx + out, cy + k, cx + d, cy + d);
+    clip.curveTo(cx + k, cy + out, cx, cy + out);
+    clip.curveTo(cx - k, cy + out, cx - d, cy + d);
+    clip.curveTo(cx - out, cy + k, cx - out, cy);
+    clip.curveTo(cx - out, cy - k, cx - d, cy - d);
+    clip.curveTo(cx - k, cy - out, cx, cy - out);
+    clip.curveTo(cx + k, cy - out, cx + d, cy - d);
+    clip.curveTo(cx + out, cy - k, cx + out, cy);
+    clip.endFill();
 }
 
 function drawCard(bar, card, index, x)
@@ -474,16 +520,12 @@ function drawCard(bar, card, index, x)
     var orbAt = 20 * ART;
     // Whose side it is on, by a glow behind the medallion: under all of its
     // art, so the gold ring and the arcs are as they were and the colour
-    // stands about them. GFx 3 has no filters for shapes: the glow is rings
-    // drawn wider and fainter outwards, as the movement preview's line is.
+    // stands about them (SIDE_GLOW_FULL, above).
     var hue = SIDE_GLOW[card.side];
     if (hue != null && hue != undefined)
     {
         var halo = clip.createEmptyMovieClip("side", 0);
-        for (var g = 0; g < 5; g++)
-        {
-            ring(halo, mid, CARD_H / 2, 24.5 + g * 1.1, 2 + g, hue, 52 - g * 10);
-        }
+        sideGlow(halo, mid, CARD_H / 2, SIDE_GLOW_FULL, SIDE_GLOW_OUT, hue, SIDE_GLOW_ALPHA);
     }
     art(clip, "Portraits_IC2", 1, 0, 0, CARD_W, CARD_H);
     // The current turn's: the party bar's own glow (SelectedPlayer), at the
@@ -599,6 +641,14 @@ function drawCard(bar, card, index, x)
     }
     clip.onRelease = function()
     {
+        // The sound of choosing a portrait in the party bar (issue 62; the
+        // user, 2026-10-08: "There's a sound when swapping between party
+        // portraits. We should play that sound when selecting turn-based
+        // portraits").
+        if (inGame)
+        {
+            fscommand("PlayGUISound", SELECT_CHARACTER + " Click");
+        }
         fscommand("TB_Focus", String(this.id));
     };
     clip.onRollOver = function()
@@ -689,6 +739,10 @@ function drawButton(bar, name, depth, word, command, x, y, live)
     clip.onRelease = function()
     {
         this.face(1);
+        if (inGame)
+        {
+            fscommand("PlayGUISound", BUTTON_CLICK + " Click");
+        }
         fscommand(this.command, "");
     };
 }
@@ -770,6 +824,14 @@ function drawArrow(bar, later, x, count)
         this.arrow.art1._y = 0;
         if (inGame)
         {
+            // The game's own click of the arrows that page through its book
+            // screens (issue 62; the user, 2026-10-08: "there should be a nice
+            // metal clinking sound that is used in the game when clicking
+            // through menus"): SharedLibrary.CharSelect's previous and next
+            // buttons have SoundEvents.ST_BOOK_ARROW_CLICK, 100, and
+            // Behaviour.PushButton plays it as the click acts, through
+            // ExternalCommands.PlayGUISound(type, "Click"), which is this.
+            fscommand("PlayGUISound", BOOK_ARROW_CLICK + " Click");
             fscommand("TB_Scroll", String(this.step));
         }
         else
