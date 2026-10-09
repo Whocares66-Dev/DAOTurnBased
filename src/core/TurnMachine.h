@@ -193,7 +193,9 @@ struct ActorObservation
     // dao::commands::SubActions; nothing for no command, for a step the
     // engine does not time and for one not begun). The time an action is at
     // a timed step that advances is not counted by either limit of the
-    // machine's (issue 28; core/TimedStep.h).
+    // machine's (issue 28; core/TimedStep.h); and what a timed step ran
+    // between two looks is what a hold at an effect's command costs
+    // (TurnMachine::ChargeHold; issue 64).
     StepTime step;
 };
 
@@ -891,12 +893,14 @@ class TurnMachine
         // HoldRuns): the world's clock as the hold was last charged (none:
         // no hold is being charged), how long holds have run this turn, how
         // much of that the shared effects' clock is still to be moved by, and
-        // of the hold under way how long it has run and what it took of the
-        // bar, for the log.
+        // of the hold under way how long it has run, how much of that was the
+        // engine's own count of its timed step (ChargeHold; issue 64) and
+        // what it took of the bar, for the log.
         std::optional<std::uint32_t> heldSeen;
         std::uint32_t heldMs = 0;
         std::uint32_t heldUnagedMs = 0;
         std::uint32_t holdRanMs = 0;
+        std::uint32_t holdStepMs = 0;
         std::uint32_t holdBarMs = 0;
         // Commands of the turn's own let through. Nothing bounds the number
         // (issue 38: max_commands_per_turn is gone, and a turn's time is its
@@ -935,7 +939,9 @@ class TurnMachine
         // not count: of the command now running (told by when it began,
         // executingSince_) and of the turn. And that a limit's time came and
         // went by the clock for that, said once of the command and once of
-        // the turn (issue 28; StepTimeNotCounted).
+        // the turn (issue 28; StepTimeNotCounted). What the step ran between
+        // the last two looks, by the engine's own count, is what a hold at
+        // an effect's command is charged (StepWatch::Ran; ChargeHold).
         StepWatch step;
         std::optional<std::uint32_t> stepOf;
         std::uint32_t stepFreeMs = 0;
@@ -1034,10 +1040,13 @@ class TurnMachine
     [[nodiscard]] bool OwnClocks() const;
     // What holds the current creature at an effect's command costs the time
     // it holds it (issue 30): charged as it runs, the turn lost only once it
-    // has outlasted the bar; and the hold over, said with what it took.
+    // has outlasted the bar; and the hold over, said with what it took. The
+    // time is the engine's own count of the step its command is at, where it
+    // times it, and the machine's clock where it does not, for as long as a
+    // look finds the creature at the command (`held`; issue 64).
     [[nodiscard]] bool HoldRuns(const ActorObservation &actor, std::vector<Effect> &fx);
     void HoldLetGo(const Combatant &who, std::vector<Effect> &fx);
-    void ChargeHold(std::vector<Effect> &fx);
+    void ChargeHold(std::vector<Effect> &fx, bool held);
     [[nodiscard]] std::uint32_t Patience(std::uint32_t ms) const;
     // A turn its AI plays that is still going after max_turn_ms: ended.
     [[nodiscard]] bool TurnTooLong(std::vector<Effect> &fx);

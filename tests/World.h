@@ -171,6 +171,15 @@ struct Creature // NOLINT(bugprone-exception-escape)
     std::int32_t stepTailMs = 0;
     bool stepStands = false;
     bool atTail = false; // its timed step has ended, and its command is at its tail
+    // A knockdown's command, as the engine has it (World::KnockDown; issue
+    // 64): one timed step, the fall's length, which stays there spent for as
+    // long as the effect stands; and as the effect ends the engine pushes
+    // that step's length ahead by the getting up's, so much, from where its
+    // elapsed time is. In play a person's read `51 (1366 of 1366 ms)` as its
+    // turn began and `51 (1366 of 3499 ms)` a look after the effect was
+    // ended, every time (2026-10-05 to 2026-10-08); one whose fall was still
+    // running, `213 of 1366` and then `214 of 2347`.
+    std::int32_t getUpMs = 0;
     // What the engine has cooling on it: the list its cooldown manager ticks
     // every frame, which the game layer reads of a creature once, as it
     // comes into a fight (DAOLib's dao::abilities::Cooldowns;
@@ -431,13 +440,37 @@ class World
         c.step = StepTime{elapsedMs, durationMs};
     }
 
+    // A creature knocked down, as the engine does it: the effect on it with
+    // so many seconds to last, the fall's length among them (the game layer
+    // reads it as a condition, and its seconds off the effect), and it at the
+    // effect's command, whose one step is the fall's, with so much of it run
+    // already. When the effect ends (the machine ends it as the turn its time
+    // is paid in begins: Apply, EndConditions) the engine goes on to the
+    // getting up, that step's length pushed ahead by `getUpMs`.
+    void KnockDown(ObjectId id, float seconds, std::int32_t fallMs, std::int32_t getUpMs, std::int32_t fallenMs)
+    {
+        Creature &c = Get(id);
+        c.condition = Condition::Disabled;
+        c.conditionSeconds = seconds;
+        c.busy = true;
+        c.moving = false;
+        c.current = CommandType::ExecuteEffect;
+        c.step = StepTime{fallenMs, fallMs};
+        c.getUpMs = getUpMs;
+    }
+
     // The engine's own step of every timed step, a frame of the world
     // running: its elapsed time climbs, and at its length the command ends by
     // itself, or the step is renewed, or the command goes on at its untimed
     // tail and ends when that has run.
     void TimedSteps(std::uint32_t ms)
     {
-        const auto frame = static_cast<std::int32_t>(ms);
+        // At the engine's own pace (engineSpeed): what it adds to a step's
+        // elapsed time in a frame, the part of a millisecond kept for the
+        // next.
+        stepOwedMs += static_cast<float>(ms) * engineSpeed;
+        const auto frame = static_cast<std::int32_t>(stepOwedMs);
+        stepOwedMs -= static_cast<float>(frame);
         for (Creature &c : creatures)
         {
             if (!c.busy || c.stepStands)
@@ -460,6 +493,13 @@ class World
             c.step.elapsedMs += frame;
             if (c.step.elapsedMs < c.step.durationMs)
             {
+                continue;
+            }
+            if (c.getUpMs > 0 && c.condition != Condition::None)
+            {
+                // A knockdown's fall, run: spent, and there for as long as
+                // the effect stands.
+                c.step.elapsedMs = c.step.durationMs;
                 continue;
             }
             if (c.stepRenews > 0)
@@ -919,6 +959,21 @@ class World
         return Queue(request);
     }
 
+    // A creature's conditions ended, as the machine asks at the start of the
+    // turn their time is paid in. One knocked down goes on to its getting up:
+    // the engine pushes the length of the step its command is at ahead by the
+    // getting up's, from where its elapsed time stands (Creature::getUpMs),
+    // and it is at that command still, held by it, until the step has run.
+    void EndConditionsOf(ObjectId id)
+    {
+        Creature &c = Get(id);
+        c.condition = Condition::None;
+        if (const std::int32_t rise = std::exchange(c.getUpMs, 0); rise > 0 && c.busy)
+        {
+            c.step.durationMs = c.step.elapsedMs + rise;
+        }
+    }
+
     // A creature's command cleared, or failed: it is at nothing, and what it
     // was to do was not done. But for one its own mode binds, which is at the
     // mode's command still (Bind).
@@ -935,6 +990,7 @@ class World
         c.stepRenews = 0;
         c.stepTailMs = 0;
         c.atTail = false;
+        c.getUpMs = 0;
         used.erase(id);
         Bind(c);
     }
@@ -1033,8 +1089,17 @@ class World
     std::vector<Creature> creatures;
     std::vector<Effect> applied;
     std::vector<std::string> log;
-    bool timeHeld = false;                                  // effects' time, as DAOLib's dao::effects::Hold leaves it
-    std::int32_t speed = 1000;                              // the game's, in thousandths
+    bool timeHeld = false;     // effects' time, as DAOLib's dao::effects::Hold leaves it
+    std::int32_t speed = 1000; // the game's, in thousandths
+    // The stand-in's engine's own pace for the steps it times: so many of its
+    // milliseconds to a millisecond of the wall. One, whatever speed the
+    // machine has asked for (GameSpeed, above, is only kept), unless a case
+    // says how the engine runs at that speed: not at the speed asked for, by
+    // the mod's own measure (a walk 1.9 times as fast at twice the speed, 2.7
+    // at three: issue 58, item 7), so that the machine's clock, the wall's
+    // time times the speed it asked for, runs ahead of the step (issue 64).
+    float engineSpeed = 1.0f;
+    float stepOwedMs = 0.0f;
     std::int64_t agedMs = 0;                                // the shared clock's
     std::unordered_map<ObjectId, std::int64_t> agedOwn;     // each creature's own
     std::unordered_set<ObjectId> onOwnClock;                // as DAOLib's dao::clock::OwnClock leaves it
@@ -1130,7 +1195,7 @@ class World
                 ClearCommandsOf(e);
                 break;
             case EffectKind::EndConditions:
-                Get(e.target).condition = Condition::None;
+                EndConditionsOf(e.target);
                 break;
             case EffectKind::Cooldown:
                 // Held, released, or back to seconds: set in the engine's

@@ -40,9 +40,26 @@
 // has a mode that does so while a flag holds it), moves all the same and
 // would never end; the machine bounds what it leaves uncounted
 // (TurnMachine::kStepFree).
+//
+// And what the step ran between two looks, by the engine's own count of it:
+// what a hold at an effect's command costs (issue 64; TurnMachine::
+// ChargeHold). A creature held so is charged the time the engine holds it
+// (issue 30), and that time was the watcher's own, the wall's since the look
+// before times the speed the fight asked for. In play (2026-10-05 to
+// 2026-10-08, the fights at three times the speed) the getting up from a
+// knockdown, a step of 2,133 ms by the engine's count, was charged 2.30 to
+// 2.81 s: the watcher's clock ran ahead of the step over a long frame (0.61 s
+// counted in one frame of a step that then had 1.5 s more to run), and the
+// looks after the step's end were charged whole, each 0.14 to 0.37 s of the
+// fight's time at that speed. A knockdown whose whole time by the engine was
+// under a turn's four seconds lost the turn all the same. The owner, of what a
+// knockdown should cost (2026-10-08): "knock down should last for the amount
+// of time the game makes it last". The engine's count is its step's elapsed
+// time: where that moved between two looks, it is what ran.
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 namespace tb
 {
@@ -73,10 +90,27 @@ class StepWatch
     {
         return last_;
     }
+    // What the step ran between the last two looks, by the engine's own count
+    // of it. A timed step found further on at the second look ran what its
+    // elapsed time moved by, whatever the watcher's clock made of that time,
+    // and whether or not its length was pushed ahead meanwhile (a knockdown's
+    // step is spent at its fall's length while the effect stands, and takes
+    // the getting up's length on as the effect ends). One that had time left
+    // and is gone at the second look, or begun anew, ran to its end: what it
+    // had left, and no more than the watcher's time between the looks, since
+    // a step cut short reads the same. Nothing where the engine timed nothing
+    // between the looks or its step stood: the first look, a step it does not
+    // time, one spent and still there. The watcher's own clock is all there
+    // is to go by then.
+    [[nodiscard]] std::optional<std::uint32_t> Ran() const
+    {
+        return ran_;
+    }
 
   private:
     StepTime last_;
     std::uint32_t lookedAt_ = 0;
+    std::optional<std::uint32_t> ran_;
 };
 
 } // namespace tb

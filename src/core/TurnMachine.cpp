@@ -961,6 +961,16 @@ void TurnMachine::StepPadding(std::vector<Effect> &fx)
 void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
 {
     budget_ = Budget{};
+    // The step its command is at as the turn begins, where it is at one: a
+    // creature held at an effect's command is charged what that step runs
+    // from here, by the engine's own count (ChargeHold; issue 64), and the
+    // look that first finds it held has this one before it. A knockdown's
+    // victim is at the fall's step, spent, in this frame, and at the getting
+    // up a frame on.
+    if (seenActor_ && seenActor_->id == who.id)
+    {
+        (void)budget_.step.Look(seenActor_->step, clock_);
+    }
     // The turn begins: it is played to its end by what was chosen for its
     // creature as of now (PlayerControls; issue 46).
     budget_.begun = Budget::Begun{who.id, partyTactics_.Chosen(who.tag)};
@@ -1811,6 +1821,15 @@ void TurnMachine::ResumeTurn(const Combatant &who, std::vector<Effect> &fx)
     idleTicks_ = 0;
     lastPosition_.reset();
     orderPending_ = false;
+    // The step its command is at is looked at afresh, from this look, as it
+    // is when a turn begins (BeginTurn): what a step ran while the story
+    // played is not the turn's, and a hold that goes on after it is charged
+    // what the step runs from here (ChargeHold; issue 64).
+    budget_.step = StepWatch{};
+    if (seenActor_ && seenActor_->id == who.id)
+    {
+        (void)budget_.step.Look(seenActor_->step, clock_);
+    }
     Log(LogLevel::Info, std::format("{}'s turn goes on: {}", Utf8(who.name), BudgetLeft()));
     Emit(EventKind::TurnResumed, who.id);
     Handover(who, fx);
@@ -1916,6 +1935,18 @@ void TurnMachine::GrabAtTurnStart(const Combatant &who, std::vector<Effect> &fx)
 // At the start of a turn that is taken: a condition whose turns are spent
 // but that the engine still holds is ended now, before the creature is told
 // its turn has come.
+//
+// What is taken here is the effect's own time, the seconds the engine's timer
+// for it had left as it landed (a knockdown's is the fall and the second or
+// less its script gives it). What the engine has the creature do once the
+// effect is gone, the getting up, is other time, after it: the engine starts
+// it as the effect ends (its command's step, spent at the fall's 1,366 ms,
+// reads 1,366 of 3,499 ms a look later), and it is charged as it runs, by the
+// engine's count (HoldRuns). The two together are what the game makes a
+// knockdown last, 3.5 to 4.5 s for a person (dev/REBALANCE.md, rule 5), and
+// neither is the other again: read as one time charged twice (issue 64,
+// 2026-10-08), they were looked into and found to be the engine's two, and
+// the lines say so now.
 void TurnMachine::HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx)
 {
     const auto found = held_.find(who.id);
@@ -1931,13 +1962,17 @@ void TurnMachine::HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx)
         const std::uint32_t before = budget_.spend.CapacityLeftMs();
         const std::uint32_t clock = budget_.spend.HoldClock(std::exchange(held.owedMs, 0));
         Log(LogLevel::Info,
-            std::format("{}'s condition takes {:.2f} s of its turn's clock, {:.2f} s of its bar: {}", Utf8(who.name),
-                        static_cast<float>(clock) / 1000.0f,
+            std::format("{}'s condition takes {:.2f} s of its turn's clock, {:.2f} s of its bar, for the time its "
+                        "effect itself had left: {}",
+                        Utf8(who.name), static_cast<float>(clock) / 1000.0f,
                         static_cast<float>(before - budget_.spend.CapacityLeftMs()) / 1000.0f, BudgetLeft()));
     }
     if (held.owedMs == 0 && held.seen != Condition::None)
     {
-        Log(LogLevel::Info, std::format("{}'s condition has had its turns: ended", Utf8(who.name)));
+        Log(LogLevel::Info,
+            std::format("{}'s condition has had its turns: ended. Its effect's own time is paid; what the engine has "
+                        "it do after the effect (a getting up) is time of its own, taken as it runs",
+                        Utf8(who.name)));
         Emit(EventKind::ConditionEnded, who.id);
         fx.push_back(Effect::Of(EffectKind::EndConditions, who.id));
         endedFor_ = who.id;
@@ -2325,9 +2360,13 @@ bool TurnMachine::HoldRuns(const ActorObservation &actor, std::vector<Effect> &f
     const std::string effects = actor.effects.empty() ? std::string{} : " (" + actor.effects + ")";
     if (!budget_.heldSeen)
     {
+        // Charged by the machine's clock from this look on. What the
+        // engine's own step ran since the look before, the turn's first if
+        // the hold was there as the turn began, is taken with this one.
         budget_.heldSeen = clock_;
         budget_.holdRanMs = 0;
         budget_.holdBarMs = 0;
+        budget_.holdStepMs = 0;
         // The engine's count, as far as it goes: the whole of it where every
         // sub-action left is timed; "at least" where part of what holds the
         // creature is not timed ahead; nothing to say where none of it is.
@@ -2335,12 +2374,27 @@ bool TurnMachine::HoldRuns(const ActorObservation &actor, std::vector<Effect> &f
             actor.heldKnown            ? std::format("{:.2f} s more by the engine's count", actor.heldSeconds)
             : actor.heldSeconds > 0.0f ? std::format("at least {:.2f} s more by the engine's count", actor.heldSeconds)
                                        : std::string{"how long the engine does not say ahead"};
+        // The two things a condition costs are said apart (issue 64): its
+        // effect's own seconds, taken as this turn began (HoldAtTurnStart),
+        // and what the engine has the creature do once the effect has
+        // ended, which is this hold. Read together as `2.34 s` and then
+        // `1.69 s` for "a knockdown of 2.3 s", they were taken for one
+        // time charged twice.
+        const std::string_view after =
+            endedFor_ == current->id ? ", which is what the engine has it do after the condition that ended as this "
+                                       "turn began (a getting up), time of its own and not the condition's seconds "
+                                       "again"
+                                     : "";
+        const std::string step = actor.step.durationMs > 0
+                                     ? std::format("; its step is at {} of {} ms by the engine's count",
+                                                   actor.step.elapsedMs, actor.step.durationMs)
+                                     : std::string{"; its step is one the engine does not time"};
         Log(LogLevel::Info,
-            std::format("{} is held by an effect's command, {}: the time it holds is taken of its bar as it runs "
-                        "({}){}",
-                        Utf8(current->name), count, BudgetLeft(), effects));
+            std::format("{} is held by an effect's command, {}{}: the time it holds is taken of its bar as it runs, "
+                        "by the engine's own count of its step where it times it ({}{}){}",
+                        Utf8(current->name), count, after, BudgetLeft(), step, effects));
     }
-    ChargeHold(fx);
+    ChargeHold(fx, true);
     if (budget_.spend.CapacityLeftMs() > 0)
     {
         return false;
@@ -2353,14 +2407,46 @@ bool TurnMachine::HoldRuns(const ActorObservation &actor, std::vector<Effect> &f
     return true;
 }
 
-// The time the hold has run since it was last charged, taken of the turn.
-void TurnMachine::ChargeHold(std::vector<Effect> &fx)
+// The time the hold has run since the look before, taken of the turn: the
+// time the engine held its creature, by the engine's own count where it has
+// one (issue 64; the owner, 2026-10-08: "knock down should last for the
+// amount of time the game makes it last").
+//
+// - Where the engine times the step its command is at and that step ran
+//   between the two looks, what it ran: its own elapsed time (StepWatch::Ran,
+//   read with this look in StepTimeNotCounted). A getting up of 2,133 ms costs
+//   2,133 ms of its creature's clock.
+// - Where it does not (a knockback's fall and rise are on no list of the
+//   engine's; a knockdown's step is spent while its effect stands), the
+//   machine's own clock since the look before, for as long as a look still
+//   finds the creature at the command (`held`).
+// - Nothing for the looks that find it free. What a timed step still had to
+//   run is taken with the first of them, by the rule above, and that is all:
+//   the command ended somewhere before that look, and the looks the machine
+//   then waits to be sure of it (StepExecuting: two idle running) are the
+//   machine's caution, not the engine's hold.
+//
+// Until then every look was charged the machine's clock, the wall's time
+// times the speed the fight asked for, up to and with the look that let go.
+// In play at three times the speed, where a look is 45 to 130 ms of the wall
+// and so 0.14 to 0.37 s of the fight's time, the getting up after a knockdown
+// (2,133 ms by the engine's count) was charged 2.30 to 2.81 s: the looks
+// after the step's end, 0.32 to 0.61 s for the three holds read frame by frame
+// (the high dragon, 2026-10-05 21:39:29, :32 and :44), and the clock running
+// ahead of the step, 0 to 0.26 s, most of it in a long frame (609 ms counted
+// in one frame of 194 ms of the wall, with the step 1.5 s from its end). Of 17
+// knockdowns at the Landsmeet (2026-10-08) the effect's seconds and the
+// getting up were under four seconds together in 7, and 16 lost the turn.
+void TurnMachine::ChargeHold(std::vector<Effect> &fx, bool held)
 {
     if (!budget_.heldSeen)
     {
         return;
     }
-    const std::uint32_t ran = clock_ - std::exchange(*budget_.heldSeen, clock_);
+    const std::uint32_t since = clock_ - std::exchange(*budget_.heldSeen, clock_);
+    const std::optional<std::uint32_t> counted = budget_.step.Ran();
+    const std::uint32_t ran = counted.value_or(held ? since : 0);
+    budget_.holdStepMs += counted.value_or(0);
     budget_.heldMs += ran;
     budget_.holdRanMs += ran;
     // Of its own clock, and with it that share of the bar: its cooldowns
@@ -2398,11 +2484,17 @@ void TurnMachine::HoldLetGo(const Combatant &who, std::vector<Effect> &fx)
     {
         return; // over before a frame of it was seen: nothing ran
     }
-    ChargeHold(fx);
+    ChargeHold(fx, false);
     budget_.heldSeen.reset();
-    Log(LogLevel::Info, std::format("{} is free of the effect's command after {:.2f} s, {:.2f} s of its bar: {}",
-                                    Utf8(who.name), static_cast<float>(budget_.holdRanMs) / 1000.0f,
-                                    static_cast<float>(budget_.holdBarMs) / 1000.0f, BudgetLeft()));
+    // With whose count it was: the engine's own of its timed step, and the
+    // machine's clock for what the engine does not time.
+    Log(LogLevel::Info,
+        std::format("{} is free of the effect's command after {:.2f} s, {:.2f} s of its bar: {} ({:.2f} s of the hold "
+                    "by the engine's own count of its step, {:.2f} s by the fight's clock where the engine times none)",
+                    Utf8(who.name), static_cast<float>(budget_.holdRanMs) / 1000.0f,
+                    static_cast<float>(budget_.holdBarMs) / 1000.0f, BudgetLeft(),
+                    static_cast<float>(budget_.holdStepMs) / 1000.0f,
+                    static_cast<float>(budget_.holdRanMs - budget_.holdStepMs) / 1000.0f));
 }
 
 // At its own mode's command (issue 51; the header has the rule): at an
@@ -2582,6 +2674,13 @@ void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
         phase_ = Phase::Executing;
         executingSince_ = clock_;
         idleTicks_ = 0;
+        // Held from this look, and charged what its command's step runs from
+        // here (ChargeHold; issue 64). As a turn begins that is the look the
+        // turn began with. For one that had noticed nobody and notices in its
+        // beat it is not: what the step ran while it stood unaware is not the
+        // hold's, the beat taking nothing of its bar (issue 29; the long run
+        // of random fights with strays, seed 37).
+        (void)budget_.step.Look(seenActor_->step, clock_);
         return;
     }
     // A hostile that has noticed nobody to fight is not told its turn has
@@ -3025,9 +3124,12 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         // Idle one frame is not yet let go: a frame can fall between one
         // command the engine queues and the next (a fall, say, and then the
         // getting up, if they are two), and what its creature kept, given
-        // into that frame, would queue behind the second.
+        // into that frame, would queue behind the second. (What its timed
+        // step still had to run as its command ended is the hold's, and is
+        // taken with this look; the look that follows takes nothing more.)
         if (!actor.busy && ++idleTicks_ < 2)
         {
+            ChargeHold(fx, false);
             return;
         }
         heldByEffect_ = false; // let go: the turn is its own again, with what the hold left of it

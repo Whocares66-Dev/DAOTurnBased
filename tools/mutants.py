@@ -484,20 +484,122 @@ MUTANTS = [
     Mutant(
         "a second hold in a turn is charged from the first one's end",
         MACHINE,
-        "    ChargeHold(fx);\n    budget_.heldSeen.reset();",
-        "    ChargeHold(fx);",
+        "    ChargeHold(fx, false);\n    budget_.heldSeen.reset();",
+        "    ChargeHold(fx, false);",
     ),
     Mutant(
-        "the frame a hold lets go in is not charged",
+        "let go straight into another command, a creature is not charged what its step still had to run",
         MACHINE,
-        "    ChargeHold(fx);\n    budget_.heldSeen.reset();",
+        "    ChargeHold(fx, false);\n    budget_.heldSeen.reset();",
         "    (void)fx;\n    budget_.heldSeen.reset();",
     ),
     Mutant(
         "a frame between one command of an effect's and the next lets its creature go: what it kept is given into the gap",
         MACHINE,
-        "        if (!actor.busy && ++idleTicks_ < 2)\n        {\n            return;\n        }\n        heldByEffect_ = false;",
+        "        if (!actor.busy && ++idleTicks_ < 2)\n        {\n            ChargeHold(fx, false);\n            return;\n        }\n        heldByEffect_ = false;",
         "        heldByEffect_ = false;",
+    ),
+    # A hold costs what the engine held its creature (issue 64; the owner,
+    # 2026-10-08: "knock down should last for the amount of time the game makes
+    # it last"): the engine's own count of its command's step where it times
+    # it, the fight's clock where it does not, and nothing for the looks that
+    # find the creature free. In play a getting up of 2,133 ms cost 2.30 to
+    # 2.81 s, and a knockdown of under four seconds the whole turn.
+    Mutant(
+        "hold: charged by the fight's clock, whatever the engine counted of its step",
+        MACHINE,
+        "    const std::uint32_t ran = counted.value_or(held ? since : 0);",
+        "    const std::uint32_t ran = held ? since : 0;",
+    ),
+    Mutant(
+        "hold: the looks that find its creature free are charged the fight's clock",
+        MACHINE,
+        "    const std::uint32_t ran = counted.value_or(held ? since : 0);",
+        "    const std::uint32_t ran = counted.value_or(since);\n    (void)held;",
+    ),
+    Mutant(
+        "hold: a look that still finds its creature held, the engine timing nothing, is charged nothing",
+        MACHINE,
+        "    const std::uint32_t ran = counted.value_or(held ? since : 0);",
+        "    const std::uint32_t ran = counted.value_or(0);\n    (void)held;\n    (void)since;",
+    ),
+    Mutant(
+        "hold: what its timed step still had to run as its command ended is not charged",
+        MACHINE,
+        "        if (!actor.busy && ++idleTicks_ < 2)\n        {\n            ChargeHold(fx, false);\n            return;\n        }",
+        "        if (!actor.busy && ++idleTicks_ < 2)\n        {\n            return;\n        }",
+    ),
+    Mutant(
+        "hold: what a step ran while a conversation played is taken of the bar as the fight goes on",
+        MACHINE,
+        '    budget_.step = StepWatch{};\n    if (seenActor_ && seenActor_->id == who.id)\n    {\n        (void)budget_.step.Look(seenActor_->step, clock_);\n    }\n    Log(LogLevel::Info, std::format("{}\'s turn goes on: {}"',
+        '    Log(LogLevel::Info, std::format("{}\'s turn goes on: {}"',
+    ),
+    Mutant(
+        "hold: what its step ran between the turn's beginning and the machine's first look at the hold is not charged",
+        MACHINE,
+        "    if (seenActor_ && seenActor_->id == who.id)\n    {\n        (void)budget_.step.Look(seenActor_->step, clock_);\n    }\n    // The turn begins: it is played to its end",
+        "    // The turn begins: it is played to its end",
+    ),
+    Mutant(
+        "hold: one that notices in its beat is charged what its step ran while it stood unaware",
+        MACHINE,
+        "        (void)budget_.step.Look(seenActor_->step, clock_);\n        return;",
+        "        return;",
+    ),
+    Mutant(
+        "hold: a step found further on ran the watcher's time since, not what its elapsed time moved by",
+        TIMEDSTEP,
+        "        return static_cast<std::uint32_t>(now.elapsedMs - before.elapsedMs);",
+        "        return since;",
+    ),
+    Mutant(
+        "hold: a step spent at the look before, its length pushed ahead since, ran nothing",
+        TIMEDSTEP,
+        "    const bool further = before.durationMs > 0 && now.durationMs > 0 && now.elapsedMs > before.elapsedMs;",
+        "    const bool further = HasTimeLeft(before) && now.durationMs > 0 && now.elapsedMs > before.elapsedMs;",
+    ),
+    Mutant(
+        "hold: a step that stands ran nothing by the engine's count, where the engine counted nothing",
+        TIMEDSTEP,
+        "    const bool further = before.durationMs > 0 && now.durationMs > 0 && now.elapsedMs > before.elapsedMs;",
+        "    const bool further = before.durationMs > 0 && now.durationMs > 0 && now.elapsedMs >= before.elapsedMs;",
+    ),
+    Mutant(
+        "hold: a step the engine does not time ran what its count moved by",
+        TIMEDSTEP,
+        "    const bool further = before.durationMs > 0 && now.durationMs > 0 && now.elapsedMs > before.elapsedMs;",
+        "    const bool further = now.elapsedMs > before.elapsedMs;",
+    ),
+    Mutant(
+        "hold: a step gone with time left ran nothing",
+        TIMEDSTEP,
+        "    if (HasTimeLeft(before) && gone)",
+        "    if (HasTimeLeft(before) && gone && since == 0)",
+    ),
+    Mutant(
+        "hold: a step gone ran all it had left, however little of the watcher's time went by",
+        TIMEDSTEP,
+        "        return std::min(static_cast<std::uint32_t>(before.durationMs - before.elapsedMs), since);",
+        "        (void)since;\n        return static_cast<std::uint32_t>(before.durationMs - before.elapsedMs);",
+    ),
+    Mutant(
+        "hold: a step gone ran the whole of the watcher's time since, not what it had left",
+        TIMEDSTEP,
+        "        return std::min(static_cast<std::uint32_t>(before.durationMs - before.elapsedMs), since);",
+        "        return since;",
+    ),
+    Mutant(
+        "hold: a step begun anew is not one gone: the one before it ran nothing more",
+        TIMEDSTEP,
+        "    const bool gone = now.durationMs <= 0 || now.elapsedMs < before.elapsedMs;",
+        "    const bool gone = now.durationMs <= 0;",
+    ),
+    Mutant(
+        "hold: a step spent and gone ran the watcher's time since",
+        TIMEDSTEP,
+        "    if (HasTimeLeft(before) && gone)\n    {\n        return std::min(static_cast<std::uint32_t>(before.durationMs - before.elapsedMs), since);\n    }\n    return std::nullopt;",
+        "    if (HasTimeLeft(before) && gone)\n    {\n        return std::min(static_cast<std::uint32_t>(before.durationMs - before.elapsedMs), since);\n    }\n    return gone && before.durationMs > 0 ? std::optional<std::uint32_t>{since} : std::nullopt;",
     ),
     Mutant(
         "max_action_ms stops a hold, and clears the effect's command",

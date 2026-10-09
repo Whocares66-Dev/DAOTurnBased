@@ -37,7 +37,10 @@
 //      the scan's rules do not find fighting is brought into one (issue 29);
 //  13. a creature an effect's command holds as its turn comes waits no longer
 //      than a turn's worth of time on it, and, let go before, has its turn
-//      with the time the hold ran gone from its bar (issue 30); one that has
+//      with the time the hold ran gone from its bar (issue 30), and no more
+//      than that and a frame: by the engine's own count of its command's
+//      step where it times it, whatever the fight's clock made of that time,
+//      and by the fight's clock where it does not (issue 64); one that has
 //      noticed nobody is not held, and is from the moment it notices;
 //  14. a turn an AI plays is over within max_turn_ms of the running game's
 //      time, whatever it is doing, and is ended for that only then, never a
@@ -145,6 +148,11 @@ namespace
 {
 
 constexpr std::uint32_t kFrameMs = 16;
+// The arena's engine's pace for a step it times, against the speed the fight
+// asked for (13; issue 64): not quite that speed, as in play, where a walk ran
+// 2.7 times as fast at three (issue 58, item 7). The machine's clock is the
+// wall's time times the speed it asked for, and runs ahead of the step.
+constexpr float kEnginePace = 0.9f;
 constexpr float kRunSpeed = 5.0f;  // meters a second, about a character running
 constexpr int kMaxFrames = 200000; // 53 minutes of fight: far past any that works
 // Cooldowns (22; issue 57). The longest the arena's engine ever sets one, in
@@ -189,7 +197,22 @@ struct Task
     bool held = false;      // a condition's command: it lasts as long as the condition
     bool conjuring = false; // the engine's own spell, held in its conjure until released
     bool grab = false;      // an ability whose own effect holds its creature and its target, after it
+    // An effect's command the engine did not lay for a condition: whether the
+    // engine times its step (a getting up's; not a knockback's fall and rise,
+    // which are on no list of its own), which is as its length falls, and
+    // that length, its work as it began. A hold on a creature whose turn it
+    // is costs the step's own time where there is one (13; issue 64).
+    bool timed = false;
+    std::int32_t lengthMs = 0;
 };
+
+// Whether the arena's engine times the step of a creature's command: an
+// effect's it drew so, and not a condition's own, which lasts as long as the
+// condition and has no work to count down.
+bool Timed(const Task &task)
+{
+    return task.timed && !task.held;
+}
 
 // Counts over every fight, so a run shows the generator reached the states
 // that matter rather than passing by never getting there.
@@ -217,6 +240,7 @@ struct Coverage
     int heldByEffect = 0; // turns lost to an effect's command that held past the bar (a turn's worth, as built)
     int heldFreed = 0;    // holds that let go within the turn, which went on with the rest
     int heldPaid = 0;     // of them, with time, those held from the turn's start: their time checked against the bar
+    int heldTimed = 0;    // and of those, the holds the engine timed: checked against its step's own count (issue 64)
     int speedChanges = 0; // the game's speed set for an AI's turn and back
     long long events = 0; // typed events heard
     int conditionsEnded = 0;
@@ -509,7 +533,7 @@ class Arena
         }
         if (says(" is free of the effect's command after "))
         {
-            SaidFreeOfItsHold();
+            SaidFreeOfItsHold(line);
         }
         if (line.starts_with("round ") && says("'s turn ("))
         {
@@ -628,20 +652,46 @@ class Arena
 
     // A hold let go within the turn (13): with time, what it ran is
     // gone from the bar, whatever else the turn paid as it began (the
-    // debt of a kept action). On the machine's clock, which runs at
-    // the fight's speed; less the frames between the turn's beginning
-    // and the first look at its creature.
-    void SaidFreeOfItsHold()
+    // debt of a kept action). By the engine's own count of its step
+    // where it timed the hold, at the engine's pace, and on the
+    // machine's clock, which runs at the fight's speed, where it did
+    // not; less the frames between the turn's beginning and the first
+    // look at its creature, and the look that finds it free.
+    //
+    // And no more than it ran, and a frame (issue 64): the hold's own
+    // charge, as the machine says it. Until then the looks after a
+    // hold's end were charged, and a timed step by the clock that
+    // runs ahead of it: in play a getting up of 2,133 ms cost 2.30 to
+    // 2.81 s, and a knockdown of under four seconds the whole turn.
+    void SaidFreeOfItsHold(std::string_view line)
     {
         ++coverage_.heldFreed;
         if (std::exchange(heldPaidDue_, false))
         {
             const TurnView view = world_.machine.View();
-            const auto ran =
-                static_cast<std::uint32_t>(std::lround(static_cast<float>(heldAtStartMs_) * settings_.fightSpeed));
-            const auto slack = static_cast<std::uint32_t>(std::lround(4.0f * kFrameMs * settings_.fightSpeed));
-            Must(view.timeMs - view.timeLeftMs + slack >= ran, "a hold let go took less of the bar than it ran");
+            // (One hold to the machine may be more than one command of the
+            // arena's, timed and not: each frame at its own pace.)
+            const float ran = (static_cast<float>(heldAtStartMs_) * settings_.fightSpeed) +
+                              (static_cast<float>(heldStepMs_) * settings_.fightSpeed * kEnginePace);
+            const float frame = static_cast<float>(kFrameMs) * settings_.fightSpeed;
+            Must(static_cast<float>(view.timeMs - view.timeLeftMs) + (4.0f * frame) >= ran,
+                 "a hold let go took less of the bar than it ran");
+            // (Said to the hundredth of a second.)
+            const std::string_view after = " is free of the effect's command after ";
+            const float charged = std::stof(std::string{line.substr(line.find(after) + after.size())}) * 1000.0f;
+            if (echo)
+            {
+                std::printf("%7u (arena: the hold counted %u ms of the wall with no step timed and %u ms at a timed "
+                            "step, %.0f ms at their paces; charged %.0f ms%s)\n",
+                            world_.now, heldAtStartMs_, heldStepMs_, static_cast<double>(ran),
+                            static_cast<double>(charged), heldAgain_ ? "; thrown again before it was said free" : "");
+            }
+            // (Not of one another command of an effect's went on with before
+            // the machine had seen the first end: to the machine that is one
+            // hold, and the arena counted the first command's frames.)
+            Must(heldAgain_ || charged <= ran + frame + 10.0f, "a hold let go cost more than it ran");
             ++coverage_.heldPaid;
+            coverage_.heldTimed += heldStepMs_ > 0 ? 1 : 0;
         }
     }
 
@@ -680,7 +730,9 @@ class Arena
         }
         heldAtStart_ = HeldNow();
         heldAtStartMs_ = 0;
+        heldStepMs_ = 0;
         heldPaidDue_ = heldAtStart_; // until the machine says it free: a frame or two after it is
+        heldAgain_ = false;
         turnBeganAtMs_ = turnRunMs_; // a padded round's wait came before
         turnFromMs_ = turnRunMs_;
     }
@@ -731,7 +783,9 @@ class Arena
         FollowTurn();
         heldAtStart_ = HeldNow();
         heldAtStartMs_ = 0;
+        heldStepMs_ = 0;
         heldPaidDue_ = heldAtStart_;
+        heldAgain_ = false;
         turnBeganAtMs_ = turnRunMs_;
     }
 
@@ -977,6 +1031,7 @@ class Arena
             turnPace_.reset();    // its creature's pace as the machine begins the turn (onLog)
             heldAtStart_ = false; // judged as the machine begins the turn (onLog)
             heldAtStartMs_ = 0;
+            heldStepMs_ = 0;
             heldPaidDue_ = false;
             turnBeganAtMs_ = 0;
             told_ = kNoObject;
@@ -1332,8 +1387,12 @@ class Arena
             break;
         case CommandType::ExecuteEffect:
             // A knockdown, a stun: the victim gets up after a while, and may
-            // still be at it when its own turn comes.
+            // still be at it when its own turn comes. The engine times the
+            // step of every other one (no draw of its own: the fights go as
+            // they went).
             task.workMs = static_cast<std::int32_t>(Between(rng_, 300.0f, 2500.0f));
+            task.lengthMs = task.workMs;
+            task.timed = task.workMs % 2 == 0;
             break;
         default:
             task.workMs = 400;
@@ -2404,6 +2463,25 @@ class Arena
             return;
         }
         task.workMs -= static_cast<std::int32_t>(kFrameMs);
+        if (Timed(task))
+        {
+            // Its step, as the engine has it after this frame: so much of
+            // its length run, at the engine's own pace, in its own turn and
+            // in everyone else's, so that the machine's look as its turn
+            // begins finds the step where it is (a hold that outlasted one
+            // turn and went on through the others' was charged its next turn
+            // for all of that: the long run, seed 271). The arena moves it,
+            // and ends its command: not the stand-in's own engine. Not shown
+            // of one thrown in the middle of its own turn, which is at its
+            // action's own effect: the turn's limit would not count that
+            // time while a step ran (14).
+            const float pace = settings_.fightSpeed * kEnginePace;
+            const bool shown = id != world_.Current() || heldAtStart_;
+            c.stepStands = shown;
+            c.step = shown ? StepTime{static_cast<std::int32_t>(static_cast<float>(task.lengthMs - task.workMs) * pace),
+                                      static_cast<std::int32_t>(static_cast<float>(task.lengthMs) * pace)}
+                           : StepTime{};
+        }
         if (task.workMs > 0)
         {
             return;
@@ -2448,17 +2526,33 @@ class Arena
         {
             heldAtStart_ = false; // let go (a hold after is another's)
         }
+        else if (!heldAtStart_ && heldPaidDue_)
+        {
+            heldAgain_ = true; // thrown again before the machine said it free of the first
+        }
         else if (turn && heldAtStart_)
         {
-            heldAtStartMs_ += kFrameMs;
-            heldThisFrame_ = true; // (taken back if a menu opens in this frame: Happenings)
+            // At a step the engine times, the frame is the step's own count
+            // (issue 64); at none, the machine's clock's.
+            if (Timed(found->second))
+            {
+                heldStepMs_ += kFrameMs;
+            }
+            else
+            {
+                heldAtStartMs_ += kFrameMs;
+                heldThisFrame_ = true; // (taken back if a menu opens in this frame: Happenings)
+            }
         }
         // A turn's worth (13): with time the turn's seconds, which a hold
         // takes of the bar as it runs; as built what a round spends on
         // effects, or a turn's seconds with effects on the game's clock.
-        // Of the machine's clock, which runs at the fight's speed.
+        // Of the machine's clock, which runs at the fight's speed; or, of a
+        // hold the engine times, of its step's own count, at the engine's
+        // pace (issue 64).
         const float worth = settings_.secondsPerTurn;
-        const auto bound = static_cast<std::uint32_t>(worth * 1000.0f / settings_.fightSpeed) + kHoldSlackMs;
+        const float pace = settings_.fightSpeed * (stillHeld && Timed(found->second) ? kEnginePace : 1.0f);
+        const auto bound = static_cast<std::uint32_t>(worth * 1000.0f / pace) + kHoldSlackMs;
         Must(!turn || !heldAtStart_ || !stillHeld || turnRunMs_ - turnBeganAtMs_ <= bound,
              "a turn waited past a turn's worth on an effect no condition named");
     }
@@ -2752,6 +2846,9 @@ class Arena
             // some 2.4 s counted). The arena's own count, as it was since issue
             // 30; issue 49's Haste and slows sent the fights other ways, and
             // one came to it.
+            // (Not a frame at a step the engine times: what the step ran in
+            // it is the step's own count, and is taken with the look after
+            // the menu. Issue 64.)
             if (std::exchange(heldThisFrame_, false))
             {
                 heldAtStartMs_ -= std::min(heldAtStartMs_, kFrameMs);
@@ -3487,7 +3584,9 @@ class Arena
     std::uint32_t heldInTurnMs_ = 0; // the current creature held by a condition, running
     static constexpr std::uint32_t kHeldTurnMs = 1000;
     bool heldAtStart_ = false; // the current creature was at an effect's command no condition names as its turn came
-    std::uint32_t heldAtStartMs_ = 0; // and how long that command has held it since, running
+    bool heldAgain_ = false;   // and another effect's command took it up before the machine said it free of that one
+    std::uint32_t heldAtStartMs_ = 0; // and how long that command has held it since, running, at no timed step
+    std::uint32_t heldStepMs_ = 0;    // and how long of it at a step the engine times, counted apart (issue 64)
     bool heldThisFrame_ = false;      // and whether this frame was counted into it (a menu's first is not)
     bool heldPaidDue_ = false;  // and its time is still to be checked against the bar, as the machine says it free
     bool turnOpen_ = false;     // a turn's start heard, its end not yet
@@ -3593,6 +3692,7 @@ void Count(const Coverage &c, std::uint64_t count, bool strays, bool choices)
         {"heldByEffect", c.heldByEffect},
         {"heldFreed", c.heldFreed},
         {"heldPaid", c.heldPaid},
+        {"heldTimed", c.heldTimed},
         {"speedChanges", c.speedChanges},
         {"conditionsEnded", c.conditionsEnded},
         {"cooldownsHeld", c.cooldownsHeld},
@@ -3801,6 +3901,11 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     CHECK(coverage.heldFreed > 50);
     CHECK(coverage.heldPaid > 45);
     CHECK(coverage.heldByEffect > 25);
+    // And of those checked against the bar, the holds the arena's engine
+    // timed a step of, which cost that step's own count and not the clock's
+    // (issue 64; 2026-10-09, over issue 57's last form: 167 let go, 146
+    // checked, 64 of them timed).
+    CHECK(coverage.heldTimed > 30);
     CHECK(coverage.movementCuts > 85);
     // With time a walk past the bar takes its action's time, and the action
     // is charged on arriving: seldom given back.

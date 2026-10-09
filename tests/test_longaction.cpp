@@ -180,6 +180,66 @@ TEST_CASE("between two looks a step advanced if it had time left and its elapsed
     CHECK(watch.Look(StepTime{16, 3000}, 15128) == 16);
 }
 
+TEST_CASE("what a step ran between two looks is the engine's own count of it, whatever the watcher's clock says",
+          "[longaction][holds]")
+{
+    // What a hold at an effect's command is charged (issue 64): the step's
+    // own elapsed time, where it moved.
+    StepWatch watch;
+    // A knockdown's step as its victim's turn comes: the fall's, spent, and
+    // there while the effect stands. The first look has none before it.
+    (void)watch.Look(StepTime{1366, 1366}, 1000);
+    CHECK_FALSE(watch.Ran().has_value());
+    // The effect ended, the step's length is pushed ahead by the getting
+    // up's and it runs again: what its elapsed time moved by, though it had
+    // no time left at the look before. 43 ms, where the watcher's clock went
+    // 48.
+    (void)watch.Look(StepTime{1409, 3499}, 1048);
+    CHECK(watch.Ran() == 43U);
+    // A long frame, the watcher's clock far ahead: the step's 200 ms.
+    (void)watch.Look(StepTime{1609, 3499}, 1657);
+    CHECK(watch.Ran() == 200U);
+    // It stands: the engine counted nothing, and says nothing.
+    (void)watch.Look(StepTime{1609, 3499}, 1705);
+    CHECK_FALSE(watch.Ran().has_value());
+    // The engine ahead of the watcher's clock (a frame the watcher counts
+    // short): the engine's count all the same.
+    (void)watch.Look(StepTime{2409, 3499}, 1955);
+    CHECK(watch.Ran() == 800U);
+    (void)watch.Look(StepTime{3480, 3499}, 3026);
+    CHECK(watch.Ran() == 1071U);
+    // Gone, with time left at the look before: it ran to its end, the 19 ms
+    // it had left, of the 48 the watcher's clock went.
+    (void)watch.Look(StepTime{}, 3074);
+    CHECK(watch.Ran() == 19U);
+    // And nothing runs after it.
+    (void)watch.Look(StepTime{}, 3122);
+    CHECK_FALSE(watch.Ran().has_value());
+    // A step the engine does not time, its count moving or not.
+    (void)watch.Look(StepTime{700, 0}, 3170);
+    CHECK_FALSE(watch.Ran().has_value());
+    (void)watch.Look(StepTime{716, 0}, 3218);
+    CHECK_FALSE(watch.Ran().has_value());
+    // Gone with more left than the watcher's time between the looks, as one
+    // cut short is: no more than that time.
+    (void)watch.Look(StepTime{100, 5000}, 4000);
+    (void)watch.Look(StepTime{}, 4048);
+    CHECK(watch.Ran() == 48U);
+    // Begun anew, its elapsed time back at the start: the one before ran to
+    // its end, by the same bound.
+    (void)watch.Look(StepTime{4990, 5000}, 5000);
+    (void)watch.Look(StepTime{16, 5000}, 5048);
+    CHECK(watch.Ran() == 10U);
+    // Spent and still there, its count climbing past its length: the engine's
+    // count of it still.
+    (void)watch.Look(StepTime{5000, 5000}, 6000);
+    (void)watch.Look(StepTime{5016, 5000}, 6016);
+    CHECK(watch.Ran() == 16U);
+    // Spent, and gone at the next look: it had nothing left to run.
+    (void)watch.Look(StepTime{}, 6032);
+    CHECK_FALSE(watch.Ran().has_value());
+}
+
 TEST_CASE("an AI's action whose timed step outlasts max_action_ms plays out, and its turn goes on", "[longaction]")
 {
     // The ogre's death blow, in small: a step of eight seconds under a limit

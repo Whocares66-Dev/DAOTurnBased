@@ -2569,9 +2569,12 @@ TEST_CASE("with time, a hold costs the time it holds: a second and a half of a f
     w.onPoke = [&](ObjectId) { ++pokes; };
     w.Get(kGenlock).effects = "effect type 1057 of ability 90065 by 0x100, 1.2 of 1.2 s left";
     HeldAsItsTurnComes(w);
-    // A second and a half by the machine's count: it takes the creature for
-    // free on the second frame it sees it so.
-    w.RunFor(1480);
+    // A second and a half by the machine's count, from its first look at the
+    // hold to the last that finds its creature held: the looks after, the
+    // one that finds it free and the one the machine waits to be sure, take
+    // nothing (issue 64; until then they did, and 1,480 ms of the hold read
+    // as this second and a half).
+    w.RunFor(1512);
     // Held: its turn its own still, its AI not told to choose behind the
     // effect's command.
     CHECK(w.Current() == kGenlock);
@@ -2586,9 +2589,13 @@ TEST_CASE("with time, a hold costs the time it holds: a second and a half of a f
     CHECK(w.machine.View().timeLeftMs >= 2450);
     CHECK_FALSE(w.Said(L"Genlock loses the turn"));
     CHECK(Logged(w, "Genlock is held by an effect's command, how long the engine does not say ahead: the time it "
-                    "holds is taken of its bar as it runs (4.00 s and 21.0 m left) (effect type 1057 of ability "
-                    "90065 by 0x100, 1.2 of 1.2 s left)"));
+                    "holds is taken of its bar as it runs, by the engine's own count of its step where it times it "
+                    "(4.00 s and 21.0 m left; its step is one the engine does not time) (effect type 1057 of "
+                    "ability 90065 by 0x100, 1.2 of 1.2 s left)"));
     CHECK(Logged(w, "Genlock is free of the effect's command after 1.50 s, 1.50 s of its bar: 2.50 s and "));
+    // All of it by the machine's clock: the engine timed none of this hold.
+    CHECK(Logged(w, "(0.00 s of the hold by the engine's own count of its step, 1.50 s by the fight's clock where "
+                    "the engine times none)"));
 }
 
 TEST_CASE("with time, a hold that outlasts the bar loses the turn, and only then", "[time][holds]")
@@ -2668,7 +2675,7 @@ TEST_CASE("what a hold costs is the time it ran, whatever the effect and whateve
         w.Get(kGenlock).heldSeconds = c.seconds;
         w.Get(kGenlock).heldKnown = c.known;
         HeldAsItsTurnComes(w);
-        w.RunFor(1480);
+        w.RunFor(1512);
         CHECK(w.Current() == kGenlock);
         w.Finish(kGenlock);
         w.RunFor(100);
@@ -3192,16 +3199,23 @@ TEST_CASE("let go as the last of its bar goes, an AI is not asked to choose with
     int pokes = 0;
     w.onPoke = [&](ObjectId) { ++pokes; };
     HeldAsItsTurnComes(w);
-    for (int i = 0; i < 400 && w.machine.View().timeLeftMs > 16; ++i)
+    for (int i = 0; i < 400 && w.machine.View().timeLeftMs > 48; ++i)
     {
         w.Frame();
     }
     REQUIRE(w.Current() == kGenlock);
-    REQUIRE(w.machine.View().timeLeftMs == 16);
-    w.Finish(kGenlock); // free in the frame that takes the last of it
+    REQUIRE(w.machine.View().timeLeftMs == 48);
+    // The last of the hold is a step the engine times, with 32 ms to run: a
+    // look by the machine's clock as the step is first seen, a look that
+    // finds it 16 ms on, and the look that finds its creature free takes the
+    // 16 ms the step still had, which are the last of the bar. (A look that
+    // finds it free takes nothing where the engine timed nothing: issue 64.)
+    w.TimedStep(kGenlock, 1000, 968);
     w.RunFor(1200);
     CHECK(pokes == 0);
     CHECK(w.Current() != kGenlock);
+    CHECK(Logged(w, "Genlock is free of the effect's command after 4.00 s, 4.00 s of its bar"));
+    CHECK_FALSE(Logged(w, "Genlock is held by an effect's command past its bar"));
     CHECK_FALSE(Logged(w, "Genlock's turn ends: chose nothing"));
 }
 
@@ -4071,6 +4085,324 @@ TEST_CASE("getting up from a hold ended as its turn began takes its own time of 
     CHECK(w.machine.View().timeLeftMs <= afterTheKnockdown - 1800);
     CHECK(w.machine.View().timeLeftMs >= afterTheKnockdown - 1950);
     CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 1.0f, 0.0f) == Verdict::Allow);
+}
+
+namespace
+{
+// A person's knockdown as the engine has it, on the genlock while the hero
+// thinks (issue 64; the Landsmeet's duel, 2026-10-08, and every knockdown of
+// a person in the kept logs): the effect, with so many seconds on its timer,
+// the fall's 1,366 ms among them; its command's one step, the fall, already
+// run as the genlock's turn comes; and a getting up of 2,133 ms that the
+// engine goes on to as the effect ends. The fight is brought to the genlock's
+// turn, which the machine begins by taking the effect's seconds and ending
+// the effect.
+constexpr std::int32_t kFallMs = 1366;
+constexpr std::int32_t kGetUpMs = 2133;
+
+void KnockedDownAsItsTurnComes(World &w, float seconds)
+{
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    w.KnockDown(kGenlock, seconds, kFallMs, kGetUpMs, kFallMs);
+    w.RunFor(700); // conditions are read twice a second
+    UntilTurnOf(w, kGenlock);
+    REQUIRE(w.Did(EffectKind::EndConditions, kGenlock));
+    REQUIRE(w.Get(kGenlock).condition == Condition::None);
+    // On to the getting up: the engine's command still, its step's length
+    // pushed ahead from where it stood.
+    REQUIRE(w.Get(kGenlock).busy);
+    REQUIRE(w.Get(kGenlock).step.durationMs == kFallMs + kGetUpMs);
+}
+
+// What the turn's bar has left once the hold has let go, nothing else paid.
+std::uint32_t LeftAfterTheHold(World &w)
+{
+    for (int i = 0; i < 2000 && w.machine.State().heldByEffect && w.Current() == kGenlock; ++i)
+    {
+        w.Frame();
+    }
+    return w.machine.View().timeLeftMs;
+}
+} // namespace
+
+TEST_CASE("a knockdown costs its effect's own seconds and then its getting up, each once, by the engine's count",
+          "[time][holds]")
+{
+    // Issue 64, as it was found to be. Lyna, knocked down by Loghain's
+    // shield: `condition takes 2.34 s ... of its bar`, then `held by an
+    // effect's command, 2.00 s more by the engine's count`, and the turn
+    // lost. Read as one time charged twice; it is the engine's two. The
+    // effect's timer had 2.34 s, the fall's 1.37 and the 0.97 its script gave
+    // it (`RandomFloat()`, talent_singletarget.nss), and as the effect ended
+    // the engine went on to the getting up: the step of its command read
+    // `1366 of 1366 ms` before and `1366 of 3499 ms` a look after. 4.47 s in
+    // all, which is what the game makes that knockdown last, and more than a
+    // turn's four: the turn is lost, and that is right (the owner,
+    // 2026-10-08: "knock down should last for the amount of time the game
+    // makes it last"; dev/REBALANCE.md, rule 5).
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    KnockedDownAsItsTurnComes(w, 2.34f);
+    CHECK(w.machine.View().timeMs == 4000);
+    CHECK(w.machine.View().timeLeftMs == 1660);
+    CHECK(Logged(w, "Genlock's condition takes 2.34 s of its turn's clock, 2.34 s of its bar, for the time its "
+                    "effect itself had left: 1.66 s and "));
+    CHECK(Logged(w, "Genlock's condition has had its turns: ended. Its effect's own time is paid; what the engine "
+                    "has it do after the effect (a getting up) is time of its own, taken as it runs"));
+    // The getting up runs, and takes what it runs: with a second and a half
+    // of it gone the genlock has its turn still, held.
+    w.RunFor(1500);
+    CHECK(w.Current() == kGenlock);
+    CHECK(w.machine.State().heldByEffect);
+    CHECK(pokes == 0);
+    CHECK(Logged(w, "Genlock is held by an effect's command, how long the engine does not say ahead, which is what "
+                    "the engine has it do after the condition that ended as this turn began (a getting up), time "
+                    "of its own and not the condition's seconds again: the time it holds is taken of its bar as it "
+                    "runs, by the engine's own count of its step where it times it (1.66 s and "));
+    CHECK(Logged(w, "; its step is at 1382 of 3499 ms by the engine's count)"));
+    // And is not over when the bar is: the turn is lost to it.
+    w.RunFor(400);
+    CHECK(w.Current() != kGenlock);
+    CHECK(w.Said(L"Genlock loses the turn"));
+    CHECK(pokes == 0);
+    CHECK(Logged(w, "Genlock is held by an effect's command past its bar (1.66 s held this turn): its turn is lost"));
+    CHECK(Logged(w, "Genlock's turn ends: held by an effect; nothing rolls over"));
+}
+
+TEST_CASE("a knockdown the game makes last under a turn leaves the rest of the turn: the getting up costs its step's "
+          "own time, and no look after it",
+          "[time][holds]")
+{
+    // The same knockdown with 1.75 s on its effect's timer: 3.88 s with the
+    // getting up, under a turn's four. Of the Landsmeet's seventeen
+    // knockdowns seven were so, and sixteen lost the turn: the getting up,
+    // 2,133 ms by the engine's count, was charged 2.30 to 2.81 s by the
+    // machine's clock, the looks after its end among them.
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    KnockedDownAsItsTurnComes(w, 1.75f);
+    REQUIRE(w.machine.View().timeLeftMs == 2250);
+    const std::uint32_t left = LeftAfterTheHold(w);
+    w.RunFor(100);
+    // The step's own time, all of it and to the millisecond: from where it
+    // stood as the turn began, the fall spent, to its end. Not the two looks
+    // after, which found the genlock free.
+    CHECK(left == 2250 - kGetUpMs);
+    CHECK(w.Current() == kGenlock);
+    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+    CHECK(pokes == 1); // told to choose, with what is left
+    CHECK(Logged(w, "Genlock is free of the effect's command after 2.13 s, 2.13 s of its bar: 0.12 s and "));
+    CHECK(Logged(w, "(2.13 s of the hold by the engine's own count of its step, 0.00 s by the fight's clock where "
+                    "the engine times none)"));
+    // And it acts with that: an attack longer than what is left is begun,
+    // and lands on its next turn.
+    CHECK(Strike(w, kGenlock, kHero, Source::Script, 2.0f) == Verdict::Hold);
+}
+
+TEST_CASE("at the fight's speed the machine's clock runs ahead of the engine's step, and a getting up costs the "
+          "step's time all the same",
+          "[time][holds]")
+{
+    // The fights are played at three times the speed, and the engine does not
+    // keep to the speed it is asked for (a walk ran 2.7 times as fast at
+    // three: issue 58, item 7): the machine's clock, the wall's time times
+    // three, runs ahead of a step the engine times. By that clock this
+    // getting up was 2.37 s and the two looks after it 0.1 s more, and the
+    // turn was lost to a knockdown of 3.88 s.
+    Settings s = Timed();
+    s.fightSpeed = 3.0f;
+    World w(s);
+    w.engineSpeed = 2.7f;
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    KnockedDownAsItsTurnComes(w, 1.75f);
+    REQUIRE(w.machine.View().timeLeftMs == 2250);
+    const std::uint32_t left = LeftAfterTheHold(w);
+    w.RunFor(40);
+    // What the step ran, and not a millisecond of the clock's lead.
+    CHECK(left == 2250 - kGetUpMs);
+    CHECK(w.Current() == kGenlock);
+    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
+    CHECK(pokes == 1);
+}
+
+TEST_CASE("a longer bar is no more of the clock: a knockdown of more than a turn's seconds takes it whole",
+          "[time][holds]")
+{
+    // Combat Tactics gives a bar of five seconds, and a hold takes its share
+    // of the turn's clock, four seconds whatever the bar holds
+    // (TurnBudget::HoldClock): 4.47 s of knockdown is the whole of it.
+    std::vector<Creature> fight = StandardFight();
+    fight.at(1).tactics = 4;
+    World w(Timed(), fight);
+    KnockedDownAsItsTurnComes(w, 2.34f);
+    CHECK(w.machine.View().timeMs == 5000);
+    CHECK(w.machine.View().timeLeftMs == 2075); // 1.66 s of the clock left, which is 2.075 s of this bar
+    w.RunFor(1900);
+    CHECK(w.Current() != kGenlock);
+    CHECK(w.Said(L"Genlock loses the turn"));
+}
+
+TEST_CASE("what an effect's command does after its timed step is the fight's clock's while a look finds its creature "
+          "held, and the look that finds it free takes nothing",
+          "[time][holds]")
+{
+    // The engine times only part of some holds (a knockback's fall and rise
+    // are on no list of its own; a command can stand a look or more with no
+    // step left before it ends). That part goes by the machine's clock, look
+    // by look, for as long as a look still finds the creature at the
+    // command.
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    KnockedDownAsItsTurnComes(w, 1.0f);
+    w.Get(kGenlock).stepTailMs = 480;
+    REQUIRE(w.machine.View().timeLeftMs == 3000);
+    const std::uint32_t left = LeftAfterTheHold(w);
+    w.RunFor(100);
+    // The step's 2,133 ms, and of the tail's thirty frames every one but the
+    // last, which ended at a look that found the genlock free.
+    CHECK(left == 3000 - kGetUpMs - (480 - 16));
+    CHECK(pokes == 1);
+    CHECK(Logged(w, "(2.13 s of the hold by the engine's own count of its step, 0.46 s by the fight's clock where "
+                    "the engine times none)"));
+}
+
+TEST_CASE("let go straight into another command, a creature has paid what its step still had to run", "[time][holds]")
+{
+    // In play a creature's own free ability, queued behind the effect's
+    // command, began as that command ended, with no look between that found
+    // the creature idle (`Dwarven Soldier: use ability (free, from script)`
+    // and then `is free of the effect's command`, the high dragon,
+    // 2026-10-05). The look that lets it go takes what the timed step had
+    // left as the look before saw it, and nothing by the clock.
+    World w(Timed());
+    KnockedDownAsItsTurnComes(w, 1.75f);
+    REQUIRE(w.machine.View().timeLeftMs == 2250);
+    for (int i = 0; i < 2000 && w.Get(kGenlock).busy; ++i)
+    {
+        w.Frame();
+    }
+    // The getting up over in this frame, and the engine at the next of what
+    // it had queued for the genlock before any look.
+    REQUIRE(w.machine.State().heldByEffect);
+    w.Get(kGenlock).busy = true;
+    w.Get(kGenlock).current = CommandType::UseAbility;
+    w.Frame();
+    CHECK_FALSE(w.machine.State().heldByEffect);
+    CHECK(w.machine.View().timeLeftMs == 2250 - kGetUpMs);
+    CHECK(Logged(w, "Genlock is free of the effect's command after 2.13 s, 2.13 s of its bar"));
+}
+
+namespace
+{
+// The same knockdown on the hero, in the genlock's turn, and the fight
+// brought round to the hero's own turn: the player's, which waits for an
+// order, and finds its creature at the getting up a look later.
+void HeroKnockedDownAsItsTurnComes(World &w, float seconds)
+{
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    (void)w.machine.OnEndTurn();
+    w.RunFor(200);
+    REQUIRE(w.Current() == kGenlock);
+    w.KnockDown(kHero, seconds, kFallMs, kGetUpMs, kFallMs);
+    w.RunFor(700);
+    UntilTurnOf(w, kHero);
+    REQUIRE(w.Did(EffectKind::EndConditions, kHero));
+    REQUIRE(w.Get(kHero).busy);
+    REQUIRE(w.Get(kHero).step.durationMs == kFallMs + kGetUpMs);
+}
+} // namespace
+
+TEST_CASE("on a turn the player plays a getting up costs its step's own time too, from where the step stood as the "
+          "turn began",
+          "[time][holds]")
+{
+    // The duel's own case: Lyna's turn is the player's. Such a turn waits
+    // for an order first, and finds its creature at an effect's command only
+    // with the next look, a look or two into the getting up: what the step
+    // ran by then is the hold's all the same, the step having been looked at
+    // as the turn began.
+    World w(Timed());
+    HeroKnockedDownAsItsTurnComes(w, 1.0f);
+    w.RunFor(3000);
+    CHECK(w.Current() == kHero);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    CHECK_FALSE(w.Said(L"Hero loses the turn"));
+    CHECK(Logged(w, "Hero is free of the effect's command after 2.13 s, "));
+    CHECK(Logged(w, "(2.13 s of the hold by the engine's own count of its step, 0.00 s by the fight's clock where "
+                    "the engine times none)"));
+}
+
+TEST_CASE("what a step ran while a conversation played is not taken of the bar: the hold goes on from the look the "
+          "turn goes on at",
+          "[time][holds]")
+{
+    // A conversation in the middle of a fight stands the machine aside, and
+    // its clock with it: a hold was charged nothing for the story's time, and
+    // is charged nothing for it by the step's count either, though the engine
+    // ran the step on meanwhile. On a turn the player plays, which goes on by
+    // waiting for an order and finds the hold again a look later.
+    World w(Timed());
+    HeroKnockedDownAsItsTurnComes(w, 1.0f);
+    w.RunFor(320);
+    REQUIRE(w.machine.State().heldByEffect);
+    w.mode = Mode::Dialog;
+    w.RunFor(800);
+    const StepTime step = w.Get(kHero).step; // 800 ms further on
+    REQUIRE(step.elapsedMs == kFallMs + 320 + 800);
+    w.mode = Mode::Combat;
+    w.Frame();
+    // (The machine clears everyone's commands as the fight goes on; the
+    // effect's command is the engine's, which has the hero at it still.)
+    w.Get(kHero).busy = true;
+    w.Get(kHero).current = CommandType::ExecuteEffect;
+    w.Get(kHero).step = step;
+    w.RunFor(1400);
+    CHECK(w.Current() == kHero);
+    CHECK_FALSE(w.machine.State().heldByEffect);
+    // The getting up's 2,133 ms less the story's 800: 1.33 s, to the frame
+    // in which the conversation began.
+    CHECK(Logged(w, "Hero is free of the effect's command after 1.3"));
+    CHECK_FALSE(Logged(w, "Hero is free of the effect's command after 2."));
+}
+
+TEST_CASE("one that notices in its beat at a step the engine times is held from the look it noticed at",
+          "[time][holds]")
+{
+    // A hostile that has noticed nobody is not held, whatever the engine has
+    // it at, and its beat takes nothing of its bar (issue 29). The machine
+    // looked at its command's step as its turn began, and the engine ran the
+    // step on through the beat: noticing, it is charged what the step runs
+    // from that look, not from the turn's first (the long run of random
+    // fights with strays, seed 37).
+    World w(Timed());
+    int pokes = 0;
+    w.onPoke = [&](ObjectId) { ++pokes; };
+    w.Get(kGenlock).perception = Unnoticing();
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    REQUIRE(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
+    w.TimedStep(kGenlock, 60000);
+    UntilTurnOf(w, kGenlock);
+    REQUIRE(w.machine.View().timeLeftMs == 4000);
+    REQUIRE_FALSE(w.machine.State().heldByEffect);
+    w.RunFor(300);
+    REQUIRE(w.Current() == kGenlock);
+    w.Get(kGenlock).perception = Perception{};
+    w.RunFor(1000);
+    CHECK(w.Current() == kGenlock);
+    CHECK(w.machine.State().heldByEffect);
+    w.Finish(kGenlock);
+    w.RunFor(100);
+    CHECK(pokes == 1);
+    // The second it was held since it noticed: not the beat's 300 ms.
+    CHECK(w.machine.View().timeLeftMs <= 3050);
+    CHECK(w.machine.View().timeLeftMs >= 2950);
 }
 
 TEST_CASE("with time, a door, a chest or a pickup costs its seconds from the settings file", "[time]")

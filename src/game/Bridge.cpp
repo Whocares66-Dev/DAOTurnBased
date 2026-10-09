@@ -1492,7 +1492,12 @@ ActorObservation Bridge::Actor(ObjectId id)
         // sub-action 37 with a length of 12,500 ms, measured in play
         // 2026-10-05 and read here as that 2026-10-06, and was stopped half a
         // second before its end). One still waiting out its delay has not
-        // begun, and is given as untimed.
+        // begun, and is given as untimed. And a creature held at an effect's
+        // command is charged what the step ran between two looks, its own
+        // elapsed time, where the engine times it (core: TurnMachine::
+        // ChargeHold, issue 64: a knockdown's getting up is sub-action 51, its
+        // length pushed ahead from the fall's 1,366 ms to 3,499 as the effect
+        // ends, read here in every kept log of 2026-10-05 to 2026-10-08).
         if (const std::vector<dao::commands::SubAction> steps = dao::commands::SubActions(id); !steps.empty())
         {
             const dao::commands::SubAction &running = steps.front();
@@ -1566,7 +1571,9 @@ namespace
 // share is taken as the turn begins. Which effect a command waits on is not
 // read from the command yet (DAOLib's dao/SubActions.h), so the kinds still
 // say which effects' time left that is. The engine's command once one of
-// them is ended (the getting up) is charged as any other. What goes when a
+// them is ended (the getting up) is charged as any other, by the engine's own
+// count of its step (issue 64: time after the effect's own, which the engine
+// goes on to as the effect ends, and not the effect's seconds again). What goes when a
 // command names its effect: this list for the time, not for what the card
 // calls stunned.
 constexpr std::array kHolding{k::EFFECT_TYPE_STUN, k::EFFECT_TYPE_PARALYZE, k::EFFECT_TYPE_SLEEP, k::EFFECT_TYPE_ROOT,
