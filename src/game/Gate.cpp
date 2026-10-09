@@ -1303,7 +1303,15 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
                 }
             }
         }
-        if (result == dao::commands::kSuccess || result == dao::commands::kCleared)
+        // Done: said to the machine, for which an AI's move that is done
+        // where it began is its pass (issue 59). Cleared: nobody's news.
+        if (result == dao::commands::kSuccess)
+        {
+            const std::lock_guard lock(mutex);
+            machine.OnCommandDone(object, type);
+            return;
+        }
+        if (result == dao::commands::kCleared)
         {
             return;
         }

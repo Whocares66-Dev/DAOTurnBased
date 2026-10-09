@@ -2062,6 +2062,56 @@ MUTANTS = [
         '        std::format("{} waits {:.2f} s; {}", Utf8(who.name), static_cast<float>(cost) / 1000.0f, BudgetLeft()));\n',
         '        std::format("{} waits {:.2f} s; {}", Utf8(who.name), static_cast<float>(cost) / 1000.0f, BudgetLeft()));\n    ++budget_.commands;\n',
     ),
+    # A move that goes nowhere is its AI's pass (issue 59; OnCommandDone):
+    # the rule, and each of the things it is not.
+    Mutant(
+        "nowhere: a move done where it began is let through again for as long as the turn may last",
+        MACHINE,
+        "    if (!itsMove || budget_.spend.Walked() > budget_.movementAtCommand)",
+        "    if (!itsMove || budget_.spend.Walked() >= budget_.movementAtCommand)",
+    ),
+    Mutant(
+        "nowhere: a move that walked is its AI's pass too",
+        MACHINE,
+        "    if (!itsMove || budget_.spend.Walked() > budget_.movementAtCommand)",
+        "    if (!itsMove)",
+    ),
+    Mutant(
+        "nowhere: the end of another command of its creature's passes the turn its move is in",
+        MACHINE,
+        "budget_.lastKind == CommandKind::Move && type == budget_.lastType && !budget_.approachWalk;",
+        "budget_.lastKind == CommandKind::Move && !budget_.approachWalk;",
+    ),
+    Mutant(
+        "nowhere: an attack or a weapon set done with nothing walked is its AI's pass",
+        MACHINE,
+        "budget_.lastKind == CommandKind::Move && type == budget_.lastType && !budget_.approachWalk;",
+        "type == budget_.lastType && !budget_.approachWalk;",
+    ),
+    Mutant(
+        "nowhere: the mod's own walk to a kept attack's target, done at once, is its AI's pass",
+        MACHINE,
+        "budget_.lastKind == CommandKind::Move && type == budget_.lastType && !budget_.approachWalk;",
+        "budget_.lastKind == CommandKind::Move && type == budget_.lastType;",
+    ),
+    Mutant(
+        "nowhere: the player's own move that goes nowhere is said to be a pass",
+        MACHINE,
+        "current->id != who || PlayerControls(*current))",
+        "current->id != who)",
+    ),
+    Mutant(
+        "nowhere: another creature's move done where it began passes the current one's turn",
+        MACHINE,
+        "current == nullptr || current->id != who || PlayerControls(*current))",
+        "current == nullptr || who == kNoObject || PlayerControls(*current))",
+    ),
+    Mutant(
+        "nowhere: a story's walk in a conversation over the fight passes the turn it stands over",
+        MACHINE,
+        "    if (!Active() || current == nullptr || current->id != who || PlayerControls(*current))",
+        "    if (current == nullptr || current->id != who || PlayerControls(*current))",
+    ),
     Mutant(
         "time: a failed action's time is not given back",
         MACHINE,

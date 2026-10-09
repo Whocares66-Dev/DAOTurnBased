@@ -18,8 +18,8 @@ constexpr std::array kTurnEnds{
     // End on the turn bar, its key, a tool.
     TurnEnd{"ended by the player", true},
     // An AI that has acted and has nothing more it will do this turn: it
-    // chose to wait after its action, or its settling passed with nothing
-    // more chosen.
+    // chose to wait after its action, its settling passed with nothing more
+    // chosen, or a move it ordered was done where it began (issue 59).
     TurnEnd{"done", true},
     // An AI told its turn had come that chose to wait, its bar whole.
     TurnEnd{"waits", true},

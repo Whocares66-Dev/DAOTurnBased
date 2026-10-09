@@ -3479,8 +3479,9 @@ void TurnMachine::StepSettling(const Observation &obs, std::vector<Effect> &fx)
         // chooses nothing. No count of its commands ends it (issue 38: until
         // 2026-10-04 one that had started max_commands_per_turn was not told
         // again, whatever its bar still held). One that answers each telling
-        // with what takes nothing of its bar is told for as long as its turn
-        // may last (max_turn_ms, Step).
+        // with what is free (a weapon set, a mode) is told for as long as its
+        // turn may last (max_turn_ms, Step); one that answers with a move
+        // done where it began has passed, above (OnCommandDone; issue 59).
         if (budget_.spend.TimeLeft() && !budget_.outOfMovement)
         {
             if (!fresh)
@@ -5038,7 +5039,9 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     // the end comes with the next step (chargeBegan_) or after the beat over
     // the player's (pendingEndNow_). And an AI's own wait that is longer
     // than what it has left, or has no length (passRequested_; PayWait): a
-    // wait is its AI passing, and what is left of its bar rolls over. Every
+    // wait is its AI passing, and what is left of its bar rolls over; as is
+    // a move of its own that is done where it began (OnCommandDone; issue
+    // 59), which its script would order again as each ended. Every
     // other end is said as the turn is closed (EndTurn), and from then its
     // creature's commands are refused as anyone's out of turn, above. What
     // the mod itself gives a creature that has passed is still given: the
@@ -5540,6 +5543,57 @@ bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::string_vi
         SayGivenBack(pending_, *current, type, WhyGivenBack(why));
     }
     return true;
+}
+
+// A move that goes nowhere (issue 59). The game's scripts answer the end of a
+// command with the next, at once and with no wait, and where a move is done
+// the moment it begins they order it again: a party's summon with nobody to
+// attack walks to its place in the party's formation while it stands further
+// than melee range from its leader (ai_main_h_2.nss, _AI_MoveToControlled,
+// whose own note of 2008 says "the move commands are evaluated constantly,
+// flooding the AI"), and an ally of the last battle with nobody on its threat
+// table walks to within 8 m of the party's leader, whatever its last command
+// came to (cli000cr_army_member.nss, MoveToLeader). In real time nobody sees
+// it: the creature stands by its leader, and the next thing that happens in
+// the world gives its script something else to do. In its own turn nothing
+// else happens, and the move takes nothing of its bar, so it was let through
+// for as long as a turn may last (max_turn_ms): a summoned wolf's 633 moves
+// to a location in thirty seconds of the wall, five turns of twelve
+// (2026-10-06, staged), and Arl Eamon's 865 moves to an object in the
+// Archdemon's fight, the fight standing a minute and a half of its clock at
+// his turn (2026-10-09).
+//
+// So it is its AI's pass, as a wait of no length is and for the same reason
+// (PayWait): what costs nothing could be chosen for ever. By the engine's own
+// word for how the command ended, and by the bar's own count of its meters.
+// Only one that ended as done: of the kept logs' moves that walked nothing,
+// sixteen the engine failed for want of a path, and in fifteen of those turns
+// its script, told of the failure, went on to a blow or a talent by way of a
+// weapon set or a mode, which a pass would have refused (dev/DESIGN.md, "A
+// move that goes nowhere is its AI's pass"). Only the move its AI ordered, the
+// last command of its turn's let through: not another command of its
+// creature's that ends meanwhile, nor the mod's own walk to a kept attack's
+// target (a short one is over within a frame at three times the speed, with
+// no step of it seen, and its script's mode after it is its own to turn on).
+// And only in a turn its AI plays, a fight on: a click on the ground the
+// player's character stands on is no pass, nor is a story's walk in a
+// conversation over the fight.
+void TurnMachine::OnCommandDone(ObjectId who, CommandType type)
+{
+    const Combatant *current = order_.Current();
+    if (!Active() || current == nullptr || current->id != who || PlayerControls(*current))
+    {
+        return;
+    }
+    const bool itsMove = budget_.lastKind == CommandKind::Move && type == budget_.lastType && !budget_.approachWalk;
+    if (!itsMove || budget_.spend.Walked() > budget_.movementAtCommand)
+    {
+        return;
+    }
+    passRequested_ = true;
+    Log(LogLevel::Info, std::format("{}'s {} is done where it began, nothing of its bar walked: what costs nothing "
+                                    "could be ordered for ever, and it has passed ({})",
+                                    Utf8(current->name), Name(type), BudgetLeft()));
 }
 
 void TurnMachine::Reseed(std::uint64_t seed)

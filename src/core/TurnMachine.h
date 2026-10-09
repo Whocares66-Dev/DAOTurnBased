@@ -735,6 +735,17 @@ class TurnMachine
     // decided by it (issue 27).
     bool OnCommandFailed(ObjectId who, CommandType type, std::string_view why, ObjectId target = kNoObject);
 
+    // From the game (the same events): a creature's command ended as done,
+    // the engine's COMMAND_SUCCESSFUL. A move its AI ordered on its own turn
+    // that is done with none of its bar's meters walked went nowhere, and is
+    // its AI's pass (issue 59; dev/DESIGN.md, "A move that goes nowhere"):
+    // the turn ends as it settles, what is left of its bar rolling over, and
+    // what its script orders meanwhile is refused as after any pass (Judge).
+    // Not a move the engine failed or one that was cleared, which this is not
+    // told of: its script is told of a failure, and answers it with something
+    // else.
+    void OnCommandDone(ObjectId who, CommandType type);
+
     // From the game (DAOLib's dao::abilities::OnCooldownSet): the engine has
     // just set a cooldown on a creature, so many seconds, left and in all,
     // for an ability of its own or of the item tagged `item`; no seconds
@@ -1474,6 +1485,10 @@ class TurnMachine
     bool endTurnRequested_ = false;
     bool delayRequested_ = false;
     bool playerPaused_ = false; // the player's own pause (OnPauseKey), over the machine's
+    // Its AI has passed: by a wait that does not fit or has no length
+    // (PayWait), or by a move done where it began (OnCommandDone). The turn
+    // ends as it settles, and nothing more of its creature's own is let
+    // through meanwhile (Judge).
     bool passRequested_ = false;
     bool orderPending_ = false;
     bool resume_ = false; // back from a conversation: the current turn goes on as it was

@@ -557,10 +557,11 @@ TEST_CASE("one that notices under a command of its own is told to choose again o
     // comes in the same instant, before the machine has looked at it again:
     // in combat, that command is its turn's own, and the turn is not skipped
     // under it. (One whose command comes while it is still out of combat is
-    // the case above: the game's, and the beat goes on.)
+    // the case above: the game's, and the beat goes on.) A walk it takes: a
+    // move done where it began would be its pass (issue 59).
     w.Get(kGenlock).perception = Perception{};
     CHECK(w.Order(kGenlock, CommandType::MoveToLocation, Source::Script) == Verdict::Allow);
-    w.RunFor(200);
+    w.Walk(kGenlock, 1.0f);
     w.Finish(kGenlock);
     w.RunFor(1200);
     CHECK(pokes == 1);

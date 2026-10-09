@@ -564,6 +564,24 @@ class World
         }
     }
 
+    // A creature walks so far, in half meters a frame, and stands: the walk
+    // of the command it is at, which is not over until the case finishes it.
+    void Walk(ObjectId id, float meters)
+    {
+        Get(id).moving = true;
+        // As many half meters as it takes: counted, where a float counted them
+        // before (the same steps: halves add up exactly).
+        const int steps = static_cast<int>(std::ceil((meters - 0.001f) / 0.5f));
+        for (int step = 0; step < steps; ++step)
+        {
+            const float done = 0.5f * static_cast<float>(step);
+            Get(id).position.x += std::min(0.5f, meters - done);
+            Frame();
+        }
+        Get(id).moving = false;
+        Frame();
+    }
+
     // A command queued on a creature, through the gate as the queue hook
     // puts it; it starts running if let through. walk: for an attack, the
     // meters to its target's reach, when the game layer could tell.
@@ -1050,9 +1068,11 @@ class World
     // here, for its seconds in the stand-in's ability table (cooldownOf; none
     // there: it does not cool), an item's ability's by the item's tag
     // (itemOf). The engine's own doing, by its scripts, through its one Set
-    // (Cool).
+    // (Cool). And the game layer hears it end as done, and tells the machine
+    // (Gate.cpp's OnEnd; issue 59).
     void Finish(ObjectId id)
     {
+        machine.OnCommandDone(id, Get(id).current);
         if (const auto ran = used.find(id); ran != used.end())
         {
             const std::int32_t ability = ran->second;

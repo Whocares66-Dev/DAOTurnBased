@@ -13,7 +13,6 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
-#include <cmath>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -46,23 +45,6 @@ Verdict Act(World &w, ObjectId id, CommandType type, Source source, float second
     request.walk = walk;
     request.actionSeconds = seconds;
     return w.Queue(request);
-}
-
-// Walks a creature in half meters a frame, and stands it.
-void Walk(World &w, ObjectId id, float meters)
-{
-    w.Get(id).moving = true;
-    // As many half meters as it takes: counted, where a float counted them
-    // before (the same steps: halves add up exactly).
-    const int steps = static_cast<int>(std::ceil((meters - 0.001f) / 0.5f));
-    for (int step = 0; step < steps; ++step)
-    {
-        const float done = 0.5f * static_cast<float>(step);
-        w.Get(id).position.x += std::min(0.5f, meters - done);
-        w.Frame();
-    }
-    w.Get(id).moving = false;
-    w.Frame();
 }
 
 // An action ends and the world settles.
@@ -185,7 +167,7 @@ TEST_CASE("with time, walking costs time at the pace after a free meter, and a m
     CHECK(w.machine.View().movementLeft == 21.0f);
     CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player, 6.0f) == Verdict::Allow);
     w.Frame();
-    Walk(w, kHero, 6.0f);
+    w.Walk(kHero, 6.0f);
     Done(w, kHero);
     const TurnView view = w.machine.View();
     CHECK(view.timeLeftMs >= 2999);
@@ -208,7 +190,7 @@ TEST_CASE("with time, an attack's walk is paid as it is let through, and its swi
     CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 6.0f) == Verdict::Allow);
     CHECK(w.machine.View().timeLeftMs == 1000);
     w.Frame();
-    Walk(w, kHero, 6.0f);
+    w.Walk(kHero, 6.0f);
     CHECK(w.Get(kHero).busy); // not stopped
     CHECK(w.machine.View().timeLeftMs == 1000);
     Done(w, kHero);
@@ -235,7 +217,7 @@ TEST_CASE("with time, an attack whose swing does not fit walks to its target now
     CHECK(w.Get(kHero).busy);
     CHECK(w.Get(kHero).current == CommandType::MoveToObject);
     CHECK_FALSE(w.paused); // the world runs while she walks
-    Walk(w, kHero, 6.0f);
+    w.Walk(kHero, 6.0f);
     CHECK(w.Get(kHero).busy); // not stopped: the walk was paid for
     // Nothing else this turn: its bar is spent.
     CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 0.0f) == Verdict::Block);
@@ -1117,7 +1099,9 @@ TEST_CASE("with time, what its creature kept is given though its script waited f
 // it went. The user, of the rules built for those first (2026-10-04): "How
 // about for non-party members we apply a timeout? Don't we already have one?
 // I'm skeptical about hacking in all these conditions. We should keep things
-// simple."
+// simple." (Two of those turns were a move done where it began, told again or
+// queued again as each ended: met in play, and its AI's pass since issue 59,
+// test_nowhere.cpp.)
 namespace
 {
 // A genlock whose script answers every telling with `choose`; the others
@@ -1178,8 +1162,6 @@ std::vector<Endless> EndlessTurns()
         // count gone and no limit).
         {"a weapon set switched each time it is told", queue(CommandType::SwitchWeaponSets, Source::Script, true),
          nothing},
-        {"a move over where it stands each time it is told", queue(CommandType::MoveToLocation, Source::Script, true),
-         nothing},
         // It stands two and a half seconds at the walk, is stopped, and is
         // told again (39 times in two minutes).
         {"a walk it cannot make each time it is told", queue(CommandType::MoveToLocation, Source::Script, false),
@@ -1188,8 +1170,6 @@ std::vector<Endless> EndlessTurns()
         // stands and nothing fails.
         {"a weapon set switched again as each ends", queue(CommandType::SwitchWeaponSets, Source::Script, false),
          again(CommandType::SwitchWeaponSets, Source::Script)},
-        {"a move that ends where it began, again as each ends",
-         queue(CommandType::MoveToLocation, Source::Script, false), again(CommandType::MoveToLocation, Source::Script)},
         {"the engine's own weapon commands, one as each ends",
          queue(CommandType::SheatheWeapons, Source::Engine, false), again(CommandType::SheatheWeapons, Source::Engine)},
         // The engine failed attacks within 2 ms before issue 27 had the gate
@@ -1534,7 +1514,7 @@ TEST_CASE("with time, a cooldown counts on its user's clock and lifts in the mid
     // 4.5 s bar is a third of the turn's 4 s. test_turntime.cpp has that.)
     CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player, 3.5f) == Verdict::Allow);
     w.Frame();
-    Walk(w, kHero, 3.5f);
+    w.Walk(kHero, 3.5f);
     Done(w, kHero);
     UntilTurnOf(w, kHero);
     REQUIRE(left());
@@ -1587,7 +1567,7 @@ TEST_CASE("with time, walking moves the clock too, and a turn lost moves it a wh
     // 6 m: a meter free, a second at 5 m/s.
     CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player, 6.0f) == Verdict::Allow);
     w.Frame();
-    Walk(w, kHero, 6.0f);
+    w.Walk(kHero, 6.0f);
     Done(w, kHero);
     // Read with a value to fall back on: the analyser does not know that a
     // REQUIRE ends the case, and took the cooldown read after one for a
@@ -1832,12 +1812,12 @@ TEST_CASE("with time, the walk to a kept attack's target has a little slack and 
     REQUIRE(w.Get(kHero).current == CommandType::MoveToObject);
     // The game's walk runs a little past what was paid for: within a meter,
     // not stopped.
-    Walk(w, kHero, 6.8f);
+    w.Walk(kHero, 6.8f);
     CHECK(w.Get(kHero).busy);
     // Well past it, it is stopped: with no "Out of movement" over one that
     // did what was ordered.
     w.applied.clear();
-    Walk(w, kHero, 2.0f);
+    w.Walk(kHero, 2.0f);
     CHECK_FALSE(w.Get(kHero).busy);
     CHECK_FALSE(w.Said(L"Out of movement"));
 }
@@ -1914,7 +1894,7 @@ TEST_CASE("with time, an action whose walk runs past the bar is charged when its
     REQUIRE(w.machine.View().timeLeftMs == 2000);
     // It walks 15 m: a meter free and 2.8 s at 5 m/s, more than the 2 s
     // left. The swing's time goes to the walk; it is not stopped.
-    Walk(w, kGenlock, 15.0f);
+    w.Walk(kGenlock, 15.0f);
     CHECK(w.Get(kGenlock).busy);
     CHECK(w.Current() == kGenlock);
     // Standing at its attack: the 2 s are taken now, 1.2 s of them there
@@ -1942,7 +1922,7 @@ TEST_CASE("with time, a walk longer than the whole bar is stopped, and its actio
     (void)w.machine.OnEndTurn();
     w.RunFor(200);
     REQUIRE(w.Current() == kGenlock);
-    Walk(w, kGenlock, 25.0f); // 21 m is all its bar walks
+    w.Walk(kGenlock, 25.0f); // 21 m is all its bar walks
     w.RunFor(100);
     CHECK(w.Current() != kGenlock); // out of movement: its turn is over
     CHECK(w.machine.State().charging.empty());
@@ -2319,7 +2299,7 @@ TEST_CASE("an attack whose creature stands short of its target is stopped, its a
         REQUIRE(pokes == 1);
         // It walks a meter and stands there, others in its way: busy at its
         // attack, its command still at its approach, not a step more.
-        Walk(w, kGenlock, 1.0f);
+        w.Walk(kGenlock, 1.0f);
         w.Get(kGenlock).busy = true;
         w.Get(kGenlock).current = CommandType::Attack;
         w.Get(kGenlock).approaching = true;
@@ -2369,7 +2349,7 @@ TEST_CASE("an attack whose creature stands short of its target is stopped, its a
         World w(on);
         w.StartFight();
         REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 1.5f, 5.0f) == Verdict::Allow);
-        Walk(w, kHero, 4.6f);
+        w.Walk(kHero, 4.6f);
         w.Get(kHero).busy = true;
         w.Get(kHero).current = CommandType::Attack;
         w.applied.clear();
@@ -3535,7 +3515,7 @@ TEST_CASE("an AI whose action was given back is told so at once, once: what it d
     REQUIRE(w.Get(kGenlock).busy);
     // Its walk, 3 m, and its end. Not told at once this time: its action is
     // not given back twice for one failure.
-    Walk(w, kGenlock, 3.0f);
+    w.Walk(kGenlock, 3.0f);
     w.Finish(kGenlock);
     w.RunFor(300);
     CHECK(pokes == 2);
@@ -4645,7 +4625,7 @@ TEST_CASE("with time, a blow that took the last of the bar is struck with a shif
     // case passed whatever kShuffle was (the mutant "a creature in reach is
     // stopped for shifting its feet" survived it, 2026-10-05).
     w.Frame();
-    Walk(w, kHero, 1.0f); // the free meter
+    w.Walk(kHero, 1.0f); // the free meter
     Done(w, kHero);
     REQUIRE(w.Current() == kHero);
     REQUIRE(w.machine.View().timeLeftMs == 4000);
@@ -4653,7 +4633,7 @@ TEST_CASE("with time, a blow that took the last of the bar is struck with a shif
     REQUIRE(Act(w, kHero, CommandType::Attack, Source::Player, 4.0f) == Verdict::Allow);
     REQUIRE(w.machine.View().timeLeftMs == 0);
     REQUIRE(w.machine.View().movementLeft == 0.0f);
-    Walk(w, kHero, 0.5f);
+    w.Walk(kHero, 0.5f);
     CHECK(w.Current() == kHero);
     CHECK(w.machine.View().timeLeftMs == 0);
     CHECK(Lines(w, "runs past its bar") == 0);

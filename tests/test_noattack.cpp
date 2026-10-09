@@ -348,9 +348,11 @@ TEST_CASE("an attack failed at the blow, its script moves closer, and the same t
         CHECK(Logged(w, std::string{"Genlock's attack on Hero failed ("} + why + "): its action is given back"));
         // Its script's own answer, in the same instant: the move, which is
         // its own to make, and then the same target, asked of the engine
-        // again and let through.
+        // again and let through. The move is a walk it takes, most of the
+        // meter a turn has free: one done where it began would be its pass
+        // (issue 59; test_nowhere.cpp).
         CHECK(w.Order(kGenlock, CommandType::MoveToObject, Source::Script) == Verdict::Allow);
-        w.RunFor(100);
+        w.Walk(kGenlock, 0.8f);
         w.Finish(kGenlock);
         CHECK(Swing(w, kHero) == Verdict::Allow);
         CHECK(w.Get(kGenlock).current == CommandType::Attack);
@@ -386,7 +388,10 @@ TEST_CASE("a turn that keeps failing at the blow, its script moving and trying a
     // moves and tries the same target again as each attack fails never lets
     // the turn settle, so the count of its actions given back, two, is not
     // looked at, and each failed swing is given back whole: its bar never
-    // moves. What ends it is its turn's time, max_turn_ms.
+    // moves. What ends it is its turn's time, max_turn_ms. (The move is one
+    // the engine fails too, for want of a path, as it often did in play:
+    // DAOLib's dao/CommandEvents.h. A move done where it began would be its
+    // AI's pass, and the turn over at the first: issue 59, test_nowhere.cpp.)
     World w(Timed());
     std::vector<std::string> ends;
     KeepEnds(w, ends);
@@ -409,7 +414,7 @@ TEST_CASE("a turn that keeps failing at the blow, its script moving and trying a
             break;
         }
         w.Frame();
-        w.Finish(kGenlock);
+        (void)w.Fail(kGenlock, kNoPath);
         if (Swing(w, kHero) == Verdict::Allow)
         {
             ++swings;

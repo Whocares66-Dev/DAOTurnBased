@@ -106,7 +106,10 @@
 //      fight lets the world go, nothing is left held: each has its own
 //      seconds back. In every other fight an item's ability's record keeps
 //      its own total under the hold, as one did in play: the machine reads
-//      none of its holds back (issue 57).
+//      none of its holds back (issue 57);
+//  23. a move its AI ordered on its own turn that is done where it began is
+//      its AI's pass: the machine says so as the move ends, and nothing more
+//      of its creature's own is let through in that turn (issue 59).
 //
 // The promises were checked on two clocks until issue 50 (2026-10-05): the
 // bar of time, and one action and an allowance of meters a turn, which is
@@ -202,6 +205,9 @@ struct Task
     bool held = false;      // a condition's command: it lasts as long as the condition
     bool conjuring = false; // the engine's own spell, held in its conjure until released
     bool grab = false;      // an ability whose own effect holds its creature and its target, after it
+    // A script's move that is done where its creature stands, let through as
+    // its creature's own on the turn the arena had then (23; issue 59).
+    std::optional<std::pair<int, ObjectId>> nowhere = std::nullopt;
     // An effect's command the engine did not lay for a condition: whether the
     // engine times its step (a getting up's; not a knockback's fall and rise,
     // which are on no list of its own), which is as its length falls, and
@@ -280,6 +286,7 @@ struct Coverage
     int delays = 0;          // a party member's turn put off
     int delayedTurns = 0;    // and taken at the round's end, as it was
     int unplayed = 0;        // an action over at once, its time given back
+    int nowhere = 0;         // an AI's move done where it began: its pass (issue 59)
     int walkedOnAction = 0;  // a walk past the bar took its action's time
     int arrivals = 0;        // an action charged as its creature got there
     int heldShares = 0;      // a hold shorter than a turn took its share of a bar
@@ -342,8 +349,9 @@ class Arena
     Arena(std::uint64_t seed, Coverage &coverage, bool strays = false, bool choices = false)
         : rng_(seed), reach_(seed ^ 0x22EAC4ull), waits_(seed ^ 0x3A175ull), notice_(seed ^ 0x29A11ull),
           asks_(seed ^ 0x45C5ull), burrows_(seed ^ 0x44B0ull), chooses_(seed ^ 0x46C4ull), paces_(seed ^ 0x49FA57ull),
-          sings_(seed ^ 0x5150ull), cools_(seed ^ 0x57C001ull), settings_(RandomSettings(rng_)),
-          world_(settings_, RandomFight(rng_), seed), coverage_(coverage), runners_(strays), choices_(choices)
+          sings_(seed ^ 0x5150ull), cools_(seed ^ 0x57C001ull), nowhere_(seed ^ 0x59A0ull),
+          settings_(RandomSettings(rng_)), world_(settings_, RandomFight(rng_), seed), coverage_(coverage),
+          runners_(strays), choices_(choices)
     {
         ComeAsStrays();
         world_.record = false;
@@ -593,7 +601,7 @@ class Arena
             std::string_view words;
             int Coverage::*count;
         };
-        static constexpr std::array<Counted, 14> kCounted{{
+        static constexpr std::array<Counted, 15> kCounted{{
             {"the action it was moving for is kept", &Coverage::refunds},
             {"took too long", &Coverage::timeouts},
             {" is at its own mode's command (ability ", &Coverage::songWaits},
@@ -602,6 +610,7 @@ class Arena
             {"'s pending attack is turned on ", &Coverage::turned},
             {"'s turn is spent on its pending", &Coverage::wholeTurns},
             {"over at once: it did nothing", &Coverage::unplayed},
+            {" is done where it began, nothing of its bar walked", &Coverage::nowhere},
             {"'s walk runs past its bar", &Coverage::walkedOnAction},
             {" s taken now", &Coverage::arrivals},
             {"'s condition takes ", &Coverage::heldShares},
@@ -1041,6 +1050,7 @@ class Arena
             heldPaidDue_ = false;
             turnBeganAtMs_ = 0;
             told_ = kNoObject;
+            passed_ = false;
         }
     }
 
@@ -1336,6 +1346,12 @@ class Arena
                 ++coverage_.turnedAway;
             }
         }
+        // Its AI passed this turn by a move that went nowhere (23): nothing
+        // more of its creature's own is let through in it.
+        if (passed_ && asked.active && id == asked.current && !gamesOwn && asked.kind != CommandKind::Involuntary)
+        {
+            Must(verdict == Verdict::Block, "a command let through for one whose AI had passed by a move gone nowhere");
+        }
         // At its own mode's command, on its own turn (20): an action or a
         // move is refused before anything is spent. The game would queue it
         // behind the mode's command, to be carried out when the mode ends, in
@@ -1387,6 +1403,20 @@ class Arena
             break;
         case CommandType::MoveToLocation:
             task.walk = asked.path;
+            // Now and then a script's move is done where its creature stands
+            // (23; issue 59): a follower walked to the place it is at, an
+            // ally to a leader it is beside. On a stream of its own. Not one
+            // let through with its creature still in the last step of the
+            // walk before, which the machine sees after and takes for this
+            // move's.
+            if (asked.source == Source::Script && !world_.Get(id).moving && Chance(nowhere_, 0.05))
+            {
+                task.walk = 0.0f;
+                if (asked.active && id == asked.current && !gamesOwn)
+                {
+                    task.nowhere = turn_;
+                }
+            }
             break;
         case CommandType::Drive:
             task.walk = Between(rng_, 1.0f, 16.0f);
@@ -1598,8 +1628,21 @@ class Arena
             Release(e.target);
             break;
         case EffectKind::ReleaseCast:
-        case EffectKind::DropCast:
             break; // with time, kept actions (World's onReleased); nothing charges as built
+        case EffectKind::DropCast:
+            // A spell held in its conjure that the machine drops (the fight
+            // over, say) has its command cleared (World's DropKept), and the
+            // arena's play of it ends there: it is no conjure of the
+            // machine's to be broken in a fight after this one. Until the
+            // fights went other ways for issue 59 none had a caster that
+            // left a fight conjuring, lived through its end and had its
+            // conjure broken in the next: the long run with strays, seed
+            // 157, "a held conjure cleared that the machine did not know".
+            if (const auto dropped = tasks_.find(e.target); dropped != tasks_.end() && dropped->second.conjuring)
+            {
+                tasks_.erase(dropped);
+            }
+            break;
         case EffectKind::Approach:
             Must(e.target != kNoObject, "an approach for nobody");
             Must(e.target == world_.Current(), "an approach for someone whose turn it is not");
@@ -2505,7 +2548,19 @@ class Arena
         }
         const Task done = task;
         tasks_.erase(found);
+        // A move done where it began, its AI's own on the turn that is still
+        // under way, with a fight holding the world (23): its pass, said as
+        // the engine ends it. Not a turn the player plays.
+        FollowTurn();
+        const bool passes = done.nowhere == turn_ && world_.machine.Active() && world_.mode == Mode::Combat &&
+                            id == world_.Current() && !PlayerControls(id);
+        const int said = coverage_.nowhere;
         world_.Finish(id);
+        if (passes)
+        {
+            Must(coverage_.nowhere == said + 1, "an AI's move done where it began was no pass");
+            passed_ = true;
+        }
         Finished(id, done);
     }
 
@@ -3620,6 +3675,8 @@ class Arena
     Rng paces_;   // on whom Haste or a slow is put, or ends, and when (Pacing; issue 49): its own stream
     Rng sings_; // who has a song on that keeps it at its command, and when it turns (Singing; issue 51): its own stream
     Rng cools_; // what a script sets cooling, sets anew or ends, on whom and when (Scripted; issue 57): its own stream
+    Rng nowhere_; // which of a script's moves is done where its creature stands (Begin; issue 59): its own stream
+    bool passed_ = false; // the turn under way is one whose AI passed by such a move (23)
     Settings settings_;
     std::unordered_map<ObjectId, std::int32_t> conditionLeftMs_; // the engine's timers, in running time
     std::set<ObjectId> secondsKnown_;             // held with seconds the machine could read, and not yet ended by it
@@ -3792,6 +3849,7 @@ void Count(const Coverage &c, std::uint64_t count, bool strays, bool choices)
         {"delays", c.delays},
         {"delayedTurns", c.delayedTurns},
         {"unplayed", c.unplayed},
+        {"nowhere", c.nowhere},
         {"walkedOnAction", c.walkedOnAction},
         {"arrivals", c.arrivals},
         {"heldShares", c.heldShares},
@@ -3980,6 +4038,11 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     // is charged on arriving: seldom given back.
     // (2026-10-02: 182 walks on an action's time, 102 arrivals.)
     CHECK(coverage.unplayed > 2); // an action over at once, given back (8)
+    // An AI's move done where it began on its own turn, its pass (23; issue
+    // 59, 2026-10-09: 45, one script's move in twenty drawn so, and the
+    // eighty going other ways for it, 3451 turns in 669 rounds, every floor
+    // here still reached).
+    CHECK(coverage.nowhere > 15);
     CHECK(coverage.walkedOnAction > 60);
     CHECK(coverage.arrivals > 30);
     CHECK(coverage.tooFar > 5);
@@ -4038,8 +4101,12 @@ TEST_CASE("random fights with hostiles unaware and combatants out of reach keep 
         // turns are skipped and combatants that come and go (issue 38: 19 as
         // built, 32 with time; 23 and 29 since issue 43; 10 and 30 since
         // issue 44, whose creatures out of the world shorten the others'
-        // rounds).
-        CHECK(coverage.turnLimits > 10);
+        // rounds; 13 by issue 71, and 9 as issue 59's moves that go nowhere
+        // send these twenty-five other ways, 992 turns in 228 rounds: the
+        // floor a third of that, as the others are).
+        CHECK(coverage.turnLimits > 3);
+        // And an AI's move done where it began, its pass (23; issue 59: 10).
+        CHECK(coverage.nowhere > 3);
         // What the fight holds and what it lets go (1, 15). The commands let
         // through out of turn as the game's own, their creatures not in
         // combat by the game's word: hostiles that have not noticed, and
@@ -4176,6 +4243,9 @@ TEST_CASE("random fights with the party's tactics chosen and changed in them kee
         // one, 58 made in a companion's own turn, 374 asked for the hero;
         // among 98 conversations and 19 turns put off and taken.
         CHECK(coverage.endStops > 21);
+        // An AI's move done where it began, its pass, a companion's whose
+        // tactics play its turn among them (23; issue 59: 24).
+        CHECK(coverage.nowhere > 8);
     }
 }
 
