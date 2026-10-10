@@ -1236,7 +1236,7 @@ class TurnMachine
         // clock, each turn lost while it lasts, no fresh turns owed.
         bool onClock = false;
     };
-    ObjectId endedFor_ = kNoObject; // whose conditions the machine ended this turn
+    ObjectId endedFor_ = kNoObject; // whose conditions the machine ended this turn, until a look finds it free
     std::unordered_map<ObjectId, Held> held_;
     bool currentStunned_ = false; // the current combatant was stunned in its own turn
     // The current combatant is at an effect's command it did not choose:

@@ -4321,8 +4321,9 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses, st
             // it loses each turn that comes while it lasts.
             if (status.id == endedFor_)
             {
-                // Ended at this turn's start, and the engine holds it still:
-                // not a new condition. It runs out on the game's clock.
+                // Ended at this turn's start, and the engine holds it still,
+                // no look having found it free since: not a new condition.
+                // It runs out on the game's clock.
                 held.kind = status.condition;
                 held.onClock = true;
                 Log(LogLevel::Warn, std::format("{}'s condition was ended, and the engine still holds it: its turns "
@@ -4391,6 +4392,14 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses, st
         if (status.condition == Condition::None)
         {
             held.onClock = false; // run out
+            if (status.id == endedFor_)
+            {
+                // Seen free of what was ended: the ending is done, and what
+                // holds it after this is new, owed its own seconds (issue
+                // 100: Ariane knocked down again a second after her first
+                // knockdown was paid and ended, 2026-10-10).
+                endedFor_ = kNoObject;
+            }
         }
         // Gone from the world, it is in no fight, and has no card, the
         // party's own neither.

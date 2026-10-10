@@ -51,6 +51,7 @@
 "a companion nothing was chosen for does not go by the setting": "under tactics the companions play their own turns, the hero is still the player's",
 "a condition on the game's clock costs no turn": "on the game's clock a held creature loses each turn while its condition lasts",
 "a condition that has had its time is never ended": "a condition that has had its turns is ended at the start of the creature's turn, and it acts",
+"a condition that lands once the ended one was seen gone is taken for the old one": "a condition that lands once the ended one was seen gone is a new one",
 "a condition the engine still holds after it was ended owes a fresh turn": "a condition the engine still holds after it was ended costs each turn while it lasts, and is not ended again",
 "a constant far from the three is taken for the fourth": "a script that does not hold the rule, or none: the shipped four",
 "a constant is read by its second byte alone": "Combat Training's four ranks are the abilities the installed script names",

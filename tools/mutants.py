@@ -697,8 +697,16 @@ MUTANTS = [
     Mutant(
         "a condition the engine still holds after it was ended owes a fresh turn",
         MACHINE,
-        "            if (status.id == endedFor_)",
-        "            if (status.id == endedFor_ && false)",
+        "            if (status.id == endedFor_)\n            {\n                // Ended at this turn's start",
+        "            if (status.id == endedFor_ && false)\n            {\n                // Ended at this turn's start",
+    ),
+    # Issue 100: Ariane, knocked down again a second after her first knockdown
+    # was paid and ended (Witch Hunt, 2026-10-10).
+    Mutant(
+        "a condition that lands once the ended one was seen gone is taken for the old one",
+        MACHINE,
+        "            if (status.id == endedFor_)\n            {\n                // Seen free",
+        "            if (status.id == endedFor_ && false)\n            {\n                // Seen free",
     ),
     Mutant(
         "a turn's end goes unheard",

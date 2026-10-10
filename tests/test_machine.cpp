@@ -1732,6 +1732,30 @@ TEST_CASE(
     CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
 }
 
+TEST_CASE("a condition that lands once the ended one was seen gone is a new one", "[machine][conditions]")
+{
+    // Witch Hunt, the Dragonbone Wastes (2026-10-10, issue 100): Ariane's
+    // knockdown was paid and ended as her turn began, she was free and
+    // ordered a talent, and a second later she was knocked down again. Taken
+    // for the first still standing, it was left to the game's clock with a
+    // warning, and her next turn went whole.
+    World w;
+    w.Get(kGenlock).condition = Condition::Disabled;
+    w.StartFight();
+    UntilEnded(w);
+    REQUIRE(w.Current() == kGenlock);
+    w.RunFor(600); // a status read finds it free
+    REQUIRE(w.Current() == kGenlock);
+    w.Get(kGenlock).condition = Condition::Disabled; // held anew
+    w.RunFor(600);
+    CHECK(std::ranges::none_of(
+        w.log, [](const std::string &line) { return line.find("the engine still holds it") != std::string::npos; }));
+    // Owed as any condition is, and ended by the machine when it is paid.
+    w.applied.clear();
+    UntilEnded(w);
+    CHECK(w.Did(EffectKind::EndConditions, kGenlock));
+}
+
 TEST_CASE("a move its path cannot finish this turn is refused before a step", "[machine]")
 {
     // The engine's path to the click (DAOLib FindPath), as the gate measures
