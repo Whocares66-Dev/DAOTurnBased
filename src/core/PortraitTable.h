@@ -384,6 +384,12 @@ inline constexpr std::array kPortraitTable{
     Row(20020, "20020 (GXA) Wild Sylvan, Charred", 4.0f, 35.0f, 0.0f, -0.5f, 0.0f,
         "by eye in the Silverite Mine, 2026-10-09: its trunk and boughs, the wild sylvan's row (65), with no face "
         "found on it either; seen as it is"),
+    FromRoot(Row(43000, "43000 (STR) Strider", 3.6f, 30.0f, 0.0f, 1.1f, 4.0f,
+                 "by eye in the Dragonbone Wastes, 2026-10-10, from its root: Witch Hunt's Varterral, its hooded "
+                 "head and beak in three-quarter profile over its neck and a foreleg; it has no head node, and its "
+                 "card had its initials until this (issue 103). Its head stands forward of its root, 1.1 m aside "
+                 "of it at this turn: with nothing aside it was out of the picture; at 4.35 up it sat in the "
+                 "disc's lower half; seen as it is")),
     DefaultFor(BodyKind::OnAllFours, "a body on all fours", 0.6f, 0.0f, 0.0f, 0.0f, 0.0f,
                "straight on, from 0.6 of its extent: not yet looked at"),
     DefaultFor(BodyKind::Upright, "an upright body that is not a person's", 0.6f, 0.0f, 0.0f, 0.0f, 0.0f,

@@ -236,6 +236,7 @@ AWAKENING: dict[int, tuple[str, str]] = {
     20018: ("the_mother_cinematics", "(GXA) The Mother [cinematics]"),
     20019: ("dragon_b", "(GXA) Dragon B"),
     20020: ("wild_sylvan_charred", "(GXA) Wild Sylvan, Charred"),
+    43000: ("str500cr_atavar", "(STR) Strider"),
     20021: ("disciple_heretic_greatsword", "(GXA) Heretic Disciple - Normal"),
     20100: ("cinem_disciple_body_top", "(GXA) Disciple Body - Top"),
     20101: ("cinem_disciple_body_bottom", "(GXA) Disciple Body - Bottom"),
