@@ -107,7 +107,8 @@ class Templates(unittest.TestCase):
         self.assertFalse(set(portraits.AWAKENING) & set(portraits.TEMPLATES))
         self.assertTrue(all(row >= 20000 for row in portraits.AWAKENING))
         self.assertEqual(
-            portraits.template_of(20014), ("armored_ogre", "", "awakening")
+            portraits.template_of(20014),
+            ("armored_ogre", "(GXA) Armored Ogre", "awakening"),
         )
 
     def test_every_row_of_the_cores_framing_table_can_be_swept(self) -> None:
@@ -124,10 +125,9 @@ class Templates(unittest.TestCase):
         for row, number, label in found:
             with self.subTest(row=row):
                 self.assertEqual(row, number)
-                self.assertEqual(portraits.TEMPLATES[int(row)][1], label)
-        for row in rows:
-            with self.subTest(row=row):
-                self.assertIn(row, portraits.TEMPLATES)
+                self.assertEqual(portraits.template_of(int(row))[1], label)
+        # Awakening's own are among them since issue 84.
+        self.assertIn(20019, rows)
 
     def test_the_listing_names_every_row(self) -> None:
         text = portraits.listing()
@@ -673,9 +673,12 @@ class Loop(unittest.TestCase):
         self.assertNotIn("waited", record)
         self.assertEqual(portraits.caption(record)[1], "no_head_node")
         self.assertLess(portraits.Sweep.HEADLESS_TRIES, portraits.Sweep.HEAD_TRIES)
-        # The eleven of the sweeps of 2026-10-04, each with a template to spawn.
-        self.assertEqual(len(portraits.HEADLESS), 11)
-        self.assertLessEqual(portraits.HEADLESS, set(portraits.TEMPLATES))
+        # The eleven of the sweeps of 2026-10-04 and Awakening's one of 2026-10-09,
+        # each with a template to spawn.
+        self.assertEqual(len(portraits.HEADLESS), 12)
+        self.assertLessEqual(
+            portraits.HEADLESS, set(portraits.TEMPLATES) | set(portraits.AWAKENING)
+        )
         self.assertNotIn("screenshot", game.named())  # nothing was put up
         self.assertEqual(game.named()[-1], "kill")
 

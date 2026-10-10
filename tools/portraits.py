@@ -214,35 +214,37 @@ TEMPLATES: dict[int, tuple[str, str, str]] = {
 # The rows the game's other campaign adds (Awakening: packages\core_ep1), each
 # with a template of its own there. The base campaign cannot spawn them (an
 # add-in's templates are loaded only where it runs: Eluvian's dev/TESTING.md);
-# --awakening sweeps them, in a game that is running Awakening.
-AWAKENING: dict[int, str] = {
-    20002: "demon_pride_b",
-    20003: "shade_b",
-    20004: "high_dragon_lit",
-    20006: "giant_golem_fir",
-    20007: "childer_p1",
-    20008: "childer_p2",
-    20009: "childer_p3",
-    20010: "disciple_axe_shield",
-    20011: "disciple_alpha_axe_shield",
-    20012: "disciple_emissary_bal",
-    20013: "blighted_werewolf",
-    20014: "armored_ogre",
-    20015: "the_architect",
-    20016: "the_mother",
-    20017: "the_mother_tentacle",
-    20018: "the_mother_cinematics",
-    20019: "dragon_b",
-    20020: "wild_sylvan_charred",
-    20021: "disciple_heretic_greatsword",
-    20100: "cinem_disciple_body_top",
-    20101: "cinem_disciple_body_bottom",
-    20200: "corpse_devouring_putrid",
-    20201: "corpse_enraged_ravenous",
-    20202: "corpse_shambling_desiccated",
-    20203: "skeleton_normal_frenzied",
-    20204: "skeleton_fanged_ancient",
-    20205: "skeleton_shambling_mangled",
+# --awakening sweeps them, in a game that is running Awakening. Each row's label
+# is the appearance table's own, as the game answered it of the creature spawned
+# (the sweep of 2026-10-09 in the Silverite Mine: issue 84).
+AWAKENING: dict[int, tuple[str, str]] = {
+    20002: ("demon_pride_b", "(GXA) Pride Demon B"),
+    20003: ("shade_b", "(GXA) Shade B"),
+    20004: ("high_dragon_lit", "(GXA) Lightning Dragon Spirit"),
+    20006: ("giant_golem_fir", "(GXA) Giant Golem, Fire"),
+    20007: ("childer_p1", "(GXA) Childer Grub"),
+    20008: ("childer_p2", "(GXA) Childer Hatchling"),
+    20009: ("childer_p3", "(GXA) Childer Adult"),
+    20010: ("disciple_axe_shield", "(GXA) Disciple - Normal"),
+    20011: ("disciple_alpha_axe_shield", "(GXA) Disciple - Alpha"),
+    20012: ("disciple_emissary_bal", "(GXA) Disciple - Emissary"),
+    20013: ("blighted_werewolf", "(GXA) Blighted Werewolf"),
+    20014: ("armored_ogre", "(GXA) Armored Ogre"),
+    20015: ("the_architect", "(GXA) The Architect"),
+    20016: ("the_mother", "(GXA) The Mother"),
+    20017: ("the_mother_tentacle", "(GXA) The Mother - Tentacle"),
+    20018: ("the_mother_cinematics", "(GXA) The Mother [cinematics]"),
+    20019: ("dragon_b", "(GXA) Dragon B"),
+    20020: ("wild_sylvan_charred", "(GXA) Wild Sylvan, Charred"),
+    20021: ("disciple_heretic_greatsword", "(GXA) Heretic Disciple - Normal"),
+    20100: ("cinem_disciple_body_top", "(GXA) Disciple Body - Top"),
+    20101: ("cinem_disciple_body_bottom", "(GXA) Disciple Body - Bottom"),
+    20200: ("corpse_devouring_putrid", "(GXA) Corpse, Putrid Devouring"),
+    20201: ("corpse_enraged_ravenous", "(GXA) Corpse, Ravenous Enraged"),
+    20202: ("corpse_shambling_desiccated", "(GXA) Corpse, Desiccated Shambling"),
+    20203: ("skeleton_normal_frenzied", "(GXA) Skeleton, Frenzied Devouring"),
+    20204: ("skeleton_fanged_ancient", "(GXA) Skeleton, Ancient Fanged"),
+    20205: ("skeleton_shambling_mangled", "(GXA) Skeleton, Mangled Shambling"),
 }
 
 # The other add-ins the Ultimate Edition installs that have creatures of
@@ -295,7 +297,9 @@ ADDONS: dict[str, tuple[str, str, str]] = {
 # is waited for much longer, since a model can be late: the werewolf (22)
 # had no head node for the 4.5 seconds one sweep gave it, and rendered at the
 # first ask in the sweeps before and after.
-HEADLESS = frozenset({5, 33, 62, 73, 76, 77, 78, 81, 85, 86, 87})
+# And Awakening's 20017, the Mother's tentacle, as the broodmother's (73): none
+# in 16 s, 2026-10-09.
+HEADLESS = frozenset({5, 33, 62, 73, 76, 77, 78, 81, 85, 86, 87, 20017})
 
 
 def erf_names(path: Path) -> list[str]:
@@ -461,7 +465,7 @@ def template_of(row: int) -> tuple[str, str, str] | None:
     if row in TEMPLATES:
         return TEMPLATES[row]
     if row in AWAKENING:
-        return (AWAKENING[row], "", "awakening")
+        return (*AWAKENING[row], "awakening")
     return None
 
 
@@ -995,7 +999,8 @@ def listing() -> str:
         for row, (template, label, source) in TEMPLATES.items()
     ]
     lines += [
-        f"{row:>5}  {template:<28} awakening" for row, template in AWAKENING.items()
+        f"{row:>5}  {template:<28} awakening {label}"
+        for row, (template, label) in AWAKENING.items()
     ]
     lines.append(
         f"{len(TEMPLATES)} rows of the campaign's and {len(AWAKENING)} of Awakening's; "

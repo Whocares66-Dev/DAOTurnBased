@@ -323,6 +323,60 @@ inline constexpr std::array kPortraitTable{
                  "by eye at the camp, 2026-10-04, from its root: its face; seen as it is")),
     Row(89, "89 Archdemon", 6.0f, 35.0f, 0.0f, -1.2f, -1.45f,
         "by eye at the camp, 2026-10-04: the wounded archdemon's row, the same body; seen as it is"),
+    // Awakening's own appearances (its apr_gxa, rows 20002 on), looked at in
+    // the Silverite Mine's last room, 2026-10-09 (issue 84: the user, of a
+    // Dragon Thrall's card, "dragon thrall portrait looks off", and "we should
+    // inspect portraits for awakenings creatures as we did origins"). Until
+    // then each had a default, which frames by the creature's extent as it
+    // stands: a thrall was pictured as it flew in, measured 4.8 to 17 m from
+    // feet to head where its body is 2.4, and its card was its belly from
+    // 4.6 m. Most are a body of the main campaign's in other colours, and its
+    // row frames them, tried and seen; the Children are new.
+    Row(20002, "20002 (GXA) Pride Demon B", 2.4f, 35.0f, 0.0f, 0.6f, -0.25f,
+        "by eye in the Silverite Mine, 2026-10-09: its face and eyes, the pride demon's row (72), the same body; "
+        "seen as it is"),
+    Row(20003, "20003 (GXA) Shade B", 1.85f, 35.0f, 0.0f, 0.23f, -0.29f,
+        "by eye in the Silverite Mine, 2026-10-09: its head and the arch of its back, the shade's row (31) by its "
+        "size, 1.63 m for 1.41; a search of asides -0.12 to 0.58 and ups -0.64 to 0.06 found no better; seen as it "
+        "is"),
+    Row(20004, "20004 (GXA) Lightning Dragon Spirit", 6.0f, 35.0f, 0.0f, -1.7f, -0.8f,
+        "by eye in the Silverite Mine, 2026-10-09: its head in profile, pale as the spirit is, the high dragon's "
+        "row (66), the same body; seen as it is"),
+    Row(20006, "20006 (GXA) Giant Golem, Fire", 3.5f, 23.5f, 0.0f, 0.55f, -0.1f,
+        "by eye in the Silverite Mine, 2026-10-09: its head in the hollow between its shoulders, over the runes "
+        "of its collar, at a person's turn: at 35 degrees a shoulder hides it (searches of asides -0.2 to 1.26 "
+        "and ups -0.95 to 0.65 there were plates and runes); from a search of asides -0.25 to 0.55 and ups -0.5 "
+        "to 0.3; seen as it is"),
+    Row(20007, "20007 (GXA) Childer Grub", 1.5f, 35.0f, 0.0f, 0.3f, -1.5f,
+        "by eye in the Silverite Mine, 2026-10-09: its face in profile; it lies a metre and a half under what "
+        "the engine aims at, nothing of it in the picture until looked for from 3 m; from a search of asides 0 "
+        "to 0.3 and ups -1.65 to -1.35; seen as it is"),
+    Row(20008, "20008 (GXA) Childer Hatchling", 1.5f, 35.0f, -7.5f, 0.2f, -0.1f,
+        "by eye in the Silverite Mine, 2026-10-09: its face in profile (a person's row was a close-up of its "
+        "skin); from a search of asides -0.4 to 0.4 and ups -0.4 to 0.4, then between the two best; seen as it "
+        "is"),
+    Row(20009, "20009 (GXA) Childer Adult", 1.5f, 35.0f, -7.5f, 0.2f, -0.05f,
+        "by eye in the Silverite Mine, 2026-10-09: its face and jaws in profile under its legs (a person's row "
+        "was a close-up of its skin); from a search of asides -0.4 to 0.4 and ups -0.4 to 0.4, then between the "
+        "two best; seen as it is"),
+    Row(20014, "20014 (GXA) Armored Ogre", 2.8f, 23.5f, -7.5f, 0.28f, -0.17f,
+        "by eye in the Silverite Mine, 2026-10-09: its helm, horns and jaw, the ogre's row (47) by its size, "
+        "3.1 m for 2.74; seen as it is"),
+    Row(20015, "20015 (GXA) The Architect", 1.1f, 23.5f, -7.5f, 0.0f, 0.15f,
+        "by eye in the Silverite Mine, 2026-10-09: his face and crown whole over his chest, at a person's pitch "
+        "and rotation; at 1 m and 0.05 up the crown was cut; seen as it is"),
+    Row(20016, "20016 (GXA) The Mother", 1.6f, 23.5f, -7.5f, 0.15f, -0.05f,
+        "by eye in the Silverite Mine, 2026-10-09: her face, at a person's pitch and rotation; from a search of "
+        "asides 0 to 0.6 and ups -0.65 to -0.05, then between the two best; seen as it is"),
+    FromRoot(Row(20017, "20017 (GXA) The Mother - Tentacle", 2.8f, 35.0f, 0.0f, -0.3f, 3.4f,
+                 "by eye in the Silverite Mine, 2026-10-09, from its root: its length, the broodmother's "
+                 "tentacle's row (73); it has no head node; seen as it is")),
+    Row(20019, "20019 (GXA) Dragon B", 1.5f, 35.0f, 0.0f, -0.78f, 1.05f,
+        "by eye in the Silverite Mine, 2026-10-09: its head and frill in profile, the dragon's row (4), the same "
+        "body at 2.41 m; seen as it is"),
+    Row(20020, "20020 (GXA) Wild Sylvan, Charred", 4.0f, 35.0f, 0.0f, -0.5f, 0.0f,
+        "by eye in the Silverite Mine, 2026-10-09: its trunk and boughs, the wild sylvan's row (65), with no face "
+        "found on it either; seen as it is"),
     DefaultFor(BodyKind::OnAllFours, "a body on all fours", 0.6f, 0.0f, 0.0f, 0.0f, 0.0f,
                "straight on, from 0.6 of its extent: not yet looked at"),
     DefaultFor(BodyKind::Upright, "an upright body that is not a person's", 0.6f, 0.0f, 0.0f, 0.0f, 0.0f,
