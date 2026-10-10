@@ -1164,7 +1164,9 @@ def in_sight(who: str, target: str) -> bool:
 # off, and the rogue, on her blades, goes to its back, where a rogue's blows
 # are backstabs.
 BIG = 400.0
-TANK = "0x1b88"
+# Who holds a big one's eye: Alistair in the main game, by his id there. Another
+# party (Awakening's has no Alistair) names its own, or has none.
+TANK = os.environ.get("PLAYTHROUGH_TANK", "0x1b88")
 STAND_OFF = 14.0
 
 
@@ -1237,6 +1239,11 @@ def place_for_boss(who: str, name: str, boss: dict, before: dict, notes: dict) -
                 return True
         return False
     tank = tool("inspect", {"kind": "creature", "id": TANK})
+    # No such creature in this party: nobody holds the boss, so it has no back to
+    # go to (in Awakening the question was refused 43 times in twenty minutes and
+    # the rogue sent "behind" the boss as seen from the map's origin, 2026-10-09).
+    if tank.get("error"):
+        return False
     theirs = spot(tank)
     gap = math.dist(theirs[:2], its[:2])
     if tank.get("dead") or gap < 0.5:
