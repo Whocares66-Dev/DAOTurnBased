@@ -762,7 +762,7 @@ namespace
 {
 // Which rule an area goes by, the rooms the party has seen or sight, said
 // when it changes, at info: it is read out of a player's own log. Outdoors
-// (the Dalish forest, 2026-10-01, by Eluvian's inspect) every creature's
+// (the Dalish forest, 2026-10-01, by Eluvian's `creatures`) every creature's
 // room, the party's own too, reads in view and not loaded, so sight is the
 // rule there. `was`: what the last scan went by.
 void SayRule(std::optional<bool> &was, bool byRooms, const std::optional<dao::world::Room> &ours, ObjectId stands)

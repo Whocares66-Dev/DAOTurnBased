@@ -4,13 +4,13 @@ Through Eluvian, the development bench's MCP server (the sibling checkout
 ..\\DAOEluvianMCP): its bridge launches the game into a save, and its tools
 are called over HTTP in the game. The party travels through the Elven Ruins
 of the Dalish origin, and at every fight that begins the turn order
-(turnbased.state) is set beside where each creature stands (Eluvian's
-`inspect creatures`: its room, whether the party has seen it, whom it
+(turnbased_state) is set beside where each creature stands (Eluvian's
+`creatures`: its room, whether the party has seen it, whom it
 attacks), which is dev/DESIGN.md's "Who is in the fight": a creature in the
 order has a room the party is shown or a target in the party, and a hostile
 in combat left out of it is in a room never seen. On up to two enemy turns
 the camera's creature is asked for too: its room is never one never seen.
-Each fight is ended with Eluvian's `stage kill`, a few seconds in.
+Each fight is ended with Eluvian's `stage_kill`, a few seconds in.
 
 eluvian-agent's script, taken into this tree at its word (2026-10-01): it
 reads this mod's state and calls this mod's tool, so it is the mod's. Its
@@ -50,7 +50,7 @@ MIRROR_DOOR = "0x1f2"
 def judge(order: list[str], creatures: list[dict]) -> dict:
     """The order against the creatures: who is in it wrongly, and who is left out wrongly.
 
-    `order` is the ids of turnbased.state's order; `creatures` are Eluvian's, each with
+    `order` is the ids of turnbased_state's order; `creatures` are Eluvian's, each with
     id, name, side, combatState, room {number, seen, shown} and attackTarget {id}.
     """
     party = {c["id"] for c in creatures if c["side"] == "party"}
@@ -197,15 +197,15 @@ class Sweep:
         """One fight: the order against the rooms, and the camera on up to two enemy turns."""
         tool = self.game.tool
         time.sleep(1.5)
-        state = tool("inspect", {"kind": "turnbased.state"})
+        state = tool("turnbased_state")
         order = [o["id"] for o in state.get("order", [])]
-        creatures = tool(
-            "inspect", {"kind": "creatures", "radius": 70, "includeDead": False}
-        ).get("creatures", [])
+        creatures = tool("creatures", {"radius": 70, "includeDead": False}).get(
+            "creatures", []
+        )
         by_id = {c["id"]: c for c in creatures}
         party = {c["id"] for c in creatures if c["side"] == "party"}
         found = judge(order, creatures)
-        area = (tool("inspect", {"kind": "game"}).get("area") or {}).get("name")
+        area = (tool("state").get("area") or {}).get("name")
         line = (
             f"FIGHT {label} ({area}): active {state.get('active')}, order {len(order)} "
             f"({len(found['enemies'])} enemies: {[by_id.get(i, {}).get('name', i) for i in found['enemies']]}), "
@@ -216,7 +216,7 @@ class Sweep:
         print(line)
         cameras = []
         for _ in range(2):
-            state = tool("inspect", {"kind": "turnbased.state"})
+            state = tool("turnbased_state")
             if not state.get("active"):
                 break
             cursor = tool("health")["cursor"]
@@ -243,10 +243,9 @@ class Sweep:
             followed = (tool("camera", {}).get("following") or {}).get("id")
             seen = None
             if followed:
-                seen = (
-                    tool("inspect", {"kind": "creature", "id": followed}).get("room")
-                    or {}
-                ).get("seen")
+                seen = (tool("creature", {"id": followed}).get("room") or {}).get(
+                    "seen"
+                )
             cameras.append(
                 {
                     "turn": who.get("name"),
@@ -273,25 +272,19 @@ class Sweep:
             if health.get("mode") != "combat":
                 return
             if health.get("paused"):
-                tool("game", {"action": "unpause"})
+                tool("pause", {"paused": False})
             hostiles = tool(
-                "inspect",
-                {
-                    "kind": "creatures",
-                    "side": "hostile",
-                    "radius": 70,
-                    "includeDead": False,
-                },
+                "creatures", {"side": "hostile", "radius": 70, "includeDead": False}
             )
             for c in hostiles.get("creatures", []):
                 if c["combatState"]:
-                    tool("stage", {"action": "kill", "id": c["id"]})
+                    tool("stage_kill", {"id": c["id"]})
             time.sleep(1.5)
 
     def talk(self) -> None:
         tool = self.game.tool
         for _ in range(60):
-            dialogue = tool("inspect", {"kind": "dialogue"})
+            dialogue = tool("dialogue", {"action": "look"})
             if not dialogue.get("active"):
                 return
             replies = dialogue.get("replies", [])
@@ -317,7 +310,7 @@ class Sweep:
                 self.survey(f"{label} #{len(self.fights) + 1}")
                 self.clear_fight()
             elif reason == "the game is paused":
-                tool("game", {"action": "unpause"})
+                tool("pause", {"paused": False})
             elif "conversation" in reason:
                 self.talk()
             else:

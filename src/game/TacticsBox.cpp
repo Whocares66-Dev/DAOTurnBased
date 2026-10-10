@@ -21,7 +21,7 @@ namespace
 {
 
 // The tactics screen as DAOLib's dao::gui names it (seen in play 2026-10-05
-// through Eluvian: `inspect gui` says fullScreen "Tactics", its movie
+// through Eluvian: `gui` says fullScreen "Tactics", its movie
 // "Tactics", on layer 3).
 constexpr std::wstring_view kScreen = L"Tactics";
 // The clip of that screen's root the mod's movie is loaded into, and the

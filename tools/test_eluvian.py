@@ -1,10 +1,10 @@
 """The descriptors the plugin registers with Eluvian are JSON with a description.
 
 src/plugin/Plugin.cpp hands Eluvian (the development bench's MCP server) a
-JSON descriptor for each tool and inspect kind, as C++ raw strings. One once
-had unescaped quotes inside its description, and Eluvian refused it, which
-only eluvian.log said (2026-09-30). This reads every one back out of the
-source and parses it, so a broken one fails here rather than in play.
+JSON descriptor for each tool, as C++ raw strings. One once had unescaped
+quotes inside its description, and Eluvian refused it, which only eluvian.log
+said (2026-09-30). This reads every one back out of the source and parses it,
+so a broken one fails here rather than in play.
 """
 
 import json
@@ -16,7 +16,7 @@ PLUGIN = Path(__file__).resolve().parent.parent / "src" / "plugin" / "Plugin.cpp
 
 # A registration: the name, then one or more adjacent raw strings.
 REGISTRATION = re.compile(
-    r'Register(?:Tool|InspectKind)\(\s*"(?P<name>[^"]+)",(?P<parts>(?:\s*R"\(.*?\)")+)',
+    r'RegisterTool\(\s*"(?P<name>[^"]+)",(?P<parts>(?:\s*R"\(.*?\)")+)',
     re.DOTALL,
 )
 PART = re.compile(r'R"\((.*?)\)"', re.DOTALL)
@@ -36,13 +36,13 @@ class Descriptors(unittest.TestCase):
         self.assertEqual(
             names,
             {
-                "turnbased.state",
                 "turnbased_auto",
                 "turnbased_delay",
                 "turnbased_end_turn",
                 "turnbased_portrait",
                 "turnbased_seed",
                 "turnbased_settings",
+                "turnbased_state",
             },
         )
 
@@ -53,12 +53,23 @@ class Descriptors(unittest.TestCase):
                 self.assertIsInstance(parsed.get("description"), str)
                 self.assertTrue(parsed["description"])
 
+    def test_each_says_its_own_arguments(self) -> None:
+        # Since Eluvian's issue 110 a tool's schema is its own, and Eluvian
+        # says of a call which arguments its tool does not have.
+        for name, text in descriptors().items():
+            with self.subTest(name=name):
+                schema = json.loads(text).get("inputSchema")
+                self.assertIsInstance(schema, dict)
+                self.assertEqual(schema.get("type"), "object")
+                self.assertIsInstance(schema.get("properties"), dict)
+        state = json.loads(descriptors()["turnbased_state"])["inputSchema"]
+        self.assertEqual(state["properties"], {})
+
     def test_tool_names_reach_a_model(self) -> None:
-        # Letters, digits, '_' and '-' only (EluvianAPI.h); kinds may have dots.
+        # Letters, digits, '_' and '-' only (EluvianAPI.h).
         for name in descriptors():
-            if not name.startswith("turnbased."):
-                with self.subTest(name=name):
-                    self.assertRegex(name, r"^[A-Za-z0-9_-]+$")
+            with self.subTest(name=name):
+                self.assertRegex(name, r"^[A-Za-z0-9_-]+$")
 
 
 if __name__ == "__main__":

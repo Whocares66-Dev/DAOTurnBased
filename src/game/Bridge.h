@@ -63,7 +63,7 @@ class Bridge
     void LookAt(ObjectId id);
 
     // Whether the game took the last speed set (DAOLib's SetSpeed says);
-    // nothing before any was set. For a test server's turnbased.state.
+    // nothing before any was set. For a test server's turnbased_state.
     std::optional<bool> SpeedTook() const
     {
         return speedTook_;

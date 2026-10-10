@@ -242,9 +242,7 @@ class Addons(unittest.TestCase):
         self.assertEqual(game.named().count("kill"), 3)
         self.assertEqual(sweep.pictured, {30001: "gib_harvester", 15: "gib_adventurer"})
         spawned = [
-            call[1]["template"]
-            for call in game.calls
-            if call[1].get("action") == "spawn"
+            call[1]["template"] for call in game.calls if call[0] == "stage_spawn"
         ]
         self.assertEqual(
             spawned, ["gib_harvester", "gib_adventurer", "gib_harvester_b"]
@@ -529,7 +527,7 @@ class Game:
     ) -> dict:
         arguments = arguments or {}
         self.calls.append((name, arguments))
-        if name == "stage" and arguments["action"] == "spawn":
+        if name == "stage_spawn":
             return self.spawn
         if name == "turnbased_portrait" and arguments.get("show"):
             return (
@@ -545,8 +543,8 @@ class Game:
         """The calls in order, each as a word or two."""
         out = []
         for name, arguments in self.calls:
-            if name == "stage":
-                out.append(arguments["action"])
+            if name.startswith("stage_"):
+                out.append(name.removeprefix("stage_"))
             elif name == "turnbased_portrait":
                 out.append("show" if arguments.get("show") else "take down")
             else:
@@ -579,22 +577,19 @@ class Loop(unittest.TestCase):
             game.named(), ["spawn", "group", "show", "screenshot", "take down", "kill"]
         )
         self.assertEqual(
-            game.calls[0][1],
-            {
-                "action": "spawn",
-                "template": "drake",
-                "point": {"x": 1.0, "y": 2.0, "z": 3.0},
-            },
+            game.calls[0],
+            (
+                "stage_spawn",
+                {"template": "drake", "point": {"x": 1.0, "y": 2.0, "z": 3.0}},
+            ),
         )
-        self.assertEqual(
-            game.calls[1][1], {"action": "group", "id": "0x5001", "group": 2}
-        )
+        self.assertEqual(game.calls[1], ("stage_group", {"id": "0x5001", "group": 2}))
         self.assertEqual(
             game.calls[2][1], {"id": "0x5001", "show": True, "seconds": 30}
         )
         self.assertEqual(game.calls[3][1], {"source": "game", "image": False})
         self.assertEqual(game.calls[4][1], {"id": "0x5001", "show": False})
-        self.assertEqual(game.calls[5][1], {"action": "kill", "id": "0x5001"})
+        self.assertEqual(game.calls[5], ("stage_kill", {"id": "0x5001"}))
         self.assertEqual(record["row"], 80)
         self.assertEqual(record["template"], "drake")
         self.assertEqual(record["frame"], "frame.jpg")
@@ -700,7 +695,9 @@ class Loop(unittest.TestCase):
         self,
     ) -> None:
         game = Game()
-        game.spawn = {"error": 'stage: no creature from template "ntb210cr_hermit"'}
+        game.spawn = {
+            "error": 'stage_spawn: no creature from template "ntb210cr_hermit"'
+        }
         sweep = sweep_of(game)
         sweep.run([60, 1])
         # Nothing to make friendly or kill; row 1 has no template. After each

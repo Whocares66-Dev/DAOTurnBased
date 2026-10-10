@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// Eluvian's interface for other DAOLib plugins: register tools and inspect
-// kinds an agent can call, and emit events it can wait for. This header
+// Eluvian's interface for other DAOLib plugins: register tools an agent can
+// call, and emit and describe events it can wait for. This header
 // alone is MIT, so a plugin under any licence may include it; Eluvian itself
 // is GPLv3. Plain C across the boundary: JSON as strings, handlers as
 // function pointers with a context, nothing with a destructor.
@@ -10,7 +10,7 @@
 // may load after yours. Look it up on your first frame (dao::OnFrame), not
 // in DAOLib_Load:
 //
-//   if (const EluvianInterface1 *eluvian = EluvianFind()) {
+//   if (const EluvianInterface *eluvian = EluvianFind()) {
 //       eluvian->RegisterTool("mymod_reset", R"({"description": "Put mymod back as it starts."})",
 //                             &EndTurn, &state, 0);
 //       eluvian->EmitEvent("mymod.thing_happened", R"({"id": "0x82", "detail": "what it was"})");
@@ -22,22 +22,30 @@
 // error with a sentence the agent reads (what was wrong, what to do).
 //
 // Names: a tool's is what the agent calls it by, and only letters, digits,
-// '_' and '-' reach a model (prefix yours: "mymod_reset"). An inspect
-// kind and an event topic may use dots ("mymod.state",
-// "mymod.thing_happened"); prefix them too.
+// '_' and '-' reach a model (prefix yours: "mymod_reset"). An event topic
+// may use dots ("mymod.thing_happened"); prefix it too.
+//
+// A tool is one concept: its own arguments, those it needs required in its
+// schema. A plugin's state is a read-only tool of its own ("mymod_state",
+// ELUVIAN_READ_ONLY), not a kind of another's (#110).
+//
+// Nothing is released, so nothing is kept for an older build: a plugin is
+// built against the header of the Eluvian it runs with, and the two are
+// deployed together. ELUVIAN_INTERFACE_VERSION changes with the
+// interface's layout, so a mismatched pair refuse each other instead of a
+// plugin calling through the wrong table.
 #pragma once
 
-// (The turn-based mod's copy: these two lines and the one at the file's end
-// are its own. The header is C's as much as C++'s, and its typedefs stay.)
-// NOLINTBEGIN(modernize-use-using)
-
-#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+
+    // A C header, included by plugins in C and C++ alike: its typedefs
+    // stay typedefs, `using` being C++ only (#77).
+    // NOLINTBEGIN(modernize-use-using)
 
     typedef struct EluvianReply EluvianReply;
     struct EluvianReply
@@ -49,7 +57,7 @@ extern "C"
 
     typedef void (*EluvianToolFn)(void *context, const char *argsJson, EluvianReply *reply);
 
-    // Flags for RegisterTool, RegisterInspectKind and RegisterToolExtension.
+    // Flags for RegisterTool.
     enum
     {
         // Call the handler on the HTTP listener's thread, not the frame's: for
@@ -59,50 +67,33 @@ extern "C"
         ELUVIAN_READ_ONLY = 2,
     };
 
-    typedef struct EluvianInterface1
+    typedef struct EluvianInterface
     {
-        uint32_t size;  // sizeof(EluvianInterface1) as the host built it; later versions only append
-        uint32_t build; // MAJOR * 10000 + MINOR * 100 + PATCH
-
         // descriptorJson: {"description": "...", "inputSchema": {...}}; the
         // schema may be left out. Returns 1 if added, 0 if it replaced one of
         // the same name, -1 if refused (the reason is in eluvian.log).
         int (*RegisterTool)(const char *name, const char *descriptorJson, EluvianToolFn handler, void *context,
                             uint32_t flags);
-        // A kind of the `inspect` tool: `inspect kind="mymod.state"`.
-        // descriptorJson: {"description": "..."}. Returns as RegisterTool.
-        int (*RegisterInspectKind)(const char *kind, const char *descriptorJson, EluvianToolFn handler, void *context,
-                                   uint32_t flags);
         // Publishes an event: payloadJson an object, its creatures as ids
         // ("0x7d9"). Any thread.
         void (*EmitEvent)(const char *topic, const char *payloadJson);
-
-        // From build 200 (0.2.0); a plugin built against this header checks
-        // ELUVIAN_HAS(eluvian, member) before calling these, since an older
-        // Eluvian's interface ends before them.
-
-        // A choice of one of Eluvian's tools that is made of choices:
-        // "inspect" (chosen by `kind`: `inspect kind="mymod.state"`) and
-        // "stage" (chosen by `action`: `stage action="mymod.arena"`, a test's
-        // set-up only the mod knows). descriptorJson: {"description": "..."};
-        // the handler gets the tool's whole arguments. Returns as RegisterTool.
-        int (*RegisterToolExtension)(const char *baseTool, const char *key, const char *descriptorJson,
-                                     EluvianToolFn handler, void *context, uint32_t flags);
         // Says what an event topic means, so an agent can list the topics
         // there are (`events describe=true`) before waiting for one.
         // descriptorJson: {"description": "...", "fields": {"id": "the
         // creature", ...}}. Returns 1 if new, 0 if it replaced, -1 if refused.
         int (*DescribeEvent)(const char *topic, const char *descriptorJson);
-    } EluvianInterface1;
+    } EluvianInterface;
 
-    typedef const EluvianInterface1 *(*EluvianGetInterfaceFn)(uint32_t version);
+    typedef const EluvianInterface *(*EluvianGetInterfaceFn)(uint32_t version);
+
+    // NOLINTEND(modernize-use-using)
 
 #define ELUVIAN_GET_INTERFACE "Eluvian_GetInterface"
 
-// Whether the interface a plugin got has `member`: those added after the
-// plugin's Eluvian was built are past the end of an older one.
-#define ELUVIAN_HAS(eluvian, member)                                                                                   \
-    ((eluvian)->size >= offsetof(EluvianInterface1, member) + sizeof((eluvian)->member))
+// The interface's layout: Eluvian_GetInterface answers only a plugin built
+// against the same: 2 when #110 dropped inspect kinds and tool extensions, 3
+// when it dropped the size and build kept for older builds.
+#define ELUVIAN_INTERFACE_VERSION 3
 
 #ifdef __cplusplus
 }
@@ -117,7 +108,7 @@ extern "C"
 // Eluvian's interface if eluvian.dll is loaded, else null: Eluvian is a
 // development bench, absent from a player's install, and a plugin carries on
 // without it.
-inline const EluvianInterface1 *EluvianFind()
+inline const EluvianInterface *EluvianFind()
 {
     const HMODULE eluvian = GetModuleHandleW(L"eluvian.dll");
     if (eluvian == nullptr)
@@ -125,7 +116,6 @@ inline const EluvianInterface1 *EluvianFind()
         return nullptr;
     }
     const auto get = reinterpret_cast<EluvianGetInterfaceFn>(GetProcAddress(eluvian, ELUVIAN_GET_INTERFACE));
-    return get != nullptr ? get(1) : nullptr;
+    return get != nullptr ? get(ELUVIAN_INTERFACE_VERSION) : nullptr;
 }
 #endif
-// NOLINTEND(modernize-use-using)

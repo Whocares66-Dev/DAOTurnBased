@@ -7,7 +7,7 @@ the game into a save, and its tools are called over HTTP in the game.
 What it plays is a scenario by name, each a small script over the same
 helpers: the player's orders go through Eluvian's `order` (the engine's own
 click functions, so they pass the gate as the player's), the bar is read
-from `inspect turnbased.state` (`time_ms`, `time_left_ms`), and the turns
+from `turnbased_state` (`time_ms`, `time_left_ms`), and the turns
 from the mod's events. It prints a transcript: what each order cost, what
 each turn rolled over, what was kept for the next turn; and copies
 turnbased.log beside the build for the write-up (dev/PLAYTEST-*.md).
@@ -109,7 +109,7 @@ class Game:
             return {"error": str(error)}
 
     def state(self) -> dict:
-        answer = self.tool("inspect", {"kind": "turnbased.state"})
+        answer = self.tool("turnbased_state")
         return answer.get("state", answer)
 
     def setting(self, section: str, key: str, value: str) -> None:
@@ -121,9 +121,7 @@ class Game:
         )
 
     def hostiles(self, near: str = HERO) -> list[dict]:
-        answer = self.tool(
-            "inspect", {"kind": "creatures", "side": "hostile", "near": near}
-        )
+        answer = self.tool("creatures", {"side": "hostile", "near": near})
         return [c for c in answer.get("creatures", []) if not c.get("dead")]
 
     def events(self, since: int) -> tuple[list[dict], int]:
@@ -262,11 +260,11 @@ def fight(game: Game, rounds: int, cursor: int) -> int:
 
 
 def max_health(game: Game, who: str) -> None:
-    creature = game.tool("inspect", {"kind": "creature", "id": who})
+    creature = game.tool("creature", {"id": who})
     creature = creature.get("creature", creature)
     most = (creature.get("health") or {}).get("max")
     if most:
-        game.tool("stage", {"action": "health", "id": who, "value": most})
+        game.tool("stage_health", {"id": who, "value": most})
 
 
 def end_fight(game: Game) -> None:
@@ -274,7 +272,7 @@ def end_fight(game: Game) -> None:
         if game.tool("health").get("mode") != "combat":
             return
         for c in game.hostiles():
-            game.tool("stage", {"action": "kill", "id": c["id"]})
+            game.tool("stage_kill", {"id": c["id"]})
         time.sleep(1.5)
 
 
@@ -332,8 +330,8 @@ def scenario_stun(game: Game) -> None:
         f"{stamp()} Lyna's turn: stun {victim} for 6 s (a turn lost, and half the next):",
         str(
             game.tool(
-                "stage",
-                {"action": "effect", "id": victim, "effect": "stun", "seconds": 6},
+                "stage_effect",
+                {"action": "apply", "id": victim, "effect": "stun", "seconds": 6},
             )
         )[:160],
     )
@@ -352,8 +350,8 @@ def scenario_stun(game: Game) -> None:
         f"{stamp()} on {current}'s turn: stun Lyna for 2 s:",
         str(
             game.tool(
-                "stage",
-                {"action": "effect", "id": HERO, "effect": "stun", "seconds": 2},
+                "stage_effect",
+                {"action": "apply", "id": HERO, "effect": "stun", "seconds": 2},
             )
         )[:160],
     )
@@ -376,13 +374,12 @@ def scenario_stun(game: Game) -> None:
 def scenario_crowd(game: Game) -> None:
     """Six more spiders round the party: a long fight, for pace and the enemies' turns."""
     cursor = begin_spiders(game)
-    here = game.tool("inspect", {"kind": "creature", "id": HERO})
+    here = game.tool("creature", {"id": HERO})
     here = here.get("creature", here).get("position", {"x": 5, "y": 0, "z": 0})
     for dx, dy in ((4, 0), (-4, 0), (0, 4), (0, -4), (3, 3), (-3, -3)):
         spawned = game.tool(
-            "stage",
+            "stage_spawn",
             {
-                "action": "spawn",
                 "template": SPIDER,
                 "point": [here["x"] + dx, here["y"] + dy, here["z"]],
             },
@@ -442,9 +439,7 @@ def scenario_bar(game: Game) -> None:
     cursor = begin_spiders(game)
     # More spiders, so the fight outlasts the scenario.
     for dx, dy in ((6, 3), (6, -3), (-6, 3)):
-        game.tool(
-            "stage", {"action": "spawn", "template": SPIDER, "point": [5 + dx, dy, 0]}
-        )
+        game.tool("stage_spawn", {"template": SPIDER, "point": [5 + dx, dy, 0]})
 
     state = wait_turn(game, HERO)
     if state is None:
@@ -480,7 +475,7 @@ def scenario_bar(game: Game) -> None:
     if kept:
         print(
             f"{stamp()} kill:",
-            str(game.tool("stage", {"action": "kill", "id": kept}))[:160],
+            str(game.tool("stage_kill", {"id": kept}))[:160],
         )
 
     state = wait_turn(game, HERO)
@@ -490,7 +485,7 @@ def scenario_bar(game: Game) -> None:
     print(
         f"{stamp()} turn 3, the kept attack's target gone: {left(state)}; last refusal {state.get('last_refusal')!r}"
     )
-    here = game.tool("inspect", {"kind": "creature", "id": HERO})
+    here = game.tool("creature", {"id": HERO})
     here = here.get("creature", here).get("position", {"x": 5, "y": 0, "z": 0})
     far = game.tool(
         "order",
@@ -513,7 +508,7 @@ def scenario_bar(game: Game) -> None:
 
 def scenario_abilities(game: Game) -> None:
     """Each of Lyna's talents once: that it passes the gate, and what it costs."""
-    listed = game.tool("inspect", {"kind": "abilities", "id": HERO})
+    listed = game.tool("abilities", {"id": HERO})
     abilities = listed.get("talents", []) + listed.get("spells", [])
     print(
         f"{stamp()} Lyna's talents and spells ({listed.get('count')} abilities in all):"
@@ -522,9 +517,7 @@ def scenario_abilities(game: Game) -> None:
         print("   ", a)
     cursor = begin_spiders(game)
     for dx, dy in ((6, 3), (6, -3), (-6, 3), (-6, -3)):
-        game.tool(
-            "stage", {"action": "spawn", "template": SPIDER, "point": [5 + dx, dy, 0]}
-        )
+        game.tool("stage_spawn", {"template": SPIDER, "point": [5 + dx, dy, 0]})
     usable = [a for a in abilities if a.get("id")]
     for a in usable[:8]:
         state = wait_turn(game, HERO)
@@ -561,7 +554,7 @@ def party_health(game: Game) -> dict[str, float]:
     """Each party member's share of health left (0 when down)."""
     out = {}
     for who, name in ((HERO, "Lyna"), (TAMLEN, "Tamlen")):
-        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = game.tool("creature", {"id": who})
         creature = creature.get("creature", creature)
         health = creature.get("health") or {}
         dead = creature.get("dead")
@@ -580,9 +573,7 @@ def scenario_duel(game: Game) -> None:
     """
     cursor = begin_spiders(game, wait=not game.off)
     for template, dx, dy in DUEL_EXTRA:
-        game.tool(
-            "stage", {"action": "spawn", "template": template, "point": [5 + dx, dy, 0]}
-        )
+        game.tool("stage_spawn", {"template": template, "point": [5 + dx, dy, 0]})
     began = time.time()
     lowest = party_health(game)
     rounds = 0
@@ -594,7 +585,7 @@ def scenario_duel(game: Game) -> None:
         if health.get("mode") != "combat":
             break
         if health.get("paused") and not game.state().get("active"):
-            game.tool("game", {"action": "unpause"})
+            game.tool("pause", {"paused": False})
         for name, share in party_health(game).items():
             lowest[name] = min(lowest[name], share)
         state = game.state()
@@ -656,8 +647,8 @@ def scenario_mixed(game: Game) -> None:
         ("ogre_default", 9, -5),
     ):
         spawned = game.tool(
-            "stage",
-            {"action": "spawn", "template": template, "point": [5 + dx, dy, 0]},
+            "stage_spawn",
+            {"template": template, "point": [5 + dx, dy, 0]},
         )
         creature = spawned.get("creature") or {}
         print(
@@ -692,8 +683,8 @@ def scenario_interrupt(game: Game) -> None:
     # Something that hits harder than a weak spider's 7 or 8: her threshold
     # is 16 with Combat Training's first rank.
     spawned = game.tool(
-        "stage",
-        {"action": "spawn", "template": "ogre_default", "point": [9, -2, 0]},
+        "stage_spawn",
+        {"template": "ogre_default", "point": [9, -2, 0]},
     )
     print(
         f"{stamp()} spawn an ogre: {(spawned.get('creature') or {}).get('id')} {spawned.get('error', '')}"
@@ -732,7 +723,7 @@ def scenario_interrupt(game: Game) -> None:
                 game.tool("script", {"command": "AddAbility", "args": [HERO, a["id"]]})
             )[:120],
         )
-    listed = game.tool("inspect", {"kind": "abilities", "id": HERO})
+    listed = game.tool("abilities", {"id": HERO})
     names = {a.get("id"): a.get("name") for a in listed.get("spells", [])}
     for a in spells:
         a["name"] = names.get(a["id"], a.get("name"))
@@ -832,7 +823,7 @@ def point_at(game: Game, where: dict, name: str) -> None:
             break
     time.sleep(0.6)  # the preview follows the cursor at ten a second
     state = game.state()
-    under = game.tool("inspect", {"kind": "cursor"})
+    under = game.tool("cursor")
     print(
         f"{stamp()}   pointer {where}: {str(answer)[:200]}; under it {str(under)[:160]}; "
         f"{left(state)}; can_delay {state.get('can_delay')}"
@@ -841,7 +832,7 @@ def point_at(game: Game, where: dict, name: str) -> None:
 
 
 def position_of(game: Game, who: str) -> list[float]:
-    creature = game.tool("inspect", {"kind": "creature", "id": who})
+    creature = game.tool("creature", {"id": who})
     creature = creature.get("creature", creature)
     at = creature.get("position") or [5.0, 0.0, 0.0]
     if isinstance(at, dict):
@@ -970,7 +961,7 @@ def scenario_stealth(game: Game) -> None:
             )[:100],
         )
     time.sleep(3.0)
-    lyna = game.tool("inspect", {"kind": "creature", "id": HERO})
+    lyna = game.tool("creature", {"id": HERO})
     lyna = lyna.get("creature", lyna)
     print(
         f"{stamp()} Lyna as she stands: at {lyna.get('position')}, effects "
@@ -982,8 +973,8 @@ def scenario_stealth(game: Game) -> None:
     cursor = game.tool("health").get("cursor", 0)
     # Behind her: the hall, and its spiders' trigger, is the other way.
     spawned = game.tool(
-        "stage",
-        {"action": "spawn", "template": SPIDER, "point": [at[0] - 9.0, at[1], at[2]]},
+        "stage_spawn",
+        {"template": SPIDER, "point": [at[0] - 9.0, at[1], at[2]]},
     )
     spider = (spawned.get("creature") or {}).get("id")
     print(f"{stamp()} a spider behind her: {spider} {spawned.get('error', '')}")
@@ -998,7 +989,7 @@ def scenario_stealth(game: Game) -> None:
         )
 
     def health_of(who: str) -> float | None:
-        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = game.tool("creature", {"id": who})
         creature = creature.get("creature", creature)
         return (creature.get("health") or {}).get("current")
 
@@ -1039,12 +1030,10 @@ def scenario_stealth(game: Game) -> None:
                 print(
                     f"{stamp()}   the game's own auto-pause: unpaused, as Space would"
                 )
-                game.tool("game", {"action": "unpause"})
-            lyna = game.tool("inspect", {"kind": "creature", "id": HERO})
+                game.tool("pause", {"paused": False})
+            lyna = game.tool("creature", {"id": HERO})
             lyna = lyna.get("creature", lyna)
-            where = game.tool(
-                "inspect", {"kind": "geometry", "id": HERO, "target": spider}
-            )
+            where = game.tool("geometry", {"id": HERO, "target": spider})
             print(
                 f"{stamp()}   {now:4.1f} s: mode {health_now.get('mode')}, paused {health_now.get('paused')}; "
                 f"Lyna's command {lyna.get('command')}; to the spider {where.get('distance')}; "
@@ -1069,7 +1058,7 @@ def scenario_stealth(game: Game) -> None:
         if game.state().get("active"):
             break
         if game.tool("health").get("paused"):
-            game.tool("game", {"action": "unpause"})
+            game.tool("pause", {"paused": False})
         time.sleep(0.25)
     show_events(game, cursor)
     state = game.state()
@@ -1103,7 +1092,7 @@ def scenario_dot(game: Game) -> None:
     """
     begin_spiders(game)
     spawned = game.tool(
-        "stage", {"action": "spawn", "template": "ogre_default", "point": [9, -2, 0]}
+        "stage_spawn", {"template": "ogre_default", "point": [9, -2, 0]}
     )
     ogre = (spawned.get("creature") or {}).get("id")
     print(f"{stamp()} spawn an ogre: {ogre} {spawned.get('error', '')}")
@@ -1117,7 +1106,7 @@ def scenario_dot(game: Game) -> None:
     )
 
     def health_of(who: str) -> float | None:
-        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = game.tool("creature", {"id": who})
         creature = creature.get("creature", creature)
         return (creature.get("health") or {}).get("current")
 
@@ -1220,15 +1209,12 @@ def scenario_conjure(game: Game) -> None:
     for spell in KEPT_SPELLS:
         game.tool("script", {"command": "AddAbility", "args": [HERO, spell]})
     mana = lambda: (
-        (
-            game.tool("inspect", {"kind": "creature", "id": HERO}).get("creature") or {}
-        ).get("mana")
-        or {}
+        (game.tool("creature", {"id": HERO}).get("creature") or {}).get("mana") or {}
     ).get("current")
 
     def cast(label: str, ability: int, seconds: float = 9.0) -> None:
         if game.tool("health").get("paused"):
-            game.tool("game", {"action": "unpause"})
+            game.tool("pause", {"paused": False})
         max_health(game, HERO)
         targets = game.hostiles(HERO)
         if not targets:
@@ -1252,8 +1238,8 @@ def scenario_conjure(game: Game) -> None:
         began = time.time()
         while time.time() - began < seconds:
             if game.tool("health").get("paused"):
-                game.tool("game", {"action": "unpause"})
-            lyna = game.tool("inspect", {"kind": "creature", "id": HERO})
+                game.tool("pause", {"paused": False})
+            lyna = game.tool("creature", {"id": HERO})
             lyna = lyna.get("creature", lyna)
             print(
                 f"{stamp()}   {time.time() - began:4.1f} s: command {lyna.get('command')}, "
@@ -1262,9 +1248,7 @@ def scenario_conjure(game: Game) -> None:
             time.sleep(0.5)
 
     cast("1. Chain Lightning, spiders only", KEPT_SPELLS[0])
-    spawned = game.tool(
-        "stage", {"action": "spawn", "template": "ogre_default", "point": [6, 1, 0]}
-    )
+    spawned = game.tool("stage_spawn", {"template": "ogre_default", "point": [6, 1, 0]})
     print(
         f"{stamp()} an ogre at her side: {(spawned.get('creature') or {}).get('id')} {spawned.get('error', '')}"
     )
@@ -1272,8 +1256,8 @@ def scenario_conjure(game: Game) -> None:
     # Chain Lightning again, its cooldown taken off: Inferno and the other
     # spells that conjure are aimed at the ground, not at a creature.
     game.tool(
-        "stage",
-        {"action": "cooldown", "id": HERO, "ability": KEPT_SPELLS[0], "seconds": 0},
+        "stage_cooldown",
+        {"id": HERO, "ability": KEPT_SPELLS[0], "seconds": 0},
     )
     cast("2. Chain Lightning, the ogre striking", KEPT_SPELLS[0], seconds=10.0)
     # A talent that is used, not a passive one: Dirty Fighting, given.
@@ -1298,7 +1282,7 @@ def scenario_lands(game: Game) -> None:
     game.tool("script", {"command": "AddAbility", "args": [HERO, KEPT_SPELLS[0]]})
 
     def health_of(who: str) -> float | None:
-        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = game.tool("creature", {"id": who})
         creature = creature.get("creature", creature)
         return (creature.get("health") or {}).get("current")
 
@@ -1449,7 +1433,7 @@ def scenario_inferno(game: Game) -> None:
     if not targets:
         return
     target = min(targets, key=lambda c: c.get("distance", 99.0))
-    spot = game.tool("inspect", {"kind": "creature", "id": target["id"]})
+    spot = game.tool("creature", {"id": target["id"]})
     spot = spot.get("creature", spot).get("position") or {}
     point = [spot.get("x", 0.0), spot.get("y", 0.0), spot.get("z", 0.0)]
     answer = game.tool(
@@ -1459,7 +1443,7 @@ def scenario_inferno(game: Game) -> None:
     spiders = [c["id"] for c in targets]
 
     def health_of(who: str) -> float | None:
-        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = game.tool("creature", {"id": who})
         creature = creature.get("creature", creature)
         return (creature.get("health") or {}).get("current")
 
@@ -1550,7 +1534,7 @@ def through_talk(game: Game, seconds: float = 20.0) -> None:
                 f"{stamp()} a cutscene: {game.tool('dialogue', {'action': 'skip_cutscene'})}"
             )
         elif mode == "dialog":
-            shown = game.tool("inspect", {"kind": "dialogue"})
+            shown = game.tool("dialogue", {"action": "look"})
             replies = (shown.get("dialogue") or shown).get("replies") or []
             if replies and (replies[0].get("text") or "").strip():
                 game.tool("dialogue", {"action": "choose", "place": 0})
@@ -1597,9 +1581,7 @@ def scenario_gastrap(game: Game) -> None:
     cursor = game.tool("health").get("cursor", 0)
     enemies: list[str] = []
     for spot in ([-55.0, 0.0, 0.0],):
-        spawned = game.tool(
-            "stage", {"action": "spawn", "template": "ogre_default", "point": spot}
-        )
+        spawned = game.tool("stage_spawn", {"template": "ogre_default", "point": spot})
         creature = spawned.get("creature") or {}
         if creature.get("id"):
             enemies.append(creature["id"])
@@ -1645,7 +1627,7 @@ def scenario_gastrap(game: Game) -> None:
     everyone = party + tuple(enemies)
 
     def read(who: str) -> dict:
-        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = game.tool("creature", {"id": who})
         return creature.get("creature", creature)
 
     last = {who: (read(who).get("health") or {}).get("current") for who in everyone}
@@ -1742,12 +1724,12 @@ def scenario_regen(game: Game) -> None:
     names = {HERO: "Lyna", TAMLEN: "Tamlen"}
 
     def health_of(who: str) -> dict:
-        creature = game.tool("inspect", {"kind": "creature", "id": who})
+        creature = game.tool("creature", {"id": who})
         return creature.get("creature", creature).get("health") or {}
 
     def half(who: str) -> None:
         most = health_of(who).get("max") or 100.0
-        game.tool("stage", {"action": "health", "id": who, "value": most / 2})
+        game.tool("stage_health", {"id": who, "value": most / 2})
 
     for who in party:
         half(who)

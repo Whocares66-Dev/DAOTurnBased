@@ -69,8 +69,8 @@ It drives a game that is ALREADY RUNNING, through Eluvian's HTTP as
 tools\\sweep.py does (the development bench, ..\\DAOEluvianMCP): the party
 somewhere with room (the camp), outside a fight, the turn bar on
 (`[feedback] turn_bar = true`) with its movie deployed. It launches and quits
-nothing. Each creature is made friendly as it appears (`stage group`, group
-2) and killed after (`stage kill`), which leaves bodies where the party
+nothing. Each creature is made friendly as it appears (`stage_group`, group
+2) and killed after (`stage_kill`), which leaves bodies where the party
 stands; --keep leaves them alive.
 
 Written without the game, the calls and what they answer read from Eluvian's
@@ -472,7 +472,7 @@ def template_of(row: int) -> tuple[str, str, str] | None:
 def spawn_point(hero: dict, ahead: float) -> dict:
     """A place `ahead` metres before the creature the player controls.
 
-    `hero` is Eluvian's `inspect kind=creature`: its `position` {x, y, z} and
+    `hero` is Eluvian's `creature`: its `position` {x, y, z} and
     its `facing` in degrees, taken here as from +x toward +y. Should that be
     another way round in the game, the place is still `ahead` metres from the
     party, to another side of it.
@@ -711,9 +711,7 @@ class Sweep:
     def spawn(self, base: dict) -> tuple[str, dict] | None:
         """A creature of `base`'s template beside the party, friendly and set up."""
         template = base["template"]
-        spawned = self.tool(
-            "stage", {"action": "spawn", "template": template, "point": self.point}
-        )
+        spawned = self.tool("stage_spawn", {"template": template, "point": self.point})
         who = (spawned.get("creature") or {}).get("id")
         if "error" in spawned or not who:
             if spawned.get("gone"):
@@ -725,7 +723,7 @@ class Sweep:
         base["moved"] = spawned.get("moved")
         # Not hostile, before it has looked about: a hostile one beside the
         # party starts a fight.
-        self.tool("stage", {"action": "group", "id": who, "group": 2})
+        self.tool("stage_group", {"id": who, "group": 2})
         # A creature spawned is set up over the next frames (Eluvian: its
         # health reads 1 of 1 in the frame it is made).
         self.sleep(self.SPAWN_WAIT)
@@ -782,7 +780,7 @@ class Sweep:
             # Its renderer is released once the movie has let the picture go.
             self.sleep(1.0)
         if not self.keep:
-            self.tool("stage", {"action": "kill", "id": who})
+            self.tool("stage_kill", {"id": who})
             self.sleep(0.3)
 
     def row(self, row: int) -> dict:
@@ -1166,7 +1164,7 @@ def main() -> int:
     if options.point:
         point = dict(zip("xyz", options.point))
     else:
-        hero = http_tool("inspect", {"kind": "creature"})
+        hero = http_tool("creature")
         # The creature itself, or under its own key, as an older Eluvian answered.
         hero = hero.get("creature", hero)
         if "position" not in hero:

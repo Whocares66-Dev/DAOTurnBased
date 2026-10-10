@@ -110,14 +110,14 @@ def tool(name: str, arguments: dict | None = None, timeout: float = 90) -> dict:
 
 
 def state() -> dict:
-    answer = tool("inspect", {"kind": "turnbased.state"})
+    answer = tool("turnbased_state")
     return answer.get("state", answer)
 
 
 def creatures(
     side: str | None = None, radius: float | None = None, near: str | None = None
 ) -> list[dict]:
-    arguments: dict = {"kind": "creatures", "includeDead": False}
+    arguments: dict = {"includeDead": False}
     if side:
         arguments["side"] = side
     if radius:
@@ -125,7 +125,9 @@ def creatures(
     if near:
         arguments["near"] = near
     found = [
-        c for c in tool("inspect", arguments).get("creatures", []) if not c.get("dead")
+        c
+        for c in tool("creatures", arguments).get("creatures", [])
+        if not c.get("dead")
     ]
     if found or side != "hostile":
         return found
@@ -142,7 +144,7 @@ def creatures(
     del arguments["side"]
     return [
         c
-        for c in tool("inspect", arguments).get("creatures", [])
+        for c in tool("creatures", arguments).get("creatures", [])
         if c.get("id") in foes and not c.get("dead")
     ]
 
@@ -191,8 +193,7 @@ def status(quests: bool = False) -> int:
     if "error" in health:
         say("the game does not answer:", health["error"])
         return 1
-    game = tool("inspect", {"kind": "game"})
-    game = game.get("game", game)
+    game = tool("state")
     say(
         f"mode {health.get('mode')}, paused {health.get('paused')}, state {health.get('state')}, "
         f"area {(game.get('area') or {}).get('tag')}"
@@ -205,7 +206,7 @@ def status(quests: bool = False) -> int:
             f"mana or stamina {mana.get('current', 0):.0f}/{mana.get('max', 0):.0f}, "
             f"at {where(c)}{', doing ' + json.dumps(doing) if doing else ''}"
         )
-    journal = tool("inspect", {"kind": "journal"}) if quests else {}
+    journal = tool("journal") if quests else {}
     active = (journal.get("active") or {}).get("plot")
     for quest in journal.get("quests") or []:
         if quest.get("completed"):
@@ -232,7 +233,7 @@ def look(radius: float) -> int:
             f"  {c.get('side', '?'):8} {c['id']} {c['name']} [{c.get('tag')}] health {health_of(c)}, "
             f"{c.get('distance', 0):.1f} m at {where(c)}, room seen {((c.get('room') or {}).get('seen'))}"
         )
-    things = tool("inspect", {"kind": "placeables", "radius": radius})
+    things = tool("placeables", {"radius": radius})
     for p in things.get("placeables", []):
         if not p.get("interactive") and not p.get("name"):
             continue
@@ -242,7 +243,7 @@ def look(radius: float) -> int:
             f"{'' if p.get('interactive') else ', not to be used'}{', pick ' + str((p.get('lock') or {}).get('pickLevel')) if p.get('state') == 1 else ''}"
             f"{', to ' + leads if leads else ''}, {p.get('distance', 0):.1f} m at {where(p)}"
         )
-    exits = tool("inspect", {"kind": "exits"})
+    exits = tool("exits")
     for e in exits.get("exits", []):
         say(
             f"  exit     {e['id']} {e.get('name')} [{e.get('tag')}] {e.get('kind')} to {(e.get('leadsTo') or {}).get('area')}, "
@@ -264,9 +265,9 @@ def by_map(pin: str) -> int:
     the game's own click and this flag both arrived whole).
     """
     for _ in range(3):
-        if tool("inspect", {"kind": "gui"}).get("fullScreen") == "WorldMap":
+        if tool("gui").get("fullScreen") == "WorldMap":
             tool(
-                "input",
+                "movie",
                 {
                     "screen": "WorldMap",
                     "set": "WorldMap.m_bClosedByTravel",
@@ -283,7 +284,7 @@ def by_map(pin: str) -> int:
             return 1
         ways = [
             e
-            for e in tool("inspect", {"kind": "exits"}).get("exits", [])
+            for e in tool("exits").get("exits", [])
             if (e.get("leadsTo") or {}).get("area") == "world_map"
             and e.get("active")
             and "blocker" not in (e.get("tag") or "")
@@ -296,9 +297,9 @@ def by_map(pin: str) -> int:
             {"target": ways[0]["id"], "within": 4, "budgetMs": 240000},
             timeout=300,
         )
-        if tool("inspect", {"kind": "gui"}).get("popup"):
+        if tool("gui").get("popup"):
             # Walking into the way out asked the game's own question already.
-            tool("game", {"action": "press", "button": "Yes"})
+            tool("press", {"button": "Yes"})
             time.sleep(5)
             continue
         if tool("health").get("mode") != "explore":
@@ -308,8 +309,8 @@ def by_map(pin: str) -> int:
             return 1
         tool("order", {"action": "use", "id": HERO, "target": ways[0]["id"]})
         time.sleep(4)
-        if tool("inspect", {"kind": "gui"}).get("popup"):
-            tool("game", {"action": "press", "button": "Yes"})
+        if tool("gui").get("popup"):
+            tool("press", {"button": "Yes"})
             time.sleep(5)
     for _ in range(60):
         if tool("health").get("mode") in ("explore", "dialog", "combat"):
@@ -334,11 +335,11 @@ def go(target: str) -> int:
     answer = tool("travel", arguments, timeout=180)
     answer.pop("steps", None)
     say("travel:", json.dumps(answer)[:900])
-    if tool("inspect", {"kind": "gui"}).get("popup"):
+    if tool("gui").get("popup"):
         # An area's way out can ask "Gather your party and venture forth?" (the
         # Brecilian forest's, 2026-10-05): Yes, as by_map answers it.
         say("  a popup asks: Yes")
-        tool("game", {"action": "press", "button": "Yes"})
+        tool("press", {"button": "Yes"})
         time.sleep(5)
     return status()
 
@@ -378,9 +379,7 @@ def loot(target: str) -> int:
     panel itself since its issue 14 (`showMs`); PACE is how long.
     """
     answer = tool("loot", {"target": target, "showMs": int(PACE * 1000)}, timeout=90)
-    if not (answer.get("looted") or answer.get("empty")) and tool(
-        "inspect", {"kind": "gui"}
-    ).get("loot"):
+    if not (answer.get("looted") or answer.get("empty")) and tool("gui").get("loot"):
         # The walk there opened it (a chest the rogue picked, pick 10; a small
         # crate in the way): its panel came up as the walk ended, which the
         # tool took for the game paused or its own use refused (the tower,
@@ -402,7 +401,7 @@ def loot(target: str) -> int:
         tool("order", {"action": "use", "id": HERO, "target": target}, timeout=60)
         for _ in range(40):
             time.sleep(0.5)
-            if tool("inspect", {"kind": "gui"}).get("loot"):
+            if tool("gui").get("loot"):
                 answer = tool("loot", {"showMs": int(PACE * 1000)}, timeout=90)
                 break
             if tool("health").get("mode") not in ("explore", "gui"):
@@ -433,12 +432,12 @@ def loot(target: str) -> int:
 def shop(orders: list[str]) -> int:
     """Buys and sells with a merchant's Store screen up: `sell:0x3e7`, `buy:0x1d71:8`, `close`.
 
-    Eluvian's `store` and inspect kind=gui's `store` (its issue 9, deployed
+    Eluvian's `store` and its `gui`'s `store` (its issue 9, deployed
     2026-10-03; before it this sent store.gfx's own messages through `input`).
     With no orders it lists the stock with each price and the pack with what
     each would fetch, in copper.
     """
-    gui = tool("inspect", {"kind": "gui"})
+    gui = tool("gui")
     if gui.get("fullScreen") != "Store":
         say("  shop: no Store screen is up (talk to the merchant first)")
         return 1
@@ -512,9 +511,7 @@ def recover(seconds: float) -> int:
 
 def lootall(radius: float) -> int:
     """Loots every body and container within `radius`, nearest first; herbs are picked."""
-    things = tool("inspect", {"kind": "placeables", "radius": radius}).get(
-        "placeables", []
-    )
+    things = tool("placeables", {"radius": radius}).get("placeables", [])
     worst = 0
     for p in things:
         tag = (p.get("tag") or "").lower()
@@ -561,19 +558,19 @@ def pick_party(names: list[str]) -> int:
 
     def chosen() -> list[str]:
         paths = [f"PartyPicker.SelectedPartyMember.{n}.Name" for n in range(4)]
-        values = tool("inspect", {"kind": "data", "paths": paths}).get("values", [])
+        values = tool("data", {"paths": paths}).get("values", [])
         return [v.get("text") for v in values if v.get("found")]
 
     def under() -> str | None:
-        values = tool(
-            "inspect", {"kind": "data", "paths": ["PartyPicker.MouseOverName"]}
-        ).get("values", [])
+        values = tool("data", {"paths": ["PartyPicker.MouseOverName"]}).get(
+            "values", []
+        )
         return next((v.get("text") for v in values if v.get("found")), None)
 
     if tool("health").get("mode") != "partypicker":
         say("  party: the picker is not up")
         return 1
-    client = tool("inspect", {"kind": "window"}).get("client") or {}
+    client = tool("window").get("client") or {}
     width, height = client.get("width", 1600), client.get("height", 1000)
     have = chosen()
     # Those not wanted leave first: a portrait's own number, the hero's never.
@@ -667,7 +664,7 @@ def talk(place: int | None) -> int:
 
 
 def save(name: str) -> int:
-    answer = tool("game", {"action": "save", "name": name})
+    answer = tool("saves", {"action": "save", "name": name})
     say("save:", json.dumps(answer)[:400])
     cursor = answer.get("cursor")
     if cursor is None:
@@ -844,7 +841,7 @@ ABILITIES: dict[int, dict] = {
 
 
 def apart(a: dict, b: dict) -> float:
-    """Meters between two creatures as `inspect creatures` gives their positions."""
+    """Meters between two creatures as `creatures` gives their positions."""
     p, q = a.get("position") or {}, b.get("position") or {}
     return sum((p.get(k, 0) - q.get(k, 0)) ** 2 for k in "xyz") ** 0.5
 
@@ -860,15 +857,13 @@ BURNING_MAN_LOOKS = 28
 def turning() -> list[str]:
     """Uldred's captive mages with the light of the turning on them now."""
     lit = []
-    for c in tool("inspect", {"kind": "creatures", "radius": 60}).get("creatures", []):
+    for c in tool("creatures", {"radius": 60}).get("creatures", []):
         tag = c.get("tag") or ""
         if c.get("dead") or not (
             tag.startswith("cir240cr_mage") or tag == "cir240cr_irving"
         ):
             continue
-        effects = (
-            tool("inspect", {"kind": "creature", "id": c["id"]}).get("effects") or []
-        )
+        effects = tool("creature", {"id": c["id"]}).get("effects") or []
         if any(e.get("type") == "EFFECT_TYPE_VISUAL_EFFECT" for e in effects):
             lit.append(c["id"])
     return lit
@@ -878,7 +873,7 @@ def leaves_the_fire(who: str, targets: list[dict]) -> bool:
     """In the burning man's form with only the fireproof left: leave it."""
     if not all(any(word in t.get("name", "") for word in FIREPROOF) for t in targets):
         return False
-    looks = tool("inspect", {"kind": "creature", "id": who}).get("appearance")
+    looks = tool("creature", {"id": who}).get("appearance")
     if looks != BURNING_MAN_LOOKS:
         return False
     tool(
@@ -948,7 +943,7 @@ def by_the_games_word(ability: dict) -> dict | None:
 def ability_to_use(who: str, target: dict, notes: dict) -> tuple[int, dict] | None:
     """A talent ready now that suits the target, each tried once a turn; the
     least used so far first."""
-    known = tool("inspect", {"kind": "abilities", "id": who})
+    known = tool("abilities", {"id": who})
     counts = coverage()
     every = (known.get("talents") or []) + (known.get("spells") or [])
     every.sort(key=lambda a: counts.get(f"{who}:{a.get('id')} {a.get('name')}", 0))
@@ -1030,15 +1025,12 @@ def item_to_use(
     who: str, target: dict, targets: list[dict], notes: dict
 ) -> tuple[int, dict] | None:
     """A coating or a flask worth using now, for one with the skill to (Poison-Making)."""
-    known = tool("inspect", {"kind": "abilities", "id": who})
+    known = tool("abilities", {"id": who})
     if not any(
         "Poison-Making" in (s.get("name") or "") for s in known.get("skills") or []
     ):
         return None
-    pack = {
-        i.get("name"): i
-        for i in tool("inspect", {"kind": "inventory"}).get("items", [])
-    }
+    pack = {i.get("name"): i for i in tool("inventory").get("items", [])}
     for a in known.get("items") or []:
         item = pack.get(a.get("name"))
         if not item or not a.get("ready"):
@@ -1068,11 +1060,8 @@ RAW = {"health": "gen_im_cft_reg_elfroot", "mana": "gen_im_cft_reg_mushroom"}
 
 def potion_in_pack(who: str, kind: str = "health") -> tuple[int, str] | None:
     """A health poultice (or, kind "mana", a lyrium potion) `who` can drink now: its ability and the item's tag, the weakest first."""
-    known = tool("inspect", {"kind": "abilities", "id": who})
-    pack = {
-        i.get("name"): i
-        for i in tool("inspect", {"kind": "inventory"}).get("items", [])
-    }
+    known = tool("abilities", {"id": who})
+    pack = {i.get("name"): i for i in tool("inventory").get("items", [])}
     found = []
     for a in known.get("items") or []:
         item = pack.get(a.get("name"))
@@ -1120,14 +1109,8 @@ def step_toward(who: str, target: str, meters: float) -> tuple[str, int | None]:
     if meters < 1:
         return "no movement left", None
     found = tool(
-        "inspect",
-        {
-            "kind": "geometry",
-            "id": who,
-            "target": target,
-            "walk": True,
-            "waypoints": True,
-        },
+        "geometry",
+        {"id": who, "target": target, "walk": True, "waypoints": True},
     )
     points = [
         (p["x"], p["y"], p["z"]) for p in (found.get("walk") or {}).get("waypoints", [])
@@ -1152,9 +1135,7 @@ def step_toward(who: str, target: str, meters: float) -> tuple[str, int | None]:
 
 def in_sight(who: str, target: str) -> bool:
     """Whether `who` has a line of sight to `target`, as the engine answers it."""
-    sight = tool("inspect", {"kind": "geometry", "id": who, "target": target}).get(
-        "lineOfSight"
-    )
+    sight = tool("geometry", {"id": who, "target": target}).get("lineOfSight")
     return bool((sight or {}).get("clear", True))
 
 
@@ -1185,10 +1166,7 @@ def spot(c: dict) -> tuple[float, float, float]:
 def walk_to(who: str, point: tuple, budget: float) -> int | None:
     """Orders a walk to `point` if the game has a path there no longer than `budget`; the order's cursor."""
     found = (
-        tool(
-            "inspect",
-            {"kind": "geometry", "id": who, "point": list(point), "walk": True},
-        ).get("walk")
+        tool("geometry", {"id": who, "point": list(point), "walk": True}).get("walk")
         or {}
     )
     length = found.get("length", found.get("lengthSoFar"))
@@ -1202,7 +1180,7 @@ def shoots(who: str, notes: dict) -> bool:
     """Whether `who` fights from range: a mage, or a bow in hand; read once a fight."""
     key = f"shoots:{who}"
     if key not in notes:
-        sheet = tool("inspect", {"kind": "character", "id": who})
+        sheet = tool("character", {"id": who})
         slots = (sheet.get("equipment") or {}).get("slots") or {}
         main = (slots.get("main") or {}).get("name", "").lower()
         notes[key] = (sheet.get("class") or {}).get("name") == "Mage" or any(
@@ -1216,7 +1194,7 @@ def place_for_boss(who: str, name: str, boss: dict, before: dict, notes: dict) -
     if who == TANK:
         return False
     budget = before.get("movement_left", 0)
-    mine, its = spot(tool("inspect", {"kind": "creature", "id": who})), spot(boss)
+    mine, its = spot(tool("creature", {"id": who})), spot(boss)
     off = math.dist(mine[:2], its[:2])
     if shoots(who, notes):
         if off >= STAND_OFF - 2 or budget < 5:
@@ -1238,7 +1216,7 @@ def place_for_boss(who: str, name: str, boss: dict, before: dict, notes: dict) -
                 )
                 return True
         return False
-    tank = tool("inspect", {"kind": "creature", "id": TANK})
+    tank = tool("creature", {"id": TANK})
     # No such creature in this party: nobody holds the boss, so it has no back to
     # go to (in Awakening the question was refused 43 times in twenty minutes and
     # the rogue sent "behind" the boss as seen from the map's origin, 2026-10-09).
@@ -1272,7 +1250,7 @@ PROBED: list[str] = []
 
 def probe11(who: str, name: str, target: dict) -> None:
     PROBED.append(who)
-    sight = tool("inspect", {"kind": "geometry", "id": who, "target": target["id"]})
+    sight = tool("geometry", {"id": who, "target": target["id"]})
     say(
         f"  probe 11: {name} is ordered at {target['name']} {target['id']}, {target.get('distance', 0):.1f} m off, "
         f"line of sight {json.dumps(sight.get('lineOfSight'))[:160]}"
@@ -1280,7 +1258,7 @@ def probe11(who: str, name: str, target: dict) -> None:
     answer = tool("order", {"action": "attack", "id": who, "target": target["id"]})
     for n in range(10):
         time.sleep(0.75)
-        c = tool("inspect", {"kind": "creature", "id": who})
+        c = tool("creature", {"id": who})
         s = state()
         path = c.get("path") or {}
         say(
@@ -1389,7 +1367,7 @@ def player_turn(who: str, name: str, notes: dict) -> None:
             litany = next(
                 (
                     i
-                    for i in tool("inspect", {"kind": "inventory"}).get("items", [])
+                    for i in tool("inventory").get("items", [])
                     if i.get("tag") == "cir000im_litany"
                 ),
                 None,
@@ -1401,7 +1379,7 @@ def player_turn(who: str, name: str, notes: dict) -> None:
                 if litany
                 else None
             )
-            known = tool("inspect", {"kind": "abilities", "id": who})
+            known = tool("abilities", {"id": who})
             read = next(
                 (
                     a
@@ -1441,8 +1419,7 @@ def player_turn(who: str, name: str, notes: dict) -> None:
         if (
             burnable
             and len(burnable) < len(targets)
-            and tool("inspect", {"kind": "creature", "id": who}).get("appearance")
-            == BURNING_MAN_LOOKS
+            and tool("creature", {"id": who}).get("appearance") == BURNING_MAN_LOOKS
         ):
             targets = burnable
         # One a turn: the turn's own reading of its health is the turn's
@@ -1638,9 +1615,9 @@ def player_turn(who: str, name: str, notes: dict) -> None:
 
 def raise_fallen(notes: dict) -> None:
     """Walks the nearest of the living to each fallen party member, which is what ends combat."""
-    party = tool(
-        "inspect", {"kind": "creatures", "side": "party", "includeDead": True}
-    ).get("creatures", [])
+    party = tool("creatures", {"side": "party", "includeDead": True}).get(
+        "creatures", []
+    )
     living = [c for c in party if not c.get("dead")]
     for down in (c for c in party if c.get("dead")):
         if not living:
@@ -1705,7 +1682,7 @@ def fight(minutes: float) -> int:
                 # it until the player's Space (the forest's genlocks, 30 m
                 # off). Press it for them.
                 if health.get("paused"):
-                    tool("game", {"action": "unpause"})
+                    tool("pause", {"paused": False})
                     notes["unpaused_before_the_fight"] = (
                         notes.get("unpaused_before_the_fight", 0) + 1
                     )

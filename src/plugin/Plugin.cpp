@@ -82,7 +82,7 @@ struct State
     std::ofstream events; // turnbased.events.jsonl: the machine's events, a JSON line each
     // Eluvian, the development bench's MCP server, when installed: looked
     // for once, on the first frame.
-    const EluvianInterface1 *eluvian = nullptr;
+    const EluvianInterface *eluvian = nullptr;
     bool eluvianLooked = false;
 };
 State g;
@@ -658,7 +658,7 @@ void OpenEvents()
 // agent reads the machine's state, ends the player's turn, sets settings
 // and reseeds initiative, and hears the events above as turnbased.<kind>.
 // Handlers come on the frame thread, as the hooks do: the machine's lock.
-void InspectState(void * /*context*/, const char * /*args*/, EluvianReply *reply)
+void StateTool(void * /*context*/, const char * /*args*/, EluvianReply *reply)
 {
     tb::MachineState state;
     {
@@ -685,7 +685,7 @@ void EndTurnTool(void * /*context*/, const char * /*args*/, EluvianReply *reply)
         return;
     }
     reply->error(reply, "There is no turn of the player's to end: this ends a party member's turn the player plays. "
-                        "Wait for turnbased.turn_started with detail \"yours\", or read inspect turnbased.state.");
+                        "Wait for turnbased.turn_started with detail \"yours\", or read turnbased_state.");
 }
 
 void DelayTool(void * /*context*/, const char * /*args*/, EluvianReply *reply)
@@ -703,7 +703,7 @@ void DelayTool(void * /*context*/, const char * /*args*/, EluvianReply *reply)
     }
     reply->error(reply, "The turn cannot be put off now: only a party member's turn the player plays, waiting on an "
                         "order, with nothing of it spent, once a round, and with someone standing after it this "
-                        "round. inspect turnbased.state says so in can_delay.");
+                        "round. turnbased_state says so in can_delay.");
 }
 
 void SeedTool(void * /*context*/, const char *args, EluvianReply *reply)
@@ -837,7 +837,7 @@ void PortraitTool(void * /*context*/, const char *args, EluvianReply *reply)
             g.bar.TryPortrait(*read.ask, view, static_cast<std::uint32_t>(GetTickCount64()));
         if (report.lack == tb::PortraitLack::Creature)
         {
-            reply->error(reply, std::format("There is no creature with the id {:#x}: give one of inspect's ids, of a "
+            reply->error(reply, std::format("There is no creature with the id {:#x}: give one of creatures' ids, of a "
                                             "creature in the area the party is in.",
                                             read.ask->id)
                                     .c_str());
@@ -855,7 +855,10 @@ void PortraitTool(void * /*context*/, const char *args, EluvianReply *reply)
 
 // Once, on the first frame: the loader loads plugins by name, so eluvian.dll
 // comes after this one and is not there yet in DAOLib_Load. Absent from a
-// player's install, and then nothing is registered.
+// player's install, and then nothing is registered; nor with an Eluvian
+// built against another layout of the interface than this header's
+// (ELUVIAN_INTERFACE_VERSION, 3 since 2026-10-09), which answers none: the
+// two are built against one header and deployed together.
 void LookForEluvian()
 {
     g.eluvianLooked = true;
@@ -864,7 +867,7 @@ void LookForEluvian()
     {
         return;
     }
-    const EluvianInterface1 &e = *g.eluvian;
+    const EluvianInterface &e = *g.eluvian;
     // Each answers -1 when refused, the reason in eluvian.log: the state's
     // descriptor once was not JSON, and only eluvian.log said so (2026-09-30).
     std::vector<std::string> refused;
@@ -874,9 +877,12 @@ void LookForEluvian()
             refused.emplace_back(name);
         }
     };
+    // The state is a tool of the mod's own, read-only: it was a kind of
+    // Eluvian's `inspect`, turnbased.state, until Eluvian's interface 2 took
+    // the kinds away (its issue 110, issue 85 here, 2026-10-09).
     check(
-        e.RegisterInspectKind(
-            "turnbased.state",
+        e.RegisterTool(
+            "turnbased_state",
             R"({"description": "The turn-based combat mod's fight now. Top: active, phase (awaiting order, AI )"
             R"(thinking, executing, settling, turn start, idle...), round, world_ms; current {id, name, side, yours} )"
             R"(of whose turn it is (null between turns; yours when the player plays it); time_left_ms of its bar of )"
@@ -887,14 +893,14 @@ void LookForEluvian()
             R"(condition, on_clock, owed_ms}. cooldowns: every cooldown the engine has set on a fighter, held on )"
             R"(its user's own clock {id, ability, left_ms, of_ms, and item: the item's tag, for an item's ability}. )"
             R"(charging: actions begun and not yet paid for {id, ability, owed_ms}. Ids are 0x... )"
-            R"(strings."})",
-            &InspectState, nullptr, ELUVIAN_READ_ONLY),
-        "turnbased.state");
+            R"(strings.", "inputSchema": {"type": "object", "properties": {}}})",
+            &StateTool, nullptr, ELUVIAN_READ_ONLY),
+        "turnbased_state");
     check(e.RegisterTool(
               "turnbased_end_turn",
               R"({"description": "End the current party member's turn, as the bar's End or its key does: what it has )"
               R"(left is given up and the next creature's turn starts (turnbased.turn_ended, then )"
-              R"(turnbased.turn_started). Only on a turn the player plays (turnbased.state's current.yours); an error )"
+              R"(turnbased.turn_started). Only on a turn the player plays (turnbased_state's current.yours); an error )"
               R"(otherwise.", "inputSchema": {"type": "object", "properties": {}}})",
               &EndTurnTool, nullptr, 0),
           "turnbased_end_turn");
@@ -903,7 +909,7 @@ void LookForEluvian()
               R"({"description": "Put the current party member's turn off to the end of this round, as the bar's )"
               R"(Delay does: nothing of it is spent, the next creature's turn starts (turnbased.turn_delayed, then )"
               R"(turnbased.turn_started), and its own turn comes whole after everyone else's. Only while )"
-              R"(turnbased.state's can_delay is true; an error otherwise.", )"
+              R"(turnbased_state's can_delay is true; an error otherwise.", )"
               R"("inputSchema": {"type": "object", "properties": {}}})",
               &DelayTool, nullptr, 0),
           "turnbased_delay");
@@ -928,7 +934,7 @@ void LookForEluvian()
         e.RegisterTool(
             "turnbased_auto",
             R"({"description": "Whose turns their tactics play in a turn-based fight: ask of one of the party, or )"
-            R"(choose for a companion. id (a creature's id, as inspect gives them) or name (its name, in any case) )"
+            R"(choose for a companion. id (a creature's id, as creatures gives them) or name (its name, in any case) )"
             R"(says who. on chooses: true, its tactics play its turns as an AI plays its own, bound by the turn; )"
             R"(false, its turns wait for the player. With no on the tool only answers. A choice applies from that )"
             R"(companion's next turn: a turn under way is played out as it began. It is kept with the playthrough )"
@@ -936,7 +942,7 @@ void LookForEluvian()
             R"(was chosen for goes by. Never the hero: its turns are the player's, and choosing for it is an error. )"
             R"(Answers id, name, tag, hero, on (the state now), by (chosen, or setting where nothing was), changed, )"
             R"(applies (from when), turn_under_way (null, or yours or AI: how the turn it has now began). )"
-            R"(inspect turnbased.state has the same on as auto on each party member's card.", )"
+            R"(turnbased_state has the same on as auto on each party member's card.", )"
             R"("inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "name": {"type": )"
             R"("string"}, "on": {"type": "boolean"}}}})",
             &AutoTool, nullptr, 0),
@@ -976,55 +982,51 @@ void LookForEluvian()
             R"("required": ["id"]}})",
             &PortraitTool, nullptr, 0),
         "turnbased_portrait");
-    // What each turnbased.* topic means, for `events describe=true` (Eluvian
-    // 0.2.0; an older one's interface ends before DescribeEvent).
+    // What each turnbased.* topic means, for `events describe=true`.
     int described = 0;
-    if (ELUVIAN_HAS(g.eluvian, DescribeEvent))
+    for (int k = 0; k <= static_cast<int>(tb::kLastEventKind); ++k)
     {
-        for (int k = 0; k <= static_cast<int>(tb::kLastEventKind); ++k)
+        const auto kind = static_cast<tb::EventKind>(k);
+        const tb::EventDescription d = tb::Describe(kind);
+        std::string json = R"({"description":")";
+        tb::AppendJsonString(json, d.meaning != nullptr ? d.meaning : "");
+        json += R"(","fields":{"world_ms":"the fight's clock, the world's milliseconds","round":"the round")";
+        const auto field = [&json](const char *name, const char *text) {
+            if (text != nullptr)
+            {
+                json += std::format(R"(,"{}":")", name);
+                tb::AppendJsonString(json, text);
+                json += '"';
+            }
+        };
+        if (d.creature)
         {
-            const auto kind = static_cast<tb::EventKind>(k);
-            const tb::EventDescription d = tb::Describe(kind);
-            std::string json = R"({"description":")";
-            tb::AppendJsonString(json, d.meaning != nullptr ? d.meaning : "");
-            json += R"(","fields":{"world_ms":"the fight's clock, the world's milliseconds","round":"the round")";
-            const auto field = [&json](const char *name, const char *text) {
-                if (text != nullptr)
-                {
-                    json += std::format(R"(,"{}":")", name);
-                    tb::AppendJsonString(json, text);
-                    json += '"';
-                }
-            };
-            if (d.creature)
-            {
-                field("id", "the creature, as 0x... (inspect's ids)");
-                field("name", "its name");
-            }
-            field("detail", d.detail);
-            field("value", d.value);
-            field("command", d.command);
-            field("note", d.note);
-            json += "}}";
-            const std::string topic = std::string{"turnbased."} + tb::Name(kind);
-            if (e.DescribeEvent(topic.c_str(), json.c_str()) < 0)
-            {
-                refused.push_back(topic);
-            }
-            else
-            {
-                ++described;
-            }
+            field("id", "the creature, as 0x... (creatures' ids)");
+            field("name", "its name");
+        }
+        field("detail", d.detail);
+        field("value", d.value);
+        field("command", d.command);
+        field("note", d.note);
+        json += "}}";
+        const std::string topic = std::string{"turnbased."} + tb::Name(kind);
+        if (e.DescribeEvent(topic.c_str(), json.c_str()) < 0)
+        {
+            refused.push_back(topic);
+        }
+        else
+        {
+            ++described;
         }
     }
     for (const std::string &name : refused)
     {
         spdlog::warn("Eluvian refused {}: its reason is in eluvian.log", name);
     }
-    spdlog::info("registered with Eluvian (build {}): inspect turnbased.state; turnbased_end_turn, turnbased_delay, "
-                 "turnbased_seed, turnbased_settings, turnbased_auto, turnbased_portrait; events turnbased.<kind>, "
-                 "{} described; {} refused",
-                 e.build, described, refused.size());
+    spdlog::info("registered with Eluvian: turnbased_state, turnbased_end_turn, turnbased_delay, turnbased_seed, "
+                 "turnbased_settings, turnbased_auto, turnbased_portrait; events turnbased.<kind>, {} described; "
+                 "{} refused",
+                 described, refused.size());
 }
 
 void Log(tb::LogLevel level, std::string_view line)
