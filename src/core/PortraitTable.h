@@ -239,9 +239,12 @@ inline constexpr std::array kPortraitTable{
     Row(27, "27 Rage Demon", 1.8f, 35.0f, 0.0f, 0.0f, -0.15f,
         "by eye at the camp, 2026-10-04: its head and eye; from searches of asides -0.45 to 0.45 and ups -0.45 to "
         "0.45; seen as it is (turned, its head stays in the middle: no aside)"),
-    Row(31, "31 Shade", 1.6f, 35.0f, 0.0f, 0.2f, -0.25f,
-        "by eye at the camp, 2026-10-04: its hood in profile, which is low before its back; from searches of asides "
-        "-0.45 to 0.45 and ups -0.45 to 0.45; seen as it is"),
+    Row(31, "31 Shade", 1.3f, 23.5f, 0.0f, 0.04f, -0.26f,
+        "by eye in the Blackmarsh, 2026-10-09: its hood and the eye under it, turned toward the camera at a "
+        "person's turn and to the right of the middle; the user, of the Awakening shade framed as this one was "
+        "at 35 degrees from 1.6 m, 0.2 aside and -0.25 up (by eye at the camp, 2026-10-04): 'it should be moved a "
+        "little bit to the right and then turn towards the camera a little bit. Right now it's too much "
+        "profile'; this row by 20003's, for its size; seen as it is"),
     Row(32, "32 Ash Wraith", 1.7f, 35.0f, 0.0f, 0.4f, -0.3f,
         "by eye at the camp, 2026-10-04: its skull under its crest; from searches of asides -0.5 to 0.5 and ups -0.5 "
         "to 0.5; seen as it is"),
@@ -335,10 +338,11 @@ inline constexpr std::array kPortraitTable{
     Row(20002, "20002 (GXA) Pride Demon B", 2.4f, 35.0f, 0.0f, 0.6f, -0.25f,
         "by eye in the Silverite Mine, 2026-10-09: its face and eyes, the pride demon's row (72), the same body; "
         "seen as it is"),
-    Row(20003, "20003 (GXA) Shade B", 1.85f, 35.0f, 0.0f, 0.23f, -0.29f,
-        "by eye in the Silverite Mine, 2026-10-09: its head and the arch of its back, the shade's row (31) by its "
-        "size, 1.63 m for 1.41; a search of asides -0.12 to 0.58 and ups -0.64 to 0.06 found no better; seen as it "
-        "is"),
+    Row(20003, "20003 (GXA) Shade B", 1.5f, 23.5f, 0.0f, 0.05f, -0.3f,
+        "by eye in the Blackmarsh, 2026-10-09: its hood and the eye under it, turned toward the camera at a "
+        "person's turn and to the right of the middle, as the user asked of its card ('too much profile'); at 35 "
+        "degrees from 1.85 m, 0.23 aside, it was the arch of its back; from a search of asides -0.3 to 0.3 and "
+        "ups -0.59 to 0.01 at 1.85 m and three looks nearer; seen as it is"),
     Row(20004, "20004 (GXA) Lightning Dragon Spirit", 6.0f, 35.0f, 0.0f, -1.7f, -0.8f,
         "by eye in the Silverite Mine, 2026-10-09: its head in profile, pale as the spirit is, the high dragon's "
         "row (66), the same body; seen as it is"),
