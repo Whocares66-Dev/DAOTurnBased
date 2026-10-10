@@ -44,6 +44,9 @@ tools/        build.ps1 (DAOLib's, for this tree), gate.ps1 (the merge's gate, i
               running game: how a row of src/core/PortraitTable.h is found and checked by eye),
               test_*.py, console.ps1, check-powershell.ps1
 dev/          design, UI, DAOLib's needs, testing; images/ for the docs
+docs/         the player's guide, a Jekyll site (Just the Docs): index.md, guide/*.md, assets/img/ (the game's
+              own frames, cropped); docs/README.md has how to preview it and how each picture was taken
+              and how it looks; tools/build_docs.py builds every version of it (master's and each release tag's)
 extern/DAOLib the submodule
 ```
 

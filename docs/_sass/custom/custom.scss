@@ -1,0 +1,371 @@
+// The guide's own touches over its gold-on-black scheme
+// (color_schemes/turnbased.scss): what is current is gold, a picture from the
+// game has no frame and never runs wider than the text, a key is
+// drawn as a key, and a table is rows with a rule between them, not a grid of
+// boxes.
+
+@import "turnbased_palette";
+
+// -- the sidebar and the header ----------------------------------------------
+
+// The hourglass after the site's name, as DAOEluvianMCP's guide has its
+// eluvian.
+.site-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: $gold;
+}
+
+.site-icon {
+  order: 1;
+  height: 24px;
+  width: auto;
+}
+
+// The name on one line beside it, at the sidebar's narrowest.
+.site-title .site-name {
+  font-size: 1.25rem;
+  white-space: nowrap;
+}
+
+// Under the pointer the title is lit as a page's name in the list is, in
+// gold, where the theme lights it grey (the user, 2026-10-10: "hover should
+// be gold").
+.site-title:hover {
+  color: $gold-bright;
+  background-image: linear-gradient(90deg, rgba(217, 170, 69, 0.22), transparent);
+}
+
+.side-bar,
+.main-header,
+.site-header,
+.site-footer {
+  border-color: $rule;
+}
+
+.nav-list .nav-list-item .nav-list-link {
+  color: $bone;
+
+  &:hover {
+    color: $gold-bright;
+    background-image: linear-gradient(90deg, rgba(217, 170, 69, 0.14), transparent);
+  }
+
+  &.active {
+    color: $gold-bright;
+    font-weight: 600;
+    background-image: linear-gradient(90deg, rgba(217, 170, 69, 0.22), transparent);
+  }
+}
+
+// The header's right: the version selector and the repository's mark.
+.aux-nav,
+.aux-nav .aux-nav-list,
+.aux-nav .aux-nav-list .aux-nav-list-item {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.github-link {
+  display: flex;
+  align-items: center;
+  margin: 0 1.25rem 0 0.25rem;
+  color: $bone-dim;
+
+  &:hover {
+    color: $gold-bright;
+  }
+}
+
+.docs-version,
+.docs-versions {
+  position: relative;
+  margin-right: 0.75rem;
+  font-size: 14px;
+  color: $bone;
+  white-space: nowrap;
+}
+
+.docs-versions summary,
+.docs-version {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid $rule;
+  border-radius: 6px;
+  list-style: none;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  &::marker {
+    content: "";
+  }
+
+  svg {
+    color: $bone-dim;
+  }
+}
+
+.docs-versions summary {
+  cursor: pointer;
+}
+
+.docs-versions summary:hover,
+.docs-versions[open] summary {
+  color: $gold-bright;
+  border-color: $gold-dark;
+}
+
+.docs-versions[open] summary svg {
+  transform: rotate(180deg);
+}
+
+.docs-versions ul {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 40;
+  min-width: 100%;
+  margin: 0.4rem 0 0;
+  padding: 0.25rem;
+  list-style: none;
+  background-color: $black-light;
+  border: 1px solid $rule;
+  border-radius: 6px;
+
+  a {
+    display: block;
+    padding: 0.25rem 0.6rem;
+    color: $bone;
+    border-radius: 4px;
+
+    &:hover,
+    &[aria-current="true"] {
+      color: $gold-bright;
+      background-image: linear-gradient(90deg, rgba(217, 170, 69, 0.22), transparent);
+    }
+  }
+}
+
+// The header's links scroll sideways in Just the Docs, which would clip the
+// list of versions to a box with a scrollbar: it drops over the page.
+.main-header,
+.aux-nav,
+.aux-nav-list {
+  overflow: visible;
+}
+
+.main-header {
+  position: relative;
+  z-index: 30;
+}
+
+// -- the page -----------------------------------------------------------------
+
+.main-content h1,
+.main-content h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid $rule;
+}
+
+.main-content a {
+  text-decoration-color: rgba(217, 170, 69, 0.4);
+
+  &:hover {
+    color: $gold-bright;
+    text-decoration-color: $gold-bright;
+  }
+}
+
+.main-content img.screenshot {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1rem 0 1.5rem;
+  border: none;
+  border-radius: 4px;
+}
+
+.main-content kbd {
+  padding: 0.1em 0.45em;
+  border: 1px solid $gold-dark;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: $gold-bright;
+  background: $black-lighter;
+}
+
+// Code has its darker ground and no line round it, in a sentence or in a
+// block (the user, 2026-10-10: "no border around images or code").
+.main-content :not(pre) > code {
+  color: $gold-bright;
+  border: none;
+}
+
+.main-content div.highlighter-rouge,
+.main-content figure.highlight,
+.main-content pre.highlight,
+.main-content .highlight {
+  border: none;
+}
+
+// Just the Docs frames a block's inner `div.highlight` in a rule of its own,
+// by a selector that outranks the one above: named as it names it.
+.main-content div.highlighter-rouge div.highlight,
+.main-content figure.highlight pre,
+.main-content div.listingblock div.content {
+  border: none;
+}
+
+// The copy button on a code block, as DAOEluvianMCP's guide has it: the icon
+// and a little room in the block's corner, a hand over it, gold and brighter
+// under the pointer. Its icons are Lucide's (_includes/icons/code_copy.html),
+// drawn by stroke and not fill.
+div.highlighter-rouge > button,
+div.listingblock > div.content > button,
+figure.highlight > button {
+  width: auto;
+  height: auto;
+  padding: 0.3rem;
+  top: 0.35rem;
+  right: 0.35rem;
+  line-height: 0;
+  cursor: pointer;
+  color: $gold;
+  background: none;
+
+  &:hover {
+    color: $gold-bright;
+    background: none;
+  }
+
+  &:focus {
+    outline: none;
+  }
+
+  &,
+  svg,
+  svg * {
+    cursor: pointer;
+  }
+
+  svg.copy-icon {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+// The theme gives the button `cursor: copy` (an arrow with a plus) while its
+// block is under the pointer, by this selector: the hand, by the same.
+div.highlighter-rouge:hover > button,
+div.listingblock > div.content:hover > button,
+figure.highlight:hover > button {
+  cursor: pointer;
+}
+
+// -- scrollbars: the page's black and its text's own colour, not the
+// browser's grey and white (the user, 2026-10-10: "theme the scrollbar", and
+// of a first one in the gilt: "too yellow, needs to match text").
+
+* {
+  scrollbar-color: $bone-dim $black-deep;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+  background-color: $black-deep;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: $black-lighter;
+  border: 2px solid $black-deep;
+  border-radius: 6px;
+
+  &:hover {
+    background-color: $bone-dim;
+  }
+}
+
+// -- tables: no outer box, no grid and no rule between rows; a head in gold
+// over a gilt rule, every other row a shade browner, and the row under the
+// pointer lit. A name in a
+// cell is set as code without code's own box, which made every cell a box
+// within a box (the user, 2026-10-10: "improve table looks").
+
+.table-wrapper {
+  margin: 1rem 0 1.75rem;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.main-content table {
+  width: 100%;
+  margin: 0;
+  border: none;
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+.main-content th,
+.main-content td {
+  min-width: 0;
+  padding: 0.6rem 0.9rem;
+  border: none;
+  background-color: transparent;
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+.main-content th {
+  border-bottom: 1px solid $gilt;
+  color: $gold-bright;
+  font-size: 0.72rem !important;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+// Every other row a shade browner, so the eye keeps its line across a wide
+// table, and that shade alone between rows (the user, 2026-10-10: "table rows
+// should have alternating colors", and of a rule between them besides: "no
+// need for borders").
+.main-content tbody tr:nth-child(even) td {
+  background-color: $black-light;
+}
+
+.main-content tbody tr:hover td {
+  background-color: $black-lighter;
+}
+
+.main-content td code {
+  padding: 0;
+  border: none;
+  background: none;
+  color: $gold-bright;
+  white-space: nowrap;
+}
+
+// A setting's section, the first of four columns, said aside.
+.main-content td:first-child:not(:only-child) code {
+  color: $bone-dim;
+}
+
+.main-content td strong {
+  color: $gold-bright;
+}

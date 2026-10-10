@@ -1,0 +1,50 @@
+# The guide's site: Just the Docs, as SkyrimFollowerTactics' and the other DAO
+# repositories' are. Its pages are index.md and guide/*.md, written by hand;
+# its pictures are the game's own frames, cropped (assets/img, README.md).
+title: DAO Turn-Based
+description: Turn-based combat for Dragon Age Origins and Awakening, a DAOLib plugin.
+url: https://whocares66-dev.github.io
+baseurl: /DAOTurnBased
+remote_theme: just-the-docs/just-the-docs@v0.12.0
+color_scheme: turnbased
+# The hourglass (assets/hourglass.png, the picture whole) beside the title and
+# as the icon, made from it: its visible part (636 by 1062 from 309, 85) at 96
+# high as assets/hourglass-icon.png (_includes/title.html), and on a square
+# as assets/favicon.ico at 64, 48, 32 and 16.
+favicon_ico: /assets/favicon.ico
+permalink: pretty
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+  - jekyll-include-cache
+search_enabled: true
+search:
+  heading_level: 3
+  previews: 3
+  button: false
+heading_anchors: true
+back_to_top: true
+back_to_top_text: Back to top
+# The header's right is docs/_includes/components/aux_nav.html, the version
+# selector and GitHub's mark; the theme draws it only where this is set.
+aux_links:
+  GitHub: https://github.com/Whocares66-Dev/DAOTurnBased
+callouts:
+  note:
+    color: blue
+  warning:
+    color: yellow
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+exclude:
+  - README.md
+  - Gemfile
+  - Gemfile.lock
+  - vendor

@@ -1,28 +1,63 @@
-# DAOTurnBased
+# DAO Turn-Based
 
-Turn-based combat for **Dragon Age: Origins** (GOG Ultimate Edition, `DAOrigins.exe` 1.05.13263.0): a native plugin on [DAOLib](https://github.com/Whocares66-Dev/DAOLib), the game's plugin loader and reverse-engineered library.
+Turn-based combat for **Dragon Age: Origins**, Awakening and Witch Hunt: a [DAOLib](https://github.com/Whocares66-Dev/DAOLib) plugin. When a fight starts, everyone rolls initiative and acts one at a time. Talents, spells, enemies and difficulty are unchanged.
 
-When a fight starts, the world freezes and every combatant rolls initiative. Then each takes a turn in order, while everyone else waits. A turn is one action (attack, ability, spell, potion) and up to 9 m of movement, scaled by the creature's speed, in either order. On the party's turns the game stays paused until you give an order, as you always would. It plays out, then waits for the next. The pause key ends your turn. Enemies and allies take their turns through the game's own AI, one at a time. When the last enemy falls, real time resumes. Turn-based combat is switched on or off outside fights in the game's Options: the Game tab, under "Turn-based". A key can be given to the switch, to Delay and to End turn (Enter) in the Controls tab, under "Turn-based".
+![A turn-based fight](docs/assets/img/fight.jpg)
 
-`dev/DESIGN.md` has the rules and why, and `dev/UI.md` the turn order bar, built from the game's own UI, and the movement preview still to come. `dev/TESTING.md` is how to try it and what to report. It has been played through Castle Cousland's fights (`dev/PLAYTEST-*.md`, 2026-09-30) and is still rough: expect bugs.
+## Features
+
+- **[Turns](https://whocares66-dev.github.io/DAOTurnBased/turns/)**: each turn is 4 seconds to spend on attacks, abilities and movement, each at the time the game takes for it. Unused time rolls over to the next turn.
+- **[Portrait bar](https://whocares66-dev.github.io/DAOTurnBased/portrait-bar/)**: everyone in the fight, in the order they act, and what an attack or a move will cost before you order it.
+- **[Party control](https://whocares66-dev.github.io/DAOTurnBased/party/)**: play each companion's turn yourself, or let its tactics play it.
+- **[Options](https://whocares66-dev.github.io/DAOTurnBased/options/)**: an on/off switch, fight speed and key bindings in the game's own Options menu.
+
+## Getting started
+
+Version 1.05 of the game. The mod is developed and tested on the GOG version. The Steam and EA versions need a large-address-aware (LAA) `DAOrigins.exe`; GOG's is large-address-aware already.
+
+Download the [latest release](https://github.com/Whocares66-Dev/DAOTurnBased/releases/latest) and copy `version.dll` and the `daolib` folder into the game's `bin_ship` folder, next to `DAOrigins.exe`. Saves are not modified. To uninstall, delete `bin_ship\daolib\plugins\turnbased`.
+
+The [getting started guide](https://whocares66-dev.github.io/DAOTurnBased/getting-started/) has the details.
+
+## Docs
+
+**[whocares66-dev.github.io/DAOTurnBased](https://whocares66-dev.github.io/DAOTurnBased/)**: the player's guide (`python tools/build_docs.py --serve` builds it locally; [docs/README.md](docs/README.md) has how it is made).
+
+- [dev/DESIGN.md](dev/DESIGN.md): the rules, and why each is as it is.
+- [dev/UI.md](dev/UI.md): the portrait bar and the movement preview, made of the game's own interface.
+- [dev/TESTING.md](dev/TESTING.md): how it is checked in the game, and what was seen there.
+
+## What is here
+
+- `src/core`: the rules and the turn state machine, with no game and no Windows, tested in `tests/`.
+- `src/game`: everything that touches the engine, through DAOLib.
+- `src/plugin`: the entry point and the frame callback.
+- `ui/`: the portrait bar's and the tactics page's movies, and a ready-made portrait.
+- `tools/`: building, deploying, the movies, the preview's art and the docs site.
+- `docs/`: the player's guide.
+- `dev/`: the docs above, and `DAOLIB_NEEDS.md`, what the mod needs from DAOLib next.
+- `extern/DAOLib`: the library, as a submodule.
 
 ## Building
 
-What DAOLib needs: Visual Studio 2022 with the C++ workload, [vcpkg](https://github.com/microsoft/vcpkg) with `VCPKG_ROOT` set, Python 3, and for formatting and linting LLVM 22+ and PSScriptAnalyzer.
+Visual Studio 2022 with the C++ workload, [vcpkg](https://github.com/microsoft/vcpkg) with `VCPKG_ROOT` set, and Python 3. Everything is 32-bit, as the game is.
 
 ```powershell
-git submodule update --init                     # extern\DAOLib
-.\tools\build.ps1 -Preset debug -Test           # the plugin, DAOLib's loader, the tests
-.\tools\deploy.ps1                              # into the game's bin_ship (game closed)
-.\tools\deploy.ps1 -Remove                      # the plugin out again
+git submodule update --init --recursive   # DAOLib, and its address library
+python tools\movie.py                     # the two movies (needs Java and JPEXS FFDec)
+python tools\reticles.py                  # the movement preview's art, made from the game's own files
+.\tools\build.ps1 -Preset debug -Test     # the plugin, DAOLib's loader, the tests
+.\tools\build.ps1 -Preset release -Test   # what the game plays
+.\tools\deploy.ps1 -Preset release        # into the game (with the game closed)
+.\tools\deploy.ps1 -Remove                # take it out again
 ```
 
-Settings are in `Documents\BioWare\Dragon Age\daolib\turnbased.ini`, written with comments on first run and re-read when changed. The log is `turnbased.log` beside it.
+Logs and `turnbased.ini` are in `Documents\BioWare\Dragon Age\daolib\`.
 
-## Layout
+## Working on DAO Turn-Based
 
-- `src/core`: the rules and the turn state machine, with no game and no Windows, tested in `tests/`.
-- `src/game`: everything that touches the engine, through DAOLib. The gate on the command queue, and the pause key.
-- `src/plugin`: the entry point and the frame callback.
-- `extern/DAOLib`: the library, as a submodule, the way Skyrim plugins use CommonLibSSE.
-- `dev/DAOLIB_NEEDS.md`: what this mod needs from DAOLib next.
+[CLAUDE.md](CLAUDE.md) has the project's rules: the one architectural rule, the checks before a commit and before a merge, and how a change is seen in play.
+
+## License
+
+GPLv3 ([LICENSE](LICENSE)), as DAOLib. `src/plugin/EluvianAPI.h` is Eluvian's header, MIT.

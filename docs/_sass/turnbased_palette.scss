@@ -1,0 +1,17 @@
+// The guide's colours, by name: for the colour scheme and for custom.scss.
+// Each is the game's own, measured from its interface in this guide's
+// pictures and the game's frames (2026-10-10; the user: "Use the same kind of
+// gold and black seen in the game"): its menus' warm black, the dark brown of
+// its buttons, the pale gold of its lettering and the gilt of its rings.
+
+$black-deep: #040404; // the game's menus behind everything: the sidebar
+$black: #0c0806; // its warm black: the page
+$black-light: #1a1208; // toward its buttons' brown: code, the search box
+$black-lighter: #2c1c04; // a button's face (Delay, End): a row hovered, a key
+$gold-bright: #ebd8ae; // its brightest lettering: headings, what is current
+$gold: #dec67e; // the lettering of its buttons and captions: links
+$gold-dark: #ae8a1e; // the gilt of a card's ring, in shadow: a frame, a button
+$gilt: #d2a22a; // the same gilt, lit: a rule under a table's head
+$bone: #d2c696; // its menus' text
+$bone-dim: #a29672; // its lists' text: what is said aside
+$rule: rgba(198, 150, 30, 0.32); // the gilt, thin: a line between things

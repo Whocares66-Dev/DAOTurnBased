@@ -24,3 +24,7 @@ __pycache__/
 
 # Claude Code runtime state
 /.claude/scheduled_tasks.lock
+# The guide's site as Jekyll builds it beside its pages (docs/README.md).
+docs/_site/
+docs/.jekyll-cache/
+docs/.sass-cache/

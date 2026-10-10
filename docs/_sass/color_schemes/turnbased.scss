@@ -1,0 +1,27 @@
+// Gold on black, as a Just the Docs colour scheme: the game's own interface
+// is gilt on dark leather, and the portrait bar is made of it (the user,
+// 2026-10-10: "use a gold / black theme"). What is not a colour is in
+// custom/custom.scss, which uses these names too.
+
+// The theme's own dark scheme first, for what is not named here (code's
+// colours among it), as SkyrimFollowerTactics' guide has it.
+@import "./color_schemes/dark";
+@import "turnbased_palette";
+
+$color-scheme: dark;
+$body-background-color: $black;
+$body-heading-color: $gold-bright;
+$body-text-color: $bone;
+$link-color: $gold;
+$nav-child-link-color: $bone-dim;
+$sidebar-color: $black-deep;
+$base-button-color: $black-light;
+$btn-primary-color: $gold-dark;
+$code-background-color: $black-light;
+$code-linenumber-color: $bone-dim;
+$feedback-color: $black-light;
+$table-background-color: $black;
+$search-background-color: $black-light;
+$search-foreground-color: $bone;
+$search-result-preview-color: $bone-dim;
+$border-color: $rule;
