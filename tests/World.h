@@ -86,6 +86,7 @@ struct Creature // NOLINT(bugprone-exception-escape)
     Condition condition = Condition::None; // stunned or pinned, as the game side reads it
     float conditionSeconds = 0.0f;         // what the engine has left of it (0: not read)
     float energy = 1.0f;                   // mana or stamina
+    float reserved = 0.0f;                 // what its sustained abilities hold back of it
     bool mana = false;                     // a mage's
     bool moving = false;
     CommandType current = CommandType::Invalid;
@@ -439,7 +440,8 @@ class World
         {
             const Creature &c = Get(id);
             obs.statuses.push_back({id, c.exists, c.down, c.down ? 0.0f : c.health, c.condition, c.energy, c.mana,
-                                    c.condition != Condition::None ? c.conditionSeconds : 0.0f, c.movement});
+                                    c.reserved, c.condition != Condition::None ? c.conditionSeconds : 0.0f,
+                                    c.movement});
         }
         // What cools on those come into the fight, read once each as the
         // machine asks (Bridge.cpp, Observe).

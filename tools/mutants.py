@@ -656,6 +656,24 @@ MUTANTS = [
         "",
     ),
     Mutant(
+        "what a creature's sustained abilities hold back never reaches the bar",
+        MACHINE,
+        "        c->reserved = status.reserved;",
+        "",
+    ),
+    Mutant(
+        "a scan clears what every card's sustained abilities hold back",
+        MACHINE,
+        "            known->reserved = reserved;",
+        "            known->reserved = reserved * 0.0f;",
+    ),
+    Mutant(
+        "the bar's string leaves out what sustained abilities hold back",
+        BAR,
+        "        Field(out, static_cast<long long>(std::lround(std::clamp(card.reserved, 0.0f, 1.0f) * 100.0f)));",
+        "        Field(out, 0LL);",
+    ),
+    Mutant(
         "the bar's string leaves out whether it is mana",
         BAR,
         "        Field(out, card.mana);",
@@ -4110,8 +4128,8 @@ MUTANTS = [
     Mutant(
         "the cards do not say whose tactics play its turns",
         MACHINE,
-        "                                 pending, std::wstring{}, std::wstring{}, OnTactics(c), walkCut});",
-        "                                 pending, std::wstring{}, std::wstring{}, false, walkCut});",
+        "                                 OnTactics(c),",
+        "                                 false,",
     ),
     Mutant(
         "the state says auto of every card, an enemy's too",

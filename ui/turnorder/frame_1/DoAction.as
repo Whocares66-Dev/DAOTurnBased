@@ -19,7 +19,7 @@
 // Outside the game there is no plugin to ask, and it draws a sample fight,
 // so the look can be checked in any Flash player.
 
-var BAR_VERSION = 12;
+var BAR_VERSION = 13;
 var CARD = String.fromCharCode(30);
 var FIELD = String.fromCharCode(31);
 
@@ -57,9 +57,12 @@ var TOP = 14;
 // which is what fits beside the minimap.
 var LOOK = 1.25;
 var BAR_PIXELS = 50;
-// End's and Delay's art as it shows, a lip, the face and a dark edge: the top 24 of
-// the 30 units it is drawn in (36 px in the game's frame at a scale of 1.5).
-var BUTTON_FACE = 24;
+// How much of End's and Delay's art shows, of the height it is drawn in: a lip, the
+// leather face, a dark edge and the shadow's line under it. Measured in the game's
+// frame, row by row down the buttons' middle: 34 px of the 37.5 a button drawn 30
+// units high takes at 1.25 px a unit. (Taken for 24 of 30 at first, the lettering's
+// foot read as the edge; the two then stood with nothing between them.)
+var BUTTON_SHOWS = 34 / 37.5;
 // The minimap, which the game draws at its size in pixels in the view's top right
 // corner: the bar's right end keeps this far from the view's right edge (the map is
 // 187 px wide), where a narrow view would have End and Delay under it (seen at
@@ -324,7 +327,7 @@ function parse(text)
                     name: f[8], tag: f[9], portrait: f[10] == undefined ? "" : f[10],
                     energy: Number(f[11]), mana: f[12] == "1", owed: Number(f[13]), waits: f[14] == "1",
                     icon: f[16] == undefined ? "" : f[16], ability: f[17] == undefined ? "" : f[17],
-                    walkCut: f[18] == "1"});
+                    walkCut: f[18] == "1", reserved: f[19] == undefined ? 0 : Number(f[19])});
     }
     // The cards are every turn to come; the row is those the bar shows, a
     // row's worth from `before` on (version 9). The rest are read for what
@@ -521,6 +524,66 @@ function art(clip, name, depth, x, y, w, h)
     return holder;
 }
 
+// The party bar's arcs are swept by angle about the ring's middle, a frame of its
+// animation a percent (portraits.gfx, read 2026-10-10: HealthBar's and ManaBar's
+// Progress_mc turn a mask 1.7654 degrees a frame from 1.73, nothing shown at frame
+// 1 and all at 100). The cards' were filled by height until then, which is a tenth
+// of the arc off at three quarters (the user, of the hero's card beside her
+// portrait: "shouldn't the turn based portrait do exactly what the party portrait
+// does?"). `side` is 1 for the left arc, health's, and -1 for the right.
+var RING_X = 57 * ART;
+var RING_Y = 56.8 * ART;
+function sweep(arc, clip, name, depth, percent, side)
+{
+    var frame = Math.round(Math.max(0, Math.min(100, percent)));
+    if (frame < 2)
+    {
+        arc._visible = false;
+        return;
+    }
+    var angle = frame >= 100 ? 180 : 1.73 + 1.7654 * frame;
+    var mask = clip.createEmptyMovieClip(name, depth);
+    var steps = Math.ceil(angle / 15);
+    mask.beginFill(0xFFFFFF, 100);
+    mask.moveTo(RING_X, RING_Y);
+    for (var i = 0; i <= steps; i++)
+    {
+        var at = (90 + side * angle * i / steps) * Math.PI / 180;
+        mask.lineTo(RING_X + CARD_W * Math.cos(at), RING_Y + CARD_W * Math.sin(at));
+    }
+    mask.endFill();
+    arc.setMask(mask);
+}
+
+// What a creature's sustained abilities hold back of its mana or stamina: the party
+// bar's mark, as far from the arc's top as that share of it, which is where the
+// arc ends when it is full (ManaStaminaBarReserve: the piece Portraits_I48, a
+// mage's I4C, 15 by 24, laid on its side and turned about the ring's middle 1.7871
+// degrees a frame of 99, its alpha down to half and back in 60 frames).
+function reserveMark(clip, depth, card)
+{
+    var mark = clip.createEmptyMovieClip("reserve", depth);
+    mark._x = RING_X;
+    mark._y = RING_Y;
+    mark._xscale = mark._yscale = 100 * ART;
+    var frame = Math.max(1, Math.round(card.reserved / 100 * 99));
+    mark._rotation = Math.max(1.8, 1.7871 * frame - 1.85);
+    // The piece's own place in the mark: its axes changed over (a quarter turn and a
+    // flip), 0.963 along and 0.869 across.
+    var flat = mark.createEmptyMovieClip("flat", 1);
+    flat._x = -3.45;
+    flat._y = -48.2;
+    flat._xscale = -96.3;
+    flat._yscale = 86.9;
+    art(flat, card.mana ? "Portraits_I4C" : "Portraits_I48", 1, 0, 0, 15, 24)._rotation = 90;
+    mark.beat = 0;
+    mark.onEnterFrame = function()
+    {
+        this.beat = (this.beat + 1) % 60;
+        this._alpha = 100 - 51 * (30 - Math.abs(30 - this.beat)) / 30;
+    };
+}
+
 function circle(clip, cx, cy, r, fill, alpha)
 {
     var k = 0.4142 * r;
@@ -656,19 +719,19 @@ function drawCard(bar, card, index, x)
         var text = label(clip, "initials", 5, 0, mid - 13, CARD_W, 26, 17, PARCHMENT, "center", true);
         text.text = initials(card.name);
     }
-    // Health: the party bar's red arc, filled from the foot to the share left.
-    var health = art(clip, "Portraits_I41", 6, 0, 0, CARD_W, CARD_H);
-    var level = clip.createEmptyMovieClip("level", 7);
-    var share = Math.max(0, Math.min(100, card.health)) / 100;
-    box(level, 0, CARD_H * (1 - share), CARD_W, CARD_H * share + 1, 0xFFFFFF, 100);
-    health.setMask(level);
-    // Mana (a mage's, blue) or stamina (gold): the party bar's right arc,
-    // filled the same way (Portraits_I52 and I5B, portraits.gfx's ManaBar).
-    var energy = art(clip, card.mana ? "Portraits_I52" : "Portraits_I5B", 11, 0, 0, CARD_W, CARD_H);
-    var energyLevel = clip.createEmptyMovieClip("energyLevel", 12);
-    var energyShare = Math.max(0, Math.min(100, card.energy)) / 100;
-    box(energyLevel, 0, CARD_H * (1 - energyShare), CARD_W, CARD_H * energyShare + 1, 0xFFFFFF, 100);
-    energy.setMask(energyLevel);
+    // Health: the party bar's red arc, swept from the foot to the share left.
+    sweep(art(clip, "Portraits_I41", 6, 0, 0, CARD_W, CARD_H), clip, "level", 7, card.health, 1);
+    // Mana (a mage's, blue) or stamina (gold): the party bar's right arc, as the
+    // party bar draws it (portraits.gfx's ManaBar and ManaStaminaBarReserve): a
+    // dark track (Portraits_I58 and I55), the arc swept over it (I52 and I5B), and
+    // where sustained abilities hold some of it back, a mark that far from the top.
+    art(clip, card.mana ? "Portraits_I58" : "Portraits_I55", 10, 0, 0, CARD_W, CARD_H);
+    sweep(art(clip, card.mana ? "Portraits_I52" : "Portraits_I5B", 11, 0, 0, CARD_W, CARD_H), clip, "energyLevel", 12,
+          card.energy, -1);
+    if (card.reserved > 0)
+    {
+        reserveMark(clip, 13, card);
+    }
     art(clip, "Portraits_I3C", 16, 0, 0, CARD_W, CARD_H);
     // No rank gem at the foot: a dot of the game's rank colour (yellow, a
     // lieutenant's) asked what it was of the tester and of the user, who
@@ -1008,13 +1071,18 @@ function build(state)
         // pressed nearly every turn and the lower place is the nearer to
         // the battlefield; Delay, to be had only before anything is spent,
         // is the turn's first choice.
-        // Within the cards' height, with the same room above Delay, between the two
-        // and under End (the user, 2026-10-10: "make the 2 end buttons vertically
-        // aligned w/ the portraits", and "should be space x above button, x below
-        // button, x between buttons"), by what of their art shows. Until then the two
-        // were set by the 30 units the art is drawn in, and stood higher than the
-        // portraits with a wide gap between.
-        var room = (CARD_H - 2 * BUTTON_FACE) / 3;
+        // About the portraits' middle, at their own size, with the same room above
+        // Delay, between the two and under End (the user, 2026-10-10: "make the 2 end
+        // buttons vertically aligned w/ the portraits", "should be space x above
+        // button, x below button, x between buttons", and, of a build that had made
+        // them smaller to fit a card's height: "did i fucking tell you to do that?").
+        // The room is measured within the current card's height, the tallest thing in
+        // the row: within a plain card's 60 two buttons leave 2 for three rooms. By
+        // what of their art shows (BUTTON_SHOWS). Until then the two were set by the
+        // 30 units the art is drawn in and stood higher than the portraits.
+        var shows = END_H * BUTTON_SHOWS;
+        var room = (CARD_H * CURRENT_SCALE / 100 - 2 * shows) / 3;
+        var middle = TOP + CARD_H / 2;
         var offered = state.delay == 1 || state.delay == 2;
         // Clear of the last card's shoulder, where a pending ability's icon
         // stands: it lay against End's edge (play test 29). With arrows,
@@ -1023,10 +1091,10 @@ function build(state)
         // End over Delay's shadow, which reaches under End's face: a click there is End's.
         if (offered)
         {
-            drawButton(bar, "delay", 500, "Delay", "TB_Delay", buttonsAt, TOP + room, state.delay == 1);
+            drawButton(bar, "delay", 500, "Delay", "TB_Delay", buttonsAt, middle - room / 2 - shows, state.delay == 1);
         }
         drawButton(bar, "endTurn", 501, "End", "TB_EndTurn", buttonsAt,
-                   offered ? TOP + 2 * room + BUTTON_FACE : TOP + (CARD_H - BUTTON_FACE) / 2, true);
+                   offered ? middle + room / 2 : middle - shows / 2, true);
     }
     // On the stage's own middle, which showAll puts at the view's: Stage.width is the
     // view's width in stage units, wider than the stage on a view wider than 16:9.

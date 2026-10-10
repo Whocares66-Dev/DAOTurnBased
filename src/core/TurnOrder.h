@@ -37,10 +37,11 @@ struct Combatant
     // through one): Haste, a salve, a slow. With its build they are the pace
     // its turn's meters are made from (core/Rules.h, Pace).
     MovementEffects movement;
-    float health = 1.0f; // current over maximum
-    float energy = 1.0f; // mana or stamina, the same
-    bool mana = false;   // a mage's
-    bool down = false;   // dead, dying, or gone from the fight
+    float health = 1.0f;   // current over maximum
+    float energy = 1.0f;   // mana or stamina, the same
+    bool mana = false;     // a mage's
+    float reserved = 0.0f; // what its sustained abilities hold back of it
+    bool down = false;     // dead, dying, or gone from the fight
     // Fighting where the player can see it, not only near (Settings::
     // joinBySight): in a room the party has seen, or it or a party member
     // the other's attack target. An enemy or ally that is not waits outside

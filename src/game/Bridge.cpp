@@ -228,13 +228,44 @@ bool OutOfWorld(Mode mode)
     return mode == Mode::Loading || mode == Mode::Pregame || mode == Mode::CharGen || mode == Mode::Unknown;
 }
 
-// Mana or stamina, as the party bar's right arc shows it: the one
-// depletable property both are (PROPERTY_DEPLETABLE_MANA_STAMINA).
-float Energy(ObjectId id)
+// Mana or stamina, as the party bar's right arc shows it (portraits.gfx,
+// SharedLibrary.Portrait.UpdateManaStaminaBar, read 2026-10-10 after the
+// user saw the hero's card full beside her portrait's arc with its top
+// dark: "shouldn't the turn based portrait do exactly what the party
+// portrait does?"). The arc's whole is the one depletable property both are
+// (PROPERTY_DEPLETABLE_MANA_STAMINA), its total with what the creature's
+// sustained abilities hold back put on again; `filled` is the current of
+// that and `reserved` the upkeep of it, which the party bar marks from the
+// arc's top. The upkeep is the interface's `AbilityUpkeepCost`; here the sum
+// of the costs its upkeep effects carry, where the scripts keep each
+// (effect_upkeep_h's EffectUpkeep: float 0, negative, taken off the
+// property's total as the effect is applied).
+struct EnergyArc
+{
+    float filled = 0.0f;
+    float reserved = 0.0f;
+};
+
+EnergyArc Energy(ObjectId id)
 {
     const float current = api::GetCreatureProperty(id, k::PROPERTY_DEPLETABLE_MANA_STAMINA, k::PROPERTY_VALUE_CURRENT);
     const float total = api::GetCreatureProperty(id, k::PROPERTY_DEPLETABLE_MANA_STAMINA, k::PROPERTY_VALUE_TOTAL);
-    return total > 0.0f ? std::clamp(current / total, 0.0f, 1.0f) : 0.0f;
+    float upkeep = 0.0f;
+    const dao::script::Array effects = api::GetEffects(id, k::EFFECT_TYPE_UPKEEP);
+    for (std::size_t i = 0; i < effects.Size(); ++i)
+    {
+        if (const dao::CGameEffect *effect = effects.Effect(i); effect != nullptr)
+        {
+            upkeep -= api::GetEffectFloat(*effect, 0);
+        }
+    }
+    upkeep = std::max(upkeep, 0.0f);
+    const float whole = total + upkeep;
+    if (!(whole > 0.0f))
+    {
+        return {};
+    }
+    return {.filled = std::clamp(current / whole, 0.0f, 1.0f), .reserved = std::clamp(upkeep / whole, 0.0f, 1.0f)};
 }
 
 // A mage's is mana: its core class, as core_h's GetCreatureCoreClass reads
@@ -1646,7 +1677,9 @@ CombatantStatus Bridge::Status(ObjectId id)
     {
         status.down = api::IsDead(id) != 0;
         status.health = Health(id);
-        status.energy = Energy(id);
+        const EnergyArc arc = Energy(id);
+        status.energy = arc.filled;
+        status.reserved = arc.reserved;
         status.mana = Mage(id);
         // Its Haste and slows as they stand now (MovementEffectsOn): what
         // its next turn's meters are made of, and with a turn a bar of time

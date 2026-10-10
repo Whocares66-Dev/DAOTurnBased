@@ -113,6 +113,9 @@ std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits, cons
         // The meters stopped its walk in its last turn (version 12): with
         // nothing pending, the icon is the game's for a move.
         Field(out, card.walkCut);
+        // What its sustained abilities hold back of its mana or stamina, a
+        // share of the same arc (version 13): the party bar's mark on it.
+        Field(out, static_cast<long long>(std::lround(std::clamp(card.reserved, 0.0f, 1.0f) * 100.0f)));
     }
     return out;
 }

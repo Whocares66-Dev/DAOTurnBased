@@ -3877,6 +3877,7 @@ TEST_CASE("a scan of who is fighting leaves the cards' mana and stamina as the s
     w.Get(kGenlock).energy = 0.4f;
     w.Get(kGenlock).mana = true; // an emissary
     w.Get(kHero).energy = 0.7f;
+    w.Get(kHero).reserved = 0.2f; // a sustained ability of hers on
     w.StartFight();
     // The first turn has begun: its scan came in the step that looked at
     // everyone, after the look.
@@ -3884,6 +3885,8 @@ TEST_CASE("a scan of who is fighting leaves the cards' mana and stamina as the s
     CHECK(CardOf(w, kGenlock).energy == 0.4f);
     CHECK(CardOf(w, kGenlock).mana);
     CHECK(CardOf(w, kHero).energy == 0.7f);
+    CHECK(CardOf(w, kHero).reserved == 0.2f);
+    CHECK(CardOf(w, kGenlock).reserved == 0.0f);
     CHECK_FALSE(CardOf(w, kHero).mana);
     // A swing costs her stamina; the turn waits again, which asks for a scan
     // (who her action showed the party), and no look follows it for half a
@@ -3897,6 +3900,7 @@ TEST_CASE("a scan of who is fighting leaves the cards' mana and stamina as the s
     REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
     REQUIRE(w.scans > scans);
     CHECK(CardOf(w, kHero).energy == 0.5f);
+    CHECK(CardOf(w, kHero).reserved == 0.2f);
     CHECK(CardOf(w, kGenlock).energy == 0.4f);
     CHECK(CardOf(w, kGenlock).mana);
 }

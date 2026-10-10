@@ -918,10 +918,12 @@ TEST_CASE("the state says of each party member whether its tactics play its turn
     // The party's two, and neither enemy.
     CHECK(count(json, R"("auto":false})") == 2);
     CHECK(count(json, R"("auto":)") == 2);
-    CHECK(json.find(R"("name":"Alistair","side":"party","rank":0,"health":1.00,"energy":1.00,"mana":false,)"
-                    R"("down":false,"current":false,"yours":true,"round":1,"auto":false})") != std::string::npos);
-    CHECK(json.find(R"("name":"Genlock","side":"enemy","rank":0,"health":1.00,"energy":1.00,"mana":false,)"
-                    R"("down":false,"current":false,"yours":false,"round":1})") != std::string::npos);
+    CHECK(json.find(
+              R"("name":"Alistair","side":"party","rank":0,"health":1.00,"energy":1.00,"reserved":0.00,"mana":false,)"
+              R"("down":false,"current":false,"yours":true,"round":1,"auto":false})") != std::string::npos);
+    CHECK(json.find(
+              R"("name":"Genlock","side":"enemy","rank":0,"health":1.00,"energy":1.00,"reserved":0.00,"mana":false,)"
+              R"("down":false,"current":false,"yours":false,"round":1})") != std::string::npos);
     // Chosen in his own turn: this turn is yours, and auto says the next is not.
     UntilTurnOf(w, kCompanion);
     (void)w.machine.ChooseTactics(Of(w, kCompanion), true, "a test");

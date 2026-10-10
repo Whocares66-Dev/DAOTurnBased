@@ -244,8 +244,9 @@ struct CombatantStatus
     bool down = false;
     float health = 1.0f;
     Condition condition = Condition::None;
-    float energy = 1.0f; // mana or stamina, current over maximum
-    bool mana = false;   // a mage's is mana, anyone else's stamina
+    float energy = 1.0f;   // mana or stamina, current over maximum
+    bool mana = false;     // a mage's is mana, anyone else's stamina
+    float reserved = 0.0f; // what its sustained abilities hold back, of the same maximum
     // The seconds its condition has left, as the engine holds them when the
     // game layer can read them (0: not known): with a turn a bar of time, a
     // hold takes its own time of its victim's turns.
@@ -453,6 +454,7 @@ struct CardView
     int round = 0;
     float energy = 1.0f; // mana or stamina
     bool mana = false;
+    float reserved = 0.0f; // what its sustained abilities hold back of it
     // With a turn a bar of time: what an action of its still owes, kept for
     // its next turn or run already (0: none). The card says so.
     std::uint32_t owedMs = 0;

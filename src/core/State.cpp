@@ -90,9 +90,9 @@ std::string ToJson(const MachineState &state)
         out += R"(,"name":)";
         Text(out, Utf8(card.name));
         out += std::format(
-            R"(,"side":"{}","rank":{},"health":{:.2f},"energy":{:.2f},"mana":{},"down":{},"current":{},"yours":{},"round":{})",
-            Name(card.side), card.rank, card.health, card.energy, Bool(card.mana), Bool(card.down), Bool(card.current),
-            Bool(card.yours), card.round);
+            R"(,"side":"{}","rank":{},"health":{:.2f},"energy":{:.2f},"reserved":{:.2f},"mana":{},"down":{},"current":{},"yours":{},"round":{})",
+            Name(card.side), card.rank, card.health, card.energy, card.reserved, Bool(card.mana), Bool(card.down),
+            Bool(card.current), Bool(card.yours), card.round);
         // A party member's: whether its tactics play its turns (issue 46),
         // from its next one. Beside `yours`, which on the current card is of
         // the turn under way: a choice made in that turn shows here at once

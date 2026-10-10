@@ -4055,11 +4055,13 @@ void TurnMachine::Merge(const std::vector<Combatant> &scan, std::vector<Effect> 
             const int initiative = known->initiative;
             const float energy = known->energy;
             const bool mana = known->mana;
+            const float reserved = known->reserved;
             MovementEffects movement = std::move(known->movement);
             *known = seen;
             known->initiative = initiative;
             known->energy = energy;
             known->mana = mana;
+            known->reserved = reserved;
             known->movement = std::move(movement);
             if (back && left_.erase(seen.id) > 0)
             {
@@ -4135,6 +4137,7 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses, st
         c->health = status.health;
         c->energy = status.energy;
         c->mana = status.mana;
+        c->reserved = status.reserved;
         // Its Haste and slows as they stand now: what its next turn's meters
         // are made of, and with time what its turn under way walks at from
         // here (FollowPace; issue 49).
@@ -5567,9 +5570,26 @@ TurnView TurnMachine::View() const
         // fallen member's card, greyed, is of nobody on its way anywhere.
         const auto last = lastTurn_.find(c.id);
         const bool walkCut = !c.down && last != lastTurn_.end() && last->second.walkCut;
-        view.upcoming.push_back({c.id, c.name, c.tag, c.side, c.rank, c.health, c.down, slot.current, PlayerControls(c),
-                                 slot.round, c.energy, c.mana, owes != charges_.end() ? owes->owedMs : 0, waits,
-                                 pending, std::wstring{}, std::wstring{}, OnTactics(c), walkCut});
+        view.upcoming.push_back({c.id,
+                                 c.name,
+                                 c.tag,
+                                 c.side,
+                                 c.rank,
+                                 c.health,
+                                 c.down,
+                                 slot.current,
+                                 PlayerControls(c),
+                                 slot.round,
+                                 c.energy,
+                                 c.mana,
+                                 c.reserved,
+                                 owes != charges_.end() ? owes->owedMs : 0,
+                                 waits,
+                                 pending,
+                                 std::wstring{},
+                                 std::wstring{},
+                                 OnTactics(c),
+                                 walkCut});
     }
     return view;
 }

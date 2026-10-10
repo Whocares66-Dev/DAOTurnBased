@@ -152,8 +152,8 @@ TEST_CASE("the bar's string carries each card's portrait, empty for none yet", "
     REQUIRE(records.size() >= 3);
     const auto hero = Split(records[1], kBarField);
     const auto genlock = Split(records[2], kBarField);
-    REQUIRE(hero.size() == 19);
-    REQUIRE(genlock.size() == 19);
+    REQUIRE(hero.size() == 20);
+    REQUIRE(genlock.size() == 20);
     CHECK(hero[10].empty());
     CHECK(genlock[0] == std::to_wstring(kGenlock));
     CHECK(genlock[10] == L"portrait_7.dds");

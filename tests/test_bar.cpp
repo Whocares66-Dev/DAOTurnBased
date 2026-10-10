@@ -76,7 +76,7 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     REQUIRE(bar.cards.size() == 4);               // each combatant once
     for (const auto &card : bar.cards)
     {
-        REQUIRE(card.size() == 19);
+        REQUIRE(card.size() == 20);
     }
     CHECK(bar.cards[0][0] == std::to_wstring(kHero));
     CHECK(bar.cards[0][1] == L"0");   // the party
@@ -110,10 +110,12 @@ TEST_CASE("a name cannot break the bar's string apart", "[bar]")
     card.health = 1.7f;  // out of range: clamped
     card.energy = -0.5f; // the same
     card.mana = true;
+    card.reserved = 0.25f;
     view.upcoming.push_back(card);
     const Decoded bar = Decode(EncodeBar(view));
     REQUIRE(bar.cards.size() == 1);
-    REQUIRE(bar.cards[0].size() == 19);
+    REQUIRE(bar.cards[0].size() == 20);
+    CHECK(bar.cards[0][19] == L"25");
     CHECK(bar.cards[0][8] == L"BadName!");
     CHECK(bar.cards[0][3] == L"100");
     CHECK(bar.cards[0][11] == L"0");
@@ -165,7 +167,7 @@ TEST_CASE("the bar's string says, last on its card, that its creature's walk was
     REQUIRE(bar.cards.size() == 4);
     for (const auto &card : bar.cards)
     {
-        REQUIRE(card.size() == 19);
+        REQUIRE(card.size() == 20);
         CHECK(card[18] == (card[0] == std::to_wstring(kHero) ? L"1" : L"0"));
     }
 }

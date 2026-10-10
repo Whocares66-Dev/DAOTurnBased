@@ -20,7 +20,8 @@ namespace tb
 //  "speed":1.0,"speed_took":true,"held_by_effect":false,
 //  "last_refusal":"...","notice":"" (the caption's line of an action given
 //  back, while it shows),"order":[{"id":"0x...","name":"...","side":"party",
-//  "rank":100,"health":0.85,"energy":1.0,"mana":false,"down":false,
+//  "rank":100,"health":0.85,"energy":1.0,"reserved":0.15 (of the same arc, what its
+//  sustained abilities hold back),"mana":false,"down":false,
 //  "current":true,"yours":true,"round":2,"auto":false (a party member's
 //  only: its tactics play its turns, from its next one; core/PartyTactics.h)},
 //  ...],"held":[{"id":"0x...",

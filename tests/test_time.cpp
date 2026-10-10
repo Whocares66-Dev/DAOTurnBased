@@ -2044,8 +2044,9 @@ TEST_CASE("a card says what is pending: an ability by its id, an attack by none;
         std::wstring{kBarField} + L"10211" + kBarField + L"ico_chain_lightning" + kBarField + L"Chain Lightning";
     CHECK(bar.find(tail) != std::wstring::npos);
     // The others have nothing pending: -1 and two empty fields, before the
-    // card's last, that no walk of theirs was cut short.
-    CHECK(bar.ends_with(std::wstring{kBarField} + L"-1" + kBarField + kBarField + kBarField + L"0"));
+    // card's last two, that no walk of theirs was cut short and that no
+    // sustained ability holds any of its stamina back.
+    CHECK(bar.ends_with(std::wstring{kBarField} + L"-1" + kBarField + kBarField + kBarField + L"0" + kBarField + L"0"));
 }
 
 TEST_CASE("a pending attack is no ability's", "[time][bar]")

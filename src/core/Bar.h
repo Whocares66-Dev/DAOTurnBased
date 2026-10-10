@@ -45,7 +45,7 @@ namespace tb
 
 inline constexpr wchar_t kBarCard = 0x1E;
 inline constexpr wchar_t kBarField = 0x1F;
-inline constexpr int kBarVersion = 12;
+inline constexpr int kBarVersion = 13;
 
 // The portraits and the row come from the game's side, the rest from the
 // machine.

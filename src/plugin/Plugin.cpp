@@ -862,7 +862,7 @@ void LookForEluvian()
             R"(of whose turn it is (null between turns; yours when the player plays it); time_left_ms of its bar of )"
             R"(time_ms, movement_left, movement_max; speed (the game's, as the mod set it) and speed_took; )"
             R"(held_by_effect; last_refusal. order: the turns to come, current first, each {id, name, side, rank, )"
-            R"(health, energy, mana, down, current, yours, round, and for a party member auto: its tactics play its )"
+            R"(health, energy, reserved, mana, down, current, yours, round, and for a party member auto: its tactics play its )"
             R"(turns, from its next one (turnbased_auto chooses)}. held: conditions holding creatures {id, name, )"
             R"(condition, on_clock, owed_ms}. cooldowns: every cooldown the engine has set on a fighter, held on )"
             R"(its user's own clock {id, ability, left_ms, of_ms, and item: the item's tag, for an item's ability}. )"
