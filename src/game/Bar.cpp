@@ -343,6 +343,17 @@ void BarLink::Publish(const TurnView &view)
 // ends. Its `_visible` is not touched by the game's script, which only
 // plays its frames; the border the game draws round the screen while paused
 // (PauseBorder_mc) is left as it is.
+//
+// The layer is not always there. With no layer to hide the banner in while a
+// fight shows its bar, something is not as it was read, and that is said,
+// once. With none to show it again in, the game has closed the layer over
+// what ended the fight, which is its ordinary way: a load from the middle of
+// one (a scene that moves the party on, a save loaded) and the party fallen.
+// Nothing is said then, and the frame asks again until the layer is back
+// (FollowFight), where `shown again` says it was done. Until 2026-10-09 that
+// was the same warning, the session's one: three of a day's eleven warnings,
+// each mended by itself a moment or a minute later (issue 89; the
+// Blackmarsh, 22:13:18 and `shown again: set` at 22:14:20).
 void BarLink::HideGameBanner(bool hide)
 {
     if (bannerHidden_.load() == hide)
@@ -354,7 +365,7 @@ void BarLink::HideGameBanner(bool hide)
     dao::gui::Movie movie{owner != nullptr ? dao::gui::MovieOf(owner) : nullptr};
     if (!movie || !movie.IsAvailable(kBanner))
     {
-        if (!std::exchange(bannerSaid_, true))
+        if (hide && !std::exchange(bannerSaid_, true))
         {
             spdlog::warn("the game's Paused banner is not there to hide (the floaty layer's {})", kBanner);
         }

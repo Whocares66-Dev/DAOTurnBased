@@ -1352,17 +1352,24 @@ MUTANTS = [
         "            });",
         "            (void)fx;",
     ),
+    # A fight dropped by a load (issue 90): the book of holds is kept through
+    # the load and given back as the world is there again, unless a game was
+    # loaded meanwhile, whose world is another. (Two mutants went with what
+    # they broke, the recoveries for a hold no fight wrote back: one left at
+    # its hour, and one that grows.)
     Mutant(
-        "a hold no fight wrote back is left at its hour",
+        "load: a fight dropped by a load forgets the cooldowns it holds, and they stand at their hour",
         MACHINE,
-        "            fx.push_back(CooldownOf(look.id, r.ability, r.item, 0, 0));\n            continue;",
-        "            continue;",
+        "            // whoever goes on with the party: GiveBackDropped.)\n            order_.Clear();\n",
+        "            // whoever goes on with the party: GiveBackDropped.)\n            order_.Clear();\n"
+        "            holds_.clear();\n",
     ),
     Mutant(
-        "a hold grows: more left than the engine's own total is taken as it stands",
+        "load: a game loaded is written the cooldowns the dropped fight held",
         MACHINE,
-        "        leftMs = totalMs;\n",
-        "        leftMs = std::max(leftMs, totalMs);\n",
+        '                                    holds_.size(), one ? "" : "s", one ? "was" : "were", one ? "is" : "are"));\n'
+        "    holds_.clear();\n",
+        '                                    holds_.size(), one ? "" : "s", one ? "was" : "were", one ? "is" : "are"));\n',
     ),
     Mutant(
         "an item's ability's cooldown is set with no item's tag",

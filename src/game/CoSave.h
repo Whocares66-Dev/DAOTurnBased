@@ -13,6 +13,10 @@
 // and for a new game. What was chosen in the session before is gone then: it
 // was the other playthrough's.
 //
+// The same call is the machine's word that the world is another one
+// (TurnMachine::OnGameLoaded; issue 90): the save itself has nothing of a
+// fight's in it, and the mod's file keeps nothing of one.
+//
 // DAOLib's own cautions (dao/Saves.h), which the mod is the first to meet in
 // play: its two callbacks had not been seen running when it was written (the
 // hooks under them had), a new game's among them; and one early quicksave

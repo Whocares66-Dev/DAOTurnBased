@@ -45,9 +45,9 @@
 //     are one thing to it;
 //   - one the engine sets again while it is held is taken again at the
 //     engine's new word, and one it sets to nothing is let go;
-//   - a hold is never for more than the engine's own total, and a hold no
-//     fight wrote back is ended;
-//   - as the fight ends, each still held has its own seconds back.
+//   - as the fight ends, each still held has its own seconds back; and after
+//     a fight a load took the world from under, as the world is there again
+//     (issue 90), unless it is another game's.
 #include "World.h"
 
 #include "core/TurnMachine.h"
@@ -270,7 +270,6 @@ TEST_CASE("one the engine sets as the fight begins, before its creature's cooldo
     CHECK(w.coolingReads == 4);
     CHECK(Left(w, kHero, kShieldBash) == 12000);
     CHECK(Lines(w, "is cooling in the engine") == 1);
-    CHECK_FALSE(Logged(w, "at the machine's own scale"));
 }
 
 TEST_CASE("a cooldown is taken as it is set, whoever's turn it is and whatever its creature is at", "[cooldowns]")
@@ -648,8 +647,6 @@ TEST_CASE("an item's ability's cooldown is held, moved and released by its item'
         CHECK(w.UseAbility(kHero, Source::Player, kPoultice, 5.0f) == Verdict::Allow);
         Done(w, kHero);
         CHECK(Left(w, kHero, kPoultice, kPoulticeTag) == 5000);
-        CHECK_FALSE(Logged(w, "at the machine's own scale"));
-        CHECK_FALSE(Logged(w, "which the engine does not do"));
     }
     SECTION("given back its own seconds by its tag as the fight ends")
     {
@@ -775,37 +772,130 @@ TEST_CASE("a hold is an hour in the engine however little is left, and its sweep
     CHECK(w.Held(kHero, kShieldBash));
 }
 
-TEST_CASE("a hold no fight wrote back is ended as its creature comes into a fight", "[cooldowns]")
+TEST_CASE("a fight dropped by a load gives each cooldown it held its own seconds back as the world is there again",
+          "[cooldowns][load]")
 {
-    // The world dropped under a fight (a loading screen), or an error stood
-    // the machine down with its effects not taken: a record at the hold's
-    // hour, which nothing else would ever end.
+    // The Blackmarsh, 2026-10-09 (issue 90): the Baroness's scene took the
+    // party out of the Fade by a load, from a conversation in the middle of
+    // the fight with the First. The party's creatures go on as they are, ids
+    // and cooldown records and all (Lyna 0x43ad4 before and after, her
+    // record `3459 s left of 30673` two minutes on). The machine forgot its
+    // book at the drop, and eleven abilities stood at the hold's hour through
+    // two minutes of exploring, until the next fight found them and ended
+    // them, a warning each.
     World w;
-    const float total = GENERATE(3600.0f, 5400.0f);
-    w.SetCooldown(kHero, kShieldBash, 1800.0f, total);
     w.StartFight();
-    CHECK(w.machine.State().cooldowns.empty());
-    CHECK(w.Cooling(kHero, kShieldBash) == nullptr);
-    CHECK(Logged(w, "Hero's ability 617 is held in the engine at the machine's own scale"));
+    REQUIRE(w.Current() == kHero);
+    w.Cool(kHero, kShieldBash, 20.0f);
+    w.Cool(kCompanion, kOverpower, 30.0f);
+    CHECK(w.machine.OnEndTurn()); // a turn of the hero's: four seconds of her clock, none of the companion's
+    w.RunFor(200);
+    REQUIRE(Left(w, kHero, kShieldBash) == 16000);
+    REQUIRE(HeldInTheEngine(w, kHero, kShieldBash));
+    REQUIRE(HeldInTheEngine(w, kCompanion, kOverpower));
+    // From a turn, or from a conversation in the middle of the fight.
+    const bool fromAScene = GENERATE(false, true);
+    if (fromAScene)
+    {
+        w.mode = Mode::Dialog;
+        w.RunFor(500);
+    }
+    w.applied.clear();
+    w.mode = Mode::Loading;
+    w.RunFor(3000);
+    REQUIRE_FALSE(w.machine.Active());
+    // Nothing is written while the game loads, the area's objects going: the
+    // two are in the engine as they were held.
+    CHECK_FALSE(w.Did(EffectKind::Cooldown));
+    CHECK(HeldInTheEngine(w, kHero, kShieldBash));
+    CHECK(HeldInTheEngine(w, kCompanion, kOverpower));
+    SECTION("with the first frame of the world, whatever its mode; then on the wall, and found by the next fight")
+    {
+        w.mode = fromAScene ? Mode::Cutscene : Mode::Explore;
+        w.Frame();
+        const RunningCooldown *heros = w.Cooling(kHero, kShieldBash);
+        REQUIRE(heros != nullptr);
+        CHECK(heros->remaining == 16.0f);
+        CHECK(heros->total == 20.0f);
+        const RunningCooldown *companions = w.Cooling(kCompanion, kOverpower);
+        REQUIRE(companions != nullptr);
+        CHECK(companions->remaining == 30.0f);
+        CHECK(companions->total == 30.0f);
+        CHECK_FALSE(w.MachineHolds(kHero, kShieldBash));
+        CHECK_FALSE(w.MachineHolds(kCompanion, kOverpower));
+        CHECK(w.machine.State().cooldowns.empty());
+        CHECK(Logged(w, "the world is there again after the fight that was dropped: the 2 cooldowns it held have their "
+                        "own seconds back (0x100's ability 617, 16.00 s left of 20.00; 0x101's ability 603, 30.00 s "
+                        "left of 30.00)"));
+        // Written once; and from there each runs on the wall, as any cooldown
+        // with no fight on.
+        w.applied.clear();
+        w.mode = Mode::Explore;
+        w.RunFor(2000);
+        CHECK_FALSE(w.Did(EffectKind::Cooldown));
+        REQUIRE(w.Cooling(kHero, kShieldBash) != nullptr);
+        CHECK(w.Cooling(kHero, kShieldBash)->remaining < 14.1f);
+        CHECK(Lines(w, "the world is there again") == 1);
+        // The next fight finds what is left of each running, as it finds any.
+        w.StartFight();
+        REQUIRE(w.machine.Active());
+        CHECK(Of(w, kHero, kShieldBash) == 20000);
+        CHECK(Left(w, kHero, kShieldBash) < 14100);
+        CHECK(Left(w, kHero, kShieldBash) > 13800);
+        CHECK(Of(w, kCompanion, kOverpower) == 30000);
+        CHECK(Lines(w, "(found running on it)") == 2);
+    }
+    SECTION("but not one the engine has set while the game loaded: that is the engine's")
+    {
+        // A scene's script, with no command: seven seconds, over the hold.
+        w.Cool(kHero, kShieldBash, 7.0f);
+        w.RunFor(1000);
+        w.mode = Mode::Explore;
+        w.Frame();
+        const RunningCooldown *heros = w.Cooling(kHero, kShieldBash);
+        REQUIRE(heros != nullptr);
+        CHECK(heros->total == 7.0f);
+        CHECK(heros->remaining < 6.0f);
+        const RunningCooldown *companions = w.Cooling(kCompanion, kOverpower);
+        REQUIRE(companions != nullptr);
+        CHECK(companions->remaining == 30.0f);
+        CHECK(Logged(w, "the 1 cooldown it held has its own seconds back (0x101's ability 603, 30.00 s left of "
+                        "30.00)"));
+    }
 }
 
-TEST_CASE("a hold is never for more than the engine's own total", "[cooldowns]")
+TEST_CASE("a game loaded over a dropped fight is another world: nothing of the fight's is written into it",
+          "[cooldowns][load]")
 {
-    // The engine sets what is left and the total as one, and only takes from
-    // what is left: more left than the total is the machine's own writing,
-    // met by a machine that does not know it (a hold no fight wrote back, on
-    // a record that kept its total). Taken at the total, and said.
+    // A save loaded in the middle of a fight (the dragons', 2026-10-09,
+    // 18:22), or a new game begun from the menu a fight was left for. Its
+    // creatures are as the save has them, under the ids the dropped fight's
+    // had as often as not, and a save keeps no cooldown (read of one written
+    // while eleven records stood at the hold's totals, 2026-10-09: those
+    // totals are not in its file). The game layer says so as DAOLib does
+    // (dao::saves::OnGameLoaded), which comes while the mode still says
+    // loading.
     World w;
-    w.itemTotalsStay = true;
-    w.SetCooldown(kHero, kPoultice, 2000.0f, 5.0f, kPoulticeTag);
     w.StartFight();
-    REQUIRE(w.Held(kHero, kPoultice, kPoulticeTag));
-    CHECK(Left(w, kHero, kPoultice, kPoulticeTag) == 5000);
-    CHECK(Of(w, kHero, kPoultice, kPoulticeTag) == 5000);
-    CHECK(Logged(w, "Hero's ability 200010 (item gen_im_qck_health_101) has 1999."));
-    CHECK(Logged(w, " s left in the engine of the 5.00 s it was set to, which the engine does not do"));
-    w.RunFor(5000);
-    CHECK(Lines(w, "which the engine does not do") == 1);
-    CHECK(Lines(w, "is cooling in the engine") == 1);
-    CHECK(Left(w, kHero, kPoultice, kPoulticeTag) == 5000);
+    w.Cool(kHero, kShieldBash, 20.0f);
+    w.RunFor(600);
+    REQUIRE(HeldInTheEngine(w, kHero, kShieldBash));
+    w.mode = GENERATE(Mode::Loading, Mode::Pregame); // a save chosen in the game's menu, or from the main menu
+    w.RunFor(1000);
+    REQUIRE_FALSE(w.machine.Active());
+    w.mode = Mode::Loading;
+    w.Frame();
+    w.Get(kHero).cooldowns.clear(); // the save's hero: the same id, and nothing cooling
+    w.machine.OnGameLoaded();
+    w.applied.clear();
+    w.mode = Mode::Explore;
+    w.RunFor(1000);
+    CHECK_FALSE(w.Did(EffectKind::Cooldown));
+    CHECK(w.Cooling(kHero, kShieldBash) == nullptr);
+    CHECK(w.machine.State().cooldowns.empty());
+    CHECK(Logged(w, "a game is loaded: the 1 cooldown the dropped fight held was another world's, and is let go"));
+    CHECK_FALSE(Logged(w, "the world is there again"));
+    // And said only where there was something to let go.
+    w.machine.OnGameLoaded();
+    CHECK(Lines(w, "a game is loaded") == 1);
 }

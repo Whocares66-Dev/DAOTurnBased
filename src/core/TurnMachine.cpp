@@ -351,8 +351,9 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         if (phase_ != Phase::Idle)
         {
             Log(LogLevel::Info, std::format("the game went to {}: the fight is dropped", ModeName(obs.mode)));
+            // (Not the cooldowns it holds, which the engine has still on
+            // whoever goes on with the party: GiveBackDropped.)
             order_.Clear();
-            holds_.clear();
             phase_ = Phase::Idle;
         }
         turnedAway_.clear(); // gone with the world, as everyone is: nobody to tell
@@ -375,6 +376,12 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         HoldTime(false, fx);
         SetSpeed(1.0f, fx);
         return fx;
+    }
+    // The world is there again, and a fight that was dropped with the last
+    // one held cooldowns still: each has its own seconds back (issue 90).
+    if (phase_ == Phase::Idle && !holds_.empty())
+    {
+        GiveBackDropped(fx);
     }
     // What came of the facings asked for with the last step (FaceTarget;
     // issue 40): said whatever the fight has come to since.
@@ -2095,9 +2102,10 @@ void TurnMachine::OnCooldownSet(ObjectId creature, std::int32_t ability, std::ws
 // And what was cooling on a creature before the fight held it, read once as
 // it comes into the fight (Needs::cooling). A record the machine holds
 // already was set by the engine since its creature came in, and taken then.
-// One with an hour or more for its total is no cooldown of the game's: a
-// hold no fight wrote back (the world dropped under one), with nothing to
-// say what it had left; ended, and said.
+// (Until 2026-10-09 a record with an hour or more for its total was ended
+// here, at warning: a hold no fight wrote back, the world dropped under one,
+// with nothing to say what it had left. A dropped fight's holds are given
+// back now, GiveBackDropped, and none is left to meet: issue 90.)
 //
 // It is the one read there is. Until 2026-10-09 a creature's were read once
 // more after each command of its turn, for an item's ability's, whose
@@ -2120,16 +2128,6 @@ void TurnMachine::TakeRunning(const CoolingLook &look, std::vector<Effect> &fx)
         {
             continue;
         }
-        if (r.total >= static_cast<float>(kCooldownHoldSeconds))
-        {
-            Log(LogLevel::Warn,
-                std::format("{}'s {} is held in the engine at the machine's own scale ({:.0f} s left of {:.0f}), and "
-                            "the machine holds no such cooldown: left by a fight that did not end (the world "
-                            "dropped, a save made in one), what it had left is not known, and it is ended: ready",
-                            Utf8(who->name), Named(r.ability, r.item), r.remaining, r.total));
-            fx.push_back(CooldownOf(look.id, r.ability, r.item, 0, 0));
-            continue;
-        }
         if (r.remaining > 0.0f)
         {
             TakeCooldown(*who, r, "found running on it", fx);
@@ -2138,12 +2136,12 @@ void TurnMachine::TakeRunning(const CoolingLook &look, std::vector<Effect> &fx)
 }
 
 // One cooldown of the engine's, onto its creature's own clock: what the
-// engine has left of it, of what it was set to. Never for more than that
-// total: the engine sets the two as one and only takes from what is left, so
-// more left than the total is the machine's own writing met by a machine
-// that does not know it (a hold no fight wrote back, on a record that kept
-// its own total: an item's did, in play, 2026-10-06), taken at the total and
-// said at warning. Nothing left ends it.
+// engine has left of it, of what it was set to. Nothing left ends it.
+// (Until 2026-10-09 one with more left than its total was taken at the total,
+// at warning: the engine sets the two as one and only takes from what is
+// left, so that was a hold no fight wrote back, on a record that kept its own
+// total, as an item's did in play, 2026-10-06. DAOLib writes an item's total
+// since 0191cbd, and no hold is left unwritten: issue 90.)
 void TurnMachine::TakeCooldown(const Combatant &who, const RunningCooldown &r, std::string_view when,
                                std::vector<Effect> &fx)
 {
@@ -2151,7 +2149,7 @@ void TurnMachine::TakeCooldown(const Combatant &who, const RunningCooldown &r, s
         holds_, [&](const Hold &h) { return h.creature == who.id && h.ability == r.ability && h.item == r.item; });
     const bool anew = held != holds_.end();
     const std::uint32_t totalMs = Milliseconds(r.total);
-    std::uint32_t leftMs = Milliseconds(r.remaining);
+    const std::uint32_t leftMs = Milliseconds(r.remaining);
     if (leftMs == 0)
     {
         if (anew)
@@ -2167,15 +2165,6 @@ void TurnMachine::TakeCooldown(const Combatant &who, const RunningCooldown &r, s
             });
         }
         return;
-    }
-    if (totalMs > 0 && leftMs > totalMs)
-    {
-        Log(LogLevel::Warn,
-            std::format("{}'s {} has {:.2f} s left in the engine of the {:.2f} s it was set to, which the engine "
-                        "does not do: a hold of the machine's that it does not know for its own; taken at what "
-                        "it was set to, and no more",
-                        Utf8(who.name), Named(r.ability, r.item), r.remaining, r.total));
-        leftMs = totalMs;
     }
     Hold taken{who.id, r.ability, r.item, leftMs, std::max(leftMs, totalMs)};
     Log(LogLevel::Info,
@@ -2259,8 +2248,9 @@ void TurnMachine::AgeCooldowns(ObjectId who, std::uint32_t clockMs, std::vector<
     std::erase_if(holds_, [&](const Hold &h) { return h.creature == who && h.leftMs == 0; });
 }
 
-// The fight is over: what still waits goes back to seconds, what it has
-// left. The machine held them, so it is the machine's to write: left as
+// The fight is over (or was dropped with the world, and the world is there
+// again: GiveBackDropped): what still waits goes back to seconds, what it
+// has left. The machine held them, so it is the machine's to write: left as
 // they are, each would wait out the hold's hour on the wall.
 void TurnMachine::ReleaseCooldowns(std::vector<Effect> &fx)
 {
@@ -2269,6 +2259,62 @@ void TurnMachine::ReleaseCooldowns(std::vector<Effect> &fx)
         fx.push_back(CooldownOf(h.creature, h.ability, h.item, static_cast<std::int32_t>((h.leftMs + 999) / 1000),
                                 static_cast<std::int32_t>((h.ofMs + 999) / 1000)));
     }
+    holds_.clear();
+}
+
+// A fight the world was dropped under (Step: the game went to loading in the
+// middle of one, as a scene moves the party to another area) wrote nothing
+// back, the area's objects going with it. But whoever goes on with the party
+// goes on as it was, its id and its cooldowns' records with it, so the engine
+// has each of those holds still, at its hour (read 2026-10-09 of the
+// Blackmarsh's log, issue 90: Lyna 0x43ad4 in the fight before the load and
+// in the one after, her records then at the hold's own numbers, `3459 s left
+// of 30673`). The book is kept through the load, and with the first step in
+// which the game's mode is of the world again each hold has its own seconds
+// back, as a fight's end gives them (ReleaseCooldowns). With no fight on, a
+// hold is on the book only so: End writes them all, and one the engine sets
+// on a creature of no fight is taken off it (OnCooldownSet). A creature that
+// went with its area is passed over by the game layer, which alone can ask.
+//
+// Until then the book was forgotten at the drop. The Baroness's scene took
+// the party out of the Fade from the fight with the First, and eleven of its
+// abilities stood at about an hour through two minutes of exploring, a healer
+// with no heal, until the next fight met them and ended them, a warning each,
+// not knowing what they had left.
+void TurnMachine::GiveBackDropped(std::vector<Effect> &fx)
+{
+    std::string held;
+    for (const Hold &h : holds_)
+    {
+        held += std::format("{}{:#x}'s {}, {:.2f} s left of {:.2f}", held.empty() ? "" : "; ", h.creature,
+                            Named(h.ability, h.item), static_cast<float>(h.leftMs) / 1000.0f,
+                            static_cast<float>(h.ofMs) / 1000.0f);
+    }
+    const bool one = holds_.size() == 1;
+    Log(LogLevel::Info, std::format("the world is there again after the fight that was dropped: the {} cooldown{} it "
+                                    "held {} own seconds back ({})",
+                                    holds_.size(), one ? "" : "s", one ? "has its" : "have their", held));
+    ReleaseCooldowns(fx);
+}
+
+// And a game loaded, or begun, is another world than the dropped fight's
+// (DAOLib's dao::saves::OnGameLoaded, which comes while the mode still says
+// loading, so before the step that would give anything back). Its creatures
+// are as the save has them, under the ids the fight's had as often as not,
+// and a save keeps no cooldown (read 2026-10-09: a manual save written while
+// eleven records stood at the hold's totals has none of those totals in its
+// file, the one round number among them aside): written into it, the book
+// would set cooling what the save has ready.
+void TurnMachine::OnGameLoaded()
+{
+    if (holds_.empty())
+    {
+        return;
+    }
+    const bool one = holds_.size() == 1;
+    Log(LogLevel::Info, std::format("a game is loaded: the {} cooldown{} the dropped fight held {} another world's, "
+                                    "and {} let go",
+                                    holds_.size(), one ? "" : "s", one ? "was" : "were", one ? "is" : "are"));
     holds_.clear();
 }
 

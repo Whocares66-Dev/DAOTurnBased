@@ -637,7 +637,6 @@ class Arena
 
     // What the engine had cooling, taken onto its creature's own clock (22):
     // whose, from which look, and set anew or ended by the game while held.
-    // And never a hold of the machine's own that it did not know of.
     void SaidOfACooldown(std::string_view line)
     {
         const auto says = [line](std::string_view words) { return line.find(words) != std::string_view::npos; };
@@ -649,8 +648,6 @@ class Arena
             coverage_.cooldownsSetAnew += says(", set anew by the game over ") ? 1 : 0;
         }
         coverage_.cooldownsEndedByIt += says(", and the game has ended its cooldown: ") ? 1 : 0;
-        Must(!says(" is held in the engine at the machine's own scale "),
-             "the machine found a hold of its own that it did not know of");
     }
 
     // Ended at its time limit (14): an AI's, and not before the

@@ -58,7 +58,11 @@ void Write(const dao::saves::Slot &save)
 }
 
 // A playthrough is in the world: its choices take the place of whatever was
-// chosen before, which was another playthrough's.
+// chosen before, which was another playthrough's. And the machine is told
+// that the world is another (issue 90): what a fight dropped with the last
+// one still held of its fighters' cooldowns is not this one's to be given.
+// DAOLib calls while the game's mode still says loading (dao/Saves.h), so
+// before the frame that would write it.
 void Read(const std::optional<dao::saves::Slot> &save)
 {
     PartyTactics choices;
@@ -88,6 +92,7 @@ void Read(const std::optional<dao::saves::Slot> &save)
     }
     const std::lock_guard lock(*g_mutex);
     g_machine->SetPartyTactics(std::move(choices));
+    g_machine->OnGameLoaded();
 }
 
 } // namespace

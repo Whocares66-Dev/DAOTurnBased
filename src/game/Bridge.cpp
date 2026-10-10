@@ -1920,8 +1920,11 @@ void Bridge::SetCooldown(const Effect &e)
     // engine by that tag, so there is one to set. Until then an
     // item's had no tag here, DAOLib found no record, and it was set
     // as the scripts do with none, which was never seen to reach it.
-    // One that is not set now (its creature gone since) is said: the
-    // machine's next look at the creature finds what the engine has.
+    // One that is not set on a creature that is there is said. One whose
+    // creature is gone is passed over without a word: so are those of an
+    // area's creatures, as what a fight dropped by a load held is given
+    // back in the next area (core: GiveBackDropped; issue 90), where only
+    // who went on with the party is there to be written.
     if (!dao::abilities::SetCooldown(e.target, e.a, static_cast<float>(e.b), static_cast<float>(e.c), e.text) &&
         api::IsObjectValid(e.target) != 0)
     {

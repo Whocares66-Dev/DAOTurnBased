@@ -769,6 +769,13 @@ class TurnMachine
     // its own holds.
     void OnCooldownSet(ObjectId creature, std::int32_t ability, std::wstring_view item, float seconds);
 
+    // From the game (DAOLib's dao::saves::OnGameLoaded, which comes while the
+    // game's mode still says loading): a save is loaded, or a new game begun.
+    // Its world is another than the one a fight was dropped with, and what
+    // that fight still held is not owed to it (GiveBackDropped): let go,
+    // unwritten.
+    void OnGameLoaded();
+
     // How long the bar's caption says that a party member's action was
     // given back and why (TurnView::notice), of the real clock: the world
     // may stand still while the player reads it. Long enough to read a line
@@ -829,9 +836,7 @@ class TurnMachine
     // over the total, so the total is set to as many times this as the
     // cooldown is of what is left of it (HoldIt): never less than this.
     // Released as its seconds have run on its user's clock, or turned back
-    // into seconds when the fight ends. And the mark of a hold no fight wrote
-    // back, met as its creature comes into a fight: no ability of the game's
-    // cools for an hour.
+    // into seconds when the fight ends.
     static constexpr std::int32_t kCooldownHoldSeconds = 3600;
     // (No length of the mod's for a creature at an effect's command: until
     // 2026-10-04 a turn waited two seconds on one, kEffectGraceMs, and was
@@ -1127,6 +1132,7 @@ class TurnMachine
     struct Hold;
     [[nodiscard]] static Effect HoldIt(const Hold &h);
     void ReleaseCooldowns(std::vector<Effect> &fx);
+    void GiveBackDropped(std::vector<Effect> &fx);
     void HoldTime(bool held, std::vector<Effect> &fx);
     void SetSpeed(float speed, std::vector<Effect> &fx);
     // The fight's speed ([turns] speed), anyone's turn.
@@ -1330,7 +1336,9 @@ class TurnMachine
     // Cooldowns in turns (dev/DESIGN.md): the cooldowns the machine holds,
     // each a record of the engine's taken as the engine set it, or found
     // running as its creature came into the fight (TakeCooldown), with what
-    // it still waits of its user's own clock.
+    // it still waits of its user's own clock. A fight's own, and written
+    // back as it ends; kept past a fight the world was dropped under, until
+    // the world is there again to be written (GiveBackDropped; issue 90).
     struct Hold
     {
         ObjectId creature = kNoObject;
