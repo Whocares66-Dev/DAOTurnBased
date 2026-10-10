@@ -1065,70 +1065,106 @@ TEST_CASE("a kept attack whose target fell is turned on the nearest enemy its cr
     CHECK(tb::NearestInReach(std::vector<tb::Foe>{foe(0x201, nan), foe(0x202, 1.0f)}) == 0x202);
 }
 
-// A mode that keeps its user at a command of its own (issue 51): Captivating
-// Song, and by the scripts Feign Death. What tells its command from another's
-// hold is three things of an effect standing on the creature, all of them.
+// A mode that keeps its user at a command of its own (issues 51 and 94):
+// Captivating Song, by the scripts Feign Death, and Awakening's Tentacle Ward.
+// What tells its command from another's hold, and from an action that only
+// has a mode's form, is four things of an effect standing on the creature,
+// all of them.
 TEST_CASE(
     "its own mode's command is told from another's hold by who put the effect on, whether its mode is on, and its kind",
     "[rules][ownmode]")
 {
     constexpr tb::ObjectId kSinger = 0x82;
+    constexpr tb::ObjectId kTentacle = 0x615c6;
     constexpr tb::ObjectId kDragon = 0x300;
-    constexpr std::int32_t kCaptivate = 1000;  // ABILITY_TALENT_CAPTIVATE
-    constexpr std::int32_t kFeignDeath = 3023; // ABILITY_TALENT_FEIGN_DEATH
-    constexpr std::int32_t kShieldWall = 3041; // a mode that leaves its user free
-    constexpr std::int32_t kUpkeep = 1058;     // any other kind: a mode's own upkeep, say
-    constexpr std::int32_t kKnockback = 1057;  // the dragon's, as play read it
-    const auto effect = [](std::int32_t type, std::int32_t ability, tb::ObjectId creator, bool modeOn) {
+    // A mode, and what the game's table of abilities has it cost to keep up
+    // (abi_base.gda and Awakening's abi_gxa.gda, `CostUpkeep`; read
+    // 2026-10-10).
+    struct Mode
+    {
+        std::int32_t ability;
+        float upkeep;
+    };
+    constexpr Mode kCaptivate{1000, 60.0f};  // ABILITY_TALENT_CAPTIVATE
+    constexpr Mode kFeignDeath{3023, 40.0f}; // ABILITY_TALENT_FEIGN_DEATH
+    constexpr Mode kWard{420011, 10.0f};     // Awakening's GXA_MONSTER_TENTACLE_COVER
+    constexpr Mode kFlurry{402103, 0.0f};    // Awakening's Unending Flurry: a mode in form, not kept up
+    constexpr Mode kStorm{402203, 0.0f};     // and its Reaving Storm
+    constexpr Mode kShieldWall{12, 55.0f};   // a mode that leaves its user free
+    // A kind of effect, and the animation the game's table of effects gives
+    // it (effects.gda and Awakening's effects_gxa.gda, `Animation`; read
+    // 2026-10-10): what the engine has a creature play at a command, and 0
+    // for a kind it plays nothing for.
+    struct Kind
+    {
+        std::int32_t type;
+        std::int32_t animation;
+    };
+    constexpr Kind kSinging{1060, 2067};
+    constexpr Kind kFeigning{1041, 250};
+    constexpr Kind kDefending{20000, 30003}; // the ward's: Awakening's own, and on no list the mod ever had
+    constexpr Kind kFlurrying{20001, 30006};
+    constexpr Kind kStorming{20002, 30009};
+    constexpr Kind kUpkeep{1016, 0};      // every mode's
+    constexpr Kind kModifier{1012, 0};    // a mode's change to a property: the ward's armour, Shield Wall's
+    constexpr Kind kKnockback{1057, 273}; // the dragon's, as play read it
+    const auto effect = [](Kind kind, Mode mode, tb::ObjectId creator, bool modeOn) {
         tb::EffectOn on;
-        on.type = type;
-        on.ability = ability;
+        on.type = kind.type;
+        on.animation = kind.animation;
+        on.ability = mode.ability;
+        on.upkeep = mode.upkeep;
         on.creator = creator;
         on.modeOn = modeOn;
         return on;
     };
 
-    // The engine's own numbers (effect_constants_h.nss), which
-    // src/game/Bridge.cpp holds these to.
-    CHECK(tb::kEffectSinging == 1060);
-    CHECK(tb::kEffectFeignDeath == 1041);
-    CHECK(tb::KeepsItsCreatureAtACommand(1060));
-    CHECK(tb::KeepsItsCreatureAtACommand(1041));
-    CHECK_FALSE(tb::KeepsItsCreatureAtACommand(kUpkeep));
-    CHECK_FALSE(tb::KeepsItsCreatureAtACommand(kKnockback));
-    CHECK_FALSE(tb::KeepsItsCreatureAtACommand(0));
-
     // The song: its singing effect, put on the singer by the singer, the
     // song on. With the song's other effects beside it, in any order.
     const std::vector<tb::EffectOn> singing{effect(kUpkeep, kCaptivate, kSinger, true),
-                                            effect(tb::kEffectSinging, kCaptivate, kSinger, true)};
-    CHECK(tb::OwnModeAtItsCommand(kSinger, singing) == kCaptivate);
+                                            effect(kSinging, kCaptivate, kSinger, true)};
+    CHECK(tb::OwnModeAtItsCommand(kSinger, singing) == kCaptivate.ability);
     // Feign Death the same.
-    const std::vector<tb::EffectOn> feigning{effect(tb::kEffectFeignDeath, kFeignDeath, kSinger, true)};
-    CHECK(tb::OwnModeAtItsCommand(kSinger, feigning) == kFeignDeath);
+    const std::vector<tb::EffectOn> feigning{effect(kFeigning, kFeignDeath, kSinger, true)};
+    CHECK(tb::OwnModeAtItsCommand(kSinger, feigning) == kFeignDeath.ability);
+    // And the ward, as its script puts it on a Giant Tentacle (issue 94): by
+    // what the game's tables say of its kind and its mode, whatever their
+    // numbers. The mod went by a list of the two kinds above, and the ward's,
+    // of neither, was taken for the action's own effect of the turn it was
+    // turned on in, which stood thirty seconds of the wall at it.
+    const std::vector<tb::EffectOn> warded{effect(kUpkeep, kWard, kTentacle, true),
+                                           effect(kDefending, kWard, kTentacle, true),
+                                           effect(kModifier, kWard, kTentacle, true)};
+    CHECK(tb::OwnModeAtItsCommand(kTentacle, warded) == kWard.ability);
 
     // Nothing standing on it: whatever holds it is another's.
     CHECK(tb::OwnModeAtItsCommand(kSinger, {}) == tb::kNoMode);
 
     // A warrior with Shield Wall on, thrown by a dragon: the mode's own
-    // effects are of no kind that keeps a creature at a command, and the
-    // knockback is not its own doing. A hold.
+    // effects are of no kind the engine plays at a command, and the
+    // knockback, which is, is not its own doing. A hold.
     const std::vector<tb::EffectOn> thrown{effect(kUpkeep, kShieldWall, kSinger, true),
-                                           effect(kKnockback, 90100, kDragon, false)};
+                                           effect(kModifier, kShieldWall, kSinger, true),
+                                           effect(kKnockback, {90100, 0.0f}, kDragon, false)};
     CHECK(tb::OwnModeAtItsCommand(kSinger, thrown) == tb::kNoMode);
 
-    // Each of the three alone is not enough.
+    // Each of the four alone is wanted.
     // Another put it on the creature.
-    CHECK(tb::OwnModeAtItsCommand(kSinger, std::vector{effect(tb::kEffectSinging, kCaptivate, kDragon, true)}) ==
-          tb::kNoMode);
+    CHECK(tb::OwnModeAtItsCommand(kSinger, std::vector{effect(kSinging, kCaptivate, kDragon, true)}) == tb::kNoMode);
     // Its ability is no mode of the creature's that is on (the effect left
     // behind a frame as the song is turned off).
-    CHECK(tb::OwnModeAtItsCommand(kSinger, std::vector{effect(tb::kEffectSinging, kCaptivate, kSinger, false)}) ==
-          tb::kNoMode);
-    // Its own mode's and on, of another kind.
+    CHECK(tb::OwnModeAtItsCommand(kSinger, std::vector{effect(kSinging, kCaptivate, kSinger, false)}) == tb::kNoMode);
+    // Its own mode's and on, of a kind the engine plays nothing for.
     CHECK(tb::OwnModeAtItsCommand(kSinger, std::vector{effect(kUpkeep, kCaptivate, kSinger, true)}) == tb::kNoMode);
+    // Its own mode's and on, of a kind the engine plays at a command, and the
+    // mode not one the game keeps up: Awakening's Unending Flurry and Reaving
+    // Storm, which strike on their script's own timer and turn themselves
+    // off. Actions in a mode's form: the turn they are ordered in runs them
+    // as its action's own effect, as before the game's tables were asked.
+    CHECK(tb::OwnModeAtItsCommand(kSinger, std::vector{effect(kFlurrying, kFlurry, kSinger, true)}) == tb::kNoMode);
+    CHECK(tb::OwnModeAtItsCommand(kSinger, std::vector{effect(kStorming, kStorm, kSinger, true)}) == tb::kNoMode);
 
     // Nobody is at nobody's mode.
-    CHECK(tb::OwnModeAtItsCommand(
-              tb::kNoObject, std::vector{effect(tb::kEffectSinging, kCaptivate, tb::kNoObject, true)}) == tb::kNoMode);
+    CHECK(tb::OwnModeAtItsCommand(tb::kNoObject, std::vector{effect(kSinging, kCaptivate, tb::kNoObject, true)}) ==
+          tb::kNoMode);
 }

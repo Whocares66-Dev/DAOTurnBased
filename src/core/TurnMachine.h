@@ -189,7 +189,8 @@ struct ActorObservation
     // ability; kNoMode where the command is another's doing (a knockback, a
     // grab) or it is at no effect's command. The game layer says which from
     // the effects standing on the creature (core/Rules.h,
-    // OwnModeAtItsCommand: Captivating Song, Feign Death). Its own mode's
+    // OwnModeAtItsCommand: Captivating Song, Feign Death, Awakening's
+    // Tentacle Ward). Its own mode's
     // command is no hold and no action of the turn's: a turn the player plays
     // waits on it, a turn its tactics play is spent on it (issue 51;
     // TurnMachine::AtItsOwnMode).

@@ -4846,42 +4846,40 @@ MUTANTS = [
     ),
     # No clock on the player's turn, and a mode that keeps its user at a
     # command (issue 51). How its own mode's command is told from another's
-    # hold: three things of an effect standing on the creature, all of them.
+    # hold, and from an action in a mode's form: four things of an effect
+    # standing on the creature, all of them. The last two are the game's own
+    # word (issue 94: the animation its table of effects gives the kind, and
+    # the upkeep its table of abilities gives the mode), where the mod had a
+    # list of two kinds and three mutants of the list.
     Mutant(
         "ownmode: an effect another put on a creature reads as its own mode's",
         RULES,
-        "        if (effect.creator == creature && effect.modeOn && KeepsItsCreatureAtACommand(effect.type))",
-        "        if (effect.modeOn && KeepsItsCreatureAtACommand(effect.type))",
+        "        if (effect.creator == creature && effect.modeOn && effect.animation != 0 && effect.upkeep > 0.0f)",
+        "        if (effect.modeOn && effect.animation != 0 && effect.upkeep > 0.0f)",
     ),
     Mutant(
         "ownmode: a mode that is off still has its creature at its command",
         RULES,
-        "        if (effect.creator == creature && effect.modeOn && KeepsItsCreatureAtACommand(effect.type))",
-        "        if (effect.creator == creature && KeepsItsCreatureAtACommand(effect.type))",
+        "        if (effect.creator == creature && effect.modeOn && effect.animation != 0 && effect.upkeep > 0.0f)",
+        "        if (effect.creator == creature && effect.animation != 0 && effect.upkeep > 0.0f)",
     ),
     Mutant(
         "ownmode: any effect of a mode that is on reads as the mode's command: a warrior with Shield Wall on, thrown, is not held",
         RULES,
-        "        if (effect.creator == creature && effect.modeOn && KeepsItsCreatureAtACommand(effect.type))",
-        "        if (effect.creator == creature && effect.modeOn)",
+        "        if (effect.creator == creature && effect.modeOn && effect.animation != 0 && effect.upkeep > 0.0f)",
+        "        if (effect.creator == creature && effect.modeOn && effect.upkeep > 0.0f)",
     ),
     Mutant(
-        "ownmode: the song's effect is not one that keeps its creature at a command",
+        "ownmode: the kind is judged by the mod's list of two again, and the Tentacle Ward is no mode's command",
         RULES,
-        "    return effectType == kEffectSinging || effectType == kEffectFeignDeath;",
-        "    return effectType == kEffectFeignDeath;",
+        "        if (effect.creator == creature && effect.modeOn && effect.animation != 0 && effect.upkeep > 0.0f)",
+        "        if (effect.creator == creature && effect.modeOn && (effect.type == 1060 || effect.type == 1041))",
     ),
     Mutant(
-        "ownmode: Feign Death's effect is not one that keeps its creature at a command",
+        "ownmode: a mode the game does not keep up is its user's stance: an Unending Flurry's turn is spent at once, and it strikes in others' turns",
         RULES,
-        "    return effectType == kEffectSinging || effectType == kEffectFeignDeath;",
-        "    return effectType == kEffectSinging;",
-    ),
-    Mutant(
-        "ownmode: the singing effect's number is not the engine's",
-        "src/core/Rules.h",
-        "inline constexpr std::int32_t kEffectSinging = 1060;",
-        "inline constexpr std::int32_t kEffectSinging = 1061;",
+        "        if (effect.creator == creature && effect.modeOn && effect.animation != 0 && effect.upkeep > 0.0f)",
+        "        if (effect.creator == creature && effect.modeOn && effect.animation != 0)",
     ),
     Mutant(
         "ownmode: any creature at an effect's command is at its own mode's, whatever the game layer said: no hold is a hold",

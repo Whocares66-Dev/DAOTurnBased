@@ -498,11 +498,6 @@ bool AsksForTarget(std::int32_t targetType, std::int32_t useType)
     return useType != kUseTypeMode && (targetType & ~kTargetSelf) != 0;
 }
 
-bool KeepsItsCreatureAtACommand(std::int32_t effectType)
-{
-    return effectType == kEffectSinging || effectType == kEffectFeignDeath;
-}
-
 std::int32_t OwnModeAtItsCommand(ObjectId creature, std::span<const EffectOn> standing)
 {
     if (creature == kNoObject)
@@ -511,7 +506,7 @@ std::int32_t OwnModeAtItsCommand(ObjectId creature, std::span<const EffectOn> st
     }
     for (const EffectOn &effect : standing)
     {
-        if (effect.creator == creature && effect.modeOn && KeepsItsCreatureAtACommand(effect.type))
+        if (effect.creator == creature && effect.modeOn && effect.animation != 0 && effect.upkeep > 0.0f)
         {
             return effect.ability;
         }

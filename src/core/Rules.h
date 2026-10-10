@@ -418,23 +418,26 @@ inline constexpr std::int32_t kUseTypeMode = 2;
 // the game uses those on the caster, and so do they here.
 [[nodiscard]] bool AsksForTarget(std::int32_t targetType, std::int32_t useType);
 
-// A mode that keeps its user at a command of its own (issue 51).
+// A mode that keeps its user at a command of its own (issues 51 and 94).
 //
 // A mode is turned on and stays on, and most leave their user free to act:
-// Shield Wall, Song of Valor. Two take their user's every other action while
-// they are on, by the game's own design ("the bard cannot move or take any
-// other action while singing"): the talent's script puts on its user, beside
-// what the mode does, an effect whose command the engine keeps the creature
-// at for as long as the effect stands (talent_modal.nss, through
+// Shield Wall, Song of Valor. A few take their user's every other action
+// while they are on, by the game's own design ("the bard cannot move or take
+// any other action while singing"): the mode's script puts on its user,
+// beside what the mode does, an effect whose command the engine keeps the
+// creature at for as long as the effect stands (talent_modal.nss, through
 // Ability_ApplyUpkeepEffects, ability_h.nss: permanent, on the caster, by the
-// caster, of that ability; read 2026-10-05):
+// caster, of that ability; read 2026-10-05; Awakening's gxa_monster_modal.ncs
+// the same, read in its compiled form 2026-10-10). The three found so far:
 //   EFFECT_TYPE_SINGING (1060)      Captivating Song, ABILITY_TALENT_CAPTIVATE (1000)
 //   EFFECT_TYPE_FEIGN_DEATH (1041)  Feign Death, ABILITY_TALENT_FEIGN_DEATH (3023)
+//   EFFECT_TYPE_DEFENDING (20000)   Tentacle Ward, Awakening's GXA_MONSTER_TENTACLE_COVER (420011)
 // Seen in play for the song (2026-10-05: the singer at an ExecuteEffect
 // command no player gave, sub-action 51, 6.2 s a loop, on after `clear
-// commands`). Feign Death is the same case by the scripts, and by one look
-// in the ability sweep of that day (its user's next turn "lost to a hold"):
-// not yet seen in play under this rule.
+// commands`) and for the ward (2026-10-10, the Mother's four Giant Tentacles:
+// sub-action 51, 1.67 s a loop). Feign Death is the same case by the scripts,
+// and by one look in the ability sweep of 2026-10-05 (its user's next turn
+// "lost to a hold"): not yet seen in play under this rule.
 //
 // Such a command is no hold: nobody did it to the creature, and it lasts
 // until the mode is turned off, which is its user's own choice each turn
@@ -444,43 +447,81 @@ inline constexpr std::int32_t kUseTypeMode = 2;
 // they're letting tactics run the actor. This will give the player the
 // opportunity to turn off the song at their leisure, or end their turn."
 //
-// What tells it from another's hold, a knockback's or a grab's, is three
-// things of an effect standing on the creature, all of them:
+// What tells it from another's hold, a knockback's or a grab's, and from an
+// action of its own that only has a mode's form, is four things of an effect
+// standing on the creature, all of them, each the game's own word (issue 94;
+// until then the last two were a list of the mod's, the first two kinds
+// above, and the ward, of neither, was taken for its turn's action's own
+// effect: each tentacle's turn stood thirty seconds of the wall at it, to
+// max_turn_ms, with ninety seconds owed to its next turns):
 // - the creature put it on itself (its creator);
 // - by an ability that is a mode of its own, and on (EffectOn::modeOn);
-// - and it is of a kind that keeps its creature at a command (the two above).
-// The third is a list of kinds, and is needed. Every mode puts effects of
-// its own making on its user (its upkeep, its property modifiers), so by the
-// first two alone a warrior with Shield Wall on, thrown by a dragon, would
-// read as at its own mode's command: on a turn its tactics play the whole
-// turn spent at once (the loss issue 30 mended), on the player's the
-// knockback costing nothing. Nothing else read of the command tells the two
-// apart: a knockback's and the song's both run sub-action 51, and of both
-// the game layer reads "no temporary effect stands on it" (the song's effect
-// is permanent; a knockback's has run out by the getting up). Which effect an
-// ExecuteEffect command runs is not read from the command yet
-// (dev/DAOLIB_NEEDS.md, "The command queue", 7); when it is, the command
-// says whose it is and this list goes.
+// - it is of a kind the engine has its creature play at a command, by the
+//   game's table of effects (EffectOn::animation);
+// - and the mode is one the game keeps up, by the upkeep its table of
+//   abilities gives it (EffectOn::upkeep).
 //
-// What the list cannot say: a singer thrown by another reads as at its own
-// mode's command through the throw too, the song's effect standing all the
-// while. The five conditions (a stun, a pin) are read apart from this, and
-// take its turn as anyone's.
-inline constexpr std::int32_t kEffectSinging = 1060;
-inline constexpr std::int32_t kEffectFeignDeath = 1041;
-[[nodiscard]] bool KeepsItsCreatureAtACommand(std::int32_t effectType);
+// The third is needed. Every mode puts effects of its own making on its user
+// (its upkeep, its property modifiers), so by the first two alone a warrior
+// with Shield Wall on, thrown by a dragon, would read as at its own mode's
+// command: on a turn its tactics play the whole turn spent at once (the loss
+// issue 30 mended), on the player's the knockback costing nothing. Nothing
+// else read of the command tells the two apart: a knockback's and the song's
+// both run sub-action 51, and of both the game layer reads "no temporary
+// effect stands on it" (the song's effect is permanent; a knockback's has run
+// out by the getting up). Which effect an ExecuteEffect command runs is not
+// read from the command yet (dev/DAOLIB_NEEDS.md, "The command queue", 7);
+// when it is, the command says whose it is and the third count goes. The
+// game's table of effects (TABLE_EFFECTS, 136: effects.gda, and
+// effects_gxa.gda with Awakening) gives a kind an animation where the engine
+// has its creature play one at a command, and none where it does not: the
+// song's, Feign Death's and the ward's have one, and so have what holds a
+// creature by another's doing (a knockdown, a stun, a grab), and an upkeep
+// and a property's modifier have none (read in the game's files 2026-10-10;
+// that the engine goes by this column is not read in its code, and is so of
+// every kind seen at a command in play).
+//
+// The fourth is needed too, since the table does not stop at what the mod
+// had listed. Awakening has two talents of the party's own that are modes in
+// form and actions in what they do, Unending Flurry (402103) and Reaving
+// Storm (402203): each puts on its user an effect of a kind the engine plays
+// at a command (20001 and 20002), strikes on a delayed event of its script's
+// own, taking stamina as it strikes, and turns itself off (gxa_modal.ncs,
+// read in its compiled form 2026-10-10: the flurry with under 20 of stamina
+// or no hostile target, the storm perceiving no hostile). Neither is kept
+// up: the table of abilities gives them no upkeep (CostUpkeep 0), where the
+// song's is 60, Feign Death's 40 and the ward's 10. By the first three alone
+// they would be their user's stance, the turn spent on them at once or
+// waiting with the world held, and their strikes would fall in other
+// creatures' turns. With the fourth they are what they were before this
+// issue, their turn's action's own effect, which runs in its own turn and
+// costs the time it runs. Neither has been seen in play in turns, either way.
+//
+// What the four counts cannot say: a singer thrown by another reads as at
+// its own mode's command through the throw too, the song's effect standing
+// all the while. The five conditions (a stun, a pin) are read apart from
+// this, and take its turn as anyone's.
 
 // One effect standing on a creature, as the game layer read it
-// (src/game/Bridge.cpp, of DAOLib's dao::effects::On).
+// (src/game/Bridge.cpp, of DAOLib's dao::effects::On). The last three are
+// asked only of an effect the creature put on itself by an ability, and are
+// as they are here for any other.
 struct EffectOn
 {
     std::int32_t type = 0;        // EFFECT_TYPE_*
     std::int32_t ability = 0;     // the ability that applied it; 0 for none
     ObjectId creator = kNoObject; // who applied it
+    // The animation the game's table of effects gives its kind (the table's
+    // `Animation`): what the engine has a creature play at a command while
+    // an effect of the kind stands on it. 0 for a kind it plays nothing for.
+    std::int32_t animation = 0;
     // That ability is a mode (the ability table's UseType 2), and the
     // creature the effect stands on has it on (the scripts'
     // IsModalAbilityActive).
     bool modeOn = false;
+    // What the table of abilities has that ability cost to keep up (its
+    // `CostUpkeep`): 0 for one the game does not keep up.
+    float upkeep = 0.0f;
 };
 
 // No mode: what a creature at no mode's command is at
@@ -489,8 +530,8 @@ inline constexpr std::int32_t kNoMode = -1;
 
 // The mode whose command a creature at an effect's command is at, by the
 // effects standing on it: the ability of the first that is its own mode's by
-// all three counts above; kNoMode with none, and then what holds it is
-// another's.
+// all four counts above; kNoMode with none, and then what it is at is
+// another's doing or its own action.
 [[nodiscard]] std::int32_t OwnModeAtItsCommand(ObjectId creature, std::span<const EffectOn> standing);
 
 // Whether two sides fight each other: the enemies against the party and

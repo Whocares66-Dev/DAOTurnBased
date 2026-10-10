@@ -104,10 +104,6 @@ static_assert(static_cast<int>(CommandType::SwitchWeaponSets) ==
 static_assert(static_cast<int>(CommandType::Turn) == static_cast<int>(dao::core::CommandType::Turn));
 static_assert(static_cast<int>(CommandType::Fly) == static_cast<int>(dao::core::CommandType::Fly));
 static_assert(kNoObject == dao::kInvalidObject);
-// The two kinds of effect by which a mode keeps its user at a command
-// (core/Rules.h, KeepsItsCreatureAtACommand; issue 51).
-static_assert(kEffectSinging == static_cast<std::int32_t>(dao::script::EffectType::Singing));
-static_assert(kEffectFeignDeath == static_cast<std::int32_t>(dao::script::EffectType::FeignDeath));
 
 namespace
 {
@@ -1285,6 +1281,21 @@ void SayLongStep(ObjectId id, CommandType command, const dao::commands::SubActio
                                       : std::string{});
 }
 
+// The animation the game's table of effects gives a kind of effect, 0 for
+// none (core: EffectOn::animation; issue 94): what the engine has a creature
+// play at a command while an effect of the kind stands on it. The game's own
+// word for which kinds keep a creature at a command, where the mod had a
+// list of two until more came with Awakening (TABLE_EFFECTS' `Animation`,
+// read in effects.gda and effects_gxa.gda 2026-10-10: 2067 for the song's
+// EFFECT_TYPE_SINGING, 250 for Feign Death's, 30003 for the Tentacle Ward's
+// EFFECT_TYPE_DEFENDING, 148 for a knockdown's, 0 for an upkeep's and a
+// property's modifier). The engine's own read of its table, as the scripts'
+// GetM2DAInt is.
+std::int32_t EffectAnimation(std::int32_t effectType)
+{
+    return dao::gda::GetInt(dao::script::Table::Effects, effectType, "Animation").value_or(0);
+}
+
 // The creature whose turn it is, found at its own mode's command (core:
 // ActorObservation::ownMode; issue 51): said once as it is found so, and
 // again when it is found so after it was not, or of another mode: on each of
@@ -1293,7 +1304,10 @@ void SayLongStep(ObjectId id, CommandType command, const dao::commands::SubActio
 // creature there, by its kind. Nothing on the screen says it yet, and what
 // the machine then does with the turn (waits for the player, or spends it on
 // the mode) is read against this line in a play test's log. Not yet seen in
-// play.
+// play. With what the game's tables say of the two (issue 94): the mode's
+// upkeep, and the kind as the table of effects labels it, which has
+// Awakening's kinds too (the scripts' constants DAOLib names kinds by are the
+// main campaign's), with the animation it gives the kind.
 void SayOwnMode(ObjectId id, std::int32_t mode, std::int32_t effectType)
 {
     static ObjectId lastWho = dao::kInvalidObject;
@@ -1308,10 +1322,16 @@ void SayOwnMode(ObjectId id, std::int32_t mode, std::int32_t effectType)
     {
         return;
     }
-    spdlog::info("{:#x} is at its own mode's command, not held: its ability {} ({}) is a mode and is on, and the "
-                 "effect of type {} ({}) that it put on itself by it keeps it there",
-                 id, mode, Utf8(dao::abilities::Name(mode).value_or(std::wstring{L"no name read"})), effectType,
-                 dao::script::Name(static_cast<dao::script::EffectType>(effectType)));
+    spdlog::info("{:#x} is at its own mode's command, not held: its ability {} ({}) is a mode the game keeps up (an "
+                 "upkeep of {:.0f}) and is on, and the effect of type {} ({}) that it put on itself by it keeps it "
+                 "there, a kind the engine has its creature play at a command (animation {} in the game's table of "
+                 "effects)",
+                 id, mode, Utf8(dao::abilities::Name(mode).value_or(std::wstring{L"no name read"})),
+                 dao::gda::GetFloat(dao::script::Table::AbilitiesTalents, mode, "CostUpkeep").value_or(0.0f),
+                 effectType,
+                 Utf8(dao::gda::GetString(dao::script::Table::Effects, effectType, "Label")
+                          .value_or(std::wstring{L"no label read"})),
+                 EffectAnimation(effectType));
 }
 
 } // namespace
@@ -1354,11 +1374,13 @@ std::int32_t AtAnEffect(ActorObservation &actor, ObjectId id, const dao::Command
     //
     // And whether the command is its own mode's, not a hold (core:
     // ActorObservation::ownMode, Rules.h's OwnModeAtItsCommand;
-    // issue 51): by an effect standing on it that it put on itself,
-    // by an ability that is a mode of its own and on, of a kind that
-    // keeps its creature at a command (Captivating Song's singing
-    // effect, Feign Death's). The mode is asked about only for an
-    // effect that passes the two cheap tests, so a creature with no
+    // issues 51 and 94): by an effect standing on it that it put on
+    // itself, by an ability that is a mode of its own and on, of a
+    // kind the engine has its creature play at a command, the mode
+    // one the game keeps up (Captivating Song's singing effect, Feign
+    // Death's, the Tentacle Ward's). The kind is asked about only
+    // for an effect the creature put on itself by an ability, and
+    // the ability only for one of such a kind, so a creature with no
     // such effect costs no table read and no script call more.
     std::vector<EffectOn> standing;
     for (const dao::effects::Standing &effect : dao::effects::On(id))
@@ -1367,10 +1389,17 @@ std::int32_t AtAnEffect(ActorObservation &actor, ObjectId id, const dao::Command
         on.type = static_cast<std::int32_t>(effect.type);
         on.ability = effect.ability;
         on.creator = effect.creator;
-        on.modeOn =
-            on.creator == id && KeepsItsCreatureAtACommand(on.type) && on.ability > 0 &&
-            dao::gda::GetInt(dao::script::Table::AbilitiesTalents, on.ability, "UseType").value_or(0) == kUseTypeMode &&
-            api::IsModalAbilityActive(id, on.ability) != 0;
+        if (on.creator == id && on.ability > 0)
+        {
+            on.animation = EffectAnimation(on.type);
+        }
+        if (on.animation != 0)
+        {
+            const auto abilities = dao::script::Table::AbilitiesTalents;
+            on.modeOn = dao::gda::GetInt(abilities, on.ability, "UseType").value_or(0) == kUseTypeMode &&
+                        api::IsModalAbilityActive(id, on.ability) != 0;
+            on.upkeep = dao::gda::GetFloat(abilities, on.ability, "CostUpkeep").value_or(0.0f);
+        }
         standing.push_back(on);
         if (!(effect.remaining > 0.0f))
         {
@@ -1391,9 +1420,8 @@ std::int32_t AtAnEffect(ActorObservation &actor, ObjectId id, const dao::Command
     actor.ownMode = OwnModeAtItsCommand(id, standing);
     if (actor.ownMode != kNoMode)
     {
-        const auto own = std::ranges::find_if(standing, [&](const EffectOn &on) {
-            return on.modeOn && on.ability == actor.ownMode && KeepsItsCreatureAtACommand(on.type);
-        });
+        const auto own = std::ranges::find_if(
+            standing, [&](const EffectOn &on) { return on.animation != 0 && on.ability == actor.ownMode; });
         return own != standing.end() ? own->type : 0;
     }
     return 0;
