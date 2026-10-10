@@ -1547,7 +1547,7 @@ ActorObservation Bridge::Actor(ObjectId id)
     const dao::Vector position = api::GetPosition(id);
     actor.position = {position.x, position.y, position.z};
     actor.conjureHeld = dao::commands::ConjureHeld(id) && dao::commands::Conjure(id).has_value();
-    actor.timersHeld = dao::timers::Waiting(id) > 0;
+    actor.timersHeld = dao::timers::WaitingFor(id) > 0;
     // What it has noticed, as of this frame: the party's own is not asked about.
     if (std::ranges::find(party_, id) == party_.end())
     {
@@ -1888,7 +1888,7 @@ void Bridge::AgeEffects(const Effect &e)
     {
         // One creature's own clock (core: AgeOwnClock), in steps as
         // small as a frame's walk: DAOLib keeps the fractions.
-        dao::clock::Advance(e.target, static_cast<float>(e.b) / 1000.0f);
+        dao::clock::AdvanceObject(e.target, static_cast<float>(e.b) / 1000.0f);
         return;
     }
     // With the effects and regeneration, since DAOLib 48fe011, the
