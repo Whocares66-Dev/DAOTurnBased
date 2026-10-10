@@ -460,18 +460,26 @@ struct CardView
     // camera leaving for the next turn in the same frame (play test 28).
     bool waits = false;
     // What is pending, where owedMs says something is: the ability's id, or
-    // -1 for an attack. The game layer adds the ability's icon (a texture's
-    // name) and its name as the player reads it, for the card to show: the
-    // icon in the round marker's ring, in place of the seconds, which "does
-    // not really tell us anything" (the user, 2026-10-02).
+    // -1 for an attack. The game layer adds its name as the player reads it
+    // and the icon for the card's shoulder (a texture's name), in place of
+    // the seconds, which "does not really tell us anything" (the user,
+    // 2026-10-02): the ability's own, the game's for an attack, or, with
+    // nothing pending, the game's for a move where walkCut says so.
     std::int32_t pendingAbility = -1;
-    std::wstring pendingIcon;
+    std::wstring icon;
     std::wstring pendingName;
     // A party member's: its tactics play its turns, as chosen for it or as
     // `[turns] party` says (core/PartyTactics.h; issue 46). Of its next turn:
     // `yours` on the current card is of the turn under way, which is played
     // out the way it began, so the two may differ there until that turn ends.
     bool tacticsPlay = false;
+    // The meters stopped its walk in its last turn ("Out of movement":
+    // TurnMachine::TrackMovement), and its next has not begun: somebody on
+    // its way somewhere, which the card says as it says a pending action
+    // (issue 83; the user, 2026-10-09: "if out of time when moving should
+    // show moving icon top right of portrait, as we do attack etc."). Not of
+    // one that is down. Last, the view filling the fields above by place.
+    bool walkCut = false;
 };
 
 struct TurnView
@@ -1389,8 +1397,17 @@ class TurnMachine
     PartyTactics partyTactics_;
 
     bool stoodDown_ = false; // after an error (StandDown): no turns until the game has left combat
-    // With time: what each creature's last turn left over, to its cap.
-    std::unordered_map<ObjectId, std::uint32_t> rollover_;
+    // What each creature's last turn left to its next (none: a turn passed
+    // over, which leaves nothing, or no turn yet in this fight): what of its
+    // bar rolled over, to its cap; and that the meters stopped its walk in it
+    // (Budget::outOfMovement as it ended), which its card says until that
+    // next turn begins (CardView::walkCut; issue 83).
+    struct LastTurn
+    {
+        std::uint32_t rolledMs = 0;
+        bool walkCut = false;
+    };
+    std::unordered_map<ObjectId, LastTurn> lastTurn_;
     // With time: how long each creature was held by another's action
     // while that action ran (a grab, Overwhelm), owed of its own turns
     // (GrabAtTurnStart, LoseTurn).

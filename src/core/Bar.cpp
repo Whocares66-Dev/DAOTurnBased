@@ -104,11 +104,15 @@ std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits, cons
         Meters(out, static_cast<float>(card.owedMs) / 1000.0f);
         // It has put its turn off, and waits for it (version 8).
         Field(out, card.waits);
-        // What is pending: the ability's id (-1: an attack), its icon's
-        // texture and its name, where the game layer found them.
+        // What is pending: the ability's id (-1: an attack), the icon for
+        // the card's shoulder and the ability's name, where the game layer
+        // found them.
         Field(out, static_cast<long long>(card.pendingAbility));
-        Field(out, std::wstring_view{card.pendingIcon});
+        Field(out, std::wstring_view{card.icon});
         Field(out, std::wstring_view{card.pendingName});
+        // The meters stopped its walk in its last turn (version 12): with
+        // nothing pending, the icon is the game's for a move.
+        Field(out, card.walkCut);
     }
     return out;
 }

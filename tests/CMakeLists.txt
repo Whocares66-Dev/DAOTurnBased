@@ -59,6 +59,7 @@ add_executable(
     test_turnend.cpp
     test_turntime.cpp
     test_wait.cpp
+    test_walkcut.cpp
 )
 tb_apply_warnings(tb_tests)
 target_link_libraries(tb_tests PRIVATE tb_core Catch2::Catch2WithMain)

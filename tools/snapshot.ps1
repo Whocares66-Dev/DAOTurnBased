@@ -32,7 +32,8 @@ param(
     # More of the movie's parameters, each name=value: first=2 (the row's first
     # place, with -Sample more), turn=ai (somebody else's turn: no End, no Delay),
     # point=later or point=earlier (the pointer on that arrow), click=later or
-    # click=earlier (one click on it).
+    # click=earlier (one click on it), point=card4 (the pointer on the row's
+    # fifth card: the caption says what its card says).
     [string[]] $Set = @()
 )
 

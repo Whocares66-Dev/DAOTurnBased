@@ -360,7 +360,7 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         wantScan_ = false;
         const bool charging = !charges_.empty() || landing_.has_value();
         charges_.clear();
-        rollover_.clear();
+        lastTurn_.clear();
         grabbedMs_.clear();
         landing_.reset();
         chargeBegan_ = false;
@@ -725,7 +725,7 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     cooled_.clear();
     left_.clear();
     charges_.clear();
-    rollover_.clear();
+    lastTurn_.clear();
     grabbedMs_.clear();
     paceRates_.clear(); // what was said of a creature's Haste in the last fight is not this one's
     landing_.reset();
@@ -998,9 +998,12 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     budget_.spend = NewSpend(who);
     budget_.pace = BarPace(who);
     budget_.personMps = settings_.paceMps;
-    if (const auto rolled = rollover_.find(who.id); rolled != rollover_.end())
+    if (const auto last = lastTurn_.find(who.id); last != lastTurn_.end())
     {
-        budget_.rolledMs = rolled->second;
+        budget_.rolledMs = last->second.rolledMs;
+        // The walk that turn was stopped at has been on its card since
+        // (CardView::walkCut): until now, its next turn beginning.
+        last->second.walkCut = false;
     }
     clockSeenMs_ = 0;
     clockRuns_ = true;
@@ -1145,8 +1148,8 @@ float TurnMachine::BarPace(const Combatant &who)
 TurnBudget TurnMachine::NewSpend(const Combatant &who) const
 {
     const TacticsTime tactics = TimeFromTactics(TacticsOf(who));
-    const auto rolled = rollover_.find(who.id);
-    const std::uint32_t rollover = rolled != rollover_.end() ? rolled->second : 0;
+    const auto last = lastTurn_.find(who.id);
+    const std::uint32_t rollover = last != lastTurn_.end() ? last->second.rolledMs : 0;
     return TurnBudget::Time(TurnTime(TurnMs(), tactics.bonusMs, rollover), settings_.paceMps * BarPace(who),
                             settings_.freeStepMeters);
 }
@@ -3675,7 +3678,7 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
             }
             const bool saved = RollsOver(why);
             const std::uint32_t rolled = saved ? unspent : 0;
-            rollover_[current->id] = rolled;
+            lastTurn_[current->id] = {rolled, budget_.outOfMovement};
             if (saved)
             {
                 Log(LogLevel::Info, std::format("{}'s turn ends: {}; {:.2f} s rolls over", Utf8(current->name), why,
@@ -3692,7 +3695,7 @@ void TurnMachine::EndTurn(std::vector<Effect> &fx, std::string_view why)
         }
         else
         {
-            rollover_.erase(current->id);
+            lastTurn_.erase(current->id);
             Log(LogLevel::Info, std::format("{}'s turn ends: {}", Utf8(current->name), why));
         }
         Emit(EventKind::TurnEnded, current->id, std::string{why});
@@ -4045,7 +4048,7 @@ void TurnMachine::Leaves(Combatant &who, std::string_view why, std::string_view 
     Log(LogLevel::Info, std::format("{} leaves the fight: {}", Utf8(who.name), why));
     Emit(EventKind::Gone, who.id, std::string{detail});
     who.down = true;
-    rollover_.erase(who.id);
+    lastTurn_.erase(who.id);
     SetOwnClock(who.id, false, fx);
 }
 
@@ -5641,9 +5644,13 @@ TurnView TurnMachine::View() const
         // the name are the game layer's to add.
         const std::int32_t pending =
             owes != charges_.end() && owes->type == CommandType::UseAbility ? owes->ability : -1;
+        // Its walk stopped by the meters in its last turn, while it stands: a
+        // fallen member's card, greyed, is of nobody on its way anywhere.
+        const auto last = lastTurn_.find(c.id);
+        const bool walkCut = !c.down && last != lastTurn_.end() && last->second.walkCut;
         view.upcoming.push_back({c.id, c.name, c.tag, c.side, c.rank, c.health, c.down, slot.current, PlayerControls(c),
                                  slot.round, c.energy, c.mana, owes != charges_.end() ? owes->owedMs : 0, waits,
-                                 pending, std::wstring{}, std::wstring{}, OnTactics(c)});
+                                 pending, std::wstring{}, std::wstring{}, OnTactics(c), walkCut});
     }
     return view;
 }

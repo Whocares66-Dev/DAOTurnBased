@@ -19,7 +19,7 @@
 // Outside the game there is no plugin to ask, and it draws a sample fight,
 // so the look can be checked in any Flash player.
 
-var BAR_VERSION = 11;
+var BAR_VERSION = 12;
 var CARD = String.fromCharCode(30);
 var FIELD = String.fromCharCode(31);
 
@@ -191,7 +191,9 @@ var ROW = 10; // the sample's row: core's TurnView::kShown
 function sampleView()
 {
     // Each combatant once, the current first: the rest of round 2, then
-    // round 3's up to the current (core/TurnOrder.h, Upcoming).
+    // round 3's up to the current (core/TurnOrder.h, Upcoming). The Genlock
+    // has a talent pending, the Soldier waits, and the Genlock Alpha's walk
+    // was cut short (issue 83).
     // 3.1 s left of a bar of 5.5, a turn being 4. (Until issue 50 this was
     // sample=time, and sample=1 a fight of one action and nine meters a turn,
     // with no bar: that clock is gone, and its sample with it.)
@@ -207,7 +209,7 @@ function sampleView()
         [513, 2, 2, 40, 0, 0, 0, 2, "Genlock", "g", "", 100, 0, "1.6", 0, 617, "ico_shield_bash", "Shield Bash"],
         [258, 0, 0, 0, 1, 0, 1, 2, "Morrigan", "gen00fl_morrigan", "gui_portrait_49", 30, 1],
         [768, 1, 2, 90, 0, 0, 0, 2, "Soldier", "s", "gui_portrait_09", 80, 0, "0.0", 1],
-        [514, 2, 3, 100, 0, 0, 0, 2, "Genlock Alpha", "a", "gui_portrait_49", 45, 0],
+        [514, 2, 3, 100, 0, 0, 0, 2, "Genlock Alpha", "a", "gui_portrait_49", 45, 0, "0.0", 0, -1, "ico_MovetoPoint", "", 1],
         [256, 0, 100, 100, 0, 0, 1, 3, "Warden", "player", "gui_portrait_09", 70, 0],
         [512, 2, 4, 80, 0, 0, 0, 3, "Hurlock Emissary", "e", "gui_portrait_49", 55, 1]
     ];
@@ -295,7 +297,8 @@ function parse(text)
                     down: f[4] == "1", current: f[5] == "1", yours: f[6] == "1", round: Number(f[7]),
                     name: f[8], tag: f[9], portrait: f[10] == undefined ? "" : f[10],
                     energy: Number(f[11]), mana: f[12] == "1", owed: Number(f[13]), waits: f[14] == "1",
-                    icon: f[16] == undefined ? "" : f[16], ability: f[17] == undefined ? "" : f[17]});
+                    icon: f[16] == undefined ? "" : f[16], ability: f[17] == undefined ? "" : f[17],
+                    walkCut: f[18] == "1"});
     }
     // The cards are every turn to come; the row is those the bar shows, a
     // row's worth from `before` on (version 9). The rest are read for what
@@ -532,6 +535,52 @@ function sideGlow(clip, cx, cy, full, out, colour, alpha)
     clip.endFill();
 }
 
+// The mark at a card's shoulder, top right of its portrait: an icon of the
+// game's by its texture's name, with a soft light behind it to lift it off
+// the portrait. Of what its creature is in the middle of: a pending talent's
+// or spell's own icon, the picture the quickbar shows for it, the game's for
+// a pending attack, or the game's for a move where its walk was cut short
+// (drawCard). `called` is what the icon is of, in a word: outside the game
+// the texture is not there, and a dark square with the word's first letter
+// stands in. Nothing for a card with no icon (an ability the game layer
+// found none for).
+//
+// First a number of seconds stood here in a ring drawn by the script; the
+// user, 2026-10-02: "crudely drawn", then "what if we used the icon of the
+// talent / spell instead of a number? the number doesn't really tell us
+// anything", and "no gold ring needed i think, just icon. maybe icon should
+// have a slight glowing border". A pending attack had none from play test 28
+// ("with four spiders every card had a badge, noise and not news") until
+// issue 15.
+function shoulderIcon(clip, icon, called)
+{
+    if (icon.length == 0)
+    {
+        return;
+    }
+    // Three quarters of the first size: at 24 it was "too big now" (the user,
+    // 2026-10-02).
+    var badge = 18;
+    var badgeX = CARD_W - badge + 5;
+    var badgeY = -5;
+    var light = clip.createEmptyMovieClip("shoulderLight", 19);
+    for (var layer = 0; layer < 4; layer++)
+    {
+        roundedBox(light, badgeX - layer * 0.75, badgeY - layer * 0.75, badge + 1.5 * layer, badge + 1.5 * layer,
+                   2 + layer, 0xFFE9A8, 16);
+    }
+    if (inGame)
+    {
+        art(clip, icon, 20, badgeX, badgeY, badge, badge);
+        return;
+    }
+    var stand = clip.createEmptyMovieClip("shoulderStand", 20);
+    roundedBox(stand, badgeX, badgeY, badge, badge, 2, INK, 100);
+    var letter = label(clip, "shoulderLetter", 21, badgeX, badgeY, badge, badge, 11, GOLD, "center", true);
+    letter.text = called.length > 0 ? called.charAt(0) : "?";
+    centre(letter, badgeY, badge);
+}
+
 function drawCard(bar, card, index, x)
 {
     var clip = bar.createEmptyMovieClip("card" + index, 100 + index);
@@ -607,45 +656,22 @@ function drawCard(bar, card, index, x)
     if (card.owed > 0)
     {
         // An action of its creature's is pending (core: Charge), and lands
-        // on its next turn: said in words under the pointer. For a talent or
-        // a spell its own icon stands at the card's shoulder, the picture
-        // the quickbar shows for it, with a soft light behind it to lift it
-        // off the portrait. First a number of seconds stood here in a ring
-        // drawn by the script; the user, 2026-10-02: "crudely drawn", then
-        // "what if we used the icon of the talent / spell instead of a
-        // number? the number doesn't really tell us anything", and "no gold
-        // ring needed i think, just icon. maybe icon should have a slight
-        // glowing border". A pending attack has no icon: with four spiders
-        // every card had a badge, noise and not news (play test 28).
+        // on its next turn: said in words under the pointer, and by its icon
+        // at the card's shoulder (shoulderIcon), a talent's or a spell's own
+        // or the game's for an attack.
         clip.fullName = pendingWords(card);
-        if (card.icon.length > 0)
-        {
-            // Three quarters of the first size: at 24 it was "too big now"
-            // (the user, 2026-10-02).
-            var badge = 18;
-            var badgeX = CARD_W - badge + 5;
-            var badgeY = -5;
-            var glow = clip.createEmptyMovieClip("pendingGlow", 19);
-            for (var layer = 0; layer < 4; layer++)
-            {
-                roundedBox(glow, badgeX - layer * 0.75, badgeY - layer * 0.75, badge + 1.5 * layer, badge + 1.5 * layer,
-                           2 + layer, 0xFFE9A8, 16);
-            }
-            if (inGame)
-            {
-                art(clip, card.icon, 20, badgeX, badgeY, badge, badge);
-            }
-            else
-            {
-                // Outside the game the icon's texture is not there: a dark
-                // square with the ability's first letter stands in.
-                var stand = clip.createEmptyMovieClip("pendingStand", 20);
-                roundedBox(stand, badgeX, badgeY, badge, badge, 2, INK, 100);
-                var letter = label(clip, "pendingLetter", 21, badgeX, badgeY, badge, badge, 11, GOLD, "center", true);
-                letter.text = card.ability.length > 0 ? card.ability.charAt(0) : "?";
-                centre(letter, badgeY, badge);
-            }
-        }
+        shoulderIcon(clip, card.icon, card.ability);
+    }
+    else if (card.walkCut)
+    {
+        // Nothing pending, and the meters stopped its creature's walk in its
+        // last turn: somebody on its way somewhere, said the same way with
+        // the game's icon for a move (issue 83; the user, 2026-10-09: "if out
+        // of time when moving should show moving icon top right of portrait,
+        // as we do attack etc."). With an action pending too the card shows
+        // that: it is what lands.
+        clip.fullName = walkWords(card);
+        shoulderIcon(clip, card.icon, "Move");
     }
     if (card.waits)
     {
@@ -1109,6 +1135,14 @@ function pendingWords(card)
 {
     var what = card.ability.length > 0 ? card.ability : (card.icon.length > 0 ? "an ability" : "an attack");
     return card.name + ": " + what + " lands " + tenths(card.owed) + " s into its next turn";
+}
+
+// And what a walk cut short's says, on its card: in the words that floated
+// over its creature as it was stopped ("Out of movement"), and what of it is
+// still so.
+function walkWords(card)
+{
+    return card.name + ": out of movement, its walk cut short";
 }
 
 var timeCost = 0;
@@ -1817,11 +1851,14 @@ _root.onEnterFrame = function()
     }
     // Outside the game, for a picture with no hand to move the mouse
     // (tools/snapshot.ps1 -Set): point=later or point=earlier puts the
-    // pointer on that arrow, click=later or click=earlier clicks it once.
+    // pointer on that arrow, click=later or click=earlier clicks it once,
+    // and point=card4 puts the pointer on the row's fifth card, for what the
+    // caption says of it.
     if (!inGame && !samplePointed && ticks >= 20)
     {
         samplePointed = true;
-        var pointed = _root.bar[(_root.click != undefined ? _root.click : _root.point) + "Hand"];
+        var named = _root.click != undefined ? _root.click : _root.point;
+        var pointed = _root.bar[named + "Hand"] != undefined ? _root.bar[named + "Hand"] : _root.bar[named];
         if (pointed != undefined)
         {
             pointed.onRollOver();

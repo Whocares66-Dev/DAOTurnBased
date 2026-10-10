@@ -20,7 +20,10 @@
 //              down, current, yours (the player commands it), round, name,
 //              tag, portrait (its texture's name, "portrait_player0.dds",
 //              core/Portraits.h; empty for none yet), mana or stamina
-//              (0-100), mana (1 for a mage's, 0 for stamina)
+//              (0-100), mana (1 for a mage's, 0 for stamina), then what
+//              later versions added (Bar.cpp says each where it writes it),
+//              the last (version 12, issue 83) that the meters stopped its
+//              walk in its last turn
 //
 // The cards are every turn to come, the row or not (version 9; a row's
 // worth before): the movie draws those of the row, and reads the rest for
@@ -42,7 +45,7 @@ namespace tb
 
 inline constexpr wchar_t kBarCard = 0x1E;
 inline constexpr wchar_t kBarField = 0x1F;
-inline constexpr int kBarVersion = 11;
+inline constexpr int kBarVersion = 12;
 
 // The portraits and the row come from the game's side, the rest from the
 // machine.

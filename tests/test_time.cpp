@@ -2087,7 +2087,7 @@ TEST_CASE("a card says what is pending: an ability by its id, an attack by none;
     {
         if (c.id == kHero)
         {
-            c.pendingIcon = L"ico_chain_lightning";
+            c.icon = L"ico_chain_lightning";
             c.pendingName = L"Chain Lightning";
         }
     }
@@ -2095,8 +2095,9 @@ TEST_CASE("a card says what is pending: an ability by its id, an attack by none;
     const std::wstring tail =
         std::wstring{kBarField} + L"10211" + kBarField + L"ico_chain_lightning" + kBarField + L"Chain Lightning";
     CHECK(bar.find(tail) != std::wstring::npos);
-    // The others have nothing pending: -1 and two empty fields.
-    CHECK(bar.ends_with(std::wstring{kBarField} + L"-1" + kBarField + kBarField));
+    // The others have nothing pending: -1 and two empty fields, before the
+    // card's last, that no walk of theirs was cut short.
+    CHECK(bar.ends_with(std::wstring{kBarField} + L"-1" + kBarField + kBarField + kBarField + L"0"));
 }
 
 TEST_CASE("a pending attack is no ability's", "[time][bar]")

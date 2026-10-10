@@ -2588,7 +2588,7 @@ MUTANTS = [
     Mutant(
         "time: the view does not say what rolled over",
         MACHINE,
-        "        budget_.rolledMs = rolled->second;",
+        "        budget_.rolledMs = last->second.rolledMs;",
         "        budget_.rolledMs = 0;",
     ),
     Mutant(
@@ -2618,7 +2618,7 @@ MUTANTS = [
     Mutant(
         "bar: a card's string leaves out the pending ability's icon",
         BAR,
-        "        Field(out, std::wstring_view{card.pendingIcon});",
+        "        Field(out, std::wstring_view{card.icon});",
         "        Field(out, std::wstring_view{});",
     ),
     Mutant(
@@ -2626,6 +2626,36 @@ MUTANTS = [
         BAR,
         "        Field(out, std::wstring_view{card.pendingName});",
         "        Field(out, std::wstring_view{});",
+    ),
+    Mutant(
+        "walkcut: a turn the meters stopped a walk in leaves no word of it for its card",
+        MACHINE,
+        "            lastTurn_[current->id] = {rolled, budget_.outOfMovement};",
+        "            lastTurn_[current->id] = {rolled, false};",
+    ),
+    Mutant(
+        "walkcut: a walk cut short stays on its card through its creature's next turn",
+        MACHINE,
+        "        last->second.walkCut = false;\n",
+        "",
+    ),
+    Mutant(
+        "walkcut: a walk cut short stays on its card past a turn its creature lost",
+        MACHINE,
+        "            lastTurn_.erase(current->id);\n",
+        "",
+    ),
+    Mutant(
+        "walkcut: a fallen creature's card says its walk was cut short",
+        MACHINE,
+        "        const bool walkCut = !c.down && last != lastTurn_.end() && last->second.walkCut;",
+        "        const bool walkCut = last != lastTurn_.end() && last->second.walkCut;",
+    ),
+    Mutant(
+        "bar: a card's string leaves out that its walk was cut short",
+        BAR,
+        "        Field(out, card.walkCut);",
+        "        Field(out, false);",
     ),
     Mutant(
         "pause: the key pauses and never runs the game again",
@@ -3942,8 +3972,8 @@ MUTANTS = [
     Mutant(
         "one that leaves the fight stays on a clock of its own, which nothing moves: what the game has waiting on it never comes",
         MACHINE,
-        "    rollover_.erase(who.id);\n    SetOwnClock(who.id, false, fx);",
-        "    rollover_.erase(who.id);\n    SetOwnClock(who.id, true, fx);",
+        "    lastTurn_.erase(who.id);\n    SetOwnClock(who.id, false, fx);",
+        "    lastTurn_.erase(who.id);\n    SetOwnClock(who.id, true, fx);",
     ),
     Mutant(
         "a turn ended as inactive rolls its time over, as if its actor had saved it",
@@ -4014,7 +4044,7 @@ MUTANTS = [
     Mutant(
         "what its last turn saved rolls over into the first turn of one that left the fight and came back",
         MACHINE,
-        "    rollover_.erase(who.id);\n",
+        "    lastTurn_.erase(who.id);\n",
         "",
     ),
     Mutant(
@@ -4191,8 +4221,8 @@ MUTANTS = [
     Mutant(
         "the cards do not say whose tactics play its turns",
         MACHINE,
-        "                                 pending, std::wstring{}, std::wstring{}, OnTactics(c)});",
-        "                                 pending, std::wstring{}, std::wstring{}, false});",
+        "                                 pending, std::wstring{}, std::wstring{}, OnTactics(c), walkCut});",
+        "                                 pending, std::wstring{}, std::wstring{}, false, walkCut});",
     ),
     Mutant(
         "the state says auto of every card, an enemy's too",

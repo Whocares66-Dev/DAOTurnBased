@@ -76,7 +76,7 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     REQUIRE(bar.cards.size() == 4);               // each combatant once
     for (const auto &card : bar.cards)
     {
-        REQUIRE(card.size() == 18);
+        REQUIRE(card.size() == 19);
     }
     CHECK(bar.cards[0][0] == std::to_wstring(kHero));
     CHECK(bar.cards[0][1] == L"0");   // the party
@@ -113,7 +113,7 @@ TEST_CASE("a name cannot break the bar's string apart", "[bar]")
     view.upcoming.push_back(card);
     const Decoded bar = Decode(EncodeBar(view));
     REQUIRE(bar.cards.size() == 1);
-    REQUIRE(bar.cards[0].size() == 18);
+    REQUIRE(bar.cards[0].size() == 19);
     CHECK(bar.cards[0][8] == L"BadName!");
     CHECK(bar.cards[0][3] == L"100");
     CHECK(bar.cards[0][11] == L"0");
@@ -143,6 +143,31 @@ TEST_CASE("a creature's mana or stamina reaches its card as the statuses read it
     REQUIRE(genlock != bar.cards.end());
     CHECK((*genlock)[11] == L"40");
     CHECK((*genlock)[12] == L"1");
+}
+
+TEST_CASE("the bar's string says, last on its card, that its creature's walk was cut short", "[bar][walkcut]")
+{
+    // Issue 83; what the machine's view says of it is test_walkcut.cpp's.
+    World w;
+    w.StartFight();
+    // The hero walks her whole bar and more: stopped, and her turn over.
+    REQUIRE(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Allow);
+    w.Frame();
+    w.Get(kHero).moving = true;
+    for (int i = 0; i < 30 && w.Get(kHero).moving; ++i)
+    {
+        w.Get(kHero).position.x += 1.0f;
+        w.Frame();
+    }
+    w.RunFor(500);
+    REQUIRE(w.Current() != kHero);
+    const Decoded bar = Decode(EncodeBar(w.machine.View()));
+    REQUIRE(bar.cards.size() == 4);
+    for (const auto &card : bar.cards)
+    {
+        REQUIRE(card.size() == 19);
+        CHECK(card[18] == (card[0] == std::to_wstring(kHero) ? L"1" : L"0"));
+    }
 }
 
 TEST_CASE("with a turn a bar of time, the bar's string has the bar and what is left of it", "[bar]")

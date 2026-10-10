@@ -171,6 +171,15 @@ constexpr std::wstring_view kMovie = L"turnorder";
 // "ic_attack" with CurrentAction "Attacking" (a walk's is "ico_MovetoPoint",
 // a talent's its own "tlt_ico_..."), loaded by portraits.gfx as any icon.
 constexpr std::wstring_view kAttackIcon = L"ic_attack";
+// And its icon for a move, the party bar's for a creature walking (above):
+// for a card whose creature's walk the meters stopped (issue 83). Read again
+// in the game's files, 2026-10-09: of the 43 rows of its table of commands
+// (commands.gda, in 2da.erf) two have an `icon`, row 1, Attack, "ic_attack",
+// and row 20, Move To Point, "ico_MovetoPoint"; and both are textures of 42 x
+// 42 in the shared atlas the game's movies draw from (guiexport.erf's
+// atl_shared_dxt1_dat.xml), the attack's a crosshair, the move's four darts
+// about a four-pointed star, as the movement marker on the ground is.
+constexpr std::wstring_view kMoveIcon = L"ico_MovetoPoint";
 } // namespace
 
 // The bar's screen added to the game's, once, and its movie looked for:
@@ -273,6 +282,13 @@ void BarLink::Publish(const TurnView &view)
     {
         if (card.owedMs == 0)
         {
+            // Nothing pending, and its walk stopped by the meters in its
+            // last turn: the game's own icon for a move in the same place
+            // (issue 83). With something pending the card shows that.
+            if (card.walkCut)
+            {
+                card.icon = std::wstring{kMoveIcon};
+            }
             continue;
         }
         if (card.pendingAbility < 0)
@@ -286,7 +302,7 @@ void BarLink::Publish(const TurnView &view)
             // plain attack. What actor has that queued up for the next
             // round, that should also indicate in the top right hand corner
             // of the portrait, as with a pending talent" (issue 15).
-            card.pendingIcon = std::wstring{kAttackIcon};
+            card.icon = std::wstring{kAttackIcon};
             card.pendingName = L"Attack";
             continue;
         }
@@ -307,7 +323,7 @@ void BarLink::Publish(const TurnView &view)
                          Utf8(found.name));
             known = abilityArt_.emplace(card.pendingAbility, std::move(found)).first;
         }
-        card.pendingIcon = known->second.icon;
+        card.icon = known->second.icon;
         card.pendingName = known->second.name;
     }
     fightShown_.store(view.active);
