@@ -8,7 +8,10 @@ on:
   push:
     branches: [master]
     paths: ['docs/**', 'tools/build_docs.py', '.github/workflows/docs.yml']
-    # A release tag adds its version to the selector.
+    # A release tag adds its version to the selector. Pages deploys a commit's
+    # site once, so the tag is pushed with master (tools/release.ps1): a tag
+    # on a commit whose site is already out changes nothing until the next
+    # build (seen at v0.1.0).
     tags: ['v*']
   pull_request:
     paths: ['docs/**', 'tools/build_docs.py', '.github/workflows/docs.yml']

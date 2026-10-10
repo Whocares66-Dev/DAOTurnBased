@@ -110,6 +110,14 @@ $version = $Matches[2]
 $tag = "v$version"
 
 if (git -C $repo tag --list $tag) { throw "Tag $tag already exists here." }
+# The commit to be tagged is on origin already: its site may have been deployed
+# without the tag, and the tag's own deployment of the same commit then changes
+# nothing. The guide's selector gains the version with the next push that builds
+# the site (dev/RELEASING.md).
+$atOrigin = (git -C $repo rev-parse origin/master).Trim() -eq (git -C $repo rev-parse HEAD).Trim()
+if ($atOrigin) {
+    Show-Warn "master is pushed already: if this commit's site was deployed, the guide gains $version only with the next docs push"
+}
 git -C $repo ls-remote --exit-code --tags origin "refs/tags/$tag" *> $null
 if ($LASTEXITCODE -eq 0) { throw "Tag $tag already exists on origin." }
 if ($LASTEXITCODE -ne 2) { throw "Could not check whether tag $tag exists on origin." }
@@ -160,10 +168,12 @@ New-Item -ItemType Directory -Force (Split-Path -Parent $notesFile) | Out-Null
 [IO.File]::WriteAllText($notesFile, "$notes`n", [Text.UTF8Encoding]::new($false))
 git -C $repo tag -a $tag -m "$name $version"
 if ($LASTEXITCODE -ne 0) { throw "Could not create tag $tag." }
-git -C $repo push --quiet origin HEAD
-if ($LASTEXITCODE -ne 0) { throw "Could not push master; tag $tag exists here and nothing was published." }
-git -C $repo push --quiet origin $tag
-if ($LASTEXITCODE -ne 0) { throw "Master was pushed, but tag $tag was not; push the tag before creating the release." }
+# Master and the tag in one push. GitHub Pages deploys a commit's site once: a second
+# deployment of the same commit is reported done and changes nothing (seen at 0.1.0,
+# whose commit master had pushed, and deployed, before its tag was made). Together,
+# whichever of the two runs deploys first has built the tag's pages too.
+git -C $repo push --quiet --atomic origin HEAD $tag
+if ($LASTEXITCODE -ne 0) { throw "Could not push master and tag $tag; the tag exists here and nothing was published." }
 
 $arguments = @('release', 'create', $tag, '--repo', $github, '--title', "$name $version",
     '--notes-file', $notesFile, '--verify-tag')
