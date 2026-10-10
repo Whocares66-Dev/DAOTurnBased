@@ -524,6 +524,64 @@ TEST_CASE("an AI's turn in an action whose step is renewed for ever is ended at 
     CHECK_FALSE(w.Get(kGenlock).busy);
 }
 
+// What the long run of random fights with strays met (seed 324, 2026-10-09;
+// issue 70): a hostile that had noticed nobody, found at a step the engine
+// timed as its turn came, noticed late in its beat and was told; the first
+// look at its action's step was the first since its turn began, found the
+// step another than it was, and took the whole beat for time a step had
+// advanced. The action's limit counted it all the same, being bounded by how
+// long its command had run; the turn's did not, and its turn went on past
+// max_turn_ms by the beat's length.
+TEST_CASE("the time before an action began is counted by max_turn_ms, whatever step its creature was at then",
+          "[longaction]")
+{
+    Settings s = Fixed();
+    s.maxTurnMs = 4000; // and max_action_ms twelve seconds: the turn's limit is the one met
+    World w(s);
+    Ends ends(w);
+    w.onPoke = [&w](ObjectId id) {
+        if (id != kGenlock)
+        {
+            (void)w.Wait(id, 0.0f);
+            return;
+        }
+        // Its script takes it into combat, and it strikes: a blow whose step
+        // stands from its first frame, so that nothing of it advances.
+        w.Get(kGenlock).perception.inCombat = true;
+        Blow(w, kGenlock, 8000);
+        w.TimedStep(kGenlock, 8000, 1000);
+        w.Get(kGenlock).stepStands = true;
+    };
+    // Unaware, and at something of its script's that the engine times, begun
+    // before its turn (and after the fight's start, which stops everyone).
+    Creature &genlock = w.Get(kGenlock);
+    genlock.perception = Unnoticing();
+    w.StartFight();
+    genlock.busy = true;
+    genlock.current = CommandType::MoveToLocation;
+    w.TimedStep(kGenlock, 9000, 100);
+    UntilTheGenlocksTurn(w);
+    REQUIRE(w.Get(kGenlock).step.durationMs == 9000);
+    const std::uint32_t began = w.now;
+    // Most of its beat goes by before the party comes into its perception;
+    // it is told, and its blow begins and stands.
+    w.RunFor(600);
+    REQUIRE(w.Current() == kGenlock);
+    genlock.perception.ofParty = true;
+    genlock.perception.ofFoes = true;
+    w.Frame();
+    w.Frame();
+    REQUIRE(w.machine.GetPhase() == Phase::Executing);
+    REQUIRE(w.Get(kGenlock).current == CommandType::Attack);
+    // Its turn is ended four seconds after it began, the beat among them.
+    w.RunFor(began + 3900 - w.now);
+    REQUIRE(w.Current() == kGenlock);
+    w.RunFor(300);
+    CHECK(w.Current() != kGenlock);
+    CHECK(ends.of[kGenlock] == std::vector<std::string>{"took too long"});
+    CHECK(Lines(w, "Genlock's turn is still going after 4000 ms, 1 of its commands let through: ended") == 1);
+}
+
 TEST_CASE("an effect's command that holds a creature is counted whatever its timed step does: a hold is not the "
           "rule's",
           "[longaction]")

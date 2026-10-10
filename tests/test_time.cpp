@@ -2450,6 +2450,63 @@ TEST_CASE("an attack that stands still is judged by where the engine has its com
     }
 }
 
+TEST_CASE("an ability that stands at its approach is stopped and given back as an attack is", "[time]")
+{
+    // Issues 48 and 92: a talent ordered at a target the engine had no way
+    // to (Wynne's in a doorway, Oghren's at a demon it had just failed for
+    // want of a path, Justice's at the Architect) neither walked nor failed,
+    // and stood to max_action_ms: `still at a use ability after 36000 ms:
+    // stopped`, the turn ended "took too long" and its rollover lost. An
+    // ability's command goes to its target by the engine's own approach, as
+    // an attack's does, and the game layer says of it as of an attack whether
+    // it is still there.
+    constexpr std::uint32_t kStood = 1000;
+    constexpr std::int32_t kTalent = 617;
+    World w(Timed());
+    std::vector<TurnEvent> events;
+    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
+    w.StartFight();
+    REQUIRE(w.UseAbility(kHero, Source::Player, kTalent, 5.0f) == Verdict::Allow);
+    w.applied.clear();
+
+    SECTION("still at its approach and not a step taken, it is stopped and its time given back")
+    {
+        const TurnView before = w.machine.View();
+        w.Get(kHero).approaching = true;
+        w.RunFor(kStood - 300);
+        CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+        w.RunFor(500);
+        CHECK(w.Did(EffectKind::ClearCommands, kHero));
+        CHECK(GivenBack(events, kHero));
+        CHECK(w.Said(L"No way through"));
+        CHECK(Logged(w, "at a use ability without a step (its command still at its approach): stopped; it cannot "
+                        "get to its target, and its action is given back"));
+        // The turn is the player's still, with more of its bar than the
+        // ability had left it.
+        CHECK(w.Current() == kHero);
+        CHECK(w.machine.View().timeLeftMs > before.timeLeftMs);
+        CHECK_FALSE(Logged(w, "still at a use ability after"));
+    }
+    SECTION("at its approach and walking, it is let be")
+    {
+        w.Get(kHero).approaching = true;
+        for (int i = 0; i < 150; ++i) // two and a half seconds, a step every frame
+        {
+            w.Get(kHero).position.x += 0.05f;
+            w.Frame();
+        }
+        CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+        CHECK_FALSE(GivenBack(events, kHero));
+    }
+    SECTION("past its approach, it is the engine's to end however long it stands")
+    {
+        w.Get(kHero).approaching = false;
+        w.RunFor(3000);
+        CHECK_FALSE(w.Did(EffectKind::ClearCommands, kHero));
+        CHECK_FALSE(GivenBack(events, kHero));
+    }
+}
+
 TEST_CASE("a kept attack is not given to a creature an effect holds as its turn begins", "[time]")
 {
     // Issue 11's bandit archer: its kept shot was given while it stood at an

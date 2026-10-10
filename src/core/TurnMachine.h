@@ -128,14 +128,16 @@ struct ActorObservation
     Vec3 position;
     bool conjureHeld = false; // at a conjure the game layer holds (Verdict::Conjure)
     bool timersHeld = false;  // its scripts' timers held for it (a damage over time's ticks)
-    // At an attack: its command is still at its approach, the walk to where
-    // it strikes from, as the engine itself says (the sub-action its command
-    // is at: DAOLib's dao::commands::RunningSubAction, 4 for a melee
-    // approach and 15 for a ranged one; the blow comes after). False at the
-    // blow, and at no attack. What the machine tells an attacker that
-    // cannot get to its target from one that is striking by (StepActing):
-    // until 2026-10-04 it worked that out for itself, from a walk it had
-    // reckoned, and stopped 67 shots in one fight (issue 11).
+    // At an attack or an ability: its command is still at its approach, the
+    // walk to where it strikes from, as the engine itself says (the
+    // sub-action its command is at: DAOLib's
+    // dao::commands::RunningSubAction, 4 for a melee approach and 15 for a
+    // ranged one; the blow comes after). False at the blow, and at neither.
+    // What the machine tells one that cannot get to its target from one that
+    // is striking by (StepActing): until 2026-10-04 it worked that out for
+    // itself, from a walk it had reckoned, and stopped 67 shots in one fight
+    // (issue 11); an ability's was not read until 2026-10-10 (issues 48 and
+    // 92).
     bool approaching = false;
     // The engine's perception between it and the party, and of anyone it
     // would fight, as of this frame (core/Types.h; the scan reads the same

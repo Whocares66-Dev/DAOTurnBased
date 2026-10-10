@@ -1136,6 +1136,20 @@ int SkillRank(ObjectId id, std::int32_t first)
     return 0;
 }
 
+// A creature's pace comes with its appearance: its combat speed in the
+// appearance table. Not the scripts' movement speed property, which is the
+// flanking angle in the shipped table (60 for everyone in the first session,
+// 2026-09-30). The appearance is the one it has now: a shapeshifter's changes
+// in place (read in play 2026-10-10: Velanna in bear's shape answers
+// appearance 68, "Bear", where the mod had kept her pace from the first look
+// at her; a bear's is a person's 4.66 m/s, a spider's 5.65). Haste and slows
+// are effects, which come and go: read with every look at everyone (Status).
+float CombatSpeed(ObjectId id)
+{
+    return dao::gda::GetFloat(dao::script::Table::Appearance, api::GetAppearanceType(id), "Game_CbtSpeed")
+        .value_or(0.0f);
+}
+
 } // namespace
 
 const Bridge::Known &Bridge::Remember(ObjectId id)
@@ -1145,28 +1159,18 @@ const Bridge::Known &Bridge::Remember(ObjectId id)
     {
         return found->second;
     }
-    // Its pace comes with its appearance, which does not change: its combat
-    // speed in the appearance table. Not the scripts' movement speed
-    // property, which is the flanking angle in the shipped table (60 for
-    // everyone in the first session, 2026-09-30). Haste and slows are
-    // effects, which come and go: read with every look at everyone (Status).
-    const float combatSpeed =
-        dao::gda::GetFloat(dao::script::Table::Appearance, api::GetAppearanceType(id), "Game_CbtSpeed").value_or(0.0f);
     // Its skills' ranks (with a turn a bar of time, Combat Tactics' time
     // and rollover; Survival's initiative), which a fight does not change.
-    Known known{api::GetName(id),
-                api::GetTag(id),
-                api::GetCreatureRank(id),
-                SpeedFactor(combatSpeed),
-                SkillRank(id, kCombatTactics1),
+    Known known{api::GetName(id), api::GetTag(id), api::GetCreatureRank(id), SkillRank(id, kCombatTactics1),
                 SkillRank(id, kSurvival1)};
     // Once per creature: what the rules will read of it, to check against
     // the game.
+    const float combatSpeed = CombatSpeed(id);
     spdlog::info("{:#010x} {} ({}): rank {}, dexterity {}, combat speed {:.2f} m/s, {:.2f} a person's, Combat "
                  "Tactics {}, Survival {}",
                  id, Utf8(known.name), Utf8(known.tag), known.rank,
                  api::GetCreatureProperty(id, k::PROPERTY_ATTRIBUTE_DEXTERITY, k::PROPERTY_VALUE_TOTAL), combatSpeed,
-                 known.speed, known.tactics, known.survival);
+                 SpeedFactor(combatSpeed), known.tactics, known.survival);
     return known_.emplace(id, std::move(known)).first->second;
 }
 
@@ -1183,12 +1187,13 @@ Combatant Bridge::Describe(ObjectId id, Side side, bool hero)
     c.tactics = known.tactics;
     c.survival = known.survival;
     c.dexterity = api::GetCreatureProperty(id, k::PROPERTY_ATTRIBUTE_DEXTERITY, k::PROPERTY_VALUE_TOTAL);
-    // Its build's pace, remembered. Its Haste and slows are not a scan's to
-    // read (Status; core: CombatantStatus::movement, which the machine keeps
-    // through a scan as it keeps the creature's mana or stamina): a scan
-    // comes as a turn begins and now and then, and with a turn a bar of time
-    // the pace is the creature's as it is now (issue 49).
-    c.speed = known.speed;
+    // Its pace, by the shape it has as this scan reads it (CombatSpeed). Its
+    // Haste and slows are not a scan's to read (Status; core:
+    // CombatantStatus::movement, which the machine keeps through a scan as it
+    // keeps the creature's mana or stamina): a scan comes as a turn begins
+    // and now and then, and with a turn a bar of time the pace is the
+    // creature's as it is now (issue 49).
+    c.speed = SpeedFactor(CombatSpeed(id));
     c.health = Health(id);
     c.down = api::IsDead(id) != 0;
     // Whether the game has it in the world, of everyone a scan reads, the
@@ -1427,9 +1432,15 @@ std::int32_t AtAnEffect(ActorObservation &actor, ObjectId id, const dao::Command
     return 0;
 }
 
-// The acting creature at an attack: whether its command is still at its
-// approach, as the engine has it.
-void AtAnAttack(ActorObservation &actor, ObjectId id)
+// The acting creature at an attack or an ability: whether its command is
+// still at its approach, as the engine has it. An ability's command goes to
+// its target by the same two steps an attack's does (the debug logs of
+// 2026-10-09 and 2026-10-10: 4 and 15 in 83 of 1,349 lines of an ability's
+// sub-actions, beside 0, 37, 39, 7, 8 and 50), and one that stood there was
+// read for the log alone until 2026-10-10: `still at a use ability after
+// 36000 ms: stopped`, twelve seconds of the wall with no failure and no step
+// (issues 48 and 92).
+void AtItsApproach(ActorObservation &actor, ObjectId id)
 {
     const std::uint32_t at = dao::commands::RunningSubAction(id);
     actor.approaching = at == kMeleeApproach || at == kRangedApproach;
@@ -1441,30 +1452,9 @@ void AtAnAttack(ActorObservation &actor, ObjectId id)
     {
         lastWho = id;
         lastAt = at;
-        spdlog::debug("{:#x}'s attack is at sub-action {}{}", id, at, actor.approaching ? " (its approach)" : "");
-    }
-}
-
-// The acting creature at an ability: which sub-action its command is at,
-// said as it changes, at debug. Nothing is decided by it. Twice in the
-// Blackmarsh's Fade (issue 88, 2026-10-09) Oghren's talent, ordered again as
-// the engine failed it for want of a path, stood twelve seconds of the wall
-// with no failure and no step, `still at a use ability after 36000 ms:
-// stopped`, and the log, kept at info, does not say where the command stood:
-// at its approach (15, by DAOLib's dao/Conjure.h, where an attack that stands
-// so is stopped after a second), at its turn to face (39), or at something
-// else. The next one's log is read for this line.
-void AtAnAbility(ObjectId id)
-{
-    const std::uint32_t at = dao::commands::RunningSubAction(id);
-    static ObjectId lastWho = dao::kInvalidObject;
-    static std::uint32_t lastAt = 0;
-    if (id != lastWho || at != lastAt)
-    {
-        lastWho = id;
-        lastAt = at;
-        spdlog::debug("{:#x}'s use ability is at sub-action {}{}", id, at,
-                      at == kMeleeApproach || at == kRangedApproach ? " (its approach)" : "");
+        spdlog::debug("{:#x}'s {} is at sub-action {}{}", id,
+                      actor.current == CommandType::Attack ? "attack" : "use ability", at,
+                      actor.approaching ? " (its approach)" : "");
     }
 }
 
@@ -1562,11 +1552,20 @@ ActorObservation Bridge::Actor(ObjectId id)
             {
                 actor.step = StepTime{running.elapsedMs, running.durationMs};
             }
+            // A shot's animations are such steps (sub-action 37, "play an
+            // animation"), and their lengths what the shot costs (issue 60;
+            // Gate.cpp, LearnShot).
+            constexpr std::uint32_t kPlayAnimation = 37;
+            if (actor.current == CommandType::Attack && running.type == kPlayAnimation && running.delayMs <= 0 &&
+                running.durationMs > 0)
+            {
+                ShotStep(id, running.elapsedMs, running.durationMs);
+            }
             SayLongStep(id, actor.current, running);
         }
-        // At an attack: whether its command is still at its approach, as the
-        // engine itself has it (the sub-action the command is at). The
-        // machine judges an attacker that stands still by this (core:
+        // At an attack or an ability: whether its command is still at its
+        // approach, as the engine itself has it (the sub-action the command
+        // is at). The machine judges one that stands still by this (core:
         // ActorObservation::approaching), not by a walk worked out as the
         // command was let through: an archer in range, or a swordsman in
         // reach with others to walk round, was "short of where its walk was
@@ -1577,13 +1576,9 @@ ActorObservation Bridge::Actor(ObjectId id)
         {
             ownModeEffect = AtAnEffect(actor, id, *current.get());
         }
-        if (actor.current == CommandType::Attack)
+        if (actor.current == CommandType::Attack || actor.current == CommandType::UseAbility)
         {
-            AtAnAttack(actor, id);
-        }
-        else if (actor.current == CommandType::UseAbility)
-        {
-            AtAnAbility(id);
+            AtItsApproach(actor, id);
         }
         else if (actor.current == CommandType::Deathblow)
         {

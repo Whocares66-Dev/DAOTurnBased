@@ -3265,9 +3265,18 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     // engine's to end, however long it stands: a watch for "a swing that
     // does not begin" stopped fourteen swings that were landing, in one
     // fight (issue 11).
+    // And an ability, whose command the engine brings to its target by the
+    // same two approach steps (read in the debug logs of 2026-10-09 and
+    // 2026-10-10: 83 of 1,349 lines of an ability's sub-actions). Until
+    // 2026-10-10 only an attack was judged so, and an ability that stood at
+    // its approach waited out max_action_ms, twelve seconds of the wall at
+    // three times the speed with nothing happening, its turn's rollover lost:
+    // Wynne's in a doorway, Oghren's at a demon the engine had just found no
+    // path to, Justice's at the Architect (issues 48 and 92).
     const CommandKind at = Classify(actor.current);
-    const bool attacking = actor.current == CommandType::Attack && budget_.lastType == CommandType::Attack;
-    const bool short_ = attacking && actor.approaching;
+    const bool acting = (actor.current == CommandType::Attack || actor.current == CommandType::UseAbility) &&
+                        budget_.lastType == actor.current;
+    const bool short_ = acting && actor.approaching;
     if (actor.busy && !heldByEffect_ && (at == CommandKind::Move || at == CommandKind::Free || short_))
     {
         const std::uint32_t limit = Patience(short_ ? kStuckMs : kStoodMs);
@@ -4587,7 +4596,12 @@ std::uint32_t TurnMachine::StepTimeNotCounted(const ActorObservation &actor)
         budget_.stepFreeMs = 0;
         budget_.stepSaid = false;
     }
-    const std::uint32_t advanced = budget_.step.Look(actor.step, clock_);
+    // No more of a look than this command has run: the first one can reach
+    // back before it began, to the step its creature was at as its turn came
+    // and the beat it then stood before it was told (issue 70: the turn's
+    // limit left that beat uncounted, where the action's did not; the long run
+    // of random fights with strays, seed 324, 2026-10-09).
+    const std::uint32_t advanced = std::min(budget_.step.Look(actor.step, clock_), clock_ - executingSince_);
     if (!heldByEffect_)
     {
         budget_.stepFreeMs = std::min(budget_.stepFreeMs + advanced,
@@ -4595,9 +4609,7 @@ std::uint32_t TurnMachine::StepTimeNotCounted(const ActorObservation &actor)
         budget_.turnFreeMs = std::min(budget_.turnFreeMs + advanced,
                                       Patience(static_cast<std::uint32_t>(settings_.maxTurnMs)) * kStepFree);
     }
-    // (A look can reach back before this command began, to the one before
-    // it: never more than the command has run.)
-    return std::min(budget_.stepFreeMs, clock_ - executingSince_);
+    return budget_.stepFreeMs;
 }
 
 bool TurnMachine::TurnTooLong(std::vector<Effect> &fx)

@@ -290,20 +290,30 @@ bool WalkByPath(Reached &reached, ObjectId attacker, ObjectId target, const dao:
         // a move at with COMMAND_FAILED_PATH_ACTION_REQUIRED (DAOLib's
         // Pathfind, seen in play behind the Elven Ruins' shut doors).
         const dao::world::PathSearch search = dao::world::Pathfind(attacker, api::GetPosition(target), target);
-        const bool door = search.result == kDoorInTheWay;
-        reached.door = door;
         // What is in the way, as the game finds it (DAOLib cb08d00: a
-        // placeable within 5 m of where the path stopped). Only shut
-        // doors have been seen; said, in case it is ever something else.
+        // placeable within 5 m of where the path stopped).
         const std::string across = search.blocker != dao::kInvalidObject
                                        ? std::format("{} ({:#x})", Utf8(api::GetName(search.blocker)), search.blocker)
                                        : std::string{};
-        if (door)
+        // A door in the way is one to open: shut or locked, by its own state
+        // (the scripts' PLC_STATE_DOOR_UNLOCKED and _LOCKED, 0 and 1; open
+        // and broken are the four after). At Soldier's Peak the pathfinder
+        // gave this answer across a door that stood open, the player was
+        // told "A door is in the way (open it first)" 224 times in a fight
+        // that could not end, and the game's own click on what lay beyond
+        // failed for want of a path (issue 52, 2026-10-05): with nothing to
+        // open it is the engine's own "no", below.
+        constexpr std::int32_t kDoorLocked = 1;
+        const bool door = search.result == kDoorInTheWay;
+        const bool shut =
+            door && (search.blocker == dao::kInvalidObject || api::GetPlaceableState(search.blocker) <= kDoorLocked);
+        reached.door = shut;
+        if (shut)
         {
             spdlog::debug("attack on {:#010x}: the game finds no path to it ({}); {} is in the way", target,
                           search.result, across.empty() ? std::string{"a door"} : across);
         }
-        else if (!Answered(search.result))
+        else if (!door && !Answered(search.result))
         {
             // Not asked, or stopped when its time ran out: the engine
             // has not said no, and the walk is not known.
@@ -639,14 +649,22 @@ struct AskedSwing
 std::unordered_map<ObjectId, AskedSwing> g_askedSwings; // each creature's last
 
 // A shot under way: when its command began (the wall's milliseconds) and
-// where its archer stood, to measure what it took, on the game's clock,
-// if the archer did not walk first (LearnShot).
+// where its archer stood (WatchAttacksBegin).
 struct ShotBegun
 {
     std::uint64_t atMs = 0;
     dao::Vector where;
 };
-std::unordered_map<ObjectId, ShotBegun> g_shotsBegun;
+// A shot under way, and the animations of it that the engine times
+// (ShotStep): their lengths together, and the one it was last seen at, by
+// which the next is told from it.
+struct ShotTimed
+{
+    std::int32_t sumMs = 0;
+    std::int32_t lastElapsedMs = -1; // -1: none seen yet
+    std::int32_t lastDurationMs = 0;
+};
+std::unordered_map<ObjectId, ShotTimed> g_shotsBegun;
 // And every attack's, shot or swing: each creature's last (WatchAttacksBegin).
 std::unordered_map<ObjectId, ShotBegun> g_attacksBegun;
 
@@ -705,10 +723,28 @@ float SwingSecondsOf(ObjectId attacker)
 // kind. Said once for each kind, and again when it changes, with the
 // formula's figure beside it: where the two differ the scripts are not the
 // shipped ones, or the formula here is wrong.
-// A shot is over: what it took, the wall's time since its command began at
-// the game's speed, kept for its archer's next (a shot whose archer walked
-// into range first is not). Said once for each archer and speed, and as it
-// changes.
+// A shot is over: what it took by the engine's own count, kept for its
+// archer's next. Said once for each archer and speed, and as it changes. One
+// whose command never came to an animation (failed, stopped on its way)
+// teaches nothing.
+//
+// The count is the engine's parts of a shot (DAOLib's reading of the exe,
+// 2026-10-10, its issue 51): for a bow an aim animation played to take what
+// the scripts set with SetAttackDuration, an aim loop as long as they set
+// with SetAimLoopDuration, and the loose at its animation's own length; for
+// a staff the aim loop and one animation. The animations are sub-action 37,
+// which the engine times as it times a death blow (issue 28), each read as
+// the shot comes to it (ShotStep); the aim loop is the value the engine
+// keeps on the archer from this shot until its next (DAOLib's
+// dao::animation::AimDuration). Seen in play 2026-10-10: Anders's staff, an
+// animation of 1.533 s and an aim loop of 0.100 s, the same at every shot.
+//
+// Until then a shot was measured from outside: the wall's time from its
+// command's beginning to its end, times the speed the fight had asked for.
+// That figure carried the machine's load and whatever the engine did not
+// speed up with it: 1.9 to 8.8 s for the same shot in the playthrough's
+// fights, half of them over a whole turn on a busy evening, so that an
+// archer shot once in two turns (issue 60).
 void LearnShot(ObjectId archer, const AskedSwing &asked)
 {
     const auto begun = g_shotsBegun.find(archer);
@@ -716,15 +752,15 @@ void LearnShot(ObjectId archer, const AskedSwing &asked)
     {
         return;
     }
-    const ShotBegun shot = begun->second;
+    const std::int32_t animationsMs = begun->second.sumMs;
     g_shotsBegun.erase(begun);
-    const dao::Vector now = dao::script::api::GetPosition(archer);
-    if (std::hypot(now.x - shot.where.x, now.y - shot.where.y) > 0.3f)
+    if (animationsMs <= 0)
     {
-        return; // it walked: the walk is not the shot's
+        return;
     }
-    const float seconds =
-        static_cast<float>(GetTickCount64() - shot.atMs) / 1000.0f * std::max(0.1f, dao::clock::Speed());
+    const float aimLoop = dao::animation::AimDuration(archer).value_or(0.0f);
+    const float animations = static_cast<float>(animationsMs) / 1000.0f;
+    const float seconds = animations + aimLoop;
     const std::optional<float> before = g_swings.Seconds(asked.key);
     if (!g_swings.Learn(asked.key, seconds))
     {
@@ -732,8 +768,9 @@ void LearnShot(ObjectId archer, const AskedSwing &asked)
     }
     if (!before || std::abs(*before - seconds) > 0.05f)
     {
-        spdlog::info("{:#x}: its shot took {:.2f} s of the game's time (the flat figure {:.2f} s): what its next costs",
-                     archer, seconds, asked.formula);
+        spdlog::info("{:#x}: its shot is {:.2f} s by the engine's own count ({:.3f} s of animation and an aim loop "
+                     "of {:.3f} s; the flat figure {:.2f} s): what its next costs",
+                     archer, seconds, animations, aimLoop, asked.formula);
     }
 }
 
@@ -1220,6 +1257,25 @@ float AttackSeconds(ObjectId attacker)
     return static_cast<float>(ActionCostMs(request)) / 1000.0f;
 }
 
+void ShotStep(ObjectId archer, std::int32_t elapsedMs, std::int32_t durationMs)
+{
+    const std::lock_guard lock(g_swingMutex);
+    const auto found = g_shotsBegun.find(archer);
+    if (found == g_shotsBegun.end())
+    {
+        return;
+    }
+    // Another animation than the one last seen, where it is of another
+    // length or less far in: a bow's aim and its loose are two.
+    ShotTimed &shot = found->second;
+    if (shot.lastElapsedMs < 0 || elapsedMs < shot.lastElapsedMs || durationMs != shot.lastDurationMs)
+    {
+        shot.sumMs += durationMs;
+    }
+    shot.lastElapsedMs = elapsedMs;
+    shot.lastDurationMs = durationMs;
+}
+
 float AbilitySecondsOf(ObjectId user, std::int32_t ability)
 {
     CommandRequest request;
@@ -1263,8 +1319,8 @@ bool DidNothing(std::int32_t result)
 
 void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
 {
-    // A shot's start, to measure it by (LearnShot): only noted, as the
-    // callback's contract asks.
+    // A shot's start, from which its timed step is looked for (ShotStep,
+    // LearnShot): only noted, as the callback's contract asks.
     dao::commands::OnStart([](ObjectId object, const dao::Command &command) {
         if (static_cast<CommandType>(static_cast<int>(command.Type())) != CommandType::Attack)
         {
@@ -1276,7 +1332,7 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
         if (const auto asked = g_askedSwings.find(object);
             asked != g_askedSwings.end() && asked->second.key.style == WeaponStyle::Ranged)
         {
-            g_shotsBegun[object] = ShotBegun{GetTickCount64(), dao::script::api::GetPosition(object)};
+            g_shotsBegun[object] = ShotTimed{};
         }
     });
     // On the game's thread, inside the command step: the machine only

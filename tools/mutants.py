@@ -1102,6 +1102,12 @@ MUTANTS = [
         "        const std::uint32_t limit = Patience(short_ ? kStuckMs : kStoodMs * 1000);",
     ),
     Mutant(
+        "an ability that stands at its approach is left to max_action_ms",
+        MACHINE,
+        "    const bool acting = (actor.current == CommandType::Attack || actor.current == CommandType::UseAbility) &&",
+        "    const bool acting = actor.current == CommandType::Attack &&",
+    ),
+    Mutant(
         "a swing on the spot is taken for standing at a walk",
         MACHINE,
         "(at == CommandKind::Move || at == CommandKind::Free || short_))",
@@ -5075,6 +5081,12 @@ MUTANTS = [
         MACHINE,
         "    const std::uint32_t counted = ran - std::min(ran, budget_.turnFreeMs);",
         "    const std::uint32_t counted = ran;",
+    ),
+    Mutant(
+        "long: the beat before an action began is left uncounted by max_turn_ms",
+        MACHINE,
+        "    const std::uint32_t advanced = std::min(budget_.step.Look(actor.step, clock_), clock_ - executingSince_);",
+        "    const std::uint32_t advanced = budget_.step.Look(actor.step, clock_);",
     ),
     Mutant(
         "long: a hold's time is not counted while its command's timed step advances",
