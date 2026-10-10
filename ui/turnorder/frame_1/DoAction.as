@@ -41,11 +41,33 @@ var GAP = 5;
 var ART = CARD_W / 114;
 var END_W = 78; // End, on the inventory's leather button (190 x 32 at full size)
 var END_H = 30;
-var BUTTON_GAP = 6; // between End and Delay, one over the other
 var CAPTION_W = 230; // the caption's strip under the bar
 var CAPTION_H = 30;
 var DIVIDER = 30;
 var TOP = 14;
+// Where the bar stands on the screen, and at what size (issue 107). The game draws its
+// own interface at its size in pixels whatever the resolution; this movie's stage is
+// scaled to the view (showAll), so the bar grew with the resolution and, at 16:9,
+// where the stage is not letterboxed, rode up onto the game's buttons along the top
+// (the user, 2026-10-10, at 1920 x 1080: "seems the ui scales w/ resolution while
+// native ui doesn't? we should size it the way it looked during testing and keep it
+// that way"). So the bar is held at the size it was laid out and looked at, 1.25
+// pixels a stage unit (a 1600 x 1000 view), its top 50 pixels under the view's, as
+// it was there; on a view narrower than that it is as small as showAll makes it,
+// which is what fits beside the minimap.
+var LOOK = 1.25;
+var BAR_PIXELS = 50;
+// End's and Delay's art as it shows, a lip, the face and a dark edge: the top 24 of
+// the 30 units it is drawn in (36 px in the game's frame at a scale of 1.5).
+var BUTTON_FACE = 24;
+// The minimap, which the game draws at its size in pixels in the view's top right
+// corner: the bar's right end keeps this far from the view's right edge (the map is
+// 187 px wide), where a narrow view would have End and Delay under it (seen at
+// 1024 x 768).
+var MINIMAP_PIXELS = 200;
+var barTop = 0;    // the bar's top on the stage, as the view was last measured (measureView)
+var barScale = 1;  // and its size against the stage's own
+var barRight = 0;  // and how far right it may reach on the stage
 // The current card, the size of the party bar's portraits, selector and all
 // (the user): in play their arcs measure 59 px against a card's 41 at 100,
 // so the frame 72 against 50 (play test 5's capture, 2026-09-30).
@@ -92,6 +114,10 @@ var ARROW_GAP = 6;
 var ARROW_CLEAR = 8;
 
 var GOLD = 0xF0C850;
+// The bar's lettering: the colour of the place's name under the minimap, measured in
+// the game's frame (203, 183, 137), where it had been the gold above (the user,
+// 2026-10-10: "make the text not yellow but the lighter like location name").
+var LETTER = 0xCBB789;
 var PARCHMENT = 0xE8DFC8;
 var INK = 0x14100C;
 // A glow behind a medallion by its side (issue 13; the user, 2026-10-03:
@@ -576,7 +602,7 @@ function shoulderIcon(clip, icon, called)
     }
     var stand = clip.createEmptyMovieClip("shoulderStand", 20);
     roundedBox(stand, badgeX, badgeY, badge, badge, 2, INK, 100);
-    var letter = label(clip, "shoulderLetter", 21, badgeX, badgeY, badge, badge, 11, GOLD, "center", true);
+    var letter = label(clip, "shoulderLetter", 21, badgeX, badgeY, badge, badge, 11, LETTER, "center", true);
     letter.text = called.length > 0 ? called.charAt(0) : "?";
     centre(letter, badgeY, badge);
 }
@@ -736,7 +762,7 @@ function drawDivider(bar, round, index, x)
     var disc = clip.createEmptyMovieClip("disc", 3);
     circle(disc, DIVIDER / 2, CARD_H / 2, badge / 2 - 3, INK, 90);
     art(clip, "Portraits_IF1", 4, (DIVIDER - badge) / 2, (CARD_H - badge) / 2, badge, badge);
-    var text = label(clip, "round", 5, 0, 0, DIVIDER, badge, 14, GOLD, "center", true);
+    var text = label(clip, "round", 5, 0, 0, DIVIDER, badge, 14, LETTER, "center", true);
     text.text = String(round);
     centre(text, (CARD_H - badge) / 2, badge);
 }
@@ -764,7 +790,7 @@ function drawButton(bar, name, depth, word, command, x, y, live)
         }
     };
     clip.face(0);
-    var text = label(clip, "caption", 5, 0, 0, END_W, END_H, 15, GOLD, "center", true);
+    var text = label(clip, "caption", 5, 0, 0, END_W, END_H, 15, LETTER, "center", true);
     text.text = word;
     centreWord(text, 0, END_H);
     if (!live)
@@ -900,8 +926,31 @@ function drawArrow(bar, later, x, count)
 
 // The cards, the dividers and the button, laid out left to right and
 // centred on the stage.
+function measureView()
+{
+    // With showAll, Stage.width and Stage.height are the view's in stage units (800
+    // high for a 1600 x 1000 view, the stage being 720), so the view's top is that far
+    // above the stage's where the stage is letterboxed. With noScale they are the
+    // view's in pixels, which gives the scale the stage is shown at.
+    var units = Stage.height;
+    Stage.scaleMode = "noScale";
+    var pixels = Stage.height;
+    var across = Stage.width;
+    Stage.scaleMode = "showAll";
+    var shown = pixels > 0 && units > 0 ? pixels / units : LOOK;
+    var wanted = across > 0 ? Math.min(LOOK, across / STAGE_W) : LOOK;
+    barScale = wanted / shown;
+    barTop = (STAGE_H - units) / 2 + BAR_PIXELS / shown;
+    barRight = STAGE_W / 2 + (across / 2 - MINIMAP_PIXELS) / shown;
+}
+
 function build(state)
 {
+    // As a fight's bar is first made: the resolution does not change under a fight.
+    if (_root.bar == undefined)
+    {
+        measureView();
+    }
     // A card taken from under the pointer has no roll-out: its name stayed
     // in the caption through a whole turn (play test 30).
     _root.hovered = "";
@@ -953,27 +1002,40 @@ function build(state)
         // Where Delay is offered the two stand one over the other about the
         // medallions' middle through the whole turn, Delay greyed once it
         // is not to be had: End dropped to the middle as Delay went, and a
-        // click where it had been missed it (play test 28). With no Delay
-        // in the game (the setting) End stands alone at the middle.
+        // click where it had been missed it (play test 28).
         // Delay above, End below (the user, 2026-10-03, issue 9: "Maybe
         // the delay button should be on top of the end button"): End is
         // pressed nearly every turn and the lower place is the nearer to
         // the battlefield; Delay, to be had only before anything is spent,
         // is the turn's first choice.
-        var middle = TOP + (CARD_H - END_H) / 2;
-        var apart = (END_H + BUTTON_GAP) / 2;
+        // Within the cards' height, with the same room above Delay, between the two
+        // and under End (the user, 2026-10-10: "make the 2 end buttons vertically
+        // aligned w/ the portraits", and "should be space x above button, x below
+        // button, x between buttons"), by what of their art shows. Until then the two
+        // were set by the 30 units the art is drawn in, and stood higher than the
+        // portraits with a wide gap between.
+        var room = (CARD_H - 2 * BUTTON_FACE) / 3;
         var offered = state.delay == 1 || state.delay == 2;
         // Clear of the last card's shoulder, where a pending ability's icon
         // stands: it lay against End's edge (play test 29). With arrows,
         // clear of the right one, shown or not.
         var buttonsAt = width + (scrolls ? ARROW_GAP + ARROW_W + ARROW_CLEAR : 2 * GAP + 10);
-        drawButton(bar, "endTurn", 500, "End", "TB_EndTurn", buttonsAt, offered ? middle + apart : middle, true);
+        // End over Delay's shadow, which reaches under End's face: a click there is End's.
         if (offered)
         {
-            drawButton(bar, "delay", 501, "Delay", "TB_Delay", buttonsAt, middle - apart, state.delay == 1);
+            drawButton(bar, "delay", 500, "Delay", "TB_Delay", buttonsAt, TOP + room, state.delay == 1);
         }
+        drawButton(bar, "endTurn", 501, "End", "TB_EndTurn", buttonsAt,
+                   offered ? TOP + 2 * room + BUTTON_FACE : TOP + (CARD_H - BUTTON_FACE) / 2, true);
     }
-    bar._x = Math.round((Stage.width - width) / 2);
+    // On the stage's own middle, which showAll puts at the view's: Stage.width is the
+    // view's width in stage units, wider than the stage on a view wider than 16:9.
+    bar._xscale = bar._yscale = 100 * barScale;
+    // And left of the minimap by where End and Delay stand, on a turn that shows
+    // them or not, so that the row keeps its place from turn to turn.
+    var reach = width + (scrolls ? ARROW_GAP + ARROW_W + ARROW_CLEAR : 2 * GAP + 10) + END_W;
+    bar._x = Math.round(Math.min((STAGE_W - width * barScale) / 2, barRight - reach * barScale));
+    bar._y = Math.round(barTop);
     // Behind the medallions alone, a translucent black panel, square with
     // rounded corners and edges that fade out (the user: no tapering ends,
     // as the top menu's bar had); a small one of the same under the
@@ -1201,7 +1263,7 @@ function caption()
     // After the text, as the preview's plate sets its own, which was seen so
     // in play.
     strip.text.textColor = pointed ? (_root.hoveredColour != undefined ? _root.hoveredColour : PARCHMENT)
-                                   : (captionNotice ? GOLD : PARCHMENT);
+                                   : (captionNotice ? LETTER : PARCHMENT);
     var w = Math.max(CAPTION_W, strip.text.textWidth + 44);
     strip.plate.removeMovieClip();
     panel(strip.createEmptyMovieClip("plate", 1), strip.middle - w / 2, strip.top, w, CAPTION_H, 8);
@@ -1582,22 +1644,28 @@ function glow(clip, points, red, closed, thin)
 // on any ground.
 function previewLabel(clip, text, colour, at)
 {
-    var field = clip.length;
+    // A clip of its own at the path's end, the bar's size whatever the resolution.
+    var tag = clip.tag;
+    var field = tag.length;
     field.text = text;
     field.textColor = colour;
     var w = field.textWidth + 18;
     var h = 22;
-    var x = at.x - w / 2;
-    var y = at.y - 44;
-    clip.lineStyle(undefined); // the glow's last line would outline the plate
+    var x = -w / 2;
+    var y = -44;
+    tag.clear();
+    tag.lineStyle(undefined);
     // Two soft layers, not the bar's nine: at this size those showed as
     // rings inside one another (the sixteenth play test's pictures).
-    roundedBox(clip, x - 1, y - 1, w + 2, h + 2, 9, 0x000000, 28);
-    roundedBox(clip, x, y, w, h, 8, 0x000000, 46);
+    roundedBox(tag, x - 1, y - 1, w + 2, h + 2, 9, 0x000000, 28);
+    roundedBox(tag, x, y, w, h, 8, 0x000000, 46);
     field._x = x;
     field._width = w;
     centre(field, y, h);
-    field._visible = true;
+    tag._x = at.x;
+    tag._y = at.y;
+    tag._xscale = tag._yscale = 100 * barScale;
+    tag._visible = true;
 }
 
 function drawPreview(text)
@@ -1612,7 +1680,7 @@ function drawPreview(text)
     {
         // Under the bar, over the sample's backdrop.
         clip = _root.createEmptyMovieClip("preview", 5);
-        label(clip, "length", 1, 0, 0, 160, 24, 15, GOLD, "center", false);
+        label(clip.createEmptyMovieClip("tag", 2), "length", 1, 0, 0, 160, 24, 15, LETTER, "center", false);
         // Not there for the mouse. The preview's end is under the cursor,
         // and the game asks its interface first whether the mouse is over a
         // movie's shape: if so the cursor has no ground and a click is the
@@ -1623,10 +1691,11 @@ function drawPreview(text)
         // an extension, which the game's movies turn on as here.
         _global.gfxExtensions = true;
         clip.hitTestDisable = true;
-        clip.length.hitTestDisable = true;
+        clip.tag.hitTestDisable = true;
+        clip.tag.length.hitTestDisable = true;
     }
     clip.clear();
-    clip.length._visible = false;
+    clip.tag._visible = false;
     var records = text.split(CARD);
     var head = records[0].split(FIELD);
     var viewW = Number(head[1]);
@@ -1705,7 +1774,7 @@ function drawPreview(text)
         {
             plate += spills ? ", " + tenths(cost) + " s: next turn" : ", " + tenths(cost) + " s";
         }
-        previewLabel(clip, plate, tooFar ? RED_HEART : GOLD, end);
+        previewLabel(clip, plate, tooFar ? RED_HEART : LETTER, end);
     }
 }
 
@@ -1816,7 +1885,7 @@ function drawShow(text)
             outline(clip.createEmptyMovieClip("edge", 4), rawAt, SHOW_PAD, SHOW_RAW, SHOW_RAW, 1, GOLD);
         }
         medallion(clip, 5, rawAt + (SHOW_RAW - CARD_W) / 2, SHOW_PAD + SHOW_RAW + 20, CARD_W, texture);
-        var what = label(clip, "what", 6, SHOW_PAD, linesAt, wide - 2 * SHOW_PAD, 24, 16, GOLD, "center", true);
+        var what = label(clip, "what", 6, SHOW_PAD, linesAt, wide - 2 * SHOW_PAD, 24, 16, LETTER, "center", true);
         what.text = title;
         var how = label(clip, "how", 7, SHOW_PAD, linesAt + 24, wide - 2 * SHOW_PAD, 38, 12, PARCHMENT, "center", false);
         how.multiline = true;
