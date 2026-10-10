@@ -273,7 +273,6 @@ TEST_CASE("a battle near the party that is not the party's waits outside its fig
     // The Korcari Wilds, issue 6: a hurlock and four wolves fighting each
     // other 45 m off, in plain sight, joined the party's fight of four.
     const tb::Settings settings;
-    REQUIRE(settings.joinBySight);
     REQUIRE(settings.joinRadius == Approx(30.0f));
     const auto sighting = [](bool fightsParty, bool seen, float meters) {
         tb::Sighting s;
@@ -300,10 +299,6 @@ TEST_CASE("a battle near the party that is not the party's waits outside its fig
     tb::Settings wide;
     wide.joinRadius = 50.0f;
     CHECK(tb::InThePartysFight(sighting(false, true, 45.0f), wide));
-    // Without the rule of sight, everyone in the radius.
-    tb::Settings everyone;
-    everyone.joinBySight = false;
-    CHECK(tb::InThePartysFight(sighting(false, false, 45.0f), everyone));
 }
 
 TEST_CASE("with the party in combat and nobody to fight, a hostile seen within the join radius is fighting though it "
@@ -336,11 +331,6 @@ TEST_CASE("with the party in combat and nobody to fight, a hostile seen within t
     // A distance that is none keeps it out.
     CHECK_FALSE(
         tb::FightsUnawares(inCombat, nobody, sighting(true, std::numeric_limits<float>::quiet_NaN()), settings));
-    // Sight is asked for whatever joinBySight says.
-    tb::Settings everyone;
-    everyone.joinBySight = false;
-    CHECK_FALSE(tb::FightsUnawares(inCombat, nobody, sighting(false, 6.0f), everyone));
-    CHECK(tb::FightsUnawares(inCombat, nobody, sighting(true, 6.0f), everyone));
     // The radius is the setting's.
     tb::Settings wide;
     wide.joinRadius = 50.0f;
@@ -795,110 +785,6 @@ TEST_CASE("an ability's time: its cast less the blend, its conjuring, or a shot"
     CHECK(tb::AbilitySeconds(pinning) == Approx(1.512f));
     tb::AbilityFacts overwhelm; // a monster's special: nothing known
     CHECK(tb::AbilitySeconds(overwhelm) == 0.0f);
-}
-
-TEST_CASE("the damage that interrupts a conjuring: by Combat Training and level, or by rank and level", "[rules]")
-{
-    CHECK(tb::InterruptThreshold(true, 0, 6) == Approx(8.0f));   // 5 and half her level
-    CHECK(tb::InterruptThreshold(true, 2, 10) == Approx(30.0f)); // 20, 5, 5
-    CHECK(tb::InterruptThreshold(true, 3, 10) == Approx(40.0f));
-    CHECK(tb::InterruptThreshold(true, 4, 10) == Approx(50.0f)); // the fourth, where the script counts it
-    CHECK(tb::InterruptThreshold(true, -1, 10) == Approx(10.0f));
-    // Anyone else: its kind's ranks and its level; as shipped where the
-    // game's table is not read.
-    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(2), 7) == Approx(27.0f));  // a normal creature
-    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(3), 7) == Approx(37.0f));  // a lieutenant
-    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(4), 10) == Approx(50.0f)); // a boss
-    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(5), 10) == Approx(70.0f)); // an elite boss
-    // (autoscale.gda's NCombatTraining, read 2026-10-02: 0 for a critter, 1
-    // for a weak normal creature, 2, 3, 4, and 6 for an elite boss.)
-    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(1), 3) == Approx(3.0f));   // a critter
-    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(11), 3) == Approx(13.0f)); // a weak one
-    CHECK(tb::InterruptThreshold(false, tb::TrainingOfRankAsShipped(99), 3) == Approx(3.0f));
-    CHECK(tb::InterruptThreshold(false, 5, 10) == Approx(60.0f)); // a table a mod changed
-}
-
-namespace
-{
-// rules_core.ncs as shipped, from 3773 (the game's designerscripts.rim, read
-// 2026-10-02): the four HasAbility calls of the interruption rule.
-std::vector<std::uint8_t> ShippedRules()
-{
-    return {0x00, 0x8c, 0x2d, 0x00, 0x04, 0x03, 0x00, 0x01, 0x87, 0x04, 0x04, 0x06, 0x00, 0x00, 0x00, 0x00, 0x05,
-            0x00, 0x00, 0xfc, 0x02, 0x04, 0x03, 0x00, 0x01, 0x87, 0x05, 0x04, 0x06, 0x00, 0x00, 0x00, 0x00, 0x05,
-            0x00, 0x00, 0xfc, 0x02, 0x14, 0x20, 0x04, 0x03, 0x00, 0x01, 0x87, 0x06, 0x04, 0x06, 0x00, 0x00, 0x00,
-            0x00, 0x05, 0x00, 0x00, 0xfc, 0x02, 0x14, 0x20, 0x04, 0x03, 0x00, 0x01, 0x87, 0x08, 0x04, 0x06, 0x00,
-            0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0xfc, 0x02, 0x14, 0x20, 0x01, 0x01, 0xff, 0xff, 0xff, 0xf0, 0x00,
-            0x04, 0x1b, 0x00, 0xff, 0xff, 0xff, 0xfc, 0x04, 0x03, 0x00, 0x00, 0x00, 0x05, 0x02, 0x03};
-}
-} // namespace
-
-TEST_CASE("Combat Training's four ranks are the abilities the installed script names", "[rules]")
-{
-    using Ids = std::array<std::int32_t, 4>;
-    // As shipped: the fourth is 100104, which is no ability, so Master
-    // Combat Training (100103) never counts.
-    const std::vector<std::uint8_t> shipped = ShippedRules();
-    CHECK(tb::CombatTrainingIds(shipped) == Ids{100100, 100101, 100102, 100104});
-    CHECK(tb::kCombatTrainingAsShipped == Ids{100100, 100101, 100102, 100104});
-    // A mended script: the fourth is the ability's own id, and is read.
-    std::vector<std::uint8_t> mended = shipped;
-    REQUIRE(mended.at(64) == 0x08);
-    mended.at(64) = 0x07;
-    CHECK(tb::CombatTrainingIds(mended) == Ids{100100, 100101, 100102, 100103});
-    // A constant is `04 03` and its four bytes: bytes that only look like
-    // one from the second on are passed over.
-    std::vector<std::uint8_t> decoy = mended;
-    const std::uint8_t looksLike[] = {0x07, 0x03, 0x00, 0x01, 0x87, 0x09};
-    decoy.insert(decoy.begin() + 50, std::begin(looksLike), std::end(looksLike));
-    CHECK(tb::CombatTrainingIds(decoy) == Ids{100100, 100101, 100102, 100103});
-    // All four bytes of it, the high one first: a mod's own ability may have
-    // a large id.
-    std::vector<std::uint8_t> large = shipped;
-    large.at(61) = 0x01;
-    CHECK(tb::CombatTrainingIds(large) == Ids{100100, 100101, 100102, 0x01018708});
-    // Further into a script, and after a first 100100 that is not the rule's.
-    std::vector<std::uint8_t> later(300, 0x00);
-    const std::uint8_t alone[] = {0x04, 0x03, 0x00, 0x01, 0x87, 0x04};
-    later.insert(later.begin() + 20, std::begin(alone), std::end(alone));
-    later.insert(later.end(), mended.begin(), mended.end());
-    CHECK(tb::CombatTrainingIds(later) == Ids{100100, 100101, 100102, 100103});
-}
-
-TEST_CASE("a script that does not hold the rule, or none: the shipped four", "[rules]")
-{
-    using Ids = std::array<std::int32_t, 4>;
-    const Ids shipped{100100, 100101, 100102, 100104};
-    CHECK(tb::CombatTrainingIds({}) == shipped);
-    CHECK(tb::CombatTrainingIds(std::vector<std::uint8_t>(64, 0x04)) == shipped);
-    // Cut off after the third: no fourth to read.
-    std::vector<std::uint8_t> cut = ShippedRules();
-    cut.resize(58);
-    CHECK(tb::CombatTrainingIds(cut) == shipped);
-    // The first three are not the three: something else's constants.
-    std::vector<std::uint8_t> other = ShippedRules();
-    other.at(26) = 0x09; // the second is 100105
-    other.at(64) = 0x07;
-    CHECK(tb::CombatTrainingIds(other) == shipped);
-    std::vector<std::uint8_t> third = ShippedRules();
-    third.at(45) = 0x09;
-    third.at(64) = 0x07;
-    CHECK(tb::CombatTrainingIds(third) == shipped);
-    // The fourth too far from the third to be the rule's.
-    std::vector<std::uint8_t> far = ShippedRules();
-    far.at(64) = 0x07;
-    far.insert(far.begin() + 46, 60, 0x00);
-    CHECK(tb::CombatTrainingIds(far) == shipped);
-    // A fourth that is no id.
-    std::vector<std::uint8_t> nothing = ShippedRules();
-    nothing.at(61) = 0x00;
-    nothing.at(62) = 0x00;
-    nothing.at(63) = 0x00;
-    nothing.at(64) = 0x00;
-    CHECK(tb::CombatTrainingIds(nothing) == shipped);
-    // The very end of a script: nothing is read past it.
-    const std::vector<std::uint8_t> end{0x04, 0x03, 0x00, 0x01, 0x87};
-    CHECK(tb::CombatTrainingIds(end) == shipped);
 }
 
 TEST_CASE("a swing's time is what the scripts last set for it, once one has been seen", "[rules][time]")

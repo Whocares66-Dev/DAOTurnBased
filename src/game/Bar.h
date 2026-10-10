@@ -71,7 +71,7 @@ class BarLink
     // table's own camera for it or by the kind of body it is and its size
     // (core's FramePortrait). Each said in the log, once a creature a fight.
     // From the frame callback: rendering is the scripts' thread's.
-    void KeepPortraits(const TurnView &view, bool render);
+    void KeepPortraits(const TurnView &view);
 
     // One creature's portrait rendered now, by the rule as built or as a
     // tester asks (the turnbased_portrait tool, src/plugin/Plugin.cpp; the

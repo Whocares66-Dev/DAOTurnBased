@@ -189,11 +189,6 @@ std::int32_t MainHandType(ObjectId creature)
     return api::IsObjectValid(weapon) != 0 ? api::GetBaseItemType(weapon) : -1;
 }
 
-// path_check (Settings::pathCheck): the player's orders measured by the
-// path the engine would walk, not a straight line. Read on the scripts'
-// thread, set on reload.
-std::atomic<bool> g_pathCheck{true};
-
 // Casts kept while they charge (Gate.h, HeldCast), by their caster. The
 // gate and the bridge's effects both run on the scripts' thread.
 std::unordered_map<ObjectId, HeldCast> g_heldCasts;
@@ -203,10 +198,8 @@ std::set<ObjectId> g_engineConjures;
 
 // A move farther than its path can go this turn is refused ("Too far")
 // rather than walked until its meters run out: the user's call, 2026-10-01
-// ("refusing too far is right i think"). Off, a move walks until stopped.
-// A flag, not a constant, so both ways stay compiled and linted.
-std::atomic<bool> g_pathOnDemand{true};
-
+// ("refusing too far is right i think").
+//
 // The walk the game's own pathfinder finds for a creature to a point, its
 // length, by DAOLib's search of its own (dao::world::FindPath, 1fe01a3,
 // seen in play in the Elven Ruins: round a corner 3.21 m straight was
@@ -429,11 +422,11 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     // the search disturbed the creature's own request for a path is not
     // proven; it is not made while one may be pending.
     const bool atRest = self.CurrentCommand() == nullptr && api::GetCommandQueueSize(attacker) == 0;
-    if (g_pathCheck.load() && !atRest)
+    if (!atRest)
     {
         spdlog::debug("attack on {:#010x}: its creature is at a command already; judged by the straight line", *target);
     }
-    if (g_pathCheck.load() && atRest && !WalkByPath(reached, attacker, *target, *approach, kind, by))
+    if (atRest && !WalkByPath(reached, attacker, *target, *approach, kind, by))
     {
         return reached;
     }
@@ -480,7 +473,7 @@ bool AbilityFindsNoRoom(const dao::CCObject &self, const dao::Command &command)
 // A player's move, measured as the engine would walk it.
 std::optional<float> MoveLength(const dao::CCObject &self, const dao::Command &command)
 {
-    if (!g_pathOnDemand.load() || !g_pathCheck.load() || GetCurrentThreadId() != dao::script::ScriptThreadId())
+    if (GetCurrentThreadId() != dao::script::ScriptThreadId())
     {
         return std::nullopt;
     }
@@ -681,17 +674,6 @@ float WaitSecondsOf(const dao::CCObject &self, const dao::Command &command)
 std::mutex g_swingMutex;
 LearnedSwings g_swings;
 
-// Combat Training's four abilities as the installed rules_core counts them
-// (ReadInstalledRules), the shipped four until it has been read.
-std::mutex g_rulesMutex;
-std::array<std::int32_t, 4> g_combatTraining = kCombatTrainingAsShipped;
-std::size_t g_rulesSize = 0; // the size last read, 0 before the first
-
-std::array<std::int32_t, 4> CombatTrainingAbilities()
-{
-    const std::lock_guard lock(g_rulesMutex);
-    return g_combatTraining;
-}
 struct AskedSwing
 {
     LearnedSwings::Key key;
@@ -1104,51 +1086,6 @@ int ToggleGamePause(dao::script::CommandCall &call)
     return dao::script::kOk;
 }
 
-// The player's orders, as explore mode takes them (GameModeCombat is a
-// GameModeExplore, so they are combat's too). Their messages carry the
-// order's details or none (DAOLib's dev/messages.csv); only that one came
-// is used.
-struct Order
-{
-    const char *what;
-    dao::AddressId handler; // an id of DAOLib's address library, not an address (8b027c6 on)
-};
-namespace handler = dao::messages::handler;
-constexpr std::array kOrders{
-    Order{"move", handler::GameModeExplore_MoveCharacterToLocationMessage},
-    Order{"ability", handler::GameModeExplore_PerformAbilityMessage},
-    Order{"ability on the player", handler::GameModeExplore_PerformAbilityOnPlayerMessage},
-    Order{"ability on the selected target", handler::GameModeExplore_PerformAbilityOnSelectedTargetMessage},
-    Order{"ability on the target under the cursor", handler::GameModeExplore_PerformAbilityOnTargetUnderCursorMessage},
-    Order{"default action on a target", handler::GameModeExplore_PerformDefaultActionOnTargetMessage},
-    Order{"primary action under the cursor", handler::GameModeExplore_PerformPrimaryActionOnTargetUnderCursorMessage},
-    Order{"secondary action on a target", handler::GameModeExplore_PerformSecondaryActionOnTargetMessage},
-    Order{"secondary action under the cursor",
-          handler::GameModeExplore_PerformSecondaryActionOnTargetUnderCursorMessage},
-    Order{"use object", handler::GameModeExplore_PerformUseObjectMessage},
-};
-
-// One detour per handler, each with its own trampoline to call on.
-template <std::size_t I> struct OrderWatch
-{
-    static inline dao::Detour<dao::messages::HandlerFn> detour;
-
-    static bool __fastcall Hook(void *mode, int edx, const void *message)
-    {
-        try
-        {
-            const std::lock_guard lock(*g_mutex);
-            g_machine->OnPlayerOrder(kOrders[I].what);
-        }
-        catch (...)
-        {
-            Report("an order");
-        }
-        spdlog::debug("order: {}", kOrders[I].what);
-        return detour.Original()(mode, edx, message);
-    }
-};
-
 template <class Fn> bool Place(dao::Detour<Fn> &detour, dao::AddressId id, Fn hook, const char *what)
 {
     // Where the id is in the game that is running: the GOG build's and
@@ -1163,54 +1100,7 @@ template <class Fn> bool Place(dao::Detour<Fn> &detour, dao::AddressId id, Fn ho
     return false;
 }
 
-// Every one placed, whether or not another failed.
-template <std::size_t... I> bool WatchOrders(std::index_sequence<I...> /*unused*/)
-{
-    const std::array placed{Place(OrderWatch<I>::detour, kOrders[I].handler, &OrderWatch<I>::Hook, kOrders[I].what)...};
-    return std::ranges::all_of(placed, [](bool ok) { return ok; });
-}
-
 } // namespace
-
-// The installed rules_core, as the game resolves it (DAOLib's
-// dao::resources::Read, ea4e3f9: override, add-ins, patches, the game's own
-// archives), read for the abilities its interruption rule counts. A mod that
-// mends the script (Dain's Fixes names Master Combat Training, 100103, where
-// the shipped script names 100104) is followed, and the shipped script is
-// read as shipped: the user, 2026-10-02, "if player has the fix, they get the
-// benefit. if not, they don't." At each fight's start, since an override can
-// appear between one game and the next ("if the game itself reads the file
-// each time, use that", the user through DAOLib's session, the same day):
-// a quarter of a megabyte, read through the game's own resource manager.
-// Said in the log when what it says changes.
-void ReadInstalledRules()
-{
-    const std::optional<std::vector<std::byte>> script = dao::resources::Read(L"rules_core.ncs");
-    if (!script)
-    {
-        spdlog::warn("rules_core.ncs could not be read: Combat Training counts as the shipped script counts it");
-        return;
-    }
-    std::vector<std::uint8_t> bytes(script->size());
-    std::ranges::transform(*script, bytes.begin(), [](std::byte b) { return std::to_integer<std::uint8_t>(b); });
-    const std::array<std::int32_t, 4> ids = CombatTrainingIds(bytes);
-    {
-        const std::lock_guard lock(g_rulesMutex);
-        const bool same = g_rulesSize == bytes.size() && g_combatTraining == ids;
-        g_combatTraining = ids;
-        g_rulesSize = bytes.size();
-        if (same)
-        {
-            return;
-        }
-    }
-    constexpr std::int32_t kMasterCombatTraining = 100103;
-    spdlog::info("rules_core.ncs as installed, {} bytes: Combat Training's ranks are abilities {}, {}, {} and {} ({})",
-                 bytes.size(), ids[0], ids[1], ids[2], ids[3],
-                 ids[3] == kMasterCombatTraining   ? "Master counts: the script is a mended one"
-                 : ids == kCombatTrainingAsShipped ? "as shipped: Master Combat Training never counts"
-                                                   : "neither the shipped four nor the mended");
-}
 
 std::optional<HeldCast> TakeHeldCast(ObjectId creature)
 {
@@ -1320,11 +1210,6 @@ float AbilitySecondsOf(ObjectId user, std::int32_t ability)
     request.type = CommandType::UseAbility;
     DescribeAbilityOf(user, ability, request);
     return static_cast<float>(ActionCostMs(request)) / 1000.0f;
-}
-
-void SetPathCheck(bool on)
-{
-    g_pathCheck.store(on);
 }
 
 namespace
@@ -1476,100 +1361,6 @@ void WatchAttacksBegin()
     });
 }
 
-// The damage of one blow that interrupts a creature's spell, by the game's
-// own rule (core/Rules.h, InterruptThreshold), from what the engine has of
-// the creature.
-float InterruptThresholdOf(ObjectId target)
-{
-    // Combat Training's ranks as the game's own rule counts them
-    // (core/Rules.h, InterruptThreshold): a party member's by the
-    // abilities the script names, anyone else's from the autoscale
-    // table by its rank (rules_core.nss: Diff_GetAutoScaleTable is
-    // TABLE_AUTOSCALE whatever the difficulty). The abilities are the
-    // installed script's (ReadInstalledRules), the shipped script's
-    // until it has been read.
-    const bool party = api::IsHero(target) != 0 || api::IsFollower(target) != 0;
-    int training = 0;
-    if (party)
-    {
-        for (const std::int32_t ability : CombatTrainingAbilities())
-        {
-            training += api::HasAbility(target, ability) != 0 ? 1 : 0;
-        }
-    }
-    else
-    {
-        const std::int32_t rank = api::GetCreatureRank(target);
-        training = dao::gda::GetInt(dao::script::Table::Autoscale, rank, "nCombatTraining")
-                       .value_or(TrainingOfRankAsShipped(rank));
-    }
-    const int level =
-        static_cast<int>(api::GetCreatureProperty(target, k::PROPERTY_SIMPLE_LEVEL, k::PROPERTY_VALUE_TOTAL));
-    return InterruptThreshold(party, training, level);
-}
-
-// A blow that interrupts a spell (core: TurnMachine::OnDamaged): the
-// scripts' EVENT_TYPE_DAMAGED, sent once the damage is done (events_h.nss,
-// SendEventOnDamaged: the damage, its type, the attacker; DAOLib's
-// dao/Events.h, read 2026-10-02), heard on
-// the scripts' thread before the target's own script. Seen in play
-// 2026-10-02 (timeplay's interrupt): spiders' bites of 7 and 8 on Lyna with
-// Chain Lightning pending, her threshold 16, and the spell held. The threshold is the
-// game's own (core/Rules.h, InterruptThreshold), worked out only for a
-// creature with a spell pending.
-void WatchDamage(TurnMachine &machine, std::mutex &mutex)
-{
-    dao::events::OnScriptEvent(dao::script::EventType::Damaged, [&machine, &mutex](ObjectId target,
-                                                                                   const dao::CScriptEvent &event) {
-        try
-        {
-            constexpr std::int32_t kPhysical = 1; // DAMAGE_TYPE_PHYSICAL
-            const float damage = event.Float(0);
-            const std::int32_t type = event.Integer(0);
-            if (!(damage > 0.0f))
-            {
-                return;
-            }
-            if (type != kPhysical)
-            {
-                // Said too, at the log's finest: a staff's bolt and Drain
-                // Life on a caster with a spell pending were not physical,
-                // and nothing in the log said they had been heard (the first
-                // run of timeplay's interrupt, 2026-10-02).
-                if (spdlog::should_log(spdlog::level::debug))
-                {
-                    const std::lock_guard lock(mutex);
-                    if (machine.Conjuring(target))
-                    {
-                        spdlog::debug("{:#x} takes {:.0f} of damage type {} with a spell pending: not a blow, it holds",
-                                      target, damage, type);
-                    }
-                }
-                return;
-            }
-            {
-                const std::lock_guard lock(mutex);
-                if (!machine.Conjuring(target))
-                {
-                    return;
-                }
-            }
-            const float threshold = InterruptThresholdOf(target);
-            bool interrupted = false;
-            {
-                const std::lock_guard lock(mutex);
-                interrupted = machine.OnDamaged(target, damage, true, threshold);
-            }
-            spdlog::info("{:#x} struck for {:.0f} by {:#x} with a spell pending (threshold {:.0f}): {}", target, damage,
-                         event.Creator(), threshold, interrupted ? "interrupted" : "it holds");
-        }
-        catch (...)
-        {
-            Report("a blow on a creature with a spell pending");
-        }
-    });
-}
-
 // The engine has set a cooldown (DAOLib's dao::abilities::OnCooldownSet, its
 // issue 41): the machine is told, and takes it onto its creature's own clock
 // if its creature is of a fight (core: TurnMachine::OnCooldownSet; issue
@@ -1620,7 +1411,6 @@ void WatchCooldowns(TurnMachine &machine, std::mutex &mutex)
 bool InstallGate(TurnMachine &machine, std::mutex &mutex)
 {
     WatchCommandEnds(machine, mutex);
-    WatchDamage(machine, mutex);
     WatchCooldowns(machine, mutex);
     WatchAttacksBegin();
     g_machine = &machine;
@@ -1632,11 +1422,6 @@ bool InstallGate(TurnMachine &machine, std::mutex &mutex)
     if (!autoPause)
     {
         spdlog::error("could not intercept the scripts' ToggleGamePause");
-    }
-    // Watching the orders is a fallback: the gate holds without it.
-    if (!WatchOrders(std::make_index_sequence<kOrders.size()>{}))
-    {
-        spdlog::warn("not every order handler is watched: an order the engine queues only while running may stall");
     }
     return queue && pauseKey && autoPause;
 }

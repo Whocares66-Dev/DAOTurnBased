@@ -60,13 +60,10 @@ enum class Phase : std::uint8_t
     Starting,      // combat began: paused, waiting to see who is fighting
     TurnStart,     // between turns: paused, waiting to see who is fighting now
     AwaitingOrder, // a party member's turn: paused, waiting for the player's order
-    Dispatching,  // the player gave an order and no command came while paused: running a moment for the engine to queue
-                  // it
-    AiThinking,   // an AI creature's turn: running, waiting for it to choose
-    Executing,    // the current combatant's command is running
-    Settling,     // its command ended; the world runs on a moment
-    RoundPadding, // the round was short of round_min_seconds: the world runs on, nobody acting
-    Suspended,    // a conversation or cutscene mid-fight: hands off until it ends
+    AiThinking,    // an AI creature's turn: running, waiting for it to choose
+    Executing,     // the current combatant's command is running
+    Settling,      // its command ended; the world runs on a moment
+    Suspended,     // a conversation or cutscene mid-fight: hands off until it ends
 };
 
 [[nodiscard]] const char *Name(Phase phase);
@@ -429,8 +426,7 @@ enum class Verdict : std::uint8_t
     Hold,
     // Let through now, the engine's own cast, and its conjure held by the
     // game layer (DAOLib's HoldConjure) until ReleaseCast lets it complete,
-    // or DropCast clears it: a spell that conjures, with time
-    // (Settings::engineConjure).
+    // or DropCast clears it: a spell that conjures.
     Conjure,
 };
 
@@ -603,7 +599,7 @@ using LogSink = std::function<void(LogLevel, std::string_view)>;
 class TurnMachine
 {
   public:
-    TurnMachine(Settings settings, std::uint64_t seed, LogSink log = {});
+    TurnMachine(const Settings &settings, std::uint64_t seed, LogSink log = {});
 
     [[nodiscard]] const Settings &GetSettings() const
     {
@@ -658,13 +654,6 @@ class TurnMachine
 
     // The gate.
     [[nodiscard]] Verdict OnCommand(const CommandRequest &request);
-
-    // The player gave an order through explore mode (a click to move, an
-    // ability chosen). With `order_run_ms`, if no command follows while the
-    // game is paused, it runs a moment so the engine can queue one
-    // (Phase::Dispatching). A command of the player's at the gate, taken or
-    // refused, answers the order.
-    void OnPlayerOrder(std::string_view what);
 
     // The game's pause key (Space). It pauses, as it does in the game: the
     // user, 2026-10-02, "space bar should still pause the game i think,
@@ -791,20 +780,12 @@ class TurnMachine
     // through, since it is of the order before.
     static constexpr std::uint32_t kNoticeMs = 5000;
 
-    // A creature was struck (the scripts' EVENT_TYPE_DAMAGED, once the
-    // damage is done): a spell it has pending is interrupted by physical
-    // damage over `threshold` (core/Rules.h, InterruptThreshold), as the
-    // game interrupts one being conjured. Answers whether it was.
-    bool OnDamaged(ObjectId target, float damage, bool physical, float threshold);
     // A spell held in its conjure by the engine (Verdict::Conjure) whose
     // command ended before its time was paid: cleared by the installed
     // rules_core's damage rule, or by something that holds its caster. The
     // spell is lost: what its time paid stays spent, the rest is not owed.
     // Answers whether there was one.
     bool OnConjureCleared(ObjectId caster);
-    // Whether a blow could interrupt anything of this creature's: asked
-    // before the threshold is worked out, which costs script calls.
-    [[nodiscard]] bool Conjuring(ObjectId who) const;
 
     // Typed events, as they happen (core/Events.h): called under the same
     // lock as everything else, from inside Step and the gate's calls.
@@ -834,10 +815,6 @@ class TurnMachine
     // short 4 m from its target, the movement's own cut being 0.3 m past
     // (the third play test, 2026-09-30).
     static constexpr float kReachSlack = 0.0f;
-    // An order with no command after this long, paused, has queued nothing
-    // (and with `order_run_ms` is dispatched: the game runs until a command
-    // comes, or that long has passed).
-    static constexpr std::uint32_t kDispatchAfterMs = 100;
     // An ability held on cooldown is set to this many seconds left in the
     // engine: longer than any turn waits in real time, whatever its creature's
     // clock has left of it. What the quickbar's sweep shows is what is left
@@ -939,7 +916,6 @@ class TurnMachine
         std::optional<std::uint32_t> heldSeen;
         CommandType heldAt = CommandType::ExecuteEffect;
         std::uint32_t heldMs = 0;
-        std::uint32_t heldUnagedMs = 0;
         std::uint32_t holdRanMs = 0;
         std::uint32_t holdStepMs = 0;
         std::uint32_t holdBarMs = 0;
@@ -1015,11 +991,9 @@ class TurnMachine
     void StepStarting(const Observation &obs, std::vector<Effect> &fx);
     void StepTurnStart(const Observation &obs, std::vector<Effect> &fx);
     void StepAwaiting(const Observation &obs, std::vector<Effect> &fx);
-    void StepDispatching(const Observation &obs, std::vector<Effect> &fx);
     void StepThinking(const Observation &obs, std::vector<Effect> &fx);
     void StepExecuting(const Observation &obs, std::vector<Effect> &fx);
     void StepSettling(const Observation &obs, std::vector<Effect> &fx);
-    void StepPadding(std::vector<Effect> &fx);
     [[nodiscard]] Verdict Judge(const CommandRequest &request);
     [[nodiscard]] bool LoseTurn(const Combatant &who, std::vector<Effect> &fx);
     // A creature the game has made inactive has no turn (issue 44) and is
@@ -1072,10 +1046,9 @@ class TurnMachine
     // or its turn over); what counts on it is moved with it.
     void MoveClock(std::vector<Effect> &fx);
     void AgeCooldowns(ObjectId who, std::uint32_t clockMs, std::vector<Effect> &fx);
-    // A creature's own clock moved on: its cooldowns, and with own clocks
-    // its effects, regeneration and timers (the game layer's to move).
+    // A creature's own clock moved on: its cooldowns, and its effects,
+    // regeneration and timers (the game layer's to move).
     void AgeOwnClock(ObjectId who, std::uint32_t clockMs, std::vector<Effect> &fx);
-    [[nodiscard]] bool OwnClocks() const;
     // What holds the current creature at an effect's command costs the time
     // it holds it (issue 30): charged as it runs, the turn lost only once it
     // has outlasted the bar; and the hold over, said with what it took. The
@@ -1125,7 +1098,7 @@ class TurnMachine
     static constexpr std::wstring_view kModeFirst = L"Turn its mode off first";
     // What an action stopped as too long added to its target's debt.
     void ForgiveGrab();
-    [[nodiscard]] bool EngineConjures(const CommandRequest &request) const;
+    [[nodiscard]] static bool EngineConjures(const CommandRequest &request);
 
   public:
     // What the acting creature's last command let through was aimed at, while
@@ -1202,8 +1175,8 @@ class TurnMachine
     [[nodiscard]] ObjectId PartysOwn(ObjectId except = kNoObject) const;
     bool TurnSpent() const;
     static bool ActorGone(const Observation &obs);
-    void Floaty(std::vector<Effect> &fx, ObjectId target, std::wstring text, std::uint32_t colour) const;
-    void Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId object, std::int32_t a, std::int32_t b) const;
+    static void Floaty(std::vector<Effect> &fx, ObjectId target, std::wstring text, std::uint32_t colour);
+    static void Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId object, std::int32_t a, std::int32_t b);
     void Refuse(ObjectId target, std::wstring text, CommandType command, std::string note = {});
     // An attack the engine itself has no way to make as the two stand:
     // refused before a step (issue 27). True if it is.
@@ -1395,7 +1368,7 @@ class TurnMachine
         std::uint32_t owedMs = 0;
         CommandType type = CommandType::UseAbility;
         bool kept = true;
-        bool spell = false;  // a spell being conjured: a blow may interrupt it (OnDamaged)
+        bool spell = false;  // a spell: lost, it is said as one
         bool engine = false; // the engine's own command, held in its conjure (Verdict::Conjure)
         // What it was aimed at as it was kept: an attack given again at
         // another was turned on it by the game layer, its own target fallen
@@ -1533,10 +1506,7 @@ class TurnMachine
     // ends as it settles, and nothing more of its creature's own is let
     // through meanwhile (Judge).
     bool passRequested_ = false;
-    bool orderPending_ = false;
     bool resume_ = false; // back from a conversation: the current turn goes on as it was
-    std::uint32_t orderSeenNow_ = 0;
-    std::uint32_t dispatchUntilNow_ = 0;
     int idleTicks_ = 0;
     std::optional<Vec3> lastPosition_;
     Mode lastMode_ = Mode::Unknown;
@@ -1556,7 +1526,6 @@ class TurnMachine
     // The clock as the turn began: what max_turn_ms is counted from
     // (TurnTooLong).
     std::uint32_t turnSince_ = 0;
-    std::uint32_t roundRunMs_ = 0; // milliseconds this round has run unpaused
     // Effects' time spent inside the round by an action that needed it: an
     // effect of the action's own that keeps its creature at it. A giant
     // spider's Overwhelm is one effect on the spider and one on its prey,
@@ -1564,10 +1533,9 @@ class TurnMachine
     // pounce never ended, the world stood twelve seconds until
     // max_action_ms stopped it, and the turn ended "took too long" (the
     // eighth play test, 2026-10-01). While the acting creature is at an
-    // effect's command after its own action, effects' time runs with the
-    // world, a step at a time, and comes off the round's worth, so a round
-    // is still a turn's seconds of it (more only if an action took more).
-    std::uint32_t roundAgedMs_ = 0;
+    // effect's command after its own action, that effect's time runs with
+    // the world, a step at a time, on its creature's own clock and its
+    // target's.
     std::optional<std::uint32_t> ownEffectSince_; // the world's clock as the action's own effect was last aged
     static constexpr std::uint32_t kOwnEffectStepMs = 250;
     // A creature at a walk it does not take: at a move, or at the use of a

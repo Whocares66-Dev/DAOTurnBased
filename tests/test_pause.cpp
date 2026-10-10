@@ -16,19 +16,6 @@
 using namespace tb;
 using namespace tb::test;
 
-namespace
-{
-
-// The world idles on while the player chooses, as the mod ships.
-Settings Idling()
-{
-    Settings s = Fixed();
-    s.pauseOnPlayerTurn = false;
-    return s;
-}
-
-} // namespace
-
 TEST_CASE("the pause key pauses an enemy's turn, and the turn waits until it is pressed again", "[pause]")
 {
     World w;
@@ -70,7 +57,7 @@ TEST_CASE("the pause key pauses an enemy's turn, and the turn waits until it is 
 
 TEST_CASE("the pause key does not end a turn; End does", "[pause]")
 {
-    World w(Idling());
+    World w;
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     REQUIRE_FALSE(w.paused); // the world idles on while she chooses
@@ -90,7 +77,7 @@ TEST_CASE("the pause key does not end a turn; End does", "[pause]")
 
 TEST_CASE("an order given while the player has the game paused runs it again", "[pause]")
 {
-    World w(Idling());
+    World w;
     w.StartFight();
     REQUIRE(w.machine.OnPauseKey());
     w.Frame();
@@ -102,23 +89,6 @@ TEST_CASE("an order given while the player has the game paused runs it again", "
     REQUIRE(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
     CHECK_FALSE(w.machine.PlayerPaused());
     w.Frame();
-    CHECK_FALSE(w.paused);
-}
-
-TEST_CASE("while the machine holds the world still the pause key changes nothing", "[pause]")
-{
-    World w; // Fixed: paused while the player chooses
-    w.StartFight();
-    REQUIRE(w.paused);
-    REQUIRE(w.machine.OnPauseKey()); // taken all the same: the game must not unpause
-    CHECK_FALSE(w.machine.PlayerPaused());
-    w.RunFor(200);
-    CHECK(w.paused);
-    CHECK(w.Current() == kHero);
-    // And it did not arm a pause for the enemy's turn that follows.
-    REQUIRE(w.machine.OnEndTurn());
-    w.RunFor(100);
-    REQUIRE(w.Current() == kGenlock);
     CHECK_FALSE(w.paused);
 }
 

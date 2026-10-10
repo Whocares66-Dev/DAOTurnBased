@@ -111,9 +111,6 @@ namespace
 // The scripts' MAX_CREATURES_IN_COMBAT (rules_h.nss): how many hostiles the
 // game's own "who is fighting" asks for.
 constexpr std::int32_t kMaxCreaturesInCombat = 24;
-// EVENT_TYPE_DEBUG_KICKSTART_AI (events_h.nss): rules_core runs
-// AI_DetermineCombatRound on it.
-constexpr std::int32_t kKickstartAi = 9998;
 // A charged cast's conjuring when it is given at last: a moment for the
 // gesture, the turns it charged having been its casting time.
 constexpr float kChargedConjureSeconds = 1.0f;
@@ -804,7 +801,7 @@ void Bridge::AddFound(Scanning &scan, ObjectId id, Side side, bool unaware)
     }
     // One drawn in though it has not noticed is in the party's fight by
     // the rule that drew it in (seen, within the join radius).
-    if (settings_.joinBySight && !unaware)
+    if (!unaware)
     {
         const std::optional<dao::world::Room> room = scan.byRooms ? dao::world::RoomOf(id) : std::nullopt;
         const Sighting sighting = Sight(id, scan.living, room);
@@ -968,12 +965,9 @@ std::vector<Combatant> Bridge::Scan(const std::vector<ObjectId> &inFight)
     // party member's line of sight is the rule there, as where an area has
     // no rooms. The party's own room is the room of the one who stands for
     // it: a living member's, which the game shows for its standing there.
-    const std::optional<dao::world::Room> ours = settings_.joinBySight ? dao::world::RoomOf(scan.stands) : std::nullopt;
+    const std::optional<dao::world::Room> ours = dao::world::RoomOf(scan.stands);
     scan.byRooms = ours && ours->Shown();
-    if (settings_.joinBySight)
-    {
-        SayRule(byRooms_, scan.byRooms, ours, scan.stands);
-    }
+    SayRule(byRooms_, scan.byRooms, ours, scan.stands);
     const std::vector<ObjectId> hostiles = NearTheLiving(scan.living, scan.stands, 1);
     for (const ObjectId id : hostiles)
     {
@@ -1872,22 +1866,28 @@ void Bridge::HoldEffectsTime(const Effect &e)
     // The clock temporary effects wear off on and regeneration ticks
     // on (DAOLib's dao/Clock.h, a42be67): held through a fight,
     // moved on a round's worth at a time. And with it the scripts'
-    // own timers of a second or more, whatever their kind (issue 26,
-    // Settings::scriptTimersFrom): named before the hold, which takes
-    // what is already in the engine's queue by the same rule.
+    // own timers of a second or more, whatever their kind (issue 26):
+    // named before the hold, which takes what is already in the engine's
+    // queue by the same rule. A round is 4 s for each fighter but as many
+    // times 4 s of the world's clock as there are fighters, so a plot's
+    // timer left on the world's clock runs that many times too fast
+    // against what the fighters do: in the Harrowing Chamber Uldred's
+    // turnings of the captive mages, a 35 s cycle and ten seconds from the
+    // light on a mage to its death, all fell in the first three rounds
+    // (the user, 2026-10-04: "a round is supposed to be the same 4 seconds
+    // for everyone for things that apply over time or are environmental").
+    // A second and more is a timer; under it the scripts put one thing
+    // after another (Uldred's change of shape, 0.01 s) and must run as
+    // they do.
+    constexpr float kScriptTimersFrom = 1.0F;
     if (e.a != 0)
     {
-        dao::timers::HoldFrom(settings_.scriptTimersFrom);
-        dao::timers::Trace(settings_.scriptTimersTrace);
+        dao::timers::HoldFrom(kScriptTimersFrom);
     }
     dao::clock::Hold(e.a != 0);
     if (e.a == 0)
     {
         camera_.Release(); // the fight is over: the camera as the game has it
-    }
-    if (e.a != 0)
-    {
-        ReadInstalledRules(); // what the installed scripts count (Gate.cpp)
     }
 }
 
@@ -2079,20 +2079,12 @@ void Bridge::Apply(const std::vector<Effect> &effects)
     }
 }
 
-void Bridge::Poke(ObjectId id) const
+void Bridge::Poke(ObjectId id)
 {
     // Processed at once (bProcessImmediate): the creature's scripts run
     // now, inside this call, and whatever its AI queues comes back through
     // the gate while it is the creature's turn (dev/DESIGN.md, "The AI's
     // turn").
-    if (settings_.aiPoke == AiPoke::Kickstart)
-    {
-        if (const dao::script::OwnedEvent event = api::Event(kKickstartAi))
-        {
-            api::SignalEvent(id, *event.get(), 1);
-        }
-        return;
-    }
     // What the engine sends when a command ends: the creature's own script
     // sees it first, then rules_core, which runs its AI (custom AI too).
     // A wait that succeeded, sub-command -1 (rules_core reads ints 0-2).

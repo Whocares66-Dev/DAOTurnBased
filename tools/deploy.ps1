@@ -21,7 +21,7 @@
     folder (its dao/Gui.h), so nothing of the mod's goes into the game's override folder.
     The build copies the movie beside the built dll, on every build (CMakeLists.txt,
     FILES), so the build's folder is the whole of the mod and the deploy copies it as it
-    is. The bar shows with `turn_bar = true` in turnbased.ini. The plugin and the movie
+    is. The plugin and the movie
     are a pair, so the deploy stops at a movie older than its source (ui\turnorder,
     tools\movie.py), and at one built since the last build, which is not beside the dll
     yet; -StaleMovie deploys the folder's all the same.

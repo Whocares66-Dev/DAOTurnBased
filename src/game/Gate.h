@@ -8,11 +8,6 @@
 //   - The scripts' ToggleGamePause: the game's auto-pause on combat
 //     (module_core.nss, EVENT_TYPE_AUTOPAUSE) would unpause a turn-based
 //     fight half a second in; during one it does nothing.
-//   - Explore mode's handlers for the player's orders (a click to move, an
-//     ability chosen, a target clicked): watched, not changed, so the
-//     machine knows an order was given even if the engine queues nothing
-//     for it while paused (core/TurnMachine.h, Phase::Dispatching), and so
-//     the log ties each order to the QueueCommand caller that follows it.
 //
 // Each locks the machine's mutex for as long as the machine takes to
 // answer, and never while calling the engine.
@@ -25,18 +20,9 @@
 
 namespace tb::game
 {
-// Reads what the installed scripts count that the mod's rules follow:
-// Combat Training's four abilities in rules_core (core/Rules.h,
-// CombatTrainingIds). From the game's thread, at each fight's start.
-void ReadInstalledRules();
-
 // Places the hooks, at plugin load. False if any could not be placed; the
 // log says which.
 bool InstallGate(TurnMachine &machine, std::mutex &mutex);
-
-// Settings::pathCheck: whether the player's moves and attacks are measured
-// by the engine's own path (DAOLib's world::FindPath).
-void SetPathCheck(bool on);
 
 // With a turn a bar of time, the seconds a plain attack of this creature's
 // costs, as the gate will charge it (the swing by the game's formula, or

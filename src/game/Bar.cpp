@@ -660,7 +660,7 @@ struct ShotOrder
 {
     PortraitTuning tuning;   // nothing given: the rule as built
     bool render = true;      // false: only what there is already, and `whyNot` says why nothing is rendered
-    std::string_view whyNot; // "portraits = false", or that nothing would show a render
+    std::string_view whyNot; // that nothing would show a render
     bool again = false;      // the renderer it has is the mod's own, to be rendered again in place
 };
 
@@ -873,17 +873,14 @@ PortraitReport Shoot(ObjectId id, const ShotOrder &order)
 }
 } // namespace
 
-void BarLink::KeepPortraits(const TurnView &view, bool render)
+void BarLink::KeepPortraits(const TurnView &view)
 {
     const auto id = portraits_.Next(view, row_);
     if (!id)
     {
         return;
     }
-    ShotOrder order;
-    order.render = render;
-    order.whyNot = "portraits = false";
-    PortraitReport report = Shoot(*id, order);
+    PortraitReport report = Shoot(*id, ShotOrder{});
     // A creature come into the fight this moment may have no model yet, and
     // so no head node: asked again with the next views for a while, before
     // its card is left with initials for the fight (each is tried once).
@@ -928,7 +925,7 @@ PortraitReport BarLink::TryPortrait(const PortraitAsk &ask, const TurnView &view
     ShotOrder order;
     order.tuning = ask.tuning;
     order.render = movie;
-    order.whyNot = "not rendered: the turn bar's movie is not there to show it ([feedback] turn_bar is off, or "
+    order.whyNot = "not rendered: the turn bar's movie is not there to show it ("
                    "turnorder.swf was not found)";
     // Rendered again in place where the renderer is the mod's own: nothing
     // is released under a movie that may be showing it.

@@ -634,8 +634,7 @@ void Preview::MarkOnGround(ObjectId area, const PathSplit &split, bool attack)
 // on the ground, the game's marker where a move would end, and all of it
 // for the movie. `walk` is the order's length as the gate will measure it,
 // `walked` the path it is drawn along.
-void Preview::Draw(const TurnView &view, std::uint32_t nowMs, bool onGround, float walk,
-                   const std::vector<Vec3> &walked, bool attack)
+void Preview::Draw(const TurnView &view, std::uint32_t nowMs, float walk, const std::vector<Vec3> &walked, bool attack)
 {
     const PathSplit split = SplitPath(walked, view.movementLeft + (PathLength(walked) - walk));
     PreviewView shown;
@@ -677,7 +676,7 @@ void Preview::Draw(const TurnView &view, std::uint32_t nowMs, bool onGround, flo
     // Without the mod's rings the path is the movie's line, which is whole
     // by itself, gold and red.
     const dao::CCArea *area = dao::world::CurrentArea();
-    shown.line = !onGround || !art || area == nullptr;
+    shown.line = !art || area == nullptr;
     if (shown.line)
     {
         HideMarks();
@@ -740,7 +739,7 @@ void Preview::NoPath()
     }
 }
 
-void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bool onGround)
+void Preview::Update(const TurnView &view, std::uint32_t nowMs)
 {
     if (!installed_)
     {
@@ -756,7 +755,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
     // ("no movement left"), and a red line to everywhere says nothing: in
     // play it read "8.4 m of 0.0" wherever the cursor lay (the seventeenth
     // play test).
-    const bool waiting = enabled && view.active && view.playerTurn && view.phase == Phase::AwaitingOrder &&
+    const bool waiting = view.active && view.playerTurn && view.phase == Phase::AwaitingOrder &&
                          view.current != kNoObject && view.movementLeft >= TurnMachine::kMinStep;
     const dao::GameModeExplore *explore = waiting ? ExploreMode() : nullptr;
     const std::optional<ObjectId> object = explore != nullptr ? explore->CursorObject() : std::nullopt;
@@ -842,7 +841,7 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bo
             return;
         }
     }
-    Draw(view, nowMs, onGround, walk, walked, target != kNoObject);
+    Draw(view, nowMs, walk, walked, target != kNoObject);
 }
 
 } // namespace tb::game

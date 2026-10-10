@@ -203,17 +203,6 @@ TEST_CASE("nobody to wait for, an AI's turn, the setting off: no delay", "[delay
         w.RunFor(100);
         CHECK(w.Current() == kGenlock);
     }
-    SECTION("with the setting off")
-    {
-        Settings s = Fixed();
-        s.delay = false;
-        World w(s);
-        w.StartFight();
-        CHECK_FALSE(w.machine.View().canDelay);
-        CHECK_FALSE(w.machine.OnDelay());
-        w.RunFor(100);
-        CHECK(w.Current() == kHero);
-    }
     SECTION("outside a fight")
     {
         World w;
@@ -387,21 +376,6 @@ TEST_CASE("the bar's string and the state say whether the turn may be put off", 
     CHECK(w.machine.View().delayOffered);
     CHECK(waits().front() == L"0");
     CHECK(std::ranges::none_of(w.machine.View().upcoming, &CardView::waits));
-}
-
-TEST_CASE("with the setting off Delay is not offered", "[delay][bar]")
-{
-    Settings s = Fixed();
-    s.delay = false;
-    World w(s);
-    w.StartFight();
-    CHECK_FALSE(w.machine.View().delayOffered);
-    // Delay, what rolled over and the pause, then the row's three (nobody
-    // before the four, nobody after) and the caption's line, none, which
-    // end the head.
-    CHECK(EncodeBar(w.machine.View())
-              .find(std::wstring{kBarField} + L"0" + kBarField + L"0.0" + kBarField + L"0" + kBarField + L"0" +
-                    kBarField + L"4" + kBarField + L"0" + kBarField + kBarCard) != std::wstring::npos);
 }
 
 TEST_CASE("with time, the view says what of the bar rolled over", "[delay][time][bar]")

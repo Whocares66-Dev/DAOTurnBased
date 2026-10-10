@@ -726,41 +726,9 @@ struct AbilityFacts
 inline constexpr float kCastShareOfAnimation = 0.84f;
 [[nodiscard]] float AbilitySeconds(const AbilityFacts &facts);
 
-// The damage over which a blow interrupts a spell being conjured
-// (rules_core.nss at EVENT_TYPE_DAMAGED, read 2026-10-01; dev/REBALANCE.md,
-// "Interruption"): for a party member 10 a rank of Combat Training, and 5,
-// and half its level; for anyone else 10 for each of the ranks its kind is
-// given, and its level. Physical damage only.
-//
-// The ranks are the game layer's to read, from what is installed (the
-// user, 2026-10-02, asked whether the mod should count Master Combat
-// Training as a script mod does: "can we not just read it off the script?
-// ... if player has the fix, they get the benefit. if not, they don't.
-// each mod should do one thing & do it well"):
-// - a party member's: how many it has of the four abilities the script
-//   asks HasAbility of. The shipped script's fourth is 100104, which is no
-//   ability, where Master Combat Training is 100103: so there the fourth
-//   rank never counts, and with a mended script it does. Which four the
-//   installed script names is read from its compiled form
-//   (CombatTrainingIds);
-// - anyone else's: its rank's nCombatTraining in the game's autoscale table
-//   (TrainingOfRankAsShipped where that is not read).
-[[nodiscard]] float InterruptThreshold(bool party, int combatTraining, int level);
-
 // A thing that is not fighting done with an object: a door, a chest, a lever,
 // a lock, a thing picked up, taken or handed over ([costs] object).
 [[nodiscard]] bool UsesAnObject(CommandType type);
-[[nodiscard]] int TrainingOfRankAsShipped(int creatureRank);
-
-// The four abilities a compiled rules_core counts as Combat Training's
-// ranks. In it (NCS V1.0B, read from the game's designerscripts.rim
-// 2026-10-02, at 3779) a constant integer is `04 03` and four bytes, the
-// high one first, and the four stand 17 to 19 bytes apart, each followed by
-// its HasAbility call: 100100, 100101, 100102, and then 100104 as shipped.
-// Found by the first three; the fourth is whatever constant follows them.
-// The shipped four where the script is not given or they are not found.
-inline constexpr std::array<std::int32_t, 4> kCombatTrainingAsShipped{100100, 100101, 100102, 100104};
-[[nodiscard]] std::array<std::int32_t, 4> CombatTrainingIds(std::span<const std::uint8_t> compiledScript);
 
 // Until the engine gives animations' lengths, by kind (dev/REBALANCE.md,
 // "What no rule reaches"): a swing that is not a formula's (the play tests'

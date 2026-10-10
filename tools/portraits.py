@@ -67,8 +67,8 @@ creature, its own row or its kind's default.
 
 It drives a game that is ALREADY RUNNING, through Eluvian's HTTP as
 tools\\sweep.py does (the development bench, ..\\DAOEluvianMCP): the party
-somewhere with room (the camp), outside a fight, the turn bar on
-(`[feedback] turn_bar = true`) with its movie deployed. It launches and quits
+somewhere with room (the camp), outside a fight, the turn bar's
+movie deployed. It launches and quits
 nothing. Each creature is made friendly as it appears (`stage_group`, group
 2) and killed after (`stage_kill`), which leaves bodies where the party
 stands; --keep leaves them alive.

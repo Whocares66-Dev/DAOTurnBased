@@ -60,8 +60,8 @@ int Cleared(const World &w, ObjectId target)
 bool InATurn(const World &w)
 {
     const Phase phase = w.machine.GetPhase();
-    return phase == Phase::AwaitingOrder || phase == Phase::Dispatching || phase == Phase::AiThinking ||
-           phase == Phase::Executing || phase == Phase::Settling;
+    return phase == Phase::AwaitingOrder || phase == Phase::AiThinking || phase == Phase::Executing ||
+           phase == Phase::Settling;
 }
 
 // Why each turn ended, by whose it was.

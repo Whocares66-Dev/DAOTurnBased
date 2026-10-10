@@ -115,8 +115,7 @@ void UntilTurnOf(World &w, ObjectId id)
         w.Frame();
     }
     REQUIRE(w.Current() == id);
-    for (int i = 0;
-         i < 100 && (w.machine.GetPhase() == Phase::TurnStart || w.machine.GetPhase() == Phase::RoundPadding); ++i)
+    for (int i = 0; i < 100 && w.machine.GetPhase() == Phase::TurnStart; ++i)
     {
         w.Frame();
     }

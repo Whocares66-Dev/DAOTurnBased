@@ -146,8 +146,8 @@ int Effects(const World &w, EffectKind kind, ObjectId target)
 bool InATurn(const World &w)
 {
     const Phase phase = w.machine.GetPhase();
-    return phase == Phase::AwaitingOrder || phase == Phase::Dispatching || phase == Phase::AiThinking ||
-           phase == Phase::Executing || phase == Phase::Settling;
+    return phase == Phase::AwaitingOrder || phase == Phase::AiThinking || phase == Phase::Executing ||
+           phase == Phase::Settling;
 }
 
 // The turns go by, the player's ended as they come, until it is `id`'s and

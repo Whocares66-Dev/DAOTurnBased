@@ -165,7 +165,7 @@ EventDescription Describe(EventKind kind)
     case EventKind::ConditionHeld:
         return {"A stun, pin, knockdown, paralysis or sleep holds a creature: it costs it its time.",
                 true,
-                "where its time is from: its seconds, or condition_turns",
+                "where its time is from: its seconds, or a turn",
                 "milliseconds of its time it costs (0: as long as it lasts)",
                 nullptr,
                 nullptr};

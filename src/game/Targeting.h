@@ -30,14 +30,9 @@ class Targeting
     // Once, at load: the interceptor. It asks the machine, under its
     // mutex, whose turn it is.
     void Install(const TurnMachine &machine, std::mutex &mutex);
-    void SetEnabled(bool on)
-    {
-        enabled_ = on;
-    }
 
   private:
     bool installed_ = false;
-    bool enabled_ = true;
     int logged_ = 0; // the game's thread's alone: messages are delivered there
 };
 

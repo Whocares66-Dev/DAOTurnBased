@@ -237,7 +237,6 @@ struct Coverage
     int blockedOutOfTurn = 0;
     int movementCuts = 0;
     int refunds = 0;
-    int dispatches = 0;
     int interludes = 0;
     int menus = 0;
     int joiners = 0;
@@ -248,7 +247,6 @@ struct Coverage
     int vanished = 0;
     int stunned = 0;      // creatures stunned or pinned
     int lostTurns = 0;    // turns taken by a condition
-    int lostOnClock = 0;  // of them, with conditions on the game's clock
     int heldByEffect = 0; // turns lost to an effect's command that held past the bar (a turn's worth, as built)
     int heldFreed = 0;    // holds that let go within the turn, which went on with the rest
     int heldPaid = 0;     // of them, with time, those held from the turn's start: their time checked against the bar
@@ -265,7 +263,7 @@ struct Coverage
     int cooldownsEndedByIt = 0; // a held cooldown the game ended, let go
     int cooldownLooks = 0;      // times the machine's book was checked against the engine's, every half second or so
     int roundsAged = 0;
-    int ownAged = 0; // a creature's own clock moved (Settings::ownClocks)
+    int ownAged = 0; // a creature's own clock moved
     // With a turn a bar of time.
     int kept = 0;            // actions that did not fit, kept for a later turn
     int landed = 0;          // kept actions given again and let through
@@ -857,7 +855,11 @@ class Arena
         (void)Chance(rng, 0.3);
         s.partyControl = Chance(rng, 0.3) ? PartyControl::Tactics : PartyControl::Manual;
         (void)Chance(rng, 0.3);
-        s.roundMinSeconds = Chance(rng, 0.3) ? Between(rng, 1.0f, 6.0f) : 0.0f;
+        // The draws round_min_seconds took until it went (issue 104), as the others kept here.
+        if (Chance(rng, 0.3))
+        {
+            (void)Between(rng, 1.0f, 6.0f);
+        }
         s.settleMs = static_cast<int>(Between(rng, 0.0f, 800.0f));
         s.aiThinkMs = static_cast<int>(Between(rng, 200.0f, 2000.0f));
         s.aiFollowUpMs = static_cast<int>(Between(rng, 0.0f, 1000.0f));
@@ -868,13 +870,15 @@ class Arena
         // three seconds, where the default is thirty: its time limit ends
         // turns there among everything else that goes on in a fight (14).
         s.maxTurnMs = Chance(rng, 0.3) ? 3000 : 30000;
-        s.floaties = Chance(rng, 0.5);
-        s.scriptEvents = true; // the round check reads the turn-start events
+        (void)Chance(rng, 0.5); // the draw the floaties' switch took until it went (issue 104), as below
         s.cameraFollow = Chance(rng, 0.2);
-        s.orderRunMs = Chance(rng, 0.5) ? 500 : 0;
-        s.pauseOnPlayerTurn = Chance(rng, 0.5);
+        (void)Chance(rng, 0.5); // order_run_ms's
+        (void)Chance(rng, 0.5); // and the one the pause while the player chooses took
         (void)Chance(rng, 0.2);
-        s.conditionTurns = Chance(rng, 0.2) ? 0 : (Chance(rng, 0.7) ? 1 : 2);
+        if (!Chance(rng, 0.2)) // condition_turns' two
+        {
+            (void)Chance(rng, 0.7);
+        }
         // Faster only: the arena's bounds on how long a turn may take are
         // in real milliseconds, and a slower game stretches every one of
         // the machine's waits past them.
@@ -1199,7 +1203,7 @@ class Arena
             asked.item = true;
             asked.seconds = Between(rng_, 1.0f, 6.0f);
         }
-        // A spell that conjures (Settings::engineConjure): one longer than
+        // A spell that conjures: one longer than
         // what is left goes to the engine at once, held in its conjure.
         if (!asked.item && asked.type == CommandType::UseAbility && !asked.sustained && Chance(rng_, 0.5))
         {
@@ -1594,7 +1598,6 @@ class Arena
             break;
         case EffectKind::OwnClock:
             Must(timeHeld_, "a creature put on its own clock while effects' time runs anyway");
-            Must(settings_.ownClocks, "own clocks with own clocks off");
             if (e.a != 0)
             {
                 ownClock_.insert(e.target);
@@ -1616,11 +1619,6 @@ class Arena
             break;
         case EffectKind::EndConditions:
             Must(e.target == world_.Current(), "a condition ended out of its creature's turn");
-            // Or one whose seconds the machine was given: it ends what it
-            // has taken the time of. (A second hold landing between two
-            // looks, its seconds not read, is the first's to the machine.)
-            Must(settings_.conditionTurns > 0 || secondsKnown_.erase(e.target) > 0,
-                 "a condition on the game's clock ended by the machine");
             ++coverage_.conditionsEnded;
             conditionLeftMs_.erase(e.target);
             Release(e.target);
@@ -1659,7 +1657,6 @@ class Arena
             if (e.kind == EffectKind::Floaty && e.text.ends_with(L" loses the turn"))
             {
                 ++coverage_.lostTurns;
-                coverage_.lostOnClock += settings_.conditionTurns == 0 ? 1 : 0;
             }
             if (e.kind == EffectKind::ClearCommands)
             {
@@ -1711,7 +1708,6 @@ class Arena
             // A creature's own clock: only one put on its own, only in
             // its own turn (this frame's, or one that opened or closed
             // in it), and by something.
-            Must(settings_.ownClocks, "a creature's own clock moved with own clocks off");
             // (Or the one the acting creature's own effect holds, out of the
             // fight since: a grab's victim that left it is on the shared
             // clock again, and what holds it is still moved by the grab's
@@ -2821,8 +2817,7 @@ class Arena
         // within its settling, whatever its creature is at (Check).
         const ObjectId current = world_.Current();
         const Phase phase = world_.machine.GetPhase();
-        const bool playing = phase == Phase::AwaitingOrder || phase == Phase::Dispatching ||
-                             phase == Phase::Executing || phase == Phase::Settling;
+        const bool playing = phase == Phase::AwaitingOrder || phase == Phase::Executing || phase == Phase::Settling;
         if (holding && playing && current != kNoObject && PlayerControls(current) && !endAsked_)
         {
             FollowTurn();
@@ -2862,12 +2857,6 @@ class Arena
                 return;
             }
         }
-        if (phase == Phase::Dispatching && Chance(rng_, 0.5))
-        {
-            // The command the order made, queued once the game runs.
-            Try(current, CommandType::Attack, Source::Player);
-            return;
-        }
         if (phase != Phase::AwaitingOrder)
         {
             return;
@@ -2898,8 +2887,8 @@ class Arena
         }
         else if (roll < 0.87)
         {
-            world_.machine.OnPlayerOrder("an order that queues nothing yet");
-            ++coverage_.dispatches;
+            // An order that queues nothing yet (an ability picked before its
+            // target): nothing the machine hears of.
         }
         else
         {
@@ -3339,8 +3328,8 @@ class Arena
     // A turn is being played in this phase: waited on, or under way.
     static bool Playing(Phase phase)
     {
-        return phase == Phase::AwaitingOrder || phase == Phase::Dispatching || phase == Phase::AiThinking ||
-               phase == Phase::Executing || phase == Phase::Settling;
+        return phase == Phase::AwaitingOrder || phase == Phase::AiThinking || phase == Phase::Executing ||
+               phase == Phase::Settling;
     }
 
     // After each frame (2, 3, 4, 7): each promise's check is a function below.
@@ -3409,9 +3398,9 @@ class Arena
         const bool aiTurn = (phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling) &&
                             world_.Current() != kNoObject && !PlayerControls(world_.Current());
         const bool ownSpeed = phase == Phase::Idle || phase == Phase::Suspended;
-        const bool playersTurn = phase == Phase::AwaitingOrder || phase == Phase::Dispatching ||
-                                 (world_.Current() != kNoObject && PlayerControls(world_.Current()) &&
-                                  (phase == Phase::Executing || phase == Phase::Settling));
+        const bool playersTurn =
+            phase == Phase::AwaitingOrder || (world_.Current() != kNoObject && PlayerControls(world_.Current()) &&
+                                              (phase == Phase::Executing || phase == Phase::Settling));
         const auto thousandths = [](float speed) { return static_cast<std::int32_t>(std::lround(speed * 1000.0f)); };
         if (aiTurn)
         {
@@ -3431,11 +3420,9 @@ class Arena
     void CheckPause(Phase phase) const
     {
         const bool choosing = phase == Phase::AwaitingOrder;
-        const bool wantsPause =
-            phase == Phase::Starting || phase == Phase::TurnStart || (choosing && settings_.pauseOnPlayerTurn);
-        const bool wantsRun = phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling ||
-                              phase == Phase::RoundPadding || phase == Phase::Dispatching ||
-                              (choosing && !settings_.pauseOnPlayerTurn);
+        const bool wantsPause = phase == Phase::Starting || phase == Phase::TurnStart;
+        const bool wantsRun =
+            phase == Phase::AiThinking || phase == Phase::Executing || phase == Phase::Settling || choosing;
         Must(!wantsPause || world_.paused, "the game running while it should wait");
         Must(!wantsRun || !world_.paused, "the game paused while a turn plays out");
     }
@@ -3799,7 +3786,6 @@ void Count(const Coverage &c, std::uint64_t count, bool strays, bool choices)
         {"blockedOutOfTurn", c.blockedOutOfTurn},
         {"movementCuts", c.movementCuts},
         {"refunds", c.refunds},
-        {"dispatches", c.dispatches},
         {"interludes", c.interludes},
         {"menus", c.menus},
         {"joiners", c.joiners},
@@ -3810,7 +3796,6 @@ void Count(const Coverage &c, std::uint64_t count, bool strays, bool choices)
         {"vanished", c.vanished},
         {"stunned", c.stunned},
         {"lostTurns", c.lostTurns},
-        {"lostOnClock", c.lostOnClock},
         {"heldByEffect", c.heldByEffect},
         {"heldFreed", c.heldFreed},
         {"heldPaid", c.heldPaid},
@@ -3954,7 +3939,6 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     // 297 conditions ended, 43 cooldowns released of 90 held; and `took too
     // long` 127 times where it was 158, all of them turns an AI played (20).
     CHECK(coverage.blockedOutOfTurn > 6000);
-    CHECK(coverage.dispatches > 33);
     CHECK(coverage.menus > 145);
     CHECK(coverage.interludes > 70);
     CHECK(coverage.joiners > 49);
@@ -3967,7 +3951,6 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     CHECK(coverage.bledOut > 80);
     CHECK(coverage.vanished > 27);
     CHECK(coverage.stunned > 290);
-    CHECK(coverage.lostOnClock > 20);
     CHECK(coverage.conditionsEnded > 110);
     // Cooldowns, as the engine sets them (22; issue 57). The fights are turn
     // for turn the ones they were, 3285 turns in 672 rounds: nothing the

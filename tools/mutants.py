@@ -243,8 +243,8 @@ MUTANTS = [
     Mutant(
         "the game is never paused for a turn",
         MACHINE,
-        "return phase == Phase::Starting || phase == Phase::TurnStart ||",
-        "(void)settings;\n    return phase == Phase::Idle &&",
+        "    return phase == Phase::Starting || phase == Phase::TurnStart;",
+        "    return phase == Phase::Idle && phase == Phase::TurnStart;",
     ),
     Mutant(
         "an action is given back every time",
@@ -334,8 +334,8 @@ MUTANTS = [
     Mutant(
         "limit: max_turn_ms is counted from the fight's start, not the turn's",
         MACHINE,
-        "    orderPending_ = false;\n    turnSince_ = clock_;\n",
-        "    orderPending_ = false;\n",
+        "    outOfCombat_ = false;\n    turnSince_ = clock_;\n",
+        "    outOfCombat_ = false;\n",
     ),
     Mutant(
         "limit: a turn ended at max_turn_ms leaves its creature at what it was doing",
@@ -356,19 +356,10 @@ MUTANTS = [
         "        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));",
     ),
     Mutant(
-        "limit: max_turn_ms in the settings file is not the turn's limit",
-        SETTINGS,
-        '        {"turns", "max_turn_ms", Int(&Settings::maxTurnMs, 1000, 600000)},',
-        '        {"turns", "max_turn_ms", Int(&Settings::maxActionMs, 1000, 600000)},',
-    ),
-    Mutant(
         "the fight's clock runs through the player's pause: a hold is charged for the pause, and a turn's limit runs under it",
         MACHINE,
         "    if (!obs.paused)\n    {\n        // The world's time:",
         "    if (true)\n    {\n        // The world's time:",
-    ),
-    Mutant(
-        "rounds are never padded", MACHINE, "if (roundRunMs_ < minMs)", "if (false)"
     ),
     Mutant(
         "a conversation does not stand the gate aside",
@@ -421,8 +412,8 @@ MUTANTS = [
     Mutant(
         "a condition on the game's clock costs no turn",
         MACHINE,
-        "    const bool holds = (held.onClock || (settings_.conditionTurns == 0 && held.kind == Condition::None)) &&",
-        "    const bool holds = (false) &&",
+        "    const bool holds = held.onClock && held.seen == Condition::Disabled;",
+        "    const bool holds = false && held.seen == Condition::Disabled;",
     ),
     # What holds a creature at an effect's command costs the time it holds it
     # (issue 30): the two seconds a turn once waited before it was taken, and
@@ -449,25 +440,7 @@ MUTANTS = [
         "time: a hold does not move its creature's own clock: an effect on it cannot wear off within the turn",
         MACHINE,
         "    budget_.holdBarMs += before - budget_.spend.CapacityLeftMs();\n    MoveClock(fx);",
-        "    budget_.holdBarMs += before - budget_.spend.CapacityLeftMs();",
-    ),
-    Mutant(
-        "with own clocks, a hold moves the clock everything else is on too",
-        MACHINE,
-        "    if (!timeHeld_ || OwnClocks())\n    {\n        return;\n    }\n    // Where effects are on the one clock",
-        "    if (!timeHeld_)\n    {\n        return;\n    }\n    // Where effects are on the one clock",
-    ),
-    Mutant(
-        "effects' time run by a hold does not come off the round's worth",
-        MACHINE,
-        "        roundAgedMs_ += static_cast<std::uint32_t>(age.b);\n        fx.push_back(age);\n        agedAtNow_ = lastNow_;",
-        "        fx.push_back(age);\n        agedAtNow_ = lastNow_;",
-    ),
-    Mutant(
-        "a stun that runs out as a hold's time runs is taken for one cured: the turn it owed is given back",
-        MACHINE,
-        "        roundAgedMs_ += static_cast<std::uint32_t>(age.b);\n        fx.push_back(age);\n        agedAtNow_ = lastNow_;",
-        "        roundAgedMs_ += static_cast<std::uint32_t>(age.b);\n        fx.push_back(age);",
+        "    budget_.holdBarMs += before - budget_.spend.CapacityLeftMs();\n    (void)fx;",
     ),
     Mutant(
         "a second hold in a turn is charged from the first one's end",
@@ -673,8 +646,8 @@ MUTANTS = [
     Mutant(
         "the fight's speed is said every frame, over the game's own slow motion (issue 71)",
         MACHINE,
-        "        clock_ += worldDt;\n        roundRunMs_ += worldDt;",
-        "        clock_ += worldDt;\n        roundRunMs_ += worldDt;\n        SetSpeed(TurnSpeed(), fx);",
+        "        clock_ += worldDt;\n",
+        "        clock_ += worldDt;\n        SetSpeed(TurnSpeed(), fx);\n",
     ),
     Mutant(
         "a creature's mana or stamina never reaches the bar",
@@ -976,12 +949,6 @@ MUTANTS = [
         "    if (person || appearance > 0)\n    {\n        return {PortraitSource::Render, {}, false};",
     ),
     Mutant(
-        "an action's effect time is spent again at the round's end",
-        MACHINE,
-        "            else\n            {\n                roundAgedMs_ += ran;",
-        "            else\n            {\n                ;",
-    ),
-    Mutant(
         "a hold is taken for its creature's own action's effect too: effects' time runs twice with it",
         MACHINE,
         "!heldByEffect_ && timeHeld_ &&",
@@ -1144,12 +1111,6 @@ MUTANTS = [
         MACHINE,
         "    if (std::exchange(chargeBegan_, false) && Active() && order_.Current() != nullptr)",
         "    if (std::exchange(chargeBegan_, false) && !Active() && order_.Current() != nullptr)",
-    ),
-    Mutant(
-        "an ability made to charge by the settings does not",
-        MACHINE,
-        "            if (ability == request.ability)\n            {\n                cost = static_cast<std::uint32_t>(turns) * TurnMs();",
-        "            if (ability != request.ability)\n            {\n                cost = static_cast<std::uint32_t>(turns) * TurnMs();",
     ),
     Mutant(
         "an AI whose bar was spent as its kept action landed is told again",
@@ -1473,18 +1434,6 @@ MUTANTS = [
         "KeyChord toggleKey{0x54, true, false, false}; // None",
     ),
     Mutant(
-        "a plot's timers run on the world's clock unless the player asks",
-        "src/core/Settings.h",
-        "    float scriptTimersFrom = 1.0f;",
-        "    float scriptTimersFrom = 0.0f;",
-    ),
-    Mutant(
-        "every delayed script event is said in the log unasked",
-        "src/core/Settings.h",
-        "    bool scriptTimersTrace = false;",
-        "    bool scriptTimersTrace = true;",
-    ),
-    Mutant(
         "Delay has a key before the player gives it one",
         "src/core/Settings.h",
         "KeyChord delayKey{0, false, false, false}; // None",
@@ -1597,7 +1546,7 @@ MUTANTS = [
         "a battle in sight that is not the party's joins its fight however far",
         RULES,
         "    return sighting.seen && std::isfinite(sighting.meters) && sighting.meters <= settings.joinRadius;",
-        "    return sighting.seen;",
+        "    (void)settings;\n    return sighting.seen;",
     ),
     Mutant(
         "a creature near the party joins its fight unseen",
@@ -1632,8 +1581,8 @@ MUTANTS = [
     Mutant(
         "a creature attacking the party from afar waits outside its fight",
         RULES,
-        "    if (!settings.joinBySight || sighting.fightsParty)",
-        "    if (!settings.joinBySight)",
+        "    if (sighting.fightsParty)",
+        "    if (sighting.fightsParty && sighting.meters <= settings.joinRadius)",
     ),
     # Issue 42: the party is where its living members are. Who stands for it
     # where one creature must, who a scan measures from, whether it is in
@@ -1807,8 +1756,8 @@ MUTANTS = [
     Mutant(
         "effects are never aged a round",
         MACHINE,
-        "        e.b = static_cast<std::int32_t>(left);\n        fx.push_back(e);",
-        "        e.b = static_cast<std::int32_t>(left);\n        (void)fx;",
+        "    e.b = static_cast<std::int32_t>(settings_.secondsPerTurn * 1000.0f);\n    fx.push_back(e);",
+        "    e.b = static_cast<std::int32_t>(settings_.secondsPerTurn * 1000.0f);\n    (void)fx;",
     ),
     Mutant(
         "effects' time stays held after the fight",
@@ -1839,24 +1788,6 @@ MUTANTS = [
         RULES,
         "    return useType != kUseTypeMode && (targetType & ~kTargetSelf) != 0;",
         "    return useType != kUseTypeMode + 99 && (targetType & ~kTargetSelf) != 0;",
-    ),
-    Mutant(
-        "a refused order still runs the world",
-        MACHINE,
-        "        orderPending_ = false;\n        if (verdict != Verdict::Allow && phase_ == Phase::Dispatching)",
-        "        if (verdict != Verdict::Allow && phase_ == Phase::Dispatching)",
-    ),
-    Mutant(
-        "a refusal while an order runs the world lets it run on",
-        MACHINE,
-        "if (verdict != Verdict::Allow && phase_ == Phase::Dispatching)",
-        "if (verdict != Verdict::Allow && phase_ == Phase::Idle)",
-    ),
-    Mutant(
-        "an order runs the world though order_run_ms is off",
-        MACHINE,
-        "if (settings_.orderRunMs <= 0)",
-        "if (settings_.orderRunMs < 0)",
     ),
     Mutant(
         "a portrait is sent without its extension, and drawn grey",
@@ -2329,8 +2260,8 @@ MUTANTS = [
     Mutant(
         "time: Interrupted is said as a fight ends",
         MACHINE,
-        '    if (why == "held" || why == "struck" || why == kConjureCleared)',
-        '    if (why == "held" || why == "struck" || why == kConjureCleared || why == "the fight over")',
+        '    if (why == "held" || why == kConjureCleared)',
+        '    if (why == "held" || why == kConjureCleared || why == "the fight over")',
     ),
     Mutant(
         "time: a turn's end does not move the clock the rest of the way",
@@ -2538,30 +2469,6 @@ MUTANTS = [
         "    const std::uint32_t owed = budget_.spend.SpendAction(0);\n    budget_.lastCostMs = cost - owed;\n    if (owed > 0)\n    {\n        Owe(current->id",
     ),
     Mutant(
-        "a burn interrupts a pending spell",
-        MACHINE,
-        "    if (!physical || !(damage > threshold) || !Conjuring(target))",
-        "    if ((!physical && damage < 0.0f) || !(damage > threshold) || !Conjuring(target))",
-    ),
-    Mutant(
-        "a scratch interrupts a pending spell",
-        MACHINE,
-        "    if (!physical || !(damage > threshold) || !Conjuring(target))",
-        "    if (!physical || !(damage > 0.0f) || !Conjuring(target))",
-    ),
-    Mutant(
-        "a blow interrupts a pending talent",
-        MACHINE,
-        "    return Active() && ((charge != charges_.end() && charge->kept && charge->spell) ||",
-        "    return Active() && ((charge != charges_.end() && charge->kept) ||",
-    ),
-    Mutant(
-        "rules: a boss is interrupted as a critter is",
-        RULES,
-        "    return party ? (10.0f * ranks) + 5.0f + (levels / 2.0f) : (10.0f * ranks) + levels;",
-        "    return party ? (10.0f * ranks) + 5.0f + (levels / 2.0f) : (0.0f * ranks) + 10.0f + levels;",
-    ),
-    Mutant(
         "delay: one that waited may wait again in its round",
         ORDER,
         "    delayed_.push_back(at->id);\n    std::rotate(at, at + 1, order_.end());",
@@ -2588,14 +2495,8 @@ MUTANTS = [
     Mutant(
         "delay: a turn is put off after a command of it was let through",
         MACHINE,
-        "           budget_.commands == 0 && budget_.pendingPaidMs == 0 && !budget_.landing &&",
-        "           budget_.pendingPaidMs == 0 && !budget_.landing &&",
-    ),
-    Mutant(
-        "delay: the setting off is not heeded",
-        MACHINE,
-        "    return settings_.delay && phase_ == Phase::AwaitingOrder && current != nullptr && PlayerControls(*current) &&",
-        "    return phase_ == Phase::AwaitingOrder && current != nullptr && PlayerControls(*current) &&",
+        "PlayerControls(*current) && budget_.commands == 0 &&\n",
+        "PlayerControls(*current) &&\n",
     ),
     Mutant(
         "delay: a turn put off is told to the scripts and counted twice",
@@ -2622,12 +2523,6 @@ MUTANTS = [
         "    Field(out, static_cast<long long>(view.delayOffered ? 2 : 0));",
     ),
     Mutant(
-        "a conversation between two rounds loses the round's start",
-        MACHINE,
-        "        const auto minMs = static_cast<std::uint32_t>(settings_.roundMinSeconds * 1000.0f);\n        if (roundRunMs_ < minMs)\n        {",
-        "        const auto minMs = static_cast<std::uint32_t>(settings_.roundMinSeconds * 1000.0f);\n        if (roundPending_ = false; roundRunMs_ < minMs)\n        {",
-    ),
-    Mutant(
         "preview: a path's string names no creature under the cursor",
         PREVIEW,
         "                    view.spills ? 1 : 0, kBarField, OverField(view.over));",
@@ -2650,12 +2545,6 @@ MUTANTS = [
         BAR,
         "    Field(out, static_cast<long long>(view.canDelay ? 1 : view.delayOffered ? 2 : 0));",
         "    Field(out, static_cast<long long>(view.canDelay ? 1 : 0));",
-    ),
-    Mutant(
-        "delay: offered with the setting off",
-        MACHINE,
-        "        view.delayOffered = settings_.delay && view.playerTurn;",
-        "        view.delayOffered = view.playerTurn;",
     ),
     Mutant(
         "delay: nobody's card says it waits",
@@ -2756,20 +2645,14 @@ MUTANTS = [
     Mutant(
         "pause: the player's pause is not kept by the machine",
         MACHINE,
-        "    const bool want = (WantsPaused(phase_, settings_) && !Landing()) || playerPaused_;",
-        "    const bool want = WantsPaused(phase_, settings_) && !Landing();",
+        "    const bool want = (WantsPaused(phase_) && !Landing()) || playerPaused_;",
+        "    const bool want = WantsPaused(phase_) && !Landing();",
     ),
     Mutant(
         "pause: an order given while paused leaves the game paused",
         MACHINE,
         "        if (verdict == Verdict::Allow && std::exchange(playerPaused_, false))",
         "        if (verdict == Verdict::Allow && playerPaused_)",
-    ),
-    Mutant(
-        "pause: the key arms a pause while the machine holds the world still",
-        MACHINE,
-        "    if (!playerPaused_ && WantsPaused(phase_, settings_))\n    {\n        return true; // held still",
-        "    if (!playerPaused_ && WantsPaused(phase_, settings_) && phase_ == Phase::Idle)\n    {\n        return true; // held still",
     ),
     Mutant(
         "pause: the player's pause outlives the fight",
@@ -3089,64 +2972,10 @@ MUTANTS = [
         "    if (key.style == WeaponStyle::TwoHanded && read.before > 0.0f)",
     ),
     Mutant(
-        "the fourth rank of Combat Training is the shipped script's whatever is installed",
-        "src/core/Rules.cpp",
-        "            ids.at(found++) = *next;",
-        "            ids.at(found) = found == 3 ? kCombatTrainingAsShipped[3] : *next;\n            ++found;",
-    ),
-    Mutant(
-        "the script's four are taken though the second is not Combat Training's",
-        "src/core/Rules.cpp",
-        "        if (found == ids.size() && ids[1] == kCombatTrainingAsShipped[1] && ids[2] == kCombatTrainingAsShipped[2] &&",
-        "        if (found == ids.size() && ids[2] == kCombatTrainingAsShipped[2] &&",
-    ),
-    Mutant(
-        "the script's four are taken though the third is not Combat Training's",
-        "src/core/Rules.cpp",
-        "        if (found == ids.size() && ids[1] == kCombatTrainingAsShipped[1] && ids[2] == kCombatTrainingAsShipped[2] &&",
-        "        if (found == ids.size() && ids[1] == kCombatTrainingAsShipped[1] &&",
-    ),
-    Mutant(
-        "a fourth rank that is no ability is taken",
-        "src/core/Rules.cpp",
-        "            ids[3] > 0)",
-        "            ids[3] >= 0)",
-    ),
-    Mutant(
-        "a constant far from the three is taken for the fourth",
-        "src/core/Rules.cpp",
-        "            for (std::size_t at = from; at < from + kNear && !next; ++at)",
-        "            for (std::size_t at = from; at < from + kNear * 100 && !next; ++at)",
-    ),
-    Mutant(
-        "a constant is read by its second byte alone",
-        "src/core/Rules.cpp",
-        "    if (at + kConstantBytes > script.size() || script[at] != 0x04 || script[at + 1] != 0x03)",
-        "    if (at + kConstantBytes > script.size() || script[at + 1] != 0x03)",
-    ),
-    Mutant(
-        "a constant's high bytes are dropped",
-        "src/core/Rules.cpp",
-        "    const std::uint32_t value = (static_cast<std::uint32_t>(script[at + 2]) << 24) |",
-        "    const std::uint32_t value = (static_cast<std::uint32_t>(script[at + 2]) << 8) |",
-    ),
-    Mutant(
-        "a party member's fourth rank of Combat Training never counts",
-        "src/core/Rules.cpp",
-        "    const float ranks = static_cast<float>(std::clamp(combatTraining, 0, 20));",
-        "    const float ranks = static_cast<float>(std::clamp(combatTraining, 0, party ? 3 : 20));",
-    ),
-    Mutant(
-        "a critter is given a rank of Combat Training",
-        "src/core/Rules.cpp",
-        "    default: // a critter, and what has no rank\n        return 0;",
-        "    default: // a critter, and what has no rank\n        return 1;",
-    ),
-    Mutant(
         "own clocks: a creature's effects do not move as its bar is spent",
         MACHINE,
-        "    if (clockMs == 0 || !OwnClocks() || !timeHeld_ || ownEffectSince_)\n    {\n        return;\n    }\n    Effect age = Effect::Of(EffectKind::AgeTime, who);",
-        "    if (clockMs < 100000 || !OwnClocks() || !timeHeld_ || ownEffectSince_)\n    {\n        return;\n    }\n    Effect age = Effect::Of(EffectKind::AgeTime, who);",
+        "    if (clockMs == 0 || !timeHeld_ || ownEffectSince_)\n    {\n        return;\n    }\n    Effect age = Effect::Of(EffectKind::AgeTime, who);",
+        "    if (clockMs < 100000 || !timeHeld_ || ownEffectSince_)\n    {\n        return;\n    }\n    Effect age = Effect::Of(EffectKind::AgeTime, who);",
     ),
     Mutant(
         "own clocks: a turn's end moves its creature's effects a whole turn again",
@@ -3163,20 +2992,14 @@ MUTANTS = [
     Mutant(
         "own clocks: nobody is put on one",
         MACHINE,
-        "    if (!OwnClocks() || !timeHeld_)\n    {\n        return;\n    }\n    Effect clock",
-        "    if (OwnClocks() || !timeHeld_)\n    {\n        return;\n    }\n    Effect clock",
+        "    if (!timeHeld_)\n    {\n        return;\n    }\n    Effect clock",
+        "    if (timeHeld_)\n    {\n        return;\n    }\n    Effect clock",
     ),
     Mutant(
         "own clocks: a creature that joins is not put on one",
         MACHINE,
         "            SetOwnClock(joined, true, fx);\n",
         "",
-    ),
-    Mutant(
-        "own clocks: the setting is not asked",
-        MACHINE,
-        "    return settings_.ownClocks;",
-        "    return true;",
     ),
     Mutant(
         "own clocks: an action's own effect does not move its target's clock",
@@ -3193,20 +3016,8 @@ MUTANTS = [
     Mutant(
         "the engine's conjuring: a spell with no conjure is given to the engine",
         MACHINE,
-        "           !request.sustained && request.conjureAnim > 0 && request.conjureSeconds > 0.0f;",
-        "           !request.sustained && request.conjureAnim >= 0 && request.conjureSeconds > 0.0f;",
-    ),
-    Mutant(
-        "the engine's conjuring: the setting is not asked",
-        MACHINE,
-        "    return settings_.engineConjure && request.type == CommandType::UseAbility &&",
-        "    return request.type == CommandType::UseAbility &&",
-    ),
-    Mutant(
-        "the engine's conjuring: the mod's own rule still interrupts",
-        MACHINE,
-        "    if (settings_.engineConjure)\n    {\n        return false;\n    }",
-        "    if (settings_.engineConjure && false)\n    {\n        return false;\n    }",
+        "           request.conjureAnim > 0 && request.conjureSeconds > 0.0f;",
+        "           request.conjureAnim >= 0 && request.conjureSeconds > 0.0f;",
     ),
     Mutant(
         "the engine's conjuring: the turn does not end at the held conjure",
@@ -3853,8 +3664,8 @@ MUTANTS = [
     Mutant(
         "the beat between turns holds the world still",
         MACHINE,
-        "(WantsPaused(phase_, settings_) && !Landing()) || playerPaused_",
-        "WantsPaused(phase_, settings_) || playerPaused_",
+        "(WantsPaused(phase_) && !Landing()) || playerPaused_",
+        "WantsPaused(phase_) || playerPaused_",
     ),
     Mutant(
         "the beat between turns never ends",
@@ -3941,8 +3752,8 @@ MUTANTS = [
     Mutant(
         "what the gate said of a creature before its turn began takes the turn that then begins",
         MACHINE,
-        "    outOfCombat_ = false;\n    orderPending_ = false;",
-        "    orderPending_ = false;",
+        "    outOfCombat_ = false;\n    turnSince_ = clock_;\n",
+        "    turnSince_ = clock_;\n",
     ),
     Mutant(
         "one fallen as it lost the party has its turn ended as out of combat, not as fallen",
@@ -4110,8 +3921,8 @@ MUTANTS = [
     Mutant(
         "the end of a turn whose creature has left the fight moves its own clock, which is the shared one's again",
         MACHINE,
-        "            rest > 0 && OwnClocks() && timeHeld_ && !current->down)",
-        "            rest > 0 && OwnClocks() && timeHeld_)",
+        "            rest > 0 && timeHeld_ && !current->down)",
+        "            rest > 0 && timeHeld_)",
     ),
     Mutant(
         "one back in the fight in the round it left in stays on the shared clock",
@@ -4972,12 +4783,6 @@ MUTANTS = [
         "ownmode: a turn settling at its creature's own mode's command goes back to executing, and never waits",
         MACHINE,
         "    if (obs.actor && obs.actor->busy && !ownMode)",
-        "    if (obs.actor && obs.actor->busy)",
-    ),
-    Mutant(
-        "ownmode: an order that queues nothing is taken for the mode's command, and the turn stands at executing",
-        MACHINE,
-        "    if (obs.actor && obs.actor->busy && !AtItsOwnMode(*obs.actor))",
         "    if (obs.actor && obs.actor->busy)",
     ),
     # A turn its tactics play.

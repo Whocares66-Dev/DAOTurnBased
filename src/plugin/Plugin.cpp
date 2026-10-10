@@ -72,12 +72,8 @@ struct State
     std::uint32_t lastSettingsCheck = 0;
     tb::game::BarLink bar;
     tb::game::Preview preview;
-    bool movePreview = true;
-    bool movePreviewGround = false;
     tb::game::Targeting targeting;
     tb::game::TacticsBox tacticsBox; // the tactics page's box, "Use when turn-based" (game/TacticsBox.h)
-    bool turnBar = false;
-    bool portraits = true;
     std::uint32_t lastBarPublish = 0;
     std::ofstream events; // turnbased.events.jsonl: the machine's events, a JSON line each
     // Eluvian, the development bench's MCP server, when installed: looked
@@ -458,21 +454,6 @@ void PollToggle()
 
 // An edit to turnbased.ini takes effect without a restart: rules from the
 // next turn, `enabled` from the next fight.
-void UseTurnBar(const tb::Settings &settings)
-{
-    g.turnBar = settings.turnBar;
-    g.portraits = settings.portraits;
-    g.movePreview = settings.movePreview;
-    g.movePreviewGround = settings.movePreviewGround;
-    g.targeting.SetEnabled(settings.pickTargets);
-    tb::game::SetPathCheck(settings.pathCheck);
-    if (g.turnBar)
-    {
-        g.bar.Install();
-        g.preview.Install();
-    }
-}
-
 void ReloadIfChanged(std::uint32_t now)
 {
     if (now - g.lastSettingsCheck < 2000)
@@ -491,7 +472,6 @@ void ReloadIfChanged(std::uint32_t now)
     }
     g.bridge->SetSettings(settings);
     g.toggleKey = settings.toggleKey;
-    UseTurnBar(settings);
     spdlog::info("settings reloaded from {}", tb::game::SettingsPath().string());
 }
 
@@ -505,14 +485,8 @@ void ServeBar(std::uint32_t now)
     {
         return; // never on this session: nothing shown, nothing rendered
     }
-    // Turned off, the bar is served as between fights: an empty view, so the
-    // movie lets its portraits go, they are released and the screen is taken
-    // down, as at a fight's end. Returning here instead left the screen up
-    // and the fight's rendered portraits unreleased (the review's TB-1,
-    // 2026-09-30).
     bool fighting = false;
     tb::TurnView view;
-    if (g.turnBar)
     {
         const std::lock_guard lock(g.mutex);
         fighting = g.machine->Active();
@@ -524,7 +498,7 @@ void ServeBar(std::uint32_t now)
     g.bar.KeepScreen(fighting);
     // Every frame, not with the bar's tenth of a second: the path's place
     // on the screen moves with the camera.
-    g.preview.Update(view, now, g.turnBar && g.movePreview, g.movePreviewGround);
+    g.preview.Update(view, now);
     // Where the bar's row stands among the turns to come, every frame, so
     // that nobody's leaving the order is missed between two views. A click
     // on one of its arrows is published at once: the movie asks every frame
@@ -533,7 +507,7 @@ void ServeBar(std::uint32_t now)
     if (arrowClicked || now - g.lastBarPublish >= 100)
     {
         g.lastBarPublish = now;
-        g.bar.KeepPortraits(view, g.portraits);
+        g.bar.KeepPortraits(view);
         g.bar.Publish(view);
     }
     if (g.bar.TakeEndTurn())
@@ -925,7 +899,7 @@ void LookForEluvian()
             "turnbased_settings",
             R"({"description": "Read turnbased.ini (no arguments), or set one setting in it and apply it now: section, )"
             R"(key and value as the ini has them, e.g. turns / speed / 2 (the game's speed through a fight), )"
-            R"(turns / party / tactics, turns / condition_turns / 1. Applied at once; answers the parse's warnings.", )"
+            R"(turns / party / tactics, feedback / camera_follow / false. Applied at once; answers the parse's warnings.", )"
             R"("inputSchema": {"type": "object", "properties": {"section": {"type": "string"}, "key": {"type": )"
             R"("string"}, "value": {"type": "string"}}}})",
             &SettingsTool, nullptr, 0),
@@ -1126,7 +1100,8 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     {
         spdlog::warn("DAOLib refused the Turn-based section for the game's options: the key and turnbased.ini remain");
     }
-    UseTurnBar(settings);
+    g.bar.Install();
+    g.preview.Install();
 
     g.targeting.Install(*g.machine, g.mutex);
     if (!tb::game::InstallGate(*g.machine, g.mutex))

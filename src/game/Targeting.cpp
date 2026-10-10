@@ -22,10 +22,6 @@ void Targeting::Install(const TurnMachine &machine, std::mutex &mutex)
     installed_ = true;
     dao::messages::InterceptMessage<dao::messages::PerformAbilityMessage>(
         [this, &machine, &mutex](void *, const dao::messages::PerformAbilityMessage &message) {
-            if (!enabled_)
-            {
-                return false;
-            }
             bool theirs = false;
             {
                 const std::lock_guard lock(mutex);

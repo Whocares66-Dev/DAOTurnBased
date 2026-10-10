@@ -74,8 +74,8 @@ int Effects(const World &w, EffectKind kind, ObjectId target)
 bool InATurn(const World &w)
 {
     const Phase phase = w.machine.GetPhase();
-    return phase == Phase::AwaitingOrder || phase == Phase::Dispatching || phase == Phase::AiThinking ||
-           phase == Phase::Executing || phase == Phase::Settling;
+    return phase == Phase::AwaitingOrder || phase == Phase::AiThinking || phase == Phase::Executing ||
+           phase == Phase::Settling;
 }
 
 // What was heard of the turns: each turn's bar as it began and why each
@@ -182,44 +182,38 @@ TEST_CASE("the player's singer's turn waits with its bar whole, however long the
 {
     // The issue's own fight: `Lyna is held by an effect's command past its
     // bar (4.08 s held this turn): its turn is lost`, ninety turns running.
-    for (const bool paused : {false, true})
+    Settings s = Fixed();
+    s.maxActionMs = 2000;
+    World w(s);
+    Heard heard(w);
+    w.Get(kHero).modes.insert(kSong);
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    CHECK(w.Get(kHero).current == CommandType::ExecuteEffect);
+    w.applied.clear();
+    // Two minutes: thirty of the turns it lost.
+    for (int ms = 0; ms < 120000; ms += 16)
     {
-        CAPTURE(paused);
-        Settings s = Fixed();
-        s.pauseOnPlayerTurn = paused; // the world idling on while the player chooses (the default), or held still
-        s.maxActionMs = 2000;
-        World w(s);
-        Heard heard(w);
-        w.Get(kHero).modes.insert(kSong);
-        w.StartFight();
-        REQUIRE(w.Current() == kHero);
-        CHECK(w.Get(kHero).current == CommandType::ExecuteEffect);
-        w.applied.clear();
-        // Two minutes: thirty of the turns it lost.
-        for (int ms = 0; ms < 120000; ms += 16)
-        {
-            w.Frame();
-            REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
-        }
-        CHECK(w.Current() == kHero);
-        CHECK(w.paused == paused);
-        CHECK(w.machine.View().timeLeftMs == 4000);
-        CHECK(heard.ends[kHero].empty());
-        CHECK_FALSE(w.machine.State().heldByEffect);
-        CHECK(w.Get(kHero).modes.contains(kSong));
-        // Nothing of its clock was moved for the song, and nothing of its
-        // was cleared.
-        CHECK(Effects(w, EffectKind::AgeTime, kHero) == 0);
-        CHECK(Effects(w, EffectKind::AgeTime, kNoObject) == 0);
-        CHECK(Effects(w, EffectKind::ClearCommands, kHero) == 0);
-        // Said once why the turn waits, and not as a hold.
-        CHECK(Lines(w, "Hero is at its own mode's command (ability 1000), not held: its turn waits for the player") ==
-              1);
-        CHECK(Lines(w, "is held by an effect's command") == 0);
-        CHECK(Lines(w, "the gate did not see") == 0);
-        CHECK(Lines(w, "took too long") == 0);
-        CHECK(Lines(w, "still at a") == 0);
+        w.Frame();
+        REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
     }
+    CHECK(w.Current() == kHero);
+    CHECK_FALSE(w.paused); // the world idles on while the player chooses
+    CHECK(w.machine.View().timeLeftMs == 4000);
+    CHECK(heard.ends[kHero].empty());
+    CHECK_FALSE(w.machine.State().heldByEffect);
+    CHECK(w.Get(kHero).modes.contains(kSong));
+    // Nothing of its clock was moved for the song, and nothing of its
+    // was cleared.
+    CHECK(Effects(w, EffectKind::AgeTime, kHero) == 0);
+    CHECK(Effects(w, EffectKind::AgeTime, kNoObject) == 0);
+    CHECK(Effects(w, EffectKind::ClearCommands, kHero) == 0);
+    // Said once why the turn waits, and not as a hold.
+    CHECK(Lines(w, "Hero is at its own mode's command (ability 1000), not held: its turn waits for the player") == 1);
+    CHECK(Lines(w, "is held by an effect's command") == 0);
+    CHECK(Lines(w, "the gate did not see") == 0);
+    CHECK(Lines(w, "took too long") == 0);
+    CHECK(Lines(w, "still at a") == 0);
 }
 
 TEST_CASE("End goes on singing: the turn is spent on the mode, and nothing rolls over", "[ownmode]")
@@ -268,7 +262,6 @@ TEST_CASE("the mode switched off is free, and the turn then acts with its whole 
     // the effect's command after 1.36 s, 1.30 s of its bar`, and what was
     // left was spent by then: stopping the song cost the turn too.
     Settings s = Fixed();
-    s.pauseOnPlayerTurn = false; // the world runs while she thinks, as it did there
     World w(s);
     Heard heard(w);
     w.Get(kHero).modes.insert(kSong);
@@ -417,37 +410,6 @@ TEST_CASE("an action or a move ordered at its own mode's command is refused befo
         CHECK(Act(w, kHero, Source::Player, 1.5f) == Verdict::Allow);
         CHECK(w.machine.View().timeLeftMs == 2500);
     }
-}
-
-TEST_CASE("an order that queues nothing at its own mode's command leaves the turn waiting, not executing", "[ownmode]")
-{
-    // With order_run_ms the world runs a moment for an order that queued no
-    // command, and a creature found busy then is taken to be at it.
-    Settings s = Fixed();
-    s.orderRunMs = 500;
-    World w(s);
-    Heard heard(w);
-    w.Get(kHero).modes.insert(kSong);
-    w.StartFight();
-    REQUIRE(w.Current() == kHero);
-    w.machine.OnPlayerOrder("an ability picked before its target");
-    bool dispatched = false;
-    for (int ms = 0; ms < 2000; ms += 16)
-    {
-        w.Frame();
-        dispatched = dispatched || w.machine.GetPhase() == Phase::Dispatching;
-        REQUIRE(w.machine.GetPhase() != Phase::Executing);
-    }
-    CHECK(dispatched);
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.machine.View().timeLeftMs == 4000);
-    // And End there, while the world runs for the order, sings on.
-    w.machine.OnPlayerOrder("another");
-    w.RunFor(200);
-    REQUIRE(w.machine.GetPhase() == Phase::Dispatching);
-    REQUIRE(w.machine.OnEndTurn());
-    w.Frame();
-    CHECK(heard.ends[kHero] == std::vector<std::string>{"keeping up its mode"});
 }
 
 TEST_CASE("an AI's singer's turn is spent on the mode at once, each turn, and its AI is never told to choose",

@@ -24,9 +24,11 @@ TEST_CASE("a fight goes turn by turn: the party's orders, the AI's choices, roun
     World w;
     w.StartFight();
 
-    // The world stops, everyone's real-time commands are dropped, and the
-    // highest initiative goes first: the hero, waiting for an order.
-    CHECK(w.paused);
+    // The world stopped as the fight began, everyone's real-time commands
+    // are dropped, and the highest initiative goes first: the hero, waiting
+    // for an order, the world idling on while she chooses.
+    CHECK(w.Did(EffectKind::Pause));
+    CHECK_FALSE(w.paused);
     CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
     CHECK(w.Signalled(events::kCombatStart));
     CHECK(w.Current() == kHero);
@@ -50,10 +52,10 @@ TEST_CASE("a fight goes turn by turn: the party's orders, the AI's choices, roun
     CHECK(w.machine.GetPhase() == Phase::Executing);
     w.RunFor(300);
     w.Finish(kHero);
-    // The swing done, the world settles, then pauses for the next order.
+    // The swing done, the world settles, and the next order is waited for.
     w.RunFor(500);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.paused);
+    CHECK_FALSE(w.paused);
 
     // Its auto-attack carrying on is its own AI's, not the player's order: no.
     CHECK(w.Order(kHero, CommandType::Attack, Source::Script) == Verdict::Block);
@@ -96,7 +98,7 @@ TEST_CASE("a fight goes turn by turn: the party's orders, the AI's choices, roun
     // Alistair, the player's too.
     CHECK(w.Current() == kCompanion);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.paused);
+    CHECK_FALSE(w.paused);
     // The pause key ends the turn.
     CHECK(w.machine.OnEndTurn());
     w.onPoke = [&](ObjectId id) { CHECK(w.Order(id, CommandType::Wait, Source::Script) == Verdict::Block); };
@@ -401,111 +403,6 @@ TEST_CASE("nobody's commands are limited in number: the player's are not, and an
     CHECK(w.Current() == kCompanion);
 }
 
-namespace
-{
-// The fallback for an engine that queues orders only when the game runs,
-// off by default since the game was seen queuing them while paused.
-Settings WithOrderRun()
-{
-    Settings s = Fixed();
-    s.orderRunMs = 500;
-    return s;
-}
-} // namespace
-
-TEST_CASE("an order that queues nothing while paused gets a moment of running time", "[machine]")
-{
-    World w(WithOrderRun());
-    w.StartFight();
-    // A command straight away: no dispatching.
-    w.machine.OnPlayerOrder("move");
-    CHECK(w.Order(kHero, CommandType::MoveToLocation, Source::Player) == Verdict::Allow);
-    w.RunFor(200);
-    CHECK(w.machine.GetPhase() == Phase::Executing);
-    w.Finish(kHero);
-    w.RunFor(500);
-    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
-
-    // An order and nothing: the game runs until the engine queues it.
-    w.machine.OnPlayerOrder("attack");
-    w.RunFor(50);
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    w.RunFor(100);
-    CHECK(w.machine.GetPhase() == Phase::Dispatching);
-    CHECK_FALSE(w.paused);
-    // Nobody else moves meanwhile.
-    CHECK(w.Order(kGenlock, CommandType::Attack, Source::Script) == Verdict::Block);
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
-    w.Frame();
-    CHECK(w.machine.GetPhase() == Phase::Executing);
-}
-
-TEST_CASE("an order that never queues anything goes back to waiting, paused", "[machine]")
-{
-    World w(WithOrderRun());
-    w.StartFight();
-    w.machine.OnPlayerOrder("use object");
-    w.RunFor(200);
-    CHECK(w.machine.GetPhase() == Phase::Dispatching);
-    w.RunFor(600);
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.paused);
-    CHECK(w.Current() == kHero);
-}
-
-TEST_CASE("by default an order that queues nothing leaves the world still", "[machine]")
-{
-    World w;
-    w.StartFight();
-    w.applied.clear();
-    // An ability picked on the quickbar, its target not yet clicked.
-    w.machine.OnPlayerOrder("ability");
-    w.RunFor(1000);
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.paused);
-    CHECK_FALSE(w.Did(EffectKind::Unpause));
-    // The target clicked: the command, queued while paused.
-    CHECK(w.Order(kHero, CommandType::UseAbility, Source::Player) == Verdict::Allow);
-}
-
-TEST_CASE("an order the gate refuses does not run the world", "[machine]")
-{
-    // Seen in play (2026-09-30): every click after the action was spent ran
-    // the world for half a second. (A refused click here is one at something
-    // too far: with time left a second swing in reach is taken.)
-    World w(WithOrderRun());
-    w.StartFight();
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Allow);
-    w.RunFor(100);
-    w.Finish(kHero);
-    w.RunFor(500);
-    REQUIRE(w.machine.GetPhase() == Phase::AwaitingOrder);
-    REQUIRE(w.Current() == kHero);
-    w.applied.clear();
-    w.machine.OnPlayerOrder("attack");
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 30.0f) == Verdict::Block);
-    w.RunFor(1000);
-    CHECK(w.Said(L"Too far"));
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.paused);
-    CHECK_FALSE(w.Did(EffectKind::Unpause));
-}
-
-TEST_CASE("a refusal while an order runs the world stops it", "[machine]")
-{
-    World w(WithOrderRun());
-    w.StartFight();
-    w.machine.OnPlayerOrder("attack");
-    w.RunFor(150);
-    REQUIRE(w.machine.GetPhase() == Phase::Dispatching);
-    CHECK_FALSE(w.paused);
-    // The command the order made, once the game ran: at a target too far.
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player, 30.0f) == Verdict::Block);
-    w.Frame();
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.paused);
-}
-
 TEST_CASE("a conversation in the middle of a fight stands the gate aside, then the turn goes on as it was", "[machine]")
 {
     World w;
@@ -582,50 +479,6 @@ TEST_CASE("an AI an effect holds as its turn comes is not told until it is let g
     w.RunFor(100);
     CHECK(w.Did(EffectKind::PokeAi, kGenlock));
     CHECK(w.Current() == kGenlock);
-}
-
-TEST_CASE("a stun that runs out as a hold's time runs has run out on the clock: it keeps the turn it owes",
-          "[machine][conditions]")
-{
-    // Effects' time run by a hold wears a stun off as a round's does. Taken
-    // for a cure (a condition gone while effects' time stands still), the
-    // turn it owed was given back: a stun shorter than the hold cost nothing.
-    // (Of the one clock everyone's effects are on with own clocks off: on
-    // its own clock a hold moves nobody else's.)
-    Settings s = Fixed();
-    s.ownClocks = false;
-    World w(s);
-    w.StartFight();
-    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
-    w.Get(kHurlock).condition = Condition::Disabled;
-    CHECK(w.machine.OnEndTurn());
-    w.Frame();
-    w.Frame();
-    REQUIRE(w.Current() == kGenlock);
-    REQUIRE(w.timeHeld);
-    w.RunFor(600); // the hurlock's stun is seen, and the hold's first steps run
-    const std::int64_t before = w.agedMs;
-    REQUIRE(before > 0);
-    for (int i = 0; i < 100 && w.agedMs == before; ++i)
-    {
-        w.Frame();
-    }
-    REQUIRE(w.agedMs > before);
-    w.Get(kHurlock).condition = Condition::None; // run out, with that step
-    w.RunFor(600);                               // and seen gone while the hold still runs
-    REQUIRE(w.Current() == kGenlock);
-    w.Finish(kGenlock);
-    for (int i = 0; i < 400 && w.machine.Order().Round() < 2; ++i)
-    {
-        if (w.machine.GetPhase() == Phase::AwaitingOrder)
-        {
-            (void)w.machine.OnEndTurn();
-        }
-        w.RunFor(100);
-    }
-    CHECK(w.Said(L"Hurlock loses the turn"));
-    CHECK(std::ranges::none_of(
-        w.log, [](const std::string &line) { return line.find("condition was taken off") != std::string::npos; }));
 }
 
 TEST_CASE("a menu over the fight holds everything as it is", "[machine]")
@@ -742,7 +595,7 @@ TEST_CASE("combat with no enemy in reach stays real-time until one fights", "[ma
     w.inCombat = true;
     w.RunFor(1100);
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.paused);
+    CHECK(w.Did(EffectKind::Pause)); // the fight began, the world stopped for it
 }
 
 TEST_CASE("a creature joining mid-fight waits for its first turn", "[machine]")
@@ -770,66 +623,6 @@ TEST_CASE("a creature joining mid-fight waits for its first turn", "[machine]")
     CHECK(w.machine.Order().Find(kShriek)->initiative == 21);
     CHECK(w.Current() == kHero);
     CHECK(w.machine.Order().All().front().id == kShriek);
-}
-
-TEST_CASE("a round shorter than round_min_seconds is padded with the world running", "[machine]")
-{
-    Settings settings = Fixed();
-    settings.roundMinSeconds = 3.0f;
-    World w{settings};
-    w.onPoke = [&](ObjectId id) { w.Order(id, CommandType::Wait, Source::Script); };
-    w.StartFight();
-    for (int turn = 0; turn < 4; ++turn)
-    {
-        if (w.machine.GetPhase() == Phase::AwaitingOrder)
-        {
-            CHECK(w.machine.OnEndTurn());
-        }
-        w.RunFor(50);
-    }
-    CHECK(w.machine.GetPhase() == Phase::RoundPadding);
-    CHECK_FALSE(w.paused);
-    CHECK(w.machine.Order().Round() == 2);
-    // Nobody acts while it runs.
-    CHECK(w.Order(kHero, CommandType::Attack, Source::Player) == Verdict::Block);
-    w.RunFor(3000);
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(w.Current() == kHero);
-}
-
-TEST_CASE("a conversation while the world runs on between two rounds does not lose the round's start", "[machine]")
-{
-    Settings settings = Fixed();
-    settings.roundMinSeconds = 3.0f;
-    World w{settings};
-    std::vector<TurnEvent> events;
-    w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
-    w.onPoke = [&](ObjectId id) { w.Order(id, CommandType::Wait, Source::Script); };
-    w.StartFight();
-    for (int turn = 0; turn < 4; ++turn)
-    {
-        if (w.machine.GetPhase() == Phase::AwaitingOrder)
-        {
-            CHECK(w.machine.OnEndTurn());
-        }
-        w.RunFor(50);
-    }
-    REQUIRE(w.machine.GetPhase() == Phase::RoundPadding);
-    w.applied.clear();
-    w.mode = Mode::Dialog;
-    w.RunFor(200);
-    REQUIRE(w.machine.GetPhase() == Phase::Suspended);
-    w.mode = Mode::Combat;
-    w.RunFor(4000);
-    // Round 2 began as a round does: the scripts and the events told, the
-    // effects' round spent, and then the hero's turn.
-    CHECK(w.Current() == kHero);
-    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
-    CHECK(std::ranges::count_if(w.applied, [](const Effect &e) {
-              return e.kind == EffectKind::Signal && e.event == events::kRoundStart && e.a == 2;
-          }) == 1);
-    CHECK(std::ranges::count_if(
-              events, [](const TurnEvent &e) { return e.kind == EventKind::RoundStarted && e.value == 2; }) == 1);
 }
 
 TEST_CASE("the view lists the turns to come, whose it is and what is left", "[machine]")
@@ -965,9 +758,8 @@ TEST_CASE("a combatant gone from the world loses its turns", "[machine]")
 TEST_CASE("every phase and effect has a name of its own", "[machine]")
 {
     std::vector<std::string> names;
-    for (const Phase phase :
-         {Phase::Idle, Phase::Starting, Phase::TurnStart, Phase::AwaitingOrder, Phase::Dispatching, Phase::AiThinking,
-          Phase::Executing, Phase::Settling, Phase::RoundPadding, Phase::Suspended})
+    for (const Phase phase : {Phase::Idle, Phase::Starting, Phase::TurnStart, Phase::AwaitingOrder, Phase::AiThinking,
+                              Phase::Executing, Phase::Settling, Phase::Suspended})
     {
         names.emplace_back(Name(phase));
     }
@@ -981,17 +773,6 @@ TEST_CASE("every phase and effect has a name of its own", "[machine]")
     std::ranges::sort(names);
     CHECK(std::ranges::adjacent_find(names) == names.end());
     CHECK(std::ranges::find(names, std::string{"?"}) == names.end());
-}
-
-TEST_CASE("script events and floating text can be turned off", "[machine]")
-{
-    Settings settings = Fixed();
-    settings.scriptEvents = false;
-    settings.floaties = false;
-    World w{settings};
-    w.StartFight();
-    CHECK_FALSE(w.Did(EffectKind::Signal));
-    CHECK_FALSE(w.Did(EffectKind::Floaty));
 }
 
 TEST_CASE("an AI that chooses nothing has what it saw explained", "[machine]")
@@ -1229,40 +1010,6 @@ TEST_CASE("End pressed during the creature's own action stops it, and the turn e
     CHECK_FALSE(w.Get(kHero).busy); // the swing stopped: nothing of it arrives in the genlock's turn
 }
 
-TEST_CASE("on the game's clock a held creature loses each turn while its condition lasts", "[machine][conditions]")
-{
-    // condition_turns 0: the condition lasts its own seconds (spent a round
-    // at a time while effects' time is held), and every turn that comes
-    // while it holds its creature is lost: the creature cannot act, and the
-    // effect's command would not end within the turn.
-    Settings s = Fixed();
-    s.conditionTurns = 0;
-    World w{s};
-    w.StartFight();
-    w.Get(kGenlock).condition = Condition::Disabled;
-    const auto lost = [&] {
-        return std::ranges::count_if(w.applied, [](const Effect &e) {
-            return e.kind == EffectKind::Floaty && e.text == L"Genlock loses the turn";
-        });
-    };
-    for (int i = 0; i < 40 && lost() < 2; ++i)
-    {
-        (void)w.machine.OnEndTurn();
-        w.RunFor(100);
-    }
-    CHECK(lost() == 2);
-    CHECK_FALSE(w.Did(EffectKind::PokeAi, kGenlock));
-    CHECK_FALSE(w.Did(EffectKind::EndConditions, kGenlock)); // the clock ends it, not the machine
-    // Worn off: its turn is its own again.
-    w.Get(kGenlock).condition = Condition::None;
-    for (int i = 0; i < 40 && !w.Did(EffectKind::PokeAi, kGenlock); ++i)
-    {
-        (void)w.machine.OnEndTurn();
-        w.RunFor(100);
-    }
-    CHECK(w.Did(EffectKind::PokeAi, kGenlock));
-}
-
 TEST_CASE("a creature stunned in its own turn loses the rest of it at once, and what it had queued",
           "[machine][conditions]")
 {
@@ -1473,13 +1220,10 @@ TEST_CASE("a refusal repeated every frame is logged once a second", "[machine]")
     CHECK(lines == 2);
 }
 
-TEST_CASE("by default the world idles on while the player chooses, and nobody else acts", "[machine]")
+TEST_CASE("the world idles on while the player chooses, and nobody else acts", "[machine]")
 {
     // The user: not pausing on a party member's turn lets the others idle.
-    Settings s = Fixed();
-    s.pauseOnPlayerTurn = Settings{}.pauseOnPlayerTurn;
-    REQUIRE_FALSE(s.pauseOnPlayerTurn);
-    World w(s);
+    World w;
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     w.RunFor(500);
@@ -2008,40 +1752,6 @@ TEST_CASE("a hold taken off before its victim's turn gives that turn back", "[ma
     }
     CHECK(w.Did(EffectKind::PokeAi, kGenlock)); // its turn, played
     CHECK_FALSE(w.Said(L"Genlock loses the turn"));
-}
-
-TEST_CASE("a hold run out as a round ages effects keeps the turns it owes", "[machine][conditions]")
-{
-    // Of the one clock everyone's effects are on with own clocks off, which
-    // the rounds move: on its own clock a creature's hold ages as its own
-    // turns pass.
-    Settings s = Fixed();
-    s.conditionTurns = 2;
-    s.ownClocks = false;
-    World w{s};
-    w.Get(kGenlock).condition = Condition::Disabled;
-    w.StartFight();
-    // Round 1's turn lost; then, as round 2 begins and ages effects, it runs out.
-    w.applied.clear();
-    for (int i = 0; i < 200 && !w.Did(EffectKind::AgeTime); ++i)
-    {
-        if (w.machine.GetPhase() == Phase::AwaitingOrder)
-        {
-            (void)w.machine.OnEndTurn();
-        }
-        w.Frame();
-    }
-    REQUIRE(w.Did(EffectKind::AgeTime));
-    CHECK(w.Said(L"Genlock loses the turn"));
-    w.Get(kGenlock).condition = Condition::None;
-    w.RunFor(600);
-    w.applied.clear();
-    for (int i = 0; i < 80 && !w.Said(L"Genlock loses the turn") && !w.Did(EffectKind::PokeAi, kGenlock); ++i)
-    {
-        (void)w.machine.OnEndTurn();
-        w.RunFor(100);
-    }
-    CHECK(w.Said(L"Genlock loses the turn")); // the second it owed
 }
 
 TEST_CASE("the game's speed is set for a turn before its camera moves", "[machine][speed]")
@@ -3377,138 +3087,6 @@ TEST_CASE("the walk to a door is movement: out of it, the walk is stopped", "[ma
     CHECK(walked < 18.5f + TurnMachine::kOvershoot + 0.5f);
 }
 
-TEST_CASE("an action whose own effect holds its creature gets that effect's time, out of the round's", "[machine]")
-{
-    // The eighth play test: a giant spider's Overwhelm, an effect on the
-    // spider and one on its prey, each ended by its time, with effects'
-    // time held: twelve seconds, then "took too long". (Of the one clock
-    // everyone's effects are on with own clocks off; test_time.cpp has each
-    // creature's own.)
-    Settings s = Fixed();
-    s.ownClocks = false;
-    World w(s);
-    w.StartFight();
-    (void)w.machine.OnEndTurn(); // the hero passes
-    bool poked = false;
-    w.onPoke = [&](ObjectId id) {
-        poked = true;
-        // A talent of its whole bar, which covers the time its effect runs.
-        CommandRequest pounce;
-        pounce.object = id;
-        pounce.type = CommandType::UseAbility;
-        pounce.source = Source::Script;
-        pounce.inCombat = true;
-        pounce.ability = 90133;
-        w.cooldownOf[pounce.ability] = 60.0f;
-        pounce.actionSeconds = 4.0f;
-        CHECK(w.Queue(pounce) == Verdict::Allow);
-    };
-    for (int i = 0; i < 40 && !poked; ++i)
-    {
-        w.Frame();
-    }
-    REQUIRE(poked);
-    REQUIRE(w.Current() == kGenlock);
-    REQUIRE(w.timeHeld);
-    const std::int64_t before = w.agedMs;
-    w.RunFor(200); // the leap
-    // The pounce: an effect's command follows the talent's, and ends when
-    // two seconds of the effect's time have run.
-    REQUIRE(w.Current() == kGenlock);
-    w.Get(kGenlock).busy = true;
-    w.Get(kGenlock).current = CommandType::ExecuteEffect;
-    int frames = 0;
-    for (; frames < 2000 && w.Current() == kGenlock; ++frames)
-    {
-        if (w.Get(kGenlock).busy && w.agedMs - before >= 2000)
-        {
-            w.Finish(kGenlock);
-        }
-        w.Frame();
-    }
-    CHECK(w.Current() != kGenlock);
-    CHECK(frames * 16 < 4000); // about its two seconds, not max_action_ms
-    CHECK(w.agedMs - before >= 2000);
-    CHECK(w.agedMs - before < 2600);
-    CHECK(std::ranges::none_of(
-        w.log, [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
-    // The round is still a turn's four seconds of effects' time in all.
-    for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
-    {
-        if (w.machine.GetPhase() == Phase::AwaitingOrder)
-        {
-            (void)w.machine.OnEndTurn();
-        }
-        w.Frame();
-    }
-    REQUIRE(w.machine.Order().Round() == 2);
-    w.Frame();
-    w.Frame();
-    CHECK(w.agedMs - before == 4000);
-}
-
-TEST_CASE("held by an effect as its turn begins, effects' time runs with the hold and comes off the round's worth",
-          "[machine]")
-{
-    // An effect that keeps its creature while it lasts can wear off within
-    // its victim's turn only if effects' time runs while it holds. Held
-    // still, as it was while a hold cost the turn after two seconds whatever
-    // it was, such an effect outlasted any wait (issue 30). Where the
-    // fight holds one clock for everyone's effects it runs with the hold, a
-    // step at a time, as it does with an action's own effect.
-    Settings s = Fixed();
-    s.partyControl = PartyControl::Manual;
-    s.ownClocks = false;
-    World w{s};
-    w.StartFight();
-    CHECK(w.Order(kGenlock, CommandType::ExecuteEffect, Source::Engine) == Verdict::Allow);
-    (void)w.machine.OnEndTurn();
-    REQUIRE(w.timeHeld);
-    const std::int64_t before = w.agedMs;
-    bool turned = false;
-    int heldFrames = 0;
-    for (int i = 0; i < 400 && w.machine.Order().Round() < 2 && w.Current() != kCompanion; ++i)
-    {
-        // Held, it may still turn to face (a free command, let through):
-        // that is not an action of its own, and the effect still holds it.
-        if (!turned && w.Current() == kGenlock && w.machine.State().heldByEffect)
-        {
-            turned = true;
-            CHECK(w.Order(kGenlock, CommandType::Turn, Source::Script) == Verdict::Allow);
-            w.Get(kGenlock).current = CommandType::ExecuteEffect;
-        }
-        // The effect wears off once two seconds of its time have run.
-        if (w.Get(kGenlock).busy && w.agedMs - before >= 2000)
-        {
-            w.Finish(kGenlock);
-        }
-        heldFrames += w.Current() == kGenlock && w.Get(kGenlock).busy ? 1 : 0;
-        w.Frame();
-    }
-    CHECK(turned);
-    CHECK_FALSE(w.Get(kGenlock).busy); // it wore off, within the turn
-    CHECK_FALSE(w.Said(L"Genlock loses the turn"));
-    CHECK(w.agedMs - before >= 2000);
-    CHECK(w.agedMs - before < 2300); // in quarter-second steps
-    // Once over, with the world: its two seconds took two seconds, not one
-    // (the hold taken for its creature's own action's effect as well, the
-    // turn to face being a command of its own, ran effects' time twice).
-    CHECK(heldFrames * 16 >= 1900);
-    // The round is still a turn's four seconds of effects' time in all.
-    for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
-    {
-        if (w.machine.GetPhase() == Phase::AwaitingOrder)
-        {
-            (void)w.machine.OnEndTurn();
-        }
-        w.Frame();
-    }
-    REQUIRE(w.machine.Order().Round() == 2);
-    w.Frame();
-    w.Frame();
-    CHECK(w.agedMs - before == 4000);
-}
-
 TEST_CASE("an action on its own effect's time may outlast max_action_ms, not three times it", "[machine]")
 {
     Settings s = Fixed();
@@ -4093,25 +3671,6 @@ TEST_CASE("an enemy's kept action is used as its next turn begins, and its turn 
     w.Finish(kGenlock);
     w.RunFor(1000);
     CHECK(pokes == 2); // its turn after it
-}
-
-TEST_CASE("an ability named in [turns] charge costs its turns' worth of bar, whatever time the game takes for it",
-          "[machine][charge]")
-{
-    Settings s = Fixed();
-    s.charge = {{kBlizzard, 2}, {617, 0}};
-    World w(s);
-    w.StartFight();
-    // A second of it by the game, and made to cost two turns: kept, a turn's
-    // worth owed.
-    CHECK(Use(w, kHero, Source::Player, kBlizzard, 1.0f) == Verdict::Hold);
-    REQUIRE(w.machine.State().charging.size() == 1);
-    CHECK(w.machine.State().charging.front().owedMs == 4000);
-    World other(s);
-    other.StartFight();
-    // Six seconds of it by the game, and made to cost none.
-    CHECK(Use(other, kHero, Source::Player, 617, 6.0f) == Verdict::Allow);
-    CHECK(other.machine.View().timeLeftMs == 4000);
 }
 
 TEST_CASE("the fight over, an action kept is lost", "[machine][charge]")

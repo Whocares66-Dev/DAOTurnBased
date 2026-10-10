@@ -60,14 +60,13 @@ class Preview
     // path, or publishes nothing to draw. `enabled` is the setting, and
     // `onGround` its style: the path as marks laid in the world, not a line
     // the movie draws.
-    void Update(const TurnView &view, std::uint32_t nowMs, bool enabled, bool onGround);
+    void Update(const TurnView &view, std::uint32_t nowMs);
 
   private:
     void Clear();
     // Update's second half: the walk it found, drawn; and of that, the marks
     // laid along the path in the world.
-    void Draw(const TurnView &view, std::uint32_t nowMs, bool onGround, float walk, const std::vector<Vec3> &walked,
-              bool attack);
+    void Draw(const TurnView &view, std::uint32_t nowMs, float walk, const std::vector<Vec3> &walked, bool attack);
     void MarkOnGround(ObjectId area, const PathSplit &split, bool attack);
     // And its two ways of having nothing to draw.
     void NoWalk();

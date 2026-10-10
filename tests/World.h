@@ -281,13 +281,9 @@ inline Settings Fixed()
     Settings s;
     s.initiativeDie = 1;
     s.initiativePerDexterity = 1.0f;
-    // The scripted cases hold the world still while the player chooses,
-    // which they check; one of their own has the default, the world idling
-    // on.
-    s.pauseOnPlayerTurn = true;
-    // Their actions are ended as soon as they are begun, to get on with the
-    // case: that reads as an action that did not play, whose time is given
-    // back. A case of its own has that rule on (test_time.cpp).
+    // The cases' actions are ended as soon as they are begun, to get on with
+    // the case: that reads as an action that did not play, whose time is
+    // given back. A case of its own has that rule on (test_time.cpp).
     s.giveBackUnplayed = false;
     // A turn of 4 s walked at 5 m a second, for round numbers, with a meter
     // free: 21 m in a whole turn.

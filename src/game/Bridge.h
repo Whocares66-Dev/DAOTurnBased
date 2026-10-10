@@ -26,7 +26,7 @@ namespace tb::game
 class Bridge
 {
   public:
-    explicit Bridge(Settings settings) : settings_(std::move(settings))
+    explicit Bridge(const Settings &settings) : settings_(settings)
     {
     }
     void SetSettings(const Settings &settings)
@@ -105,12 +105,12 @@ class Bridge
     ActorObservation Actor(ObjectId id);
     static CombatantStatus Status(ObjectId id);
     const Known &Remember(ObjectId id);
-    void Poke(ObjectId id) const;
+    static void Poke(ObjectId id);
     void Explain(ObjectId id);
     static void Signal(const Effect &effect);
     // Apply's effects that are more than a call, one each (Apply is the
     // switch over them).
-    void TellAi(const Effect &e);
+    static void TellAi(const Effect &e);
     void GiveKept(const Effect &e);
     static void WalkToKept(const Effect &e);
     void HoldEffectsTime(const Effect &e);

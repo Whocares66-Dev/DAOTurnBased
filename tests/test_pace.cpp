@@ -95,8 +95,7 @@ void UntilTurnOf(World &w, ObjectId id)
     }
     REQUIRE(w.Current() == id);
     // Its turn begun, not only come.
-    for (int i = 0;
-         i < 100 && (w.machine.GetPhase() == Phase::TurnStart || w.machine.GetPhase() == Phase::RoundPadding); ++i)
+    for (int i = 0; i < 100 && w.machine.GetPhase() == Phase::TurnStart; ++i)
     {
         w.Frame();
     }

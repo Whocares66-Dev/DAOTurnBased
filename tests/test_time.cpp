@@ -70,8 +70,7 @@ void UntilTurnOf(World &w, ObjectId id)
     }
     REQUIRE(w.Current() == id);
     // Its turn begun, not only come.
-    for (int i = 0;
-         i < 100 && (w.machine.GetPhase() == Phase::TurnStart || w.machine.GetPhase() == Phase::RoundPadding); ++i)
+    for (int i = 0; i < 100 && w.machine.GetPhase() == Phase::TurnStart; ++i)
     {
         w.Frame();
     }
@@ -589,16 +588,20 @@ TEST_CASE("with time, a kept action is said over the player's own, and nothing i
 
 TEST_CASE("with time, an action longer than a turn takes each turn it needs whole", "[time]")
 {
-    Settings s = Timed();
-    constexpr std::int32_t kRitual = 13000;
-    s.charge = {{kRitual, 2}}; // 8 s
-    World w(s);
+    World w(Timed());
     w.StartFight();
     REQUIRE(w.Current() == kHero);
     CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 1.0f, 0.0f) == Verdict::Allow);
     Done(w, kHero);
     // 3 s left of 8: owes 5, a whole turn and 1 s of the next.
-    CHECK(w.Cast(kHero, Source::Player, kRitual, 0.0f) == Verdict::Hold);
+    CommandRequest ritual;
+    ritual.object = kHero;
+    ritual.type = CommandType::UseAbility;
+    ritual.source = Source::Player;
+    ritual.inCombat = true;
+    ritual.ability = 13000;
+    ritual.actionSeconds = 8.0f;
+    CHECK(w.Queue(ritual) == Verdict::Hold);
     UntilTurnOf(w, kHero);
     CHECK_FALSE(Released(w, kHero)); // this turn is spent on it whole
     UntilTurnOf(w, kHero);
@@ -1675,8 +1678,7 @@ TEST_CASE("with time, a hold landing in its victim's own turn takes the rest of 
     CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
 }
 
-TEST_CASE("with time, a hold whose seconds are not read costs condition_turns, and one taken off costs nothing",
-          "[time]")
+TEST_CASE("with time, a hold whose seconds are not read costs a turn, and one taken off costs nothing", "[time]")
 {
     World w(Timed());
     w.StartFight();
@@ -1685,7 +1687,7 @@ TEST_CASE("with time, a hold whose seconds are not read costs condition_turns, a
     Stun(w, kHurlock, 8.0f);
     w.RunFor(700);
     auto held = w.machine.State().held;
-    CHECK(std::ranges::find(held, kGenlock, &HeldView::id)->owedMs == 4000); // condition_turns 1: a turn
+    CHECK(std::ranges::find(held, kGenlock, &HeldView::id)->owedMs == 4000); // a turn
     CHECK(std::ranges::find(held, kHurlock, &HeldView::id)->owedMs == 8000);
     // The hurlock's is cured before its turn: nothing owed.
     w.Get(kHurlock).condition = Condition::None;
@@ -2002,56 +2004,6 @@ TEST_CASE("with time, an action is given back at a walk stopped past the bar onc
     CHECK(Logged(w, "Hero's turn ends: nothing left to spend"));
 }
 
-TEST_CASE("without the engine's conjuring, a blow over the threshold interrupts a pending spell, and nothing else",
-          "[time]")
-{
-    // The mod's own copy of the game's rule, with Settings::engineConjure
-    // off; on, the installed rules_core judges the engine's own conjuring.
-    Settings mine = Timed();
-    mine.engineConjure = false;
-    const auto pending = [](World &w, std::int32_t abilityType) {
-        CommandRequest spell;
-        spell.object = kHero;
-        spell.type = CommandType::UseAbility;
-        spell.source = Source::Player;
-        spell.inCombat = true;
-        spell.ability = 13000;
-        spell.abilityType = abilityType;
-        spell.actionSeconds = 5.5f; // a conjuring longer than her bar
-        return w.Queue(spell);
-    };
-    {
-        World w(mine);
-        std::vector<TurnEvent> events;
-        w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
-        w.StartFight();
-        REQUIRE(pending(w, kAbilitySpell) == Verdict::Hold);
-        w.RunFor(100);
-        // A scratch, and a burn however hot: not interrupted.
-        CHECK_FALSE(w.machine.OnDamaged(kHero, 8.0f, true, 20.0f));
-        CHECK_FALSE(w.machine.OnDamaged(kHero, 90.0f, false, 20.0f));
-        CHECK(w.heldCasts.contains(kHero));
-        // A blow over the threshold: lost.
-        CHECK(w.machine.OnDamaged(kHero, 31.0f, true, 20.0f));
-        w.Frame();
-        CHECK_FALSE(w.heldCasts.contains(kHero));
-        CHECK(w.Said(L"Spell lost")); // not the game's own "Interrupted!", which it floats for a broken swing
-        CHECK(w.machine.State().charging.empty());
-        CHECK(std::ranges::any_of(events, [](const TurnEvent &e) {
-            return e.kind == EventKind::ActionDropped && e.who == kHero && e.detail == "struck";
-        }));
-    }
-    {
-        // A talent pending is not a spell being conjured.
-        World w(mine);
-        w.StartFight();
-        REQUIRE(pending(w, kAbilityTalent) == Verdict::Hold);
-        w.RunFor(100);
-        CHECK_FALSE(w.machine.OnDamaged(kHero, 99.0f, true, 20.0f));
-        CHECK(w.heldCasts.contains(kHero));
-    }
-}
-
 TEST_CASE("a card says what is pending: an ability by its id, an attack by none; the string its icon and name",
           "[time][bar]")
 {
@@ -2231,9 +2183,8 @@ TEST_CASE("with time, an action over at once did not play: its time is given bac
 
 TEST_CASE("a pending action lost says so in the mod's own words, in gold", "[time]")
 {
-    Settings mine = Timed();
-    mine.engineConjure = false; // the mod's own rule loses it here
-    World w(mine);
+    // A spell held in its conjure, cleared by the game's own rule (a blow).
+    World w(Timed());
     w.StartFight();
     CommandRequest spell;
     spell.object = kHero;
@@ -2243,9 +2194,11 @@ TEST_CASE("a pending action lost says so in the mod's own words, in gold", "[tim
     spell.ability = 13000;
     spell.abilityType = kAbilitySpell;
     spell.actionSeconds = 5.5f;
-    REQUIRE(w.Queue(spell) == Verdict::Hold);
+    spell.conjureAnim = 245;
+    spell.conjureSeconds = 1.0f;
+    REQUIRE(w.Queue(spell) == Verdict::Conjure);
     w.RunFor(100);
-    REQUIRE(w.machine.OnDamaged(kHero, 31.0f, true, 20.0f));
+    REQUIRE(w.machine.OnConjureCleared(kHero));
     w.Frame();
     const auto said = std::ranges::find_if(
         w.applied, [](const Effect &e) { return e.kind == EffectKind::Floaty && e.text == L"Spell lost"; });
@@ -2799,45 +2752,6 @@ TEST_CASE("with own clocks, a hold moves its creature's clock as its bar pays fo
     CHECK(w.agedMs == shared); // the one clock everything else is on is the rounds'
     CHECK(w.machine.View().timeLeftMs <= 2800);
     CHECK(w.machine.View().timeLeftMs >= 2700);
-}
-
-TEST_CASE("with time and one clock for everyone's effects, it runs with a hold and comes off the round's worth",
-          "[time][holds]")
-{
-    Settings s = Timed();
-    s.ownClocks = false;
-    World w(s);
-    w.onPoke = [&](ObjectId) {};
-    HeldAsItsTurnComes(w);
-    REQUIRE(w.timeHeld);
-    const std::int64_t before = w.agedMs;
-    for (int i = 0; i < 400 && w.Get(kGenlock).busy; ++i)
-    {
-        w.Frame();
-        if (w.agedMs - before >= 1200)
-        {
-            w.Finish(kGenlock);
-        }
-    }
-    w.RunFor(100);
-    CHECK(w.Current() == kGenlock);
-    CHECK(w.agedMs - before >= 1200);
-    CHECK(w.agedMs - before < 1500); // in quarter-second steps
-    CHECK(w.agedOwn[kGenlock] == 0);
-    CHECK(w.machine.View().timeLeftMs <= 2800);
-    CHECK(w.machine.View().timeLeftMs >= 2450);
-    // The round is still a turn's seconds of effects' time in all.
-    for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
-    {
-        if (w.machine.GetPhase() == Phase::AwaitingOrder)
-        {
-            (void)w.machine.OnEndTurn();
-        }
-        w.Frame();
-    }
-    REQUIRE(w.machine.Order().Round() == 2);
-    w.RunFor(100);
-    CHECK(w.agedMs - before == 4000);
 }
 
 TEST_CASE("a hold is not stopped as an action that takes too long: its bound is the bar", "[time][holds]")
@@ -3698,30 +3612,6 @@ TEST_CASE("with own clocks, a bigger bar moves its clock by its share, and a los
     CHECK(w.agedOwn[kGenlock] == 4000);
 }
 
-TEST_CASE("with own clocks off, everyone's effects age together as each round begins", "[time]")
-{
-    Settings off = Timed();
-    off.ownClocks = false;
-    World w(off);
-    w.StartFight();
-    REQUIRE(w.Current() == kHero);
-    CHECK(w.onOwnClock.empty());
-    CHECK(Act(w, kHero, CommandType::Attack, Source::Player, 2.0f, 0.0f) == Verdict::Allow);
-    Done(w, kHero);
-    for (int i = 0; i < 4000 && w.machine.Order().Round() < 2; ++i)
-    {
-        if (w.machine.GetPhase() == Phase::AwaitingOrder)
-        {
-            (void)w.machine.OnEndTurn();
-        }
-        w.Frame();
-    }
-    REQUIRE(w.machine.Order().Round() == 2);
-    w.RunFor(100);
-    CHECK(w.agedOwn.empty());
-    CHECK(w.agedMs > 0);
-}
-
 TEST_CASE("with own clocks, a turn put off moves nothing until it is taken", "[time]")
 {
     std::vector<Creature> fight = StandardFight();
@@ -3793,6 +3683,63 @@ TEST_CASE("with own clocks, an action's own effect moves its creature's clock an
     CHECK(w.agedOwn[kCompanion] == companion); // nobody else's
 }
 
+TEST_CASE("a hold that runs out on its victim's clock as its holder's effect ages it ran out: it was not taken off",
+          "[time]")
+{
+    // The grab's hold on its victim ends as the grab's steps have moved the
+    // victim's clock through its seconds: gone a look after such a step, it
+    // ran out, and is not a cure, which would give its time back. (Until
+    // issue 104 this was held on the one clock everyone's effects were on
+    // with own clocks off, which is gone.)
+    std::vector<Creature> fight = StandardFight();
+    fight.at(1).dexterity = 30.0f; // the genlock first
+    World w(Timed(), fight);
+    bool poked = false;
+    w.onPoke = [&](ObjectId id) {
+        if (poked)
+        {
+            return;
+        }
+        poked = true;
+        CommandRequest grab;
+        grab.object = id;
+        grab.target = kHero;
+        grab.type = CommandType::UseAbility;
+        grab.source = Source::Script;
+        grab.ability = 90036;
+        grab.inCombat = true;
+        grab.actionSeconds = 2.0f;
+        CHECK(w.Queue(grab) == Verdict::Allow);
+    };
+    w.StartFight();
+    for (int i = 0; i < 20 && !poked; ++i)
+    {
+        w.Frame();
+    }
+    REQUIRE(poked);
+    REQUIRE(w.Current() == kGenlock);
+    w.RunFor(200);
+    w.Get(kGenlock).busy = true;
+    w.Get(kGenlock).current = CommandType::ExecuteEffect;
+    Stun(w, kHero, 3.0f); // held by it, three seconds
+    w.RunFor(600);
+    REQUIRE(Logged(w, "Hero is held (stunned, pinned, knocked down)"));
+    const std::int64_t hero = w.agedOwn[kHero];
+    for (int frames = 0; frames < 2000 && w.Current() == kGenlock; ++frames)
+    {
+        if (w.Get(kGenlock).busy && w.agedOwn[kHero] - hero >= 2400)
+        {
+            // With the step that brought its seconds to their end.
+            w.Finish(kGenlock);
+            w.Get(kHero).condition = Condition::None;
+            w.Get(kHero).conditionSeconds = 0.0f;
+        }
+        w.Frame();
+    }
+    REQUIRE(w.Current() != kGenlock);
+    CHECK_FALSE(Logged(w, "Hero's condition was taken off"));
+}
+
 namespace
 {
 // A spell that conjures (its conjure animation and its speed's count, as
@@ -3837,8 +3784,6 @@ TEST_CASE("the engine's own conjuring: a spell that does not fit is begun at onc
     CHECK(w.Current() != kHero);
     REQUIRE(w.machine.State().charging.size() == 1);
     CHECK(w.machine.State().charging.front().owedMs == 1500);
-    // A blow is the installed rules_core's to judge, not the mod's.
-    CHECK_FALSE(w.machine.OnDamaged(kHero, 99.0f, true, 20.0f));
     CHECK(w.heldConjures.contains(kHero));
     // Its next turn pays what it owes and lets the conjure complete.
     UntilTurnOf(w, kHero);
@@ -3887,8 +3832,7 @@ TEST_CASE("the engine's own conjuring cleared before its time is paid: the spell
     CHECK_FALSE(w.machine.OnConjureCleared(kGenlock));
 }
 
-TEST_CASE("the engine's own conjuring is for spells that conjure; the rest are kept, and no blow interrupts them",
-          "[time]")
+TEST_CASE("the engine's own conjuring is for spells that conjure; the rest are kept", "[time]")
 {
     // A spell with no conjure, longer than what is left: kept in the gate as
     // before, and not interrupted by a blow (the game interrupts only a
@@ -3904,14 +3848,7 @@ TEST_CASE("the engine's own conjuring is for spells that conjure; the rest are k
     counted.conjureSeconds = 1.0f;
     CHECK(speed.Queue(counted) == Verdict::Hold);
     w.RunFor(100);
-    CHECK_FALSE(w.machine.OnDamaged(kHero, 99.0f, true, 20.0f));
     CHECK(w.heldCasts.contains(kHero));
-    // With the setting off, a conjuring spell is kept as before.
-    Settings mine = Timed();
-    mine.engineConjure = false;
-    World off(mine);
-    off.StartFight();
-    CHECK(off.Queue(Conjured(kHero)) == Verdict::Hold);
     // And a spell that fits is let through as ever.
     World fits(Timed());
     fits.StartFight();
@@ -4430,8 +4367,10 @@ TEST_CASE("what a step ran while a conversation played is not taken of the bar: 
     REQUIRE(w.machine.State().heldByEffect);
     w.mode = Mode::Dialog;
     w.RunFor(800);
-    const StepTime step = w.Get(kHero).step; // 800 ms further on
-    REQUIRE(step.elapsedMs == kFallMs + 320 + 800);
+    // 800 ms further on (and the one look in which the turn began to wait
+    // for its order, the world idling on).
+    const StepTime step = w.Get(kHero).step;
+    REQUIRE(step.elapsedMs == kFallMs + 320 + 800 + 16);
     w.mode = Mode::Combat;
     w.Frame();
     // (The machine clears everyone's commands as the fight goes on; the
@@ -4482,7 +4421,7 @@ TEST_CASE("one that notices in its beat at a step the engine times is held from 
     CHECK(w.machine.View().timeLeftMs >= 2950);
 }
 
-TEST_CASE("with time, a door, a chest or a pickup costs its seconds from the settings file", "[time]")
+TEST_CASE("with time, a door, a chest or a pickup costs half a second", "[time]")
 {
     // The user, 2026-10-02: "let's make these cost 0.5s for now. we can adjust
     // later. maybe make it data driven".
@@ -4498,7 +4437,7 @@ TEST_CASE("with time, a door, a chest or a pickup costs its seconds from the set
     w.RunFor(600);
     CHECK(w.machine.View().timeLeftMs == 3000);
     CHECK(w.Current() == kHero); // not an action: the turn goes on
-    // Its cost is the file's.
+    // Its cost is the rule's number.
     Settings free = Timed();
     free.objectSeconds = 0.0f;
     World f(free);
@@ -4507,7 +4446,6 @@ TEST_CASE("with time, a door, a chest or a pickup costs its seconds from the set
     f.Finish(kHero);
     f.RunFor(600);
     CHECK(f.machine.View().timeLeftMs == 4000);
-    CHECK(tb::ParseSettings("[costs]\nobject = 1.25\n").settings.objectSeconds == 1.25f);
 }
 
 TEST_CASE("with time, a door used with no time left is owed of the next turn", "[time]")
@@ -4551,7 +4489,7 @@ TEST_CASE("with own clocks, a turn's end gives what its creature's clock brought
     REQUIRE(w.Current() == kHero);
     w.Get(kHero).timersHeld = true;
     w.Frame();
-    REQUIRE(w.paused); // the player's turn, held still
+    REQUIRE_FALSE(w.paused); // the player's turn, the world idling on
     (void)w.machine.OnEndTurn();
     w.Frame();
     // Over, the next not begun, the world running meanwhile.
