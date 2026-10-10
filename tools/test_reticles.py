@@ -595,9 +595,12 @@ class HeldToTheRest(unittest.TestCase):
         files, override = re.search(
             r"^    FILES(.*?)^    OVERRIDE(.*?)^\)", cmake, re.MULTILINE | re.DOTALL
         ).groups()
-        made = [name for name in override.split() if name.startswith("build/art/")]
-        self.assertEqual(made, [f"build/art/{name}" for name in reticles.outputs()])
-        self.assertNotIn("build/art/", files)
+        made = [name for name in override.split() if name.startswith("ui/reticles/")]
+        self.assertEqual(made, [f"ui/reticles/{name}" for name in reticles.outputs()])
+        self.assertNotIn("ui/reticles/", files)
+        # And each is in the repository (issue 106), with nothing else beside them.
+        kept = sorted(path.name for path in (REPO / "ui" / "reticles").iterdir())
+        self.assertEqual(kept, sorted(reticles.outputs()))
         # What else goes there is in the repository (a Veil Tear's picture
         # and its row of the portraits table, issue 103), and is there.
         for name in override.split():

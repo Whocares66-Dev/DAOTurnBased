@@ -30,7 +30,7 @@
     goes the same way and is held the same way: the plugin loads it from its own folder
     into the game's tactics screen as that opens, and without it the page has no box.
 
-    The movement preview's red ring and red marker, build\art (python tools\reticles.py: the
+    The movement preview's red ring and red marker, ui\reticles (python tools\reticles.py: the
     game's own art made again in red; issue 72), go with the folder too, in its override\
     subfolder, which the game reads as it reads its own override folder (DAOLib's issue 43,
     7bedb3b). Without them the deploy says so and goes on: the preview then shows a path as

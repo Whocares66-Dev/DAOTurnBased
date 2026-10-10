@@ -201,7 +201,8 @@ include("${TB_DAOLIB}/cmake/Quality.cmake")
 # it is.
 #
 # And the movement preview's rings and red marker (issue 72), the game's own
-# art made again by python tools\reticles.py, into build\art (the party's
+# art made again by python tools\reticles.py, in ui\reticles (in the repository
+# since issue 106, the user's word; the party's
 # ring for the path's marks, its band widened, in gold and in red, and the
 # movement marker in red): textures, material objects, models and the three
 # rows of vfx_base that name them. They go by OVERRIDE into the folder's override\ subfolder, which
@@ -233,31 +234,56 @@ add_daolib_plugin(
         src/plugin/Plugin.cpp
     FILES build/ui/turnorder.swf build/ui/turnbased_tactics.swf
     OVERRIDE
-        build/art/tb_gold_selparty.dds
-        build/art/tb_gold_selparty_med.dds
-        build/art/tb_red_selparty.dds
-        build/art/tb_red_selparty_med.dds
-        build/art/tb_red_movetarget.dds
-        build/art/tb_red_movearrow.dds
-        build/art/tbgld.mao
-        build/art/tbgld_med.mao
-        build/art/tbred.mao
-        build/art/tbred_med.mao
-        build/art/tbred_movemark.mao
-        build/art/tbred_arw.mao
-        build/art/tb_gld.mmh
-        build/art/tb_gld_m.mmh
-        build/art/tb_gld_l.mmh
-        build/art/tb_red.mmh
-        build/art/tb_red_m.mmh
-        build/art/tb_red_l.mmh
-        build/art/tb_mov.mmh
-        build/art/vfx_base_turnbased.gda
+        ui/reticles/tb_gold_selparty.dds
+        ui/reticles/tb_gold_selparty_med.dds
+        ui/reticles/tb_red_selparty.dds
+        ui/reticles/tb_red_selparty_med.dds
+        ui/reticles/tb_red_movetarget.dds
+        ui/reticles/tb_red_movearrow.dds
+        ui/reticles/tbgld.mao
+        ui/reticles/tbgld_med.mao
+        ui/reticles/tbred.mao
+        ui/reticles/tbred_med.mao
+        ui/reticles/tbred_movemark.mao
+        ui/reticles/tbred_arw.mao
+        ui/reticles/tb_gld.mmh
+        ui/reticles/tb_gld_m.mmh
+        ui/reticles/tb_gld_l.mmh
+        ui/reticles/tb_red.mmh
+        ui/reticles/tb_red_m.mmh
+        ui/reticles/tb_red_l.mmh
+        ui/reticles/tb_mov.mmh
+        ui/reticles/vfx_base_turnbased.gda
         ui/portraits/tb_portrait_fade_tear.dds
         ui/portraits/portraits_turnbased.gda
 )
 tb_apply_warnings(turnbased)
 target_link_libraries(turnbased PRIVATE tb_core)
+# What the game plays is what is released (issues 54 and 106). RelWithDebInfo
+# links incrementally unless told otherwise, which pads the DLL for the next
+# link and keeps every function nothing calls: 3.9 MB and a 72 MB PDB on
+# 2026-10-10. /DEBUG also turns /OPT:REF and /OPT:ICF off, so they are put
+# back, as DAOLib's dao_release_symbols does for its Release builds and
+# Eluvian's CMakeLists.txt for its own.
+if(MSVC)
+    target_link_options(
+        turnbased
+        PRIVATE "$<$<CONFIG:RelWithDebInfo>:/INCREMENTAL:NO;/OPT:REF;/OPT:ICF>"
+    )
+    # The linker writes into a PDB that is already there and leaves in it
+    # what earlier links wrote, the path of an earlier link's temporary
+    # files among it, which was under the user's name before tools/build.ps1
+    # kept those in the build tree. So each release link starts its own. A
+    # debug link is incremental and needs the one it has.
+    if(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+        add_custom_command(
+            TARGET turnbased
+            PRE_LINK
+            COMMAND ${CMAKE_COMMAND} -E rm -f $<TARGET_PDB_FILE:turnbased>
+            VERBATIM
+        )
+    endif()
+endif()
 target_compile_definitions(
     turnbased
     PRIVATE TB_VERSION_STRING="${PROJECT_VERSION}"

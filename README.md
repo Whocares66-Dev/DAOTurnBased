@@ -15,7 +15,7 @@ Turn-based combat for **Dragon Age: Origins**, Awakening and Witch Hunt: a [DAOL
 
 Version 1.05 of the game. The mod is developed and tested on the GOG version. The Steam and EA versions need a large-address-aware (LAA) `DAOrigins.exe`; GOG's is large-address-aware already.
 
-Download the [latest release](https://github.com/Whocares66-Dev/DAOTurnBased/releases/latest) and copy `version.dll` and the `daolib` folder into the game's `bin_ship` folder, next to `DAOrigins.exe`. Saves are not modified. To uninstall, delete `bin_ship\daolib\plugins\turnbased`.
+Extract [DAOLib](https://github.com/Whocares66-Dev/DAOLib/releases)'s zip into the game's folder, the one that contains `bin_ship`, and then [this mod's](https://github.com/Whocares66-Dev/DAOTurnBased/releases). Saves are not modified. To uninstall, delete `bin_ship\daolib\plugins\turnbased`.
 
 The [getting started guide](https://whocares66-dev.github.io/DAOTurnBased/getting-started/) has the details.
 
@@ -32,8 +32,8 @@ The [getting started guide](https://whocares66-dev.github.io/DAOTurnBased/gettin
 - `src/core`: the rules and the turn state machine, with no game and no Windows, tested in `tests/`.
 - `src/game`: everything that touches the engine, through DAOLib.
 - `src/plugin`: the entry point and the frame callback.
-- `ui/`: the portrait bar's and the tactics page's movies, and a ready-made portrait.
-- `tools/`: building, deploying, the movies, the preview's art and the docs site.
+- `ui/`: the portrait bar's and the tactics page's movies, the movement preview's rings and marker, and a ready-made portrait.
+- `tools/`: building, deploying, packaging a release, the movies and the docs site.
 - `docs/`: the player's guide.
 - `dev/`: the docs above, and `DAOLIB_NEEDS.md`, what the mod needs from DAOLib next.
 - `extern/DAOLib`: the library, as a submodule.
@@ -45,7 +45,6 @@ Visual Studio 2022 with the C++ workload, [vcpkg](https://github.com/microsoft/v
 ```powershell
 git submodule update --init --recursive   # DAOLib, and its address library
 python tools\movie.py                     # the two movies (needs Java and JPEXS FFDec)
-python tools\reticles.py                  # the movement preview's art, made from the game's own files
 .\tools\build.ps1 -Preset debug -Test     # the plugin, DAOLib's loader, the tests
 .\tools\build.ps1 -Preset release -Test   # what the game plays
 .\tools\deploy.ps1 -Preset release        # into the game (with the game closed)
@@ -56,7 +55,7 @@ Logs and `turnbased.ini` are in `Documents\BioWare\Dragon Age\daolib\`.
 
 ## Working on DAO Turn-Based
 
-[CLAUDE.md](CLAUDE.md) has the project's rules: the one architectural rule, the checks before a commit and before a merge, and how a change is seen in play.
+[CLAUDE.md](CLAUDE.md) has the project's rules: the one architectural rule, the checks before a commit and before a merge, and how a change is seen in play. [CHANGELOG.md](CHANGELOG.md) has what each release brought, and [dev/RELEASING.md](dev/RELEASING.md) how one is cut.
 
 ## License
 

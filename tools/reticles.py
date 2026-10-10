@@ -30,10 +30,11 @@ each the game's with as little changed as makes it ours:
     of our own, each naming our models.
 
 The game finds them in the plugin's override subfolder, which DAOLib's loader
-makes a source of its resources (DAOLib's issue 43). They are made here, on
-the builder's machine, and are not in the repository: the art is the game's.
+makes a source of its resources (DAOLib's issue 43). They are in the
+repository, in ui\\reticles, since issue 106 (the user: "include them in the
+repo and zip"); until then each builder made them. This makes them again:
 
-    python tools\\reticles.py                 into build\\art
+    python tools\\reticles.py                 into ui\\reticles
     python tools\\reticles.py --game D:\\...   the game elsewhere (or DAO_GAME_DIR)
 
 Then a build, which copies them there (CMakeLists.txt, OVERRIDE). A
@@ -53,7 +54,7 @@ import zlib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-OUT_DIR = REPO / "build" / "art"
+OUT_DIR = REPO / "ui" / "reticles"
 GAME = Path(
     os.environ.get(
         "DAO_GAME_DIR", r"C:\Program Files (x86)\GOG Galaxy\Games\Dragon Age Origins"

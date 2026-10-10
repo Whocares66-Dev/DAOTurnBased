@@ -12,7 +12,8 @@
     debug       turnbased.dll, DAOLib's loader (version.dll), and the tests; build\debug
                 is then a game folder's worth of files for tools\deploy.ps1.
                 The first run compiles spdlog, Detours and Catch2 through vcpkg.
-    release     same, optimized.
+    release     same, optimized, with its symbols: what the game plays, and what
+                tools\package.ps1 puts in a release's zip.
     debug-asan  same, under AddressSanitizer; for -Test. The DLLs it makes are
                 not for the game (they need the ASan runtime beside the exe).
     debug-analyze
@@ -187,7 +188,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "configure failed ($LASTEXITCODE)" }
 
     Show-Line "`n== build ($Preset) ==" -Colour Cyan
-    cmake --build --preset $Preset --parallel $parallel
+    # The linker writes the path of its temporary files into a PDB, and the
+    # user's own is under their name (C:\Users\<name>\AppData\Local\Temp);
+    # a release's PDB is given to whoever installs it (issue 106, as DAOLib
+    # #55 and Eluvian #115). So a build's is in its tree, for the build alone.
+    $userTemp = $env:TEMP, $env:TMP
+    $env:TEMP = $env:TMP = New-Item -ItemType Directory -Force (Join-Path $buildDir 'tmp')
+    try { cmake --build --preset $Preset --parallel $parallel }
+    finally { $env:TEMP, $env:TMP = $userTemp }
     if ($LASTEXITCODE -ne 0) { throw "build failed ($LASTEXITCODE)" }
 
     if ($Test) {
