@@ -656,9 +656,10 @@ class LearnedSwings
     // game's draw and aim for that archer (combat_h.nss: 0.8 s drawing for a
     // follower, 1.5 s for the player's own character, 2 to 2.5 s in heavy
     // armour, 0.3 s with a staff; then an aim by the bow and the archer's
-    // talents and speed), which the engine keeps where DAOLib could not read
-    // it back: so what a shot took, measured, is what the next costs (the
-    // user, 2026-10-02, of the flat 1.4 and 1.6 s: "we should read these").
+    // talents and speed), set by the scripts as each shot begins and not
+    // before: so what a shot took, by the engine's own count of its parts
+    // (src/game/Gate.cpp, LearnShot), is what the next costs (the user,
+    // 2026-10-02, of the flat 1.4 and 1.6 s: "we should read these").
     [[nodiscard]] static Key ShotOf(ObjectId archer, float attackSpeedModifier);
     // Kept if it is a time a swing could take (kLeast to kMost): true then.
     bool Learn(const Key &key, float seconds);

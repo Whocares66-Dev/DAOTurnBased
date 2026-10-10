@@ -405,7 +405,9 @@ struct CommandRequest
     ObjectId target = kNoObject;
     // For an attack: the engine itself has no attack to make for the two as
     // they stand, and which of its answers that was (NoAttack, core/Types.h;
-    // src/game/Gate.cpp asks, of every attack as it comes). Refused before
+    // src/game/Gate.cpp asks, of every attack as it comes). For an ability
+    // used on a creature that approaches as an attack does (a talent with
+    // no range): no room for its user on the target's ring. Refused before
     // a step, nothing spent: the player is told why, and an AI's is given
     // back and its AI told to choose again (TurnMachine::NoAttackToMake;
     // issue 27). After the target, for the same reason.

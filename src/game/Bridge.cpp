@@ -1552,15 +1552,6 @@ ActorObservation Bridge::Actor(ObjectId id)
             {
                 actor.step = StepTime{running.elapsedMs, running.durationMs};
             }
-            // A shot's animations are such steps (sub-action 37, "play an
-            // animation"), and their lengths what the shot costs (issue 60;
-            // Gate.cpp, LearnShot).
-            constexpr std::uint32_t kPlayAnimation = 37;
-            if (actor.current == CommandType::Attack && running.type == kPlayAnimation && running.delayMs <= 0 &&
-                running.durationMs > 0)
-            {
-                ShotStep(id, running.elapsedMs, running.durationMs);
-            }
             SayLongStep(id, actor.current, running);
         }
         // At an attack or an ability: whether its command is still at its

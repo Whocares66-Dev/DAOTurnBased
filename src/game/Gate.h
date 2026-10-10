@@ -44,11 +44,6 @@ void SetPathCheck(bool on);
 [[nodiscard]] float AttackSeconds(ObjectId attacker);
 // And an ability's, as the gate will charge its user for it.
 [[nodiscard]] float AbilitySecondsOf(ObjectId user, std::int32_t ability);
-// A shot under way is at an animation the engine times, so far into it and
-// so long by the engine's own count: what that archer's next shot costs is
-// made of these (issue 60). Told by the bridge as it reads the step of the
-// creature whose turn it is.
-void ShotStep(ObjectId archer, std::int32_t elapsedMs, std::int32_t durationMs);
 
 // A cast that charges (core: Verdict::Hold): the gate refuses the command
 // and keeps what it was, the ability, its target and the place, for the

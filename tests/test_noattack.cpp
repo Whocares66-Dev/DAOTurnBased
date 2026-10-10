@@ -750,3 +750,40 @@ TEST_CASE("an AI's kept attack the engine has no room for is not made: its turn 
         }
     }
 }
+
+TEST_CASE("an ability with no place for its user at its target is refused before a step, as an attack is", "[noattack]")
+{
+    // Witch Hunt's basement (2026-10-10, issue 99): eight talents let
+    // through at a target whose ring was full, each failed by the engine
+    // (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING) and given back. A talent with
+    // no range approaches as an attack does, and the engine says beforehand
+    // whether it will find room (src/game/Gate.cpp, AbilityFindsNoRoom).
+    World w(Timed());
+    w.StartFight();
+    REQUIRE(w.Current() == kHero);
+    const TurnView before = w.machine.View();
+    CommandRequest talent;
+    talent.object = kHero;
+    talent.type = CommandType::UseAbility;
+    talent.source = Source::Player;
+    talent.inCombat = true;
+    talent.ability = 100;
+    talent.abilityType = kAbilityTalent;
+    talent.actionSeconds = 1.5f;
+    talent.target = kGenlock;
+    talent.noAttack = NoAttack::NoPlace;
+    CHECK(w.Queue(talent) == Verdict::Block);
+    CHECK_FALSE(w.Get(kHero).busy);
+    w.Frame();
+    CHECK(w.Said(L"No room at the target"));
+    CHECK(w.machine.View().notice == L"No room at the target: Hero's ability is refused");
+    CHECK(Logged(w, "Hero: use ability on Genlock refused, the engine has no place at its target for it"));
+    // Nothing spent, and the turn still waits.
+    const TurnView after = w.machine.View();
+    CHECK(after.timeLeftMs == before.timeLeftMs);
+    CHECK(after.movementLeft == before.movementLeft);
+    CHECK(w.machine.GetPhase() == Phase::AwaitingOrder);
+    // With room, the same talent is taken.
+    talent.noAttack = NoAttack::None;
+    CHECK(w.Queue(talent) == Verdict::Allow);
+}

@@ -447,6 +447,36 @@ std::optional<Reached> WalkToTarget(const dao::CCObject &self, const dao::Comman
     return reached;
 }
 
+// An ability used on a creature approaches it as the engine's attack does
+// where the abilities table gives it no range (Range 0: a melee talent, to a
+// place on its target's ring), and fails as an attack does where the ring
+// has no room for its user (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING), the
+// action given back: 104 times in the playthroughs' kept logs, 8 of them in
+// Witch Hunt's basement (2026-10-10). Whether it will is the engine's to
+// say, asked as an attack's is (DAOLib's ApproachOf for an ability, its
+// issue 52: in its example's crowd, no room said of 414 abilities and all
+// 414 failed for room; room said of 25, none of which failed for it). True
+// where there is none: the machine refuses it before a step, as an attack.
+// One with a range, or used on its user, asks no ring.
+bool AbilityFindsNoRoom(const dao::CCObject &self, const dao::Command &command)
+{
+    const std::optional<ObjectId> target = command.Target();
+    const std::optional<std::int32_t> ability = command.Ability();
+    if (GetCurrentThreadId() != dao::script::ScriptThreadId() || !target || !ability ||
+        api::IsObjectValid(*target) == 0)
+    {
+        return false;
+    }
+    const std::optional<dao::attack::Approach> approach = dao::attack::ApproachOf(self.Id(), *target, *ability);
+    if (!approach || approach->ranged || approach->findsRoom)
+    {
+        return false;
+    }
+    spdlog::debug("ability {} on {:#010x}: the engine's approach for it will find no room for {:#x}: {}", *ability,
+                  *target, self.Id(), RoomOf(*approach));
+    return true;
+}
+
 // A player's move, measured as the engine would walk it.
 std::optional<float> MoveLength(const dao::CCObject &self, const dao::Command &command)
 {
@@ -655,17 +685,7 @@ struct ShotBegun
     std::uint64_t atMs = 0;
     dao::Vector where;
 };
-// A shot under way, and the animations of it that the engine times
-// (ShotStep): their lengths together, and the one it was last seen at, by
-// which the next is told from it.
-struct ShotTimed
-{
-    std::int32_t sumMs = 0;
-    std::int32_t lastElapsedMs = -1; // -1: none seen yet
-    std::int32_t lastDurationMs = 0;
-};
-std::unordered_map<ObjectId, ShotTimed> g_shotsBegun;
-// And every attack's, shot or swing: each creature's last (WatchAttacksBegin).
+// Every attack's, shot or swing: each creature's last (WatchAttacksBegin).
 std::unordered_map<ObjectId, ShotBegun> g_attacksBegun;
 
 float SwingSecondsOf(ObjectId attacker)
@@ -724,43 +744,37 @@ float SwingSecondsOf(ObjectId attacker)
 // formula's figure beside it: where the two differ the scripts are not the
 // shipped ones, or the formula here is wrong.
 // A shot is over: what it took by the engine's own count, kept for its
-// archer's next. Said once for each archer and speed, and as it changes. One
-// whose command never came to an animation (failed, stopped on its way)
-// teaches nothing.
+// archer's next. Said once for each archer and speed, and as it changes.
 //
-// The count is the engine's parts of a shot (DAOLib's reading of the exe,
-// 2026-10-10, its issue 51): for a bow an aim animation played to take what
-// the scripts set with SetAttackDuration, an aim loop as long as they set
-// with SetAimLoopDuration, and the loose at its animation's own length; for
-// a staff the aim loop and one animation. The animations are sub-action 37,
-// which the engine times as it times a death blow (issue 28), each read as
-// the shot comes to it (ShotStep); the aim loop is the value the engine
-// keeps on the archer from this shot until its next (DAOLib's
-// dao::animation::AimDuration). Seen in play 2026-10-10: Anders's staff, an
-// animation of 1.533 s and an aim loop of 0.100 s, the same at every shot.
+// The count is the engine's three parts of a shot, as DAOLib reckons them
+// from the engine's own (dao::animation::OfShot, its issue 51; in its
+// example's play, 64 of 64 shots as their steps were logged): raising the
+// weapon, an aim animation played to take what the scripts set with
+// SetAttackDuration (none with a staff); holding the aim, as long as they
+// set with SetAimLoopDuration; and the loose, at its animation's own length.
+// The scripts set both times as a shot begins and the game clears them once
+// it is over, so they are read here, as its command ends, and a shot that
+// never set them (its command ended before its aim) teaches nothing. Seen
+// in play 2026-10-10 by the sum this replaced: Anders's staff 1.63 s at
+// every shot, Nathaniel's bow 1.57 s, a bandit's 3.34 s.
 //
-// Until then a shot was measured from outside: the wall's time from its
-// command's beginning to its end, times the speed the fight had asked for.
-// That figure carried the machine's load and whatever the engine did not
-// speed up with it: 1.9 to 8.8 s for the same shot in the playthrough's
-// fights, half of them over a whole turn on a busy evening, so that an
-// archer shot once in two turns (issue 60).
+// Until issue 99 the mod summed the shot's animations itself, sampling the
+// step its archer was at each frame (issue 60); and before that measured a
+// shot from outside, the wall's time from its command's beginning to its
+// end times the speed the fight had asked for, 1.9 to 8.8 s for the same
+// shot, so that an archer shot once in two turns.
 void LearnShot(ObjectId archer, const AskedSwing &asked)
 {
-    const auto begun = g_shotsBegun.find(archer);
-    if (begun == g_shotsBegun.end())
+    if (!dao::animation::AttackDuration(archer))
     {
         return;
     }
-    const std::int32_t animationsMs = begun->second.sumMs;
-    g_shotsBegun.erase(begun);
-    if (animationsMs <= 0)
+    const std::optional<dao::animation::Shot> shot = dao::animation::OfShot(archer);
+    if (!shot)
     {
         return;
     }
-    const float aimLoop = dao::animation::AimDuration(archer).value_or(0.0f);
-    const float animations = static_cast<float>(animationsMs) / 1000.0f;
-    const float seconds = animations + aimLoop;
+    const float seconds = shot->Total();
     const std::optional<float> before = g_swings.Seconds(asked.key);
     if (!g_swings.Learn(asked.key, seconds))
     {
@@ -768,9 +782,9 @@ void LearnShot(ObjectId archer, const AskedSwing &asked)
     }
     if (!before || std::abs(*before - seconds) > 0.05f)
     {
-        spdlog::info("{:#x}: its shot is {:.2f} s by the engine's own count ({:.3f} s of animation and an aim loop "
-                     "of {:.3f} s; the flat figure {:.2f} s): what its next costs",
-                     archer, seconds, animations, aimLoop, asked.formula);
+        spdlog::info("{:#x}: its shot is {:.2f} s by the engine's own count (its aim {:.3f} s, the aim held "
+                     "{:.3f} s, the loose {:.3f} s; the flat figure {:.2f} s): what its next costs",
+                     archer, seconds, shot->aim, shot->aimLoop, shot->fire, asked.formula);
     }
 }
 
@@ -913,6 +927,10 @@ bool LetThrough(dao::CCObject &self, dao::Command &command, const Caller &caller
     if (type == CommandType::UseAbility)
     {
         DescribeAbility(self, command, request);
+        if ((source == Source::Player || source == Source::Script) && AbilityFindsNoRoom(self, command))
+        {
+            request.noAttack = NoAttack::NoPlace;
+        }
     }
     if (type == CommandType::Attack)
     {
@@ -1257,25 +1275,6 @@ float AttackSeconds(ObjectId attacker)
     return static_cast<float>(ActionCostMs(request)) / 1000.0f;
 }
 
-void ShotStep(ObjectId archer, std::int32_t elapsedMs, std::int32_t durationMs)
-{
-    const std::lock_guard lock(g_swingMutex);
-    const auto found = g_shotsBegun.find(archer);
-    if (found == g_shotsBegun.end())
-    {
-        return;
-    }
-    // Another animation than the one last seen, where it is of another
-    // length or less far in: a bow's aim and its loose are two.
-    ShotTimed &shot = found->second;
-    if (shot.lastElapsedMs < 0 || elapsedMs < shot.lastElapsedMs || durationMs != shot.lastDurationMs)
-    {
-        shot.sumMs += durationMs;
-    }
-    shot.lastElapsedMs = elapsedMs;
-    shot.lastDurationMs = durationMs;
-}
-
 float AbilitySecondsOf(ObjectId user, std::int32_t ability)
 {
     CommandRequest request;
@@ -1319,21 +1318,15 @@ bool DidNothing(std::int32_t result)
 
 void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
 {
-    // A shot's start, from which its timed step is looked for (ShotStep,
-    // LearnShot): only noted, as the callback's contract asks.
+    // An attack's start, for what the engine says of it after
+    // (WatchAttacksBegin): only noted, as the callback's contract asks.
     dao::commands::OnStart([](ObjectId object, const dao::Command &command) {
         if (static_cast<CommandType>(static_cast<int>(command.Type())) != CommandType::Attack)
         {
             return;
         }
         const std::lock_guard lock(g_swingMutex);
-        // Any attack's, for what the engine says of it after (WatchAttacksBegin).
         g_attacksBegun[object] = ShotBegun{GetTickCount64(), dao::script::api::GetPosition(object)};
-        if (const auto asked = g_askedSwings.find(object);
-            asked != g_askedSwings.end() && asked->second.key.style == WeaponStyle::Ranged)
-        {
-            g_shotsBegun[object] = ShotTimed{};
-        }
     });
     // On the game's thread, inside the command step: the machine only
     // counts, and queues or clears nothing.
