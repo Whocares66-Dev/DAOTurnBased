@@ -586,26 +586,26 @@ MUTANTS = [
     Mutant(
         "an AI getting up from a condition the machine ended is told to choose behind the rise",
         MACHINE,
-        "        seenActor_->current == CommandType::ExecuteEffect)\n    {\n        heldByEffect_ = true;",
-        "        seenActor_->current == CommandType::ExecuteEffect && endedFor_ != who.id)\n    {\n        heldByEffect_ = true;",
+        "&& AtWhatItDidNotChoose(*seenActor_))\n    {\n        heldByEffect_ = true;",
+        "&& AtWhatItDidNotChoose(*seenActor_) && endedFor_ != who.id)\n    {\n        heldByEffect_ = true;",
     ),
     # Where a hold (issue 30) meets a hostile that has noticed nobody (issue 29).
     Mutant(
         "an unaware hostile at an effect's command stands out its hold, and then its beat",
         MACHINE,
-        "    if (!UnawareNow(who) && seenActor_ && seenActor_->id == who.id && seenActor_->busy &&",
-        "    if (seenActor_ && seenActor_->id == who.id && seenActor_->busy &&",
+        "    if (!UnawareNow(who) && seenActor_ && seenActor_->id == who.id && AtWhatItDidNotChoose(*seenActor_))",
+        "    if (seenActor_ && seenActor_->id == who.id && AtWhatItDidNotChoose(*seenActor_))",
     ),
     Mutant(
         "a party member thrown as its turn waits, after it has acted, is taken for one at its own action's effect",
         MACHINE,
-        '": " + obs.actor->effects));\n        }\n        heldByEffect_ = obs.actor->current == CommandType::ExecuteEffect;',
+        '": " + obs.actor->effects));\n        }\n        heldByEffect_ = AtWhatItDidNotChoose(*obs.actor);',
         '": " + obs.actor->effects));\n        }\n        heldByEffect_ = false;',
     ),
     Mutant(
         "an AI thrown as it thinks, after it has acted, is taken for one at its own action's effect",
         MACHINE,
-        "        // executing: busy here is something else's.\n        heldByEffect_ = obs.actor->current == CommandType::ExecuteEffect;",
+        "        // executing: busy here is something else's.\n        heldByEffect_ = AtWhatItDidNotChoose(*obs.actor);",
         "        // executing: busy here is something else's.\n        heldByEffect_ = false;",
     ),
     Mutant(
@@ -630,8 +630,8 @@ MUTANTS = [
     Mutant(
         "an AI that has waited and is then thrown is nobody's: neither held nor at its own action's effect",
         MACHINE,
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0)",
-        "        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0 &&\n            budget_.spend.ClockElapsedMs() == 0)",
+        "        if (!heldByEffect_ && AtWhatItDidNotChoose(actor) && budget_.commands == 0)",
+        "        if (!heldByEffect_ && AtWhatItDidNotChoose(actor) && budget_.commands == 0 &&\n            budget_.spend.ClockElapsedMs() == 0)",
     ),
     # Where a hold meets an attack the engine has no way to make (issue 27).
     Mutant(
@@ -2104,20 +2104,65 @@ MUTANTS = [
     Mutant(
         "nowhere: the player's own move that goes nowhere is said to be a pass",
         MACHINE,
-        "current->id != who || PlayerControls(*current))",
-        "current->id != who)",
+        "    if (PlayerControls(*current))\n    {\n        return;\n    }\n    const bool itsMove =",
+        "    const bool itsMove =",
     ),
     Mutant(
         "nowhere: another creature's move done where it began passes the current one's turn",
         MACHINE,
-        "current == nullptr || current->id != who || PlayerControls(*current))",
-        "current == nullptr || who == kNoObject || PlayerControls(*current))",
+        "current == nullptr || current->id != who)\n    {\n        return;\n    }\n    // An action whose time went",
+        "current == nullptr || who == kNoObject)\n    {\n        return;\n    }\n    // An action whose time went",
     ),
     Mutant(
         "nowhere: a story's walk in a conversation over the fight passes the turn it stands over",
         MACHINE,
-        "    if (!Active() || current == nullptr || current->id != who || PlayerControls(*current))",
-        "    if (current == nullptr || current->id != who || PlayerControls(*current))",
+        "    if (!Active() || current == nullptr || current->id != who)\n    {\n        return;\n    }\n    // An action whose time went",
+        "    if (current == nullptr || current->id != who)\n    {\n        return;\n    }\n    // An action whose time went",
+    ),
+    # A creature at a command its turn did not order, an action's time that
+    # went to its walk, and the count of an AI's actions given back (issue 88;
+    # tests/test_notordered.cpp).
+    Mutant(
+        "notordered: only an effect's command holds a creature: at an animation its script gave it, its turn stands out the action's limit",
+        MACHINE,
+        "    return actor.busy && Classify(actor.current) == CommandKind::Involuntary;",
+        "    return actor.busy && actor.current == CommandType::ExecuteEffect;",
+    ),
+    Mutant(
+        "notordered: an action's time that went to its walk is taken as any command of its creature's is done",
+        MACHINE,
+        "    if (Classify(type) == CommandKind::Action)\n    {\n        ChargeOnArrival(type);",
+        "    if (Classify(type) != CommandKind::Involuntary)\n    {\n        ChargeOnArrival(type);",
+    ),
+    Mutant(
+        "notordered: an action's time that went to its walk is taken at the first frame its creature stands, and goes to the walk again with its next step",
+        MACHINE,
+        "    if (AtItsOwnMode(actor))\n    {\n        ownEffectSince_.reset();\n        stoodAt_.reset();",
+        "    if (budget_.onArrivalMs > 0 && actor.busy && !actor.moving && Classify(actor.current) == CommandKind::Action)\n    {\n        ChargeOnArrival(actor.current);\n    }\n    if (AtItsOwnMode(actor))\n    {\n        ownEffectSince_.reset();\n        stoodAt_.reset();",
+    ),
+    Mutant(
+        "notordered: on a turn the player plays, an action's time that went to its walk is never taken",
+        MACHINE,
+        "    if (Classify(type) == CommandKind::Action)\n    {\n        ChargeOnArrival(type);",
+        "    if (Classify(type) == CommandKind::Action && !PlayerControls(*current))\n    {\n        ChargeOnArrival(type);",
+    ),
+    Mutant(
+        "notordered: an AI two of whose actions were given back is let a third, its script ordering it in the failure's own event",
+        MACHINE,
+        "    const bool nothingToGetTo = !player && budget_.givenBack >= kGivenBackEnough;",
+        "    const bool nothingToGetTo = false;",
+    ),
+    Mutant(
+        "notordered: the player's own third order after two given back is refused, the turn taken for over",
+        MACHINE,
+        "    const bool nothingToGetTo = !player && budget_.givenBack >= kGivenBackEnough;",
+        "    const bool nothingToGetTo = budget_.givenBack >= kGivenBackEnough;",
+    ),
+    Mutant(
+        "notordered: an AI one of whose actions was given back is refused its second try",
+        MACHINE,
+        "    const bool nothingToGetTo = !player && budget_.givenBack >= kGivenBackEnough;",
+        "    const bool nothingToGetTo = !player && budget_.givenBack >= kGivenBackEnough - 1;",
     ),
     Mutant(
         "time: a failed action's time is not given back",
@@ -2751,8 +2796,8 @@ MUTANTS = [
     Mutant(
         "a kept action is given to a creature an effect holds as its turn begins",
         MACHINE,
-        "Name(charge->type)));\n        return false;\n    }\n    landing_ = *charge;",
-        "Name(charge->type)));\n    }\n    landing_ = *charge;",
+        ': HeldBy(seenActor_->current, "a")));\n        return false;\n    }\n    landing_ = *charge;',
+        ': HeldBy(seenActor_->current, "a")));\n    }\n    landing_ = *charge;',
     ),
     Mutant(
         "a kept action that waited on an effect is not given as the effect lets go",

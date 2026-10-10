@@ -1417,6 +1417,29 @@ void AtAnAttack(ActorObservation &actor, ObjectId id)
     }
 }
 
+// The acting creature at an ability: which sub-action its command is at,
+// said as it changes, at debug. Nothing is decided by it. Twice in the
+// Blackmarsh's Fade (issue 88, 2026-10-09) Oghren's talent, ordered again as
+// the engine failed it for want of a path, stood twelve seconds of the wall
+// with no failure and no step, `still at a use ability after 36000 ms:
+// stopped`, and the log, kept at info, does not say where the command stood:
+// at its approach (15, by DAOLib's dao/Conjure.h, where an attack that stands
+// so is stopped after a second), at its turn to face (39), or at something
+// else. The next one's log is read for this line.
+void AtAnAbility(ObjectId id)
+{
+    const std::uint32_t at = dao::commands::RunningSubAction(id);
+    static ObjectId lastWho = dao::kInvalidObject;
+    static std::uint32_t lastAt = 0;
+    if (id != lastWho || at != lastAt)
+    {
+        lastWho = id;
+        lastAt = at;
+        spdlog::debug("{:#x}'s use ability is at sub-action {}{}", id, at,
+                      at == kMeleeApproach || at == kRangedApproach ? " (its approach)" : "");
+    }
+}
+
 // The acting creature at a death blow: where its command is, and its
 // victim's, for the log.
 void AtADeathBlow(ObjectId id, const dao::Command &command)
@@ -1529,6 +1552,10 @@ ActorObservation Bridge::Actor(ObjectId id)
         if (actor.current == CommandType::Attack)
         {
             AtAnAttack(actor, id);
+        }
+        else if (actor.current == CommandType::UseAbility)
+        {
+            AtAnAbility(id);
         }
         else if (actor.current == CommandType::Deathblow)
         {

@@ -75,6 +75,37 @@ const char *ModeName(Mode mode)
     return "?";
 }
 
+// At a command it did not choose: the engine's or the story's, what the gate
+// lets through unjudged (core/Rules.h, CommandKind::Involuntary: an effect's
+// command, an animation, a jump, a bark; and with nothing current, what is
+// queued on it that the engine has not begun). With nothing of its own let
+// through this turn that is what holds a creature, whatever the command
+// (TurnMachine::HoldRuns). Until issue 88 only an effect's did: a Desire Demon
+// at a `play animation` its script had given it (the Blackmarsh's Fade,
+// 2026-10-09) was taken to be at an action of its turn's, which the turn
+// waited to see the end of, and five of its turns stood out max_action_ms,
+// twelve seconds of the wall each, `still at a play animation after 36000 ms:
+// stopped`.
+bool AtWhatItDidNotChoose(const ActorObservation &actor)
+{
+    return actor.busy && Classify(actor.current) == CommandKind::Involuntary;
+}
+
+// What holds a creature, for the log's lines: an effect's command, as they
+// have always said, or the engine's or the story's other by its name.
+std::string HeldBy(CommandType at, std::string_view article)
+{
+    if (at == CommandType::ExecuteEffect)
+    {
+        return std::format("{} effect's command", article == "a" ? "an" : article);
+    }
+    if (at == CommandType::Invalid)
+    {
+        return std::format("{} command queued on it that the engine has not begun", article);
+    }
+    return std::format("{} {} it did not order", article, Name(at));
+}
+
 } // namespace
 
 const char *Name(Phase phase)
@@ -1323,7 +1354,7 @@ std::optional<Verdict> TurnMachine::PayAction(const Combatant &who, const Comman
         // out, its swing never begun.
         Log(LogLevel::Info, std::format("{}: {} with {:.1f} m to walk and {}: it closes in", Utf8(who.name),
                                         Name(request.type), walk, BudgetLeft()));
-        budget_.onArrivalMs = cost; // taken if it gets there after all
+        budget_.onArrivalMs = cost; // taken if it gets there after all, and strikes
         return std::nullopt;
     }
     const std::uint32_t walkMs = budget_.spend.WalkCostMs(walk);
@@ -1507,7 +1538,28 @@ bool TurnMachine::PayWait(const Combatant &who, const CommandRequest &request)
     return true;
 }
 
-void TurnMachine::ChargeOnArrival(std::vector<Effect> &fx)
+// An action's time that went to its walk (Budget::onArrivalMs: one that set
+// out with further to walk than its bar held, or whose walk ran past the bar,
+// TrackMovement) is taken as the engine ends its command as done
+// (OnCommandDone): the action it walked for ran, by the engine's own word.
+// What does not fit is owed to its creature's next turn.
+//
+// Until issue 88 it was taken at the first look that found its creature at
+// the command and not moving, "it got there", and a frame without a step is
+// not that. A creature whose feet stopped and started on the way was charged
+// at each stop, and its next step past the bar handed the time to the walk
+// again: Velanna, creeping round a target whose ring was full (the Fade's
+// crypt, 2026-10-09), `walk runs past its bar: its attack's 2.11 s goes to
+// the walk` and 39 ms on `is at its attack: its 2.11 s taken now, 0.08 s of
+// it owed to its next turn`, the pair six times over in three and a half
+// seconds, and 0.92 s owed to her next turn for a blow never struck. And an
+// attack that set out to close in was charged in its first frame, before its
+// creature had taken a step (`Oghren: attack with 21.5 m to walk ...: it
+// closes in`, and 16 ms on `Oghren is at its attack: its 2.60 s taken now`,
+// the same evening). Taken once, at the command's end, the time cannot go to
+// the walk a second time: from the walk's taking it until then there is none
+// charged to hand over.
+void TurnMachine::ChargeOnArrival(CommandType done)
 {
     const Combatant *current = order_.Current();
     const std::uint32_t cost = std::exchange(budget_.onArrivalMs, 0);
@@ -1519,15 +1571,17 @@ void TurnMachine::ChargeOnArrival(std::vector<Effect> &fx)
     budget_.lastCostMs = cost - owed;
     if (owed > 0)
     {
-        Owe(current->id, owed, budget_.lastType, budget_.lastAbility);
+        Owe(current->id, owed, done, budget_.lastAbility);
     }
     Log(LogLevel::Info,
-        std::format("{} is at its {}: its {:.2f} s taken now{}; {}", Utf8(current->name), Name(budget_.lastType),
+        std::format("{}'s {} is done: its {:.2f} s taken now{}; {}", Utf8(current->name), Name(done),
                     static_cast<float>(cost) / 1000.0f,
                     owed > 0 ? std::format(", {:.2f} s of it owed to its next turn", static_cast<float>(owed) / 1000.0f)
                              : std::string{},
                     BudgetLeft()));
-    MoveClock(fx);
+    // (With the next frame's effects, as what the gate's calls move: this
+    // comes from the engine's own end of the command, outside a step.)
+    MoveClock(pending_);
 }
 
 // Whether the mod's own copy of the game's interruption rule judges a blow
@@ -1673,24 +1727,25 @@ bool TurnMachine::LandCast(const Combatant &who, std::vector<Effect> &fx)
     {
         return false;
     }
-    // Not to a creature at an effect's command: given then, it queues behind
-    // the effect, and the machine took the effect for the action's own (a
-    // command of its creature's had been let through) and ran its time with
-    // it, at three times the patience. A bandit archer whose kept shot was
-    // given so stood 26 s before "still at a attack after 36000 ms", its
-    // target's clock aged with it (issue 11, the playthrough, 2026-10-03
-    // 13:07: the gate said "its creature is at a command already" as the
-    // shot was given, and 45 ms on "its action's own effect holds it"). It is
-    // held by that effect, as any creature found so when its turn comes
-    // (Handover), and what it kept waits: for the effect to let go, its time
-    // taken of the bar as it runs (HoldRuns), or, the hold outlasting the
-    // bar, for its next turn.
-    const bool atAnEffect =
-        seenActor_ && seenActor_->id == who.id && seenActor_->busy && seenActor_->current == CommandType::ExecuteEffect;
-    if (atAnEffect)
+    // Not to a creature at an effect's command, or at any other it did not
+    // choose (AtWhatItDidNotChoose): given then, it queues behind the effect,
+    // and the machine took the effect for the action's own (a command of its
+    // creature's had been let through) and ran its time with it, at three
+    // times the patience. A bandit archer whose kept shot was given so stood
+    // 26 s before "still at a attack after 36000 ms", its target's clock
+    // aged with it (issue 11, the playthrough, 2026-10-03 13:07: the gate
+    // said "its creature is at a command already" as the shot was given, and
+    // 45 ms on "its action's own effect holds it"). It is held by that
+    // command, as any creature found so when its turn comes (Handover), and
+    // what it kept waits: for the command to let go, its time taken of the
+    // bar as it runs (HoldRuns), or, the hold outlasting the bar, for its
+    // next turn.
+    if (seenActor_ && seenActor_->id == who.id && AtWhatItDidNotChoose(*seenActor_))
     {
         Log(LogLevel::Info,
-            std::format("{}'s pending {} waits: an effect holds its creature", Utf8(who.name), Name(charge->type)));
+            std::format("{}'s pending {} waits: {} holds its creature", Utf8(who.name), Name(charge->type),
+                        seenActor_->current == CommandType::ExecuteEffect ? "an effect"
+                                                                          : HeldBy(seenActor_->current, "a")));
         return false;
     }
     landing_ = *charge;
@@ -2420,6 +2475,7 @@ bool TurnMachine::HoldRuns(const ActorObservation &actor, std::vector<Effect> &f
         // engine's own step ran since the look before, the turn's first if
         // the hold was there as the turn began, is taken with this one.
         budget_.heldSeen = clock_;
+        budget_.heldAt = actor.current;
         budget_.holdRanMs = 0;
         budget_.holdBarMs = 0;
         budget_.holdStepMs = 0;
@@ -2446,9 +2502,9 @@ bool TurnMachine::HoldRuns(const ActorObservation &actor, std::vector<Effect> &f
                                                    actor.step.elapsedMs, actor.step.durationMs)
                                      : std::string{"; its step is one the engine does not time"};
         Log(LogLevel::Info,
-            std::format("{} is held by an effect's command, {}{}: the time it holds is taken of its bar as it runs, "
-                        "by the engine's own count of its step where it times it ({}{}){}",
-                        Utf8(current->name), count, after, BudgetLeft(), step, effects));
+            std::format("{} is held by {}, {}{}: the time it holds is taken of its bar as it runs, by the engine's "
+                        "own count of its step where it times it ({}{}){}",
+                        Utf8(current->name), HeldBy(actor.current, "a"), count, after, BudgetLeft(), step, effects));
     }
     ChargeHold(fx, true);
     if (budget_.spend.CapacityLeftMs() > 0)
@@ -2456,8 +2512,8 @@ bool TurnMachine::HoldRuns(const ActorObservation &actor, std::vector<Effect> &f
         return false;
     }
     Log(LogLevel::Info,
-        std::format("{} is held by an effect's command past its bar ({:.2f} s held this turn): its turn is lost{}",
-                    Utf8(current->name), static_cast<float>(budget_.heldMs) / 1000.0f, effects));
+        std::format("{} is held by {} past its bar ({:.2f} s held this turn): its turn is lost{}", Utf8(current->name),
+                    HeldBy(actor.current, "a"), static_cast<float>(budget_.heldMs) / 1000.0f, effects));
     Floaty(fx, current->id, current->name + L" loses the turn", current->side == Side::Party ? kGold : kGrey);
     EndTurn(fx, "held by an effect");
     return true;
@@ -2545,9 +2601,9 @@ void TurnMachine::HoldLetGo(const Combatant &who, std::vector<Effect> &fx)
     // With whose count it was: the engine's own of its timed step, and the
     // machine's clock for what the engine does not time.
     Log(LogLevel::Info,
-        std::format("{} is free of the effect's command after {:.2f} s, {:.2f} s of its bar: {} ({:.2f} s of the hold "
-                    "by the engine's own count of its step, {:.2f} s by the fight's clock where the engine times none)",
-                    Utf8(who.name), static_cast<float>(budget_.holdRanMs) / 1000.0f,
+        std::format("{} is free of {} after {:.2f} s, {:.2f} s of its bar: {} ({:.2f} s of the hold by the engine's "
+                    "own count of its step, {:.2f} s by the fight's clock where the engine times none)",
+                    Utf8(who.name), HeldBy(budget_.heldAt, "the"), static_cast<float>(budget_.holdRanMs) / 1000.0f,
                     static_cast<float>(budget_.holdBarMs) / 1000.0f, BudgetLeft(),
                     static_cast<float>(budget_.holdStepMs) / 1000.0f,
                     static_cast<float>(budget_.holdRanMs - budget_.holdStepMs) / 1000.0f));
@@ -2715,8 +2771,10 @@ void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
     // choose either: with the next step it is found at its mode and not
     // held, nothing charged, and its turn is spent on the mode as it settles.
     // StepExecuting, AtItsOwnMode; issue 51.)
-    if (!UnawareNow(who) && seenActor_ && seenActor_->id == who.id && seenActor_->busy &&
-        seenActor_->current == CommandType::ExecuteEffect)
+    // (Nor is one at any other command it did not choose, an animation its
+    // script gave it: the game's own AI chooses nothing for a creature that
+    // is at a command, ai_main_h_2.nss, AI_DetermineCombatRound. Issue 88.)
+    if (!UnawareNow(who) && seenActor_ && seenActor_->id == who.id && AtWhatItDidNotChoose(*seenActor_))
     {
         heldByEffect_ = true;
         phase_ = Phase::Executing;
@@ -2884,7 +2942,7 @@ void TurnMachine::StepAwaiting(const Observation &obs, std::vector<Effect> &fx)
                 std::format("busy with a {} the gate did not see; letting it run{}", Name(obs.actor->current),
                             obs.actor->effects.empty() ? std::string{} : ": " + obs.actor->effects));
         }
-        heldByEffect_ = obs.actor->current == CommandType::ExecuteEffect;
+        heldByEffect_ = AtWhatItDidNotChoose(*obs.actor);
         phase_ = Phase::Executing;
         executingSince_ = clock_;
         idleTicks_ = 0;
@@ -2971,7 +3029,7 @@ void TurnMachine::StepThinking(const Observation &obs, std::vector<Effect> &fx)
     {
         // Its choice would have come through the gate, which moves on to
         // executing: busy here is something else's.
-        heldByEffect_ = obs.actor->current == CommandType::ExecuteEffect;
+        heldByEffect_ = AtWhatItDidNotChoose(*obs.actor);
         phase_ = Phase::Executing;
         executingSince_ = clock_;
         idleTicks_ = 0;
@@ -3024,10 +3082,6 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         MoveClock(fx);
         EndTurn(fx, actor.conjureHeld ? "its spell conjuring" : "its spell cast at once");
         return;
-    }
-    if (budget_.onArrivalMs > 0 && actor.busy && !actor.moving && Classify(actor.current) == CommandKind::Action)
-    {
-        ChargeOnArrival(fx);
     }
     // At its own mode's command (AtItsOwnMode; issue 51): a mode turned on
     // in its own turn, say, whose command the engine then keeps it at. That
@@ -3160,7 +3214,7 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     {
         ownEffectSince_.reset();
     }
-    if (heldByEffect_ && (!actor.busy || actor.current != CommandType::ExecuteEffect))
+    if (heldByEffect_ && !AtWhatItDidNotChoose(actor))
     {
         // Idle one frame is not yet let go: a frame can fall between one
         // command the engine queues and the next (a fall, say, and then the
@@ -3320,7 +3374,9 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         // game's time at "execute effect" (issue 11, the highway to
         // Lothering, 2026-10-03), and the five seconds it was then let be
         // for were the mod's number, not the engine's (issue 30).
-        if (!heldByEffect_ && actor.current == CommandType::ExecuteEffect && budget_.commands == 0)
+        // And at any other command it did not choose (AtWhatItDidNotChoose;
+        // issue 88): the same hold, by the same word of the engine's.
+        if (!heldByEffect_ && AtWhatItDidNotChoose(actor) && budget_.commands == 0)
         {
             heldByEffect_ = true;
         }
@@ -3391,12 +3447,6 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
     if (++idleTicks_ < 2)
     {
         return;
-    }
-    // Its command is over and did not fail (OnCommandFailed drops what was
-    // to be taken): the action it walked for ran.
-    if (budget_.onArrivalMs > 0)
-    {
-        ChargeOnArrival(fx);
     }
     OverAtOnce(fx);
     const Combatant *current = order_.Current();
@@ -3604,7 +3654,7 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
     }
     // With time, an action charged as it was let through, whose walk then
     // runs past the bar: its time goes to the walk, and the action is
-    // charged when its creature gets there (ChargeOnArrival), what does not
+    // charged when its command is done (ChargeOnArrival), what does not
     // fit then owed to the next turn. Stopped here, a bandit that walked
     // for a line of sight lost the turn, its shot never fired (play test
     // 26), as a spider did whose path was longer than the gate could tell.
@@ -3616,7 +3666,7 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
         const Combatant *walker = order_.Current();
         Log(LogLevel::Info,
             std::format("{}'s walk runs past its bar: its {}'s {:.2f} s goes to the walk, and is "
-                        "taken when it gets there ({})",
+                        "taken as that is done ({})",
                         walker != nullptr ? Utf8(walker->name) : std::string{"?"}, Name(budget_.lastType),
                         static_cast<float>(budget_.onArrivalMs) / 1000.0f, BudgetLeft()));
         MoveClock(fx);
@@ -5123,15 +5173,30 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     // another command." The second: allowed, every pass would be watched in
     // real time and what did not fit would be a debt against a turn that
     // rolls time over.
+    //
+    // And an AI whose actions have been given back twice (kGivenBackEnough):
+    // it has nothing it can get to, and its turn ends as it settles
+    // (StepSettling). Until issue 88 that was said only there, and the game's
+    // script answers a failure with its next order inside the failure's own
+    // event, before a step of the machine's: the third was let through like
+    // any. In the Fade's crypt (2026-10-09) Oghren's talent failed for want
+    // of a path twice, `its action is given back` each time, a third `use
+    // ability (action, from script); 0.07 s and 0.3 m left` came a
+    // millisecond after the second failure, and that one stood out
+    // max_action_ms, twelve seconds of the wall.
     const bool actionKept = chargeBegan_ || pendingEndNow_;
     const bool aiPassed = !player && passRequested_ && !landing && !approaching;
-    if (actionKept || aiPassed)
+    const bool nothingToGetTo = !player && budget_.givenBack >= kGivenBackEnough;
+    if (actionKept || aiPassed || nothingToGetTo)
     {
         if (Logs(refusals))
         {
             Refused(refusals,
                     std::format("{}: {} from {} held, its turn is over: {}", Utf8(who->name), Name(request.type),
-                                Name(request.source), actionKept ? "its action is pending" : "it has passed"));
+                                Name(request.source),
+                                actionKept ? "its action is pending"
+                                : aiPassed ? "it has passed"
+                                           : "two of its actions were given back, and it has nothing it can get to"));
         }
         return Verdict::Block;
     }
@@ -5630,7 +5695,17 @@ bool TurnMachine::OnCommandFailed(ObjectId who, CommandType type, std::string_vi
 void TurnMachine::OnCommandDone(ObjectId who, CommandType type)
 {
     const Combatant *current = order_.Current();
-    if (!Active() || current == nullptr || current->id != who || PlayerControls(*current))
+    if (!Active() || current == nullptr || current->id != who)
+    {
+        return;
+    }
+    // An action whose time went to its walk has run: taken now, whoever
+    // plays the turn (ChargeOnArrival; issue 88).
+    if (Classify(type) == CommandKind::Action)
+    {
+        ChargeOnArrival(type);
+    }
+    if (PlayerControls(*current))
     {
         return;
     }

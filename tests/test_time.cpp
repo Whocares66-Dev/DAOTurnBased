@@ -1172,18 +1172,11 @@ std::vector<Endless> EndlessTurns()
          again(CommandType::SwitchWeaponSets, Source::Script)},
         {"the engine's own weapon commands, one as each ends",
          queue(CommandType::SheatheWeapons, Source::Engine, false), again(CommandType::SheatheWeapons, Source::Engine)},
-        // The engine failed attacks within 2 ms before issue 27 had the gate
-        // refuse them unasked: no time runs between the two, each is given
-        // back whole, and the turn never settles for the count of them to be
-        // looked at.
-        {"an attack the engine fails in the frame it was let through, and a weapon set switched, by turns",
-         queue(CommandType::SwitchWeaponSets, Source::Script, false),
-         [](World &w, ObjectId id, int) {
-             w.Finish(id);
-             CHECK(Strike(w, id, kHero, Source::Script, 1.0f) == Verdict::Allow);
-             (void)w.Fail(id, "COMMAND_FAILED_INVALID_PATH");
-             CHECK(w.Order(id, CommandType::SwitchWeaponSets, Source::Script) == Verdict::Allow);
-         }},
+        // (Not an attack the engine fails as it is let through, with a weapon
+        // set switched between: until issue 88 the turn never settled for the
+        // count of its actions given back to be looked at, and went on to the
+        // limit. The second give-back ends it at the gate now:
+        // test_notordered.cpp.)
         // The engine's own stuck timer gives a walk up after a second, and
         // its script queues the same.
         {"a walk the engine fails after its own second, queued again as each fails",
@@ -1875,7 +1868,7 @@ TEST_CASE("with time, a turn that began by paying for a pending action says what
     CHECK(w.machine.View().timeLeftMs == 3000);
 }
 
-TEST_CASE("with time, an action whose walk runs past the bar is charged when its creature gets there", "[time]")
+TEST_CASE("with time, an action whose walk runs past the bar is charged as its command is done", "[time]")
 {
     World w(Timed());
     w.onPoke = [&](ObjectId id) {
@@ -1897,9 +1890,14 @@ TEST_CASE("with time, an action whose walk runs past the bar is charged when its
     w.Walk(kGenlock, 15.0f);
     CHECK(w.Get(kGenlock).busy);
     CHECK(w.Current() == kGenlock);
-    // Standing at its attack: the 2 s are taken now, 1.2 s of them there
-    // and 0.8 s owed to its next turn.
+    // Standing at its attack, it has not struck yet: nothing is taken for a
+    // creature that only stands (issue 88).
     w.RunFor(100);
+    CHECK(w.machine.View().timeLeftMs > 1100);
+    CHECK(w.machine.State().charging.empty());
+    // It strikes, and the engine ends its command as done: the 2 s are taken
+    // now, 1.2 s of them there and 0.8 s owed to its next turn.
+    w.Finish(kGenlock);
     CHECK(w.machine.View().timeLeftMs == 0);
     const auto charging = w.machine.State().charging;
     const auto debt = std::ranges::find(charging, kGenlock, &ChargeView::id);
@@ -1932,7 +1930,7 @@ TEST_CASE("with time, a walk longer than the whole bar is stopped, and its actio
 // that action's time back once a turn (TrackMovement, budget_.refunded). On
 // the bar the time given back is a second action's, let through while the
 // first one's had already gone to its walk ("an action whose walk runs past
-// the bar is charged when its creature gets there", above; onArrivalMs): the
+// the bar is charged as its command is done", above; onArrivalMs): the
 // first is never taken, and the second, charged as it was let through, is
 // what the stop finds to give back. The random fights have it of an AI, whose
 // turn ends at the stop (test_fights.cpp's "[fight-seed]" with TB_SEED 62, 72
@@ -1953,9 +1951,7 @@ TEST_CASE("with time, an action is given back at a walk stopped past the bar onc
     const auto pastTheBar = [&] { return Lines(w, "Hero's walk runs past its bar"); };
     const auto stopped = [&] { return Lines(w, "Hero is out of movement"); };
     const auto kept = [&] { return Lines(w, "the action it was moving for is kept"); };
-    // Half a meter a frame until `seen`, and still walking then: Walk()
-    // stands its creature as it ends, and one that stands at its attack has
-    // got there, the time kept for its arrival taken (ChargeOnArrival).
+    // Half a meter a frame until `seen`, and still walking then.
     const auto walkUntil = [&](const auto &seen) {
         w.Get(kHero).moving = true;
         for (int i = 0; i < 100 && !seen(); ++i)

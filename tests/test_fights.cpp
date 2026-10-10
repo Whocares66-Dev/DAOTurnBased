@@ -4032,8 +4032,11 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     CHECK(coverage.heldTimed > 30);
     CHECK(coverage.movementCuts > 85);
     // With time a walk past the bar takes its action's time, and the action
-    // is charged on arriving: seldom given back.
-    // (2026-10-02: 182 walks on an action's time, 102 arrivals.)
+    // is charged as its command is done: seldom given back.
+    // (2026-10-02: 182 walks on an action's time, 102 arrivals. Since issue
+    // 88, 2026-10-09, an arrival is the engine ending the command as done,
+    // where every frame its creature stood at it was one, the frame before
+    // its first step among them: 29.)
     CHECK(coverage.unplayed > 2); // an action over at once, given back (8)
     // An AI's move done where it began on its own turn, its pass (23; issue
     // 59, 2026-10-09: 45, one script's move in twenty drawn so, and the
@@ -4041,7 +4044,7 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     // here still reached).
     CHECK(coverage.nowhere > 15);
     CHECK(coverage.walkedOnAction > 60);
-    CHECK(coverage.arrivals > 30);
+    CHECK(coverage.arrivals > 20);
     CHECK(coverage.tooFar > 5);
     CHECK(coverage.lostTurns > 60); // whole turns: most holds are shorter (193)
     CHECK(coverage.cooldownsHeld > 400);

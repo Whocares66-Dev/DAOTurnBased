@@ -752,6 +752,9 @@ class TurnMachine
     // Not a move the engine failed or one that was cleared, which this is not
     // told of: its script is told of a failure, and answers it with something
     // else.
+    // And an action of the acting creature's done, whoever plays its turn:
+    // if its time went to its walk, that time is taken now (ChargeOnArrival;
+    // issue 88; dev/DESIGN.md, "A turn does not wait out the limit").
     void OnCommandDone(ObjectId who, CommandType type);
 
     // From the game (DAOLib's dao::abilities::OnCooldownSet): the engine has
@@ -910,23 +913,26 @@ class TurnMachine
         // (EffectKind::Approach): where the meters paid for end, it stops
         // without a word.
         bool approachWalk = false;
-        // An action's time, to be taken when its creature gets there: its
-        // walk ran past the bar on the time the action had been charged (an
-        // archer walking for its shot, a path longer than the gate could
-        // tell), and that time went to the walk.
+        // An action's time, to be taken when the engine ends its command as
+        // done (ChargeOnArrival; issue 88): its walk ran past the bar on the
+        // time the action had been charged (an archer walking for its shot,
+        // a path longer than the gate could tell), and that time went to the
+        // walk; or it set out with further to walk than its bar held.
         std::uint32_t onArrivalMs = 0;
         // An action whose own effect holds its creature (a spider's
         // Overwhelm, an ogre's grab) is charged the time it runs: what of
         // its own cost still covers that time (none: no such effect yet).
         std::optional<std::uint32_t> ownEffectCover;
-        // Held at an effect's command it did not choose (heldByEffect_,
-        // HoldRuns): the world's clock as the hold was last charged (none:
-        // no hold is being charged), how long holds have run this turn, how
-        // much of that the shared effects' clock is still to be moved by, and
-        // of the hold under way how long it has run, how much of that was the
-        // engine's own count of its timed step (ChargeHold; issue 64) and
-        // what it took of the bar, for the log.
+        // Held at an effect's command it did not choose, or at another of
+        // the engine's or the story's (heldByEffect_, HoldRuns; issue 88):
+        // the world's clock as the hold was last charged (none: no hold is
+        // being charged) and the command that holds it, how long holds have
+        // run this turn, how much of that the shared effects' clock is still
+        // to be moved by, and of the hold under way how long it has run, how
+        // much of that was the engine's own count of its timed step
+        // (ChargeHold; issue 64) and what it took of the bar, for the log.
         std::optional<std::uint32_t> heldSeen;
+        CommandType heldAt = CommandType::ExecuteEffect;
         std::uint32_t heldMs = 0;
         std::uint32_t heldUnagedMs = 0;
         std::uint32_t holdRanMs = 0;
@@ -1047,7 +1053,9 @@ class TurnMachine
     // With time: an action that has run owes `ms` more to its creature's
     // next turns.
     void Owe(ObjectId who, std::uint32_t ms, CommandType type, std::int32_t ability);
-    void ChargeOnArrival(std::vector<Effect> &fx);
+    // With time: an action whose time went to its walk has run, the engine
+    // having ended its command (`done`) as done: that time is taken now.
+    void ChargeOnArrival(CommandType done);
     void DelayTurn(std::vector<Effect> &fx);
     void OverAtOnce(std::vector<Effect> &fx);
     void TellTurnStart(const Combatant &who, std::vector<Effect> &fx);
@@ -1235,6 +1243,11 @@ class TurnMachine
     // it kept not given, and the time it is held is its turn's (HoldRuns).
     // Not one at its own mode's command (AtItsOwnMode; issue 51): that is
     // its own doing, and no hold.
+    // Since issue 88 it is so of every command the engine or the story has
+    // it at and the gate does not judge (an animation its script gave it,
+    // a jump, a bark: core/Rules.h, CommandKind::Involuntary), an effect's
+    // being one of them: the name, the state's `held_by_effect` and the
+    // turn's end `held by an effect` are of the first kind met.
     bool heldByEffect_ = false;
     // The current combatant is a hostile that has noticed nobody to fight
     // (core/Rules.h, Rotation::Unaware), in the beat its turn is skipped after

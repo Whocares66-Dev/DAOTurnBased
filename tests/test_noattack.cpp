@@ -378,20 +378,23 @@ TEST_CASE("the failure's line names no target where the game layer gave none", "
     CHECK(Logged(w, "Genlock's attack failed (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING): its action is given back"));
 }
 
-TEST_CASE("a turn that keeps failing at the blow, its script moving and trying again as each fails, is ended by the "
-          "limit on a turn an AI plays",
+TEST_CASE("a turn that keeps failing at the blow, its script moving and trying again as each fails, ends at the "
+          "second action given back",
           "[noattack][limit]")
 {
     // Nothing is remembered of a failure, and nothing counts a turn's
     // commands (issue 38: until 2026-10-04 max_commands_per_turn ended this
     // turn at three attacks and three moves, "done"). An AI whose script
     // moves and tries the same target again as each attack fails never lets
-    // the turn settle, so the count of its actions given back, two, is not
-    // looked at, and each failed swing is given back whole: its bar never
-    // moves. What ends it is its turn's time, max_turn_ms. (The move is one
-    // the engine fails too, for want of a path, as it often did in play:
-    // DAOLib's dao/CommandEvents.h. A move done where it began would be its
-    // AI's pass, and the turn over at the first: issue 59, test_nowhere.cpp.)
+    // the turn settle between two of them, and until issue 88 the count of
+    // its actions given back, two, was looked at only as a turn settled:
+    // each failed swing was given back whole, and what ended the turn was
+    // its time, max_turn_ms, thirty seconds and nine hundred swings on. The
+    // gate holds the count now, and the move after the second failure is
+    // refused. (The move is one the engine fails too, for want of a path, as
+    // it often did in play: DAOLib's dao/CommandEvents.h. A move done where
+    // it began would be its AI's pass, and the turn over at the first: issue
+    // 59, test_nowhere.cpp.)
     World w(Timed());
     std::vector<std::string> ends;
     KeepEnds(w, ends);
@@ -421,20 +424,17 @@ TEST_CASE("a turn that keeps failing at the blow, its script moving and trying a
         }
         w.Frame();
     }
-    // Thirty seconds of it, two frames a round: the attack begun in the
-    // frame the limit was passed is stopped, and nothing of the bar went to
-    // any of them.
-    CHECK(w.Current() != kGenlock);
-    CHECK(ran >= 30000);
-    CHECK(ran <= 30100);
-    CHECK(swings > 900);
+    // Two swings, each given back whole, and its script's move after the
+    // second is refused: the turn settles and is over, within a second.
+    CHECK(ran <= 100);
+    CHECK(swings == 2);
     CHECK(Lines(w, "Genlock's attack on Hero failed (COMMAND_FAILED_NO_SPACE_IN_MELEE_RING): its action is given "
-                   "back") > 900);
-    CHECK(Logged(w, "Genlock's turn is still going after 30000 ms, "));
-    CHECK(w.Did(EffectKind::ClearCommands, kGenlock));
+                   "back") == 2);
+    w.RunFor(700);
+    CHECK(w.Current() != kGenlock);
+    CHECK_FALSE(Logged(w, "turn is still going after"));
     REQUIRE(ends.size() == 1);
-    CHECK(ends.front() == "took too long");
-    CHECK_FALSE(Logged(w, "commands this turn"));
+    CHECK(ends.front() == "nothing it can get to");
 }
 
 TEST_CASE("given back before a step and then at the blow: twice in a turn, and its turn ends", "[noattack]")
@@ -487,8 +487,10 @@ TEST_CASE("its script answers each failure with a wait: the wait costs its time,
     REQUIRE(swings == 2); // told again as the turn settled
     CHECK(Logged(w, "Genlock chooses again, its action given back"));
     CHECK(w.Fail(kGenlock, kNoSpace));
+    // (Its wait after the second is refused with whatever else it orders,
+    // its turn being over, and nothing is paid for it: issue 88.)
     CHECK(w.Wait(kGenlock, 1.0f) == Verdict::Block);
-    CHECK(Logged(w, "Genlock waits 1.00 s; 2.00 s"));
+    CHECK_FALSE(Logged(w, "Genlock waits 1.00 s; 2.00 s"));
     w.RunFor(100);
     CHECK(swings == 2);
     CHECK(w.Current() != kGenlock);
