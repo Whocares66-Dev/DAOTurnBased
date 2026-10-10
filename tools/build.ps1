@@ -40,6 +40,18 @@
     every C++ file and PSScriptAnalyzer over the PowerShell. The `tidy` target;
     a finding fails the run.
 
+.PARAMETER LongFights
+    After building, play the five hundred long random fights
+    (tests\test_fights.cpp, "[fights-long]"): twenty test cases that share
+    nothing, as twenty processes side by side. For a change to src/core's
+    logic, before a merge.
+
+.PARAMETER Mutants
+    After building, break the core on purpose: the mutants whose names (or
+    parts of names) are given, by tools\mutants.py, in the compiler's
+    environment this script has imported. The ones a branch added or changed,
+    before a merge.
+
 .PARAMETER Jobs
     How many compilations to run at once. The default leaves two of the
     machine's cores to everything else.
@@ -50,6 +62,7 @@
     .\tools\build.ps1 -Preset debug-asan -Test
     .\tools\build.ps1 -Preset release
     .\tools\build.ps1 -Preset core -Test
+    .\tools\build.ps1 -Preset core -LongFights -Mutants 'rules: a shot', 'a staff draws'
     .\tools\build.ps1 -Preset core-cov -Coverage
 #>
 [CmdletBinding()]
@@ -61,6 +74,8 @@ param(
     [switch] $Format,
     [switch] $Lint,
     [switch] $Fresh,
+    [switch] $LongFights,
+    [string[]] $Mutants = @(),
     [int] $Jobs = 0
 )
 
@@ -182,6 +197,45 @@ try {
         # possible). Each test is a process of its own with nothing shared.
         ctest --preset $Preset --parallel $parallel
         if ($LASTEXITCODE -ne 0) { throw "tests failed ($LASTEXITCODE)" }
+    }
+
+    if ($LongFights) {
+        Show-Line "`n== long fights ($Preset) ==" -Colour Cyan
+        # Twenty test cases that share nothing, each a twentieth of every lot
+        # (tests\test_fights.cpp, kLongParts): one process each, all at once,
+        # by Catch2's own sharding of the cases it is asked for. The user,
+        # 2026-10-10, of two thousand played one after another in one process
+        # on a machine of twenty cores: "parallelize them".
+        $parts = 20
+        $tests = Join-Path $buildDir 'tests\tb_tests.exe'
+        $logs = Join-Path $buildDir 'long-fights'
+        New-Item -ItemType Directory -Force $logs | Out-Null
+        $began = Get-Date
+        $running = foreach ($part in 0..($parts - 1)) {
+            $out = Join-Path $logs "part$part.txt"
+            $process = Start-Process -FilePath $tests -NoNewWindow -PassThru `
+                -ArgumentList '[fights-long]', '--shard-count', $parts, '--shard-index', $part `
+                -RedirectStandardOutput $out -RedirectStandardError "$out.err"
+            $null = $process.Handle # held, or ExitCode reads empty once the process has gone
+            [pscustomobject]@{ Part = $part; Process = $process; Out = $out }
+        }
+        $failed = @()
+        foreach ($one in $running) {
+            $one.Process.WaitForExit()
+            if ($one.Process.ExitCode -ne 0) { $failed += $one }
+        }
+        foreach ($one in $failed) {
+            Show-Line "`n-- part $($one.Part) --" -Colour Red
+            Get-Content $one.Out | Select-Object -Last 40 | ForEach-Object { Show-Line $_ }
+        }
+        if ($failed) { throw "long fights failed: $($failed.Count) of $parts parts; their output is in $logs" }
+        Show-Line ("  {0} parts side by side, {1:n0} s" -f $parts, ((Get-Date) - $began).TotalSeconds)
+    }
+
+    if ($Mutants) {
+        Show-Line "`n== mutants ==" -Colour Cyan
+        python (Join-Path $repo 'tools\mutants.py') @Mutants
+        if ($LASTEXITCODE -ne 0) { throw "mutants failed ($LASTEXITCODE)" }
     }
 
     if ($Format) {

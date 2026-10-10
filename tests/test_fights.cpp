@@ -130,6 +130,7 @@
 #include "core/TurnEnd.h"
 #include "core/TurnMachine.h"
 
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -3894,10 +3895,14 @@ void Count(const Coverage &c, std::uint64_t count, bool strays, bool choices)
 }
 
 // Plays fights from seed 1 up, and says what they reached.
-Coverage PlayFights(std::uint64_t count, bool strays = false, bool choices = false)
+// So many fights of a kind, by their seeds from 1. Or one part of them in
+// `parts`: every `parts`th seed from the `part`th, so that the parts
+// together are the same fights and each is as mixed as the whole.
+Coverage PlayFights(std::uint64_t count, bool strays = false, bool choices = false, std::uint64_t part = 0,
+                    std::uint64_t parts = 1)
 {
     Coverage coverage;
-    for (std::uint64_t seed = 1; seed <= count; ++seed)
+    for (std::uint64_t seed = 1 + part; seed <= count; seed += parts)
     {
         CAPTURE(seed);
         CAPTURE(strays);
@@ -4266,29 +4271,41 @@ TEST_CASE("one random fight, by the seed in TB_SEED", "[.][fight-seed]")
     arena.Play();
 }
 
-// Two thousand more, for a change to the machine: `tb_tests "[fights-long]"`.
-// One lot of each kind: a thousand; five hundred with hostiles unaware and
-// combatants out of reach; and two hundred and fifty with the party's tactics
-// chosen and changed in them (18), then as many of those among hostiles
-// unaware and combatants out of reach as well, and so among Haste and slows
-// that come and go (19): a companion's turn begun as its tactics' or as the
-// player's, at a pace its effects have changed, is only there.
+// Five hundred more, for a change to the machine, in twenty test cases that
+// share nothing, so that they are played side by side, one process each:
+// `.\tools\build.ps1 -Preset core -LongFights` (or all twenty one after
+// another, `tb_tests "[fights-long]"`). Each case is every twentieth seed of
+// each lot. One lot of each kind: 250; 125 with hostiles unaware and
+// combatants out of reach; and 63 with the party's tactics chosen and changed
+// in them, then 62 of those among hostiles unaware and combatants out of
+// reach as well, and so among Haste and slows that come and go: a
+// companion's turn begun as its tactics' or as the player's, at a pace its
+// effects have changed, is only there.
 //
-// Until issue 50 it was 3,500: a thousand, five hundred of the second kind
-// and two hundred and fifty of the third with one action and meters a turn,
-// 1,750 fights that went with that clock, beside the first, second and last
-// lots here. Those three are draw for draw the fights they were. The third
-// lot here stands where the other clock's stood, the tactics chosen with
-// nobody unaware: of its fights only seeds 1 to 30 had been played on the bar
-// before (the short run's), so 220 of them are new.
-TEST_CASE("two thousand random fights keep them too", "[.][fights-long]")
+// Until issue 102 they were two thousand (1,000, 500, 250 and 250) in one
+// test case, one after another in one process: four minutes on a quiet
+// machine of twenty cores and twelve to twenty-two beside the game, with the
+// rest of a merge's gate waiting behind them. The user, 2026-10-10: "Let's
+// cut from 2,000 down to 500 random tests, and parallelize them". These are
+// the first quarter of each lot's seeds, draw for draw the fights they were.
+// (And until issue 50 there were 3,500, 1,750 of them on a clock that went.)
+namespace
 {
-    const Coverage coverage = PlayFights(1000);
-    CHECK(coverage.fights == 1000);
-    const Coverage strays = PlayFights(500, true);
-    CHECK(strays.fights == 500);
-    const Coverage chosen = PlayFights(250, false, true);
-    CHECK(chosen.fights == 250);
-    const Coverage chosenStrays = PlayFights(250, true, true);
-    CHECK(chosenStrays.fights == 250);
+constexpr std::uint64_t kLongParts = 20; // as tools\build.ps1's -LongFights has it
+
+// How many of a lot's `count` seeds fall to a part.
+int FightsOf(std::uint64_t count, std::uint64_t part)
+{
+    return count > part ? static_cast<int>(((count - part - 1) / kLongParts) + 1) : 0;
+}
+} // namespace
+
+TEMPLATE_TEST_CASE_SIG("five hundred random fights keep them too", "[.][fights-long]", ((int Part), Part), 0, 1, 2, 3,
+                       4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
+{
+    const auto part = static_cast<std::uint64_t>(Part);
+    CHECK(PlayFights(250, false, false, part, kLongParts).fights == FightsOf(250, part));
+    CHECK(PlayFights(125, true, false, part, kLongParts).fights == FightsOf(125, part));
+    CHECK(PlayFights(63, false, true, part, kLongParts).fights == FightsOf(63, part));
+    CHECK(PlayFights(62, true, true, part, kLongParts).fights == FightsOf(62, part));
 }
