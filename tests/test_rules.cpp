@@ -717,7 +717,6 @@ TEST_CASE("a swing's time is the game's formula by weapon style, speed and attac
     CHECK(tb::SwingSeconds(tb::WeaponStyle::None, 0.0f, 1.0f) == Approx(2.0f));      // unarmed
     CHECK(tb::SwingSeconds(tb::WeaponStyle::Dual, -0.5f, 1.0f) == Approx(1.0f));     // a dagger's hand
     CHECK(tb::SwingSeconds(tb::WeaponStyle::TwoHanded, 0.1f, 1.0f) == Approx(2.6f)); // a battleaxe
-    CHECK(tb::SwingSeconds(tb::WeaponStyle::Ranged, 0.0f, 1.0f) == 0.0f);            // its animation's
     // Haste, and the clamps: over 1.5 is 1.5, under 0.5 is thrown away.
     CHECK(tb::SwingSeconds(tb::WeaponStyle::Single, 0.0f, 0.75f) == Approx(1.5f));
     CHECK(tb::SwingSeconds(tb::WeaponStyle::Single, 0.0f, 2.0f) == Approx(3.0f));
@@ -760,9 +759,11 @@ TEST_CASE("an attack's time: a person's swing by the formula, a shot, a creature
     archer.humanoid = true;
     archer.armed = true;
     archer.ranged = true;
-    CHECK(tb::AttackSeconds(archer) == Approx(1.4f)); // a follower's shot
-    archer.hero = true;
-    CHECK(tb::AttackSeconds(archer) == Approx(1.6f)); // the player's own
+    CHECK(tb::AttackSeconds(archer) == 0.0f); // its shot not reckoned: the stand-in's
+    archer.shot = 1.566f;                     // a follower's bow: 0.8 s of draw and the loose
+    CHECK(tb::AttackSeconds(archer) == Approx(1.566f));
+    archer.attackSpeedModifier = 0.75f; // does not reach a shot: its hold is the aim speed's
+    CHECK(tb::AttackSeconds(archer) == Approx(1.566f));
     tb::AttackFacts spider;
     spider.animation = 1.833f;
     spider.attackSpeedModifier = 0.75f; // does not reach an animation's swing
@@ -778,7 +779,6 @@ TEST_CASE("an ability's time: its cast less the blend, its conjuring, or a shot"
 {
     tb::AbilityFacts dirty;
     dirty.cast = 1.8f;
-    dirty.talent = true;
     CHECK(tb::AbilitySeconds(dirty) == Approx(1.512f));
     tb::AbilityFacts inferno;
     inferno.cast = 1.03f;
@@ -788,10 +788,11 @@ TEST_CASE("an ability's time: its cast less the blend, its conjuring, or a shot"
     CHECK(tb::AbilitySeconds(inferno) == Approx((1.03f * 0.84f) + 3.47f));
     inferno.loops = 0; // instant: no conjuring
     CHECK(tb::AbilitySeconds(inferno) == Approx(1.03f * 0.84f));
-    tb::AbilityFacts pinning; // no cast animation, a bow in hand: a shot
-    pinning.talent = true;
-    pinning.ranged = true;
-    CHECK(tb::AbilitySeconds(pinning) == Approx(1.4f));
+    tb::AbilityFacts pinning; // no cast animation, and it shoots: its shot's parts
+    pinning.shot = 1.566f + tb::kAbilityHoldSeconds + 0.766f;
+    CHECK(tb::AbilitySeconds(pinning) == Approx(3.832f));
+    pinning.cast = 1.8f; // one with a cast animation is its cast
+    CHECK(tb::AbilitySeconds(pinning) == Approx(1.512f));
     tb::AbilityFacts overwhelm; // a monster's special: nothing known
     CHECK(tb::AbilitySeconds(overwhelm) == 0.0f);
 }
@@ -965,25 +966,37 @@ TEST_CASE("a time no swing could take is not kept", "[rules][time]")
     CHECK(odd == tb::LearnedSwings::KeyOf(tb::WeaponStyle::Single, 0.0f, 0.0f));
 }
 
-TEST_CASE("a shot costs what its archer's last shot took, by its attack speed", "[rules][time]")
+TEST_CASE("a shot's draw is the scripts' five numbers, and its hold the game's own data", "[rules][time]")
 {
     using Catch::Approx;
-    // The user, of the flat 1.4 and 1.6 s: "we should read these".
-    tb::LearnedSwings shots;
-    const auto tamlen = tb::LearnedSwings::ShotOf(0x10d, 1.0f);
-    CHECK_FALSE(shots.Seconds(tamlen)); // the first: the flat figure, the caller's
-    REQUIRE(shots.Learn(tamlen, 1.41f));
-    CHECK(*shots.Seconds(tamlen) == Approx(1.41f));
-    // Another archer, or the same one hasted: their own.
-    CHECK_FALSE(shots.Seconds(tb::LearnedSwings::ShotOf(0x82, 1.0f)));
-    CHECK_FALSE(shots.Seconds(tb::LearnedSwings::ShotOf(0x10d, 0.75f)));
-    // Not a swing's key, whatever its numbers.
-    CHECK_FALSE(shots.Seconds(tb::LearnedSwings::KeyOf(tb::WeaponStyle::Ranged, 0.0f, 1.0f)));
-    // The mean of the last two: measured shots differ by a tenth.
-    REQUIRE(shots.Learn(tamlen, 1.81f));
-    CHECK(*shots.Seconds(tamlen) == Approx(1.61f));
-    REQUIRE(shots.Learn(tamlen, 1.61f));
-    CHECK(*shots.Seconds(tamlen) == Approx(1.71f));
+    // combat_h.nss, HandleCommandAttack: a staff; then armour and Master
+    // Archer, a follower or not.
+    tb::ShotFacts staff;
+    staff.staff = true;
+    staff.massive = true; // whatever it wears
+    CHECK(tb::DrawSeconds(staff) == Approx(0.3f));
+    tb::ShotFacts bow;
+    CHECK(tb::DrawSeconds(bow) == Approx(1.5f)); // anyone who is no follower
+    bow.follower = true;
+    CHECK(tb::DrawSeconds(bow) == Approx(0.8f)); // Nathaniel's, 0.800 s in play
+    bow.heavy = true;
+    CHECK(tb::DrawSeconds(bow) == Approx(2.0f));
+    bow.masterArcher = true; // lifts heavy armour's
+    CHECK(tb::DrawSeconds(bow) == Approx(0.8f));
+    bow.heavy = false;
+    bow.massive = true; // and not massive armour's
+    CHECK(tb::DrawSeconds(bow) == Approx(2.0f));
+    bow.follower = false;
+    CHECK(tb::DrawSeconds(bow) == Approx(2.5f));
+    // core_h.nss, GetCreatureRangedDrawSpeed: the aim speed and the weapon's
+    // delay, the weapon's not under nothing, nor the two together.
+    CHECK(tb::HoldSeconds(0.0f, 0.3f) == Approx(0.3f));
+    CHECK(tb::HoldSeconds(1.5f, 0.3f) == Approx(1.8f));  // a cultist archer's, 1.800 s in play
+    CHECK(tb::HoldSeconds(-0.2f, 0.3f) == Approx(0.1f)); // Rapid Shot, a salve
+    CHECK(tb::HoldSeconds(-0.5f, 0.3f) == 0.0f);         // never under nothing
+    CHECK(tb::HoldSeconds(0.4f, -1.0f) == Approx(0.4f)); // a table's negative is none
+    CHECK(tb::HoldSeconds(std::numeric_limits<float>::quiet_NaN(), 0.3f) == Approx(0.3f));
+    CHECK(tb::HoldSeconds(0.2f, std::numeric_limits<float>::infinity()) == Approx(0.2f));
 }
 
 TEST_CASE("the sides that fight each other: the enemies, and the party with its allies", "[rules]")

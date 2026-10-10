@@ -557,6 +557,29 @@ void SayAiAttack(const dao::CCObject &self, const dao::Command &command, const s
 // seconds were read here, for the machine to reckon what the engine would
 // start. What the engine did start is read of the engine: Bridge.cpp,
 // Status.)
+// An ability that shoots, by the game's own word for one (the abilities
+// table's flags, ABILITY_FLAG_RANGED_WEAPON: what the scripts ask before
+// they set its aim, ability_core.nss): its user's Aim animation at its own
+// length, no draw being set for an ability, the aim held as long as the
+// scripts hold it for any such, and the loose. DAOLib's example saw one so
+// (2026-10-10, its issue 51): 1,566, 1,500 and 766 ms, where the mod charged
+// a flat 1.4 s. Nothing for any other ability, or a user with no such
+// animations.
+std::optional<float> AbilityShotSeconds(ObjectId user, std::int32_t ability)
+{
+    constexpr std::int32_t kShoots = 1; // ABILITY_FLAG_RANGED_WEAPON
+    if ((dao::gda::GetInt(dao::script::Table::AbilitiesTalents, ability, "flags").value_or(0) & kShoots) == 0)
+    {
+        return std::nullopt;
+    }
+    const std::optional<float> fire = dao::animation::StepLength(user, dao::animation::kFire);
+    if (!fire)
+    {
+        return std::nullopt;
+    }
+    return dao::animation::StepLength(user, dao::animation::kAim).value_or(0.0f) + kAbilityHoldSeconds + *fire;
+}
+
 void DescribeAbilityOf(ObjectId user, std::int32_t ability, CommandRequest &request)
 {
     request.ability = ability;
@@ -592,9 +615,9 @@ void DescribeAbilityOf(ObjectId user, std::int32_t ability, CommandRequest &requ
     // With a turn a bar of time, what it takes (core: AbilitySeconds), by
     // its user's own animations (DAOLib's dao/Animation.h, a420055, and its
     // play test): the cast, the conjuring before it, or for an archery
-    // talent with no cast animation a shot. An item's is its drink, and a
-    // mode turned off nothing: the core's. Nothing known: the core's
-    // stand-in.
+    // talent with no cast animation a shot (AbilityShotSeconds). An item's
+    // is its drink, and a mode turned off nothing: the core's. Nothing
+    // known: the core's stand-in.
     if (request.abilityType == kAbilityItem || (request.sustained && request.sustainedOn))
     {
         return;
@@ -605,9 +628,7 @@ void DescribeAbilityOf(ObjectId user, std::int32_t ability, CommandRequest &requ
     facts.conjure = lengths.conjure;
     facts.conjureLoop = lengths.conjureLoop;
     facts.loops = request.conjureAnim != 0 ? static_cast<int>(request.conjureSeconds) : 0;
-    facts.ranged = armed && dao::gda::GetFloat(dao::script::Table::Items, weaponType, "Range").value_or(0.0f) > 0.0f;
-    facts.hero = api::IsHero(user) != 0;
-    facts.talent = request.abilityType == kAbilityTalent;
+    facts.shot = AbilityShotSeconds(user, ability);
     request.actionSeconds = AbilitySeconds(facts);
 }
 
@@ -675,6 +696,7 @@ struct AskedSwing
 {
     LearnedSwings::Key key;
     float formula = 0.0f;
+    bool shot = false; // a shot: reckoned whole beforehand, and nothing learnt of it
 };
 std::unordered_map<ObjectId, AskedSwing> g_askedSwings; // each creature's last
 
@@ -688,6 +710,35 @@ struct ShotBegun
 // Every attack's, shot or swing: each creature's last (WatchAttacksBegin).
 std::unordered_map<ObjectId, ShotBegun> g_attacksBegun;
 
+// A shot's time before it is loosed (core: ShotFacts, issue 101): the
+// engine's three parts of it, put together by DAOLib from the two times the
+// scripts will set for it. The draw is the scripts' five numbers, by what
+// they ask (the weapon a staff, the armour on the chest, Master Archer, the
+// engine's IsFollower); the hold is the archer's ranged aim speed and its
+// weapon type's BaseAimDelay, read here for each shot. Nothing where the
+// creature has no Fire animation: the core's stand-in then.
+std::optional<float> ShotSecondsOf(ObjectId archer, std::int32_t weaponType)
+{
+    constexpr std::int32_t kStaff = 16;        // BASE_ITEM_TYPE_STAFF
+    constexpr std::int32_t kHeavy = 11;        // BASE_ITEM_TYPE_ARMOR_HEAVY
+    constexpr std::int32_t kMassive = 12;      // BASE_ITEM_TYPE_ARMOR_MASSIVE
+    constexpr std::int32_t kSuperMassive = 22; // BASE_ITEM_TYPE_ARMOR_SUPERMASSIVE
+    constexpr std::int32_t kMasterArcher = 35; // ABILITY_TALENT_MASTER_ARCHER
+    const ObjectId chest = api::GetItemInEquipSlot(k::INVENTORY_SLOT_CHEST, archer);
+    const std::int32_t armour = api::IsObjectValid(chest) != 0 ? api::GetBaseItemType(chest) : -1;
+    ShotFacts facts;
+    facts.staff = weaponType == kStaff;
+    facts.heavy = armour == kHeavy;
+    facts.massive = armour == kMassive || armour == kSuperMassive;
+    facts.masterArcher = api::HasAbility(archer, kMasterArcher) != 0;
+    facts.follower = api::IsFollower(archer) != 0;
+    const float hold =
+        HoldSeconds(api::GetCreatureProperty(archer, k::PROPERTY_ATTRIBUTE_RANGED_AIM_SPEED, k::PROPERTY_VALUE_TOTAL),
+                    dao::gda::GetFloat(dao::script::Table::Itemstats, weaponType, "BaseAimDelay").value_or(0.0f));
+    const std::optional<dao::animation::Shot> shot = dao::animation::OfShot(archer, DrawSeconds(facts), hold);
+    return shot ? std::optional<float>{shot->Total()} : std::nullopt;
+}
+
 float SwingSecondsOf(ObjectId attacker)
 {
     if (GetCurrentThreadId() != dao::script::ScriptThreadId())
@@ -696,7 +747,6 @@ float SwingSecondsOf(ObjectId attacker)
     }
     AttackFacts facts;
     facts.humanoid = api::IsHumanoid(attacker) != 0;
-    facts.hero = api::IsHero(attacker) != 0;
     const ObjectId weapon = api::GetItemInEquipSlot(k::INVENTORY_SLOT_MAIN, attacker);
     facts.armed = api::IsObjectValid(weapon) != 0;
     if (facts.armed)
@@ -704,6 +754,10 @@ float SwingSecondsOf(ObjectId attacker)
         const std::int32_t type = api::GetBaseItemType(weapon);
         facts.ranged = dao::gda::GetFloat(dao::script::Table::Items, type, "Range").value_or(0.0f) > 0.0f;
         facts.weaponSpeed = dao::gda::GetFloat(dao::script::Table::Itemstats, type, "dspeed").value_or(0.0f);
+        if (facts.humanoid && facts.ranged)
+        {
+            facts.shot = ShotSecondsOf(attacker, type);
+        }
     }
     switch (api::GetWeaponStyle(attacker))
     {
@@ -729,12 +783,10 @@ float SwingSecondsOf(ObjectId attacker)
     const float formula = tb::AttackSeconds(facts);
     if (facts.humanoid && facts.armed)
     {
-        const LearnedSwings::Key key =
-            facts.ranged ? LearnedSwings::ShotOf(attacker, facts.attackSpeedModifier)
-                         : LearnedSwings::KeyOf(facts.style, facts.weaponSpeed, facts.attackSpeedModifier);
+        const LearnedSwings::Key key = LearnedSwings::KeyOf(facts.style, facts.weaponSpeed, facts.attackSpeedModifier);
         const std::lock_guard lock(g_swingMutex);
-        g_askedSwings[attacker] = AskedSwing{key, formula};
-        return g_swings.Seconds(key).value_or(formula);
+        g_askedSwings[attacker] = AskedSwing{key, formula, facts.ranged};
+        return facts.ranged ? formula : g_swings.Seconds(key).value_or(formula);
     }
     return formula;
 }
@@ -743,27 +795,15 @@ float SwingSecondsOf(ObjectId attacker)
 // kind. Said once for each kind, and again when it changes, with the
 // formula's figure beside it: where the two differ the scripts are not the
 // shipped ones, or the formula here is wrong.
-// A shot is over: what it took by the engine's own count, kept for its
-// archer's next. Said once for each archer and speed, and as it changes.
-//
-// The count is the engine's three parts of a shot, as DAOLib reckons them
-// from the engine's own (dao::animation::OfShot, its issue 51; in its
-// example's play, 64 of 64 shots as their steps were logged): raising the
-// weapon, an aim animation played to take what the scripts set with
-// SetAttackDuration (none with a staff); holding the aim, as long as they
-// set with SetAimLoopDuration; and the loose, at its animation's own length.
-// The scripts set both times as a shot begins and the game clears them once
-// it is over, so they are read here, as its command ends, and a shot that
-// never set them (its command ended before its aim) teaches nothing. Seen
-// in play 2026-10-10 by the sum this replaced: Anders's staff 1.63 s at
-// every shot, Nathaniel's bow 1.57 s, a bandit's 3.34 s.
-//
-// Until issue 99 the mod summed the shot's animations itself, sampling the
-// step its archer was at each frame (issue 60); and before that measured a
-// shot from outside, the wall's time from its command's beginning to its
-// end times the speed the fight had asked for, 1.9 to 8.8 s for the same
-// shot, so that an archer shot once in two turns.
-void LearnShot(ObjectId archer, const AskedSwing &asked)
+// A shot is over: what the engine made of it (DAOLib's dao::animation::OfShot
+// with the times the scripts set, which the game keeps until the shot's
+// command has ended), beside what was reckoned for it before it was loosed
+// (ShotSecondsOf). Nothing is learnt of it: the two are one rule read twice,
+// and where they differ the installed scripts are not the shipped ones, or
+// the rule here is wrong, which is said at warning, once for an archer and a
+// length. A shot whose command ended before its aim set no time, and says
+// nothing.
+void SayShot(ObjectId archer, float reckoned)
 {
     if (!dao::animation::AttackDuration(archer))
     {
@@ -775,27 +815,26 @@ void LearnShot(ObjectId archer, const AskedSwing &asked)
         return;
     }
     const float seconds = shot->Total();
-    const std::optional<float> before = g_swings.Seconds(asked.key);
-    if (!g_swings.Learn(asked.key, seconds))
+    const bool differs = std::abs(seconds - reckoned) > 0.05f;
+    static std::map<ObjectId, float> said; // under g_swingMutex, as its caller holds it
+    if (differs && std::exchange(said[archer], seconds) == seconds)
     {
         return;
     }
-    if (!before || std::abs(*before - seconds) > 0.05f)
-    {
-        spdlog::info("{:#x}: its shot is {:.2f} s by the engine's own count (its aim {:.3f} s, the aim held "
-                     "{:.3f} s, the loose {:.3f} s; the flat figure {:.2f} s): what its next costs",
-                     archer, seconds, shot->aim, shot->aimLoop, shot->fire, asked.formula);
-    }
+    spdlog::log(differs ? spdlog::level::warn : spdlog::level::debug,
+                "{:#x}: its shot was {:.2f} s by the engine's own count (its aim {:.3f} s, the aim held {:.3f} s, "
+                "the loose {:.3f} s), and {:.2f} s as it was reckoned before it was loosed{}",
+                archer, seconds, shot->aim, shot->aimLoop, shot->fire, reckoned,
+                differs ? ": the scripts' rule for a shot is not the one the mod has" : "");
 }
 
 void LearnSwing(ObjectId attacker)
 {
     {
         const std::lock_guard lock(g_swingMutex);
-        if (const auto asked = g_askedSwings.find(attacker);
-            asked != g_askedSwings.end() && asked->second.key.style == WeaponStyle::Ranged)
+        if (const auto asked = g_askedSwings.find(attacker); asked != g_askedSwings.end() && asked->second.shot)
         {
-            LearnShot(attacker, asked->second);
+            SayShot(attacker, asked->second.formula);
             return;
         }
     }

@@ -2448,10 +2448,34 @@ MUTANTS = [
         "        return *facts.animation;",
     ),
     Mutant(
-        "rules: the player's own shot is a follower's",
+        "rules: a shot is charged nothing known though its parts are",
         RULES,
-        "            return facts.hero ? kShotSecondsHero : kShotSecondsFollower;",
-        "            return kShotSecondsFollower;",
+        "            return facts.shot && std::isfinite(*facts.shot) && *facts.shot > 0.0f ? *facts.shot : 0.0f;",
+        "            return 0.0f;",
+    ),
+    Mutant(
+        "rules: a staff draws as a bow does",
+        RULES,
+        "    if (facts.staff)\n    {\n        return 0.3f;\n    }",
+        "",
+    ),
+    Mutant(
+        "rules: Master Archer lifts massive armour's draw too",
+        RULES,
+        "    const bool slowed = facts.massive || (facts.heavy && !facts.masterArcher);",
+        "    const bool slowed = (facts.massive || facts.heavy) && !facts.masterArcher;",
+    ),
+    Mutant(
+        "rules: anyone draws as a follower does",
+        RULES,
+        "    return facts.follower ? 0.8f : 1.5f;",
+        "    return 0.8f;",
+    ),
+    Mutant(
+        "rules: a shot's hold goes under nothing",
+        RULES,
+        "    return std::max(hold, 0.0f);",
+        "    return hold;",
     ),
     Mutant(
         "rules: an ability's conjuring is not counted",
@@ -2462,8 +2486,8 @@ MUTANTS = [
     Mutant(
         "rules: an archery talent with no cast animation costs nothing known",
         RULES,
-        "    else if (facts.talent && facts.ranged)",
-        "    else if (facts.talent && facts.ranged && facts.loops > 99)",
+        "    else if (known(facts.shot))",
+        "    else if (known(facts.shot) && facts.loops > 99)",
     ),
     Mutant(
         "time: the walk to a kept attack's target has no slack",
@@ -3019,20 +3043,20 @@ MUTANTS = [
     Mutant(
         "a swing's time is kept whatever the weapon",
         "src/core/Rules.cpp",
-        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier), kNoObject};",
-        "    return Key{style, milli(weaponSpeed) * 0, milli(attackSpeedModifier), kNoObject};",
+        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier)};",
+        "    return Key{style, milli(weaponSpeed) * 0, milli(attackSpeedModifier)};",
     ),
     Mutant(
         "a swing's time is kept whatever the attack speed",
         "src/core/Rules.cpp",
-        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier), kNoObject};",
-        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier) * 0, kNoObject};",
+        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier)};",
+        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier) * 0};",
     ),
     Mutant(
         "a swing's time is kept whatever the weapon style",
         "src/core/Rules.cpp",
-        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier), kNoObject};",
-        "    return Key{style == WeaponStyle::Dual ? style : WeaponStyle::Single, milli(weaponSpeed), milli(attackSpeedModifier), kNoObject};",
+        "    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier)};",
+        "    return Key{style == WeaponStyle::Dual ? style : WeaponStyle::Single, milli(weaponSpeed), milli(attackSpeedModifier)};",
     ),
     Mutant(
         "a time no swing could take is kept",
@@ -3055,14 +3079,14 @@ MUTANTS = [
     Mutant(
         "one weapon's swing is a mean of the last two",
         "src/core/Rules.cpp",
-        "    if ((key.style == WeaponStyle::Dual || key.style == WeaponStyle::Ranged) && read.before > 0.0f)",
+        "    if (key.style == WeaponStyle::Dual && read.before > 0.0f)",
         "    if (read.before > 0.0f)",
     ),
     Mutant(
         "a weapon in each hand: the last swing, not the mean",
         "src/core/Rules.cpp",
-        "    if ((key.style == WeaponStyle::Dual || key.style == WeaponStyle::Ranged) && read.before > 0.0f)",
-        "    if ((key.style == WeaponStyle::TwoHanded || key.style == WeaponStyle::Ranged) && read.before > 0.0f)",
+        "    if (key.style == WeaponStyle::Dual && read.before > 0.0f)",
+        "    if (key.style == WeaponStyle::TwoHanded && read.before > 0.0f)",
     ),
     Mutant(
         "the fourth rank of Combat Training is the shipped script's whatever is installed",
@@ -3807,18 +3831,6 @@ MUTANTS = [
         "src/core/Rules.cpp",
         "    case CommandType::GiveItem:\n    case CommandType::TakeItem:\n    case CommandType::PickupItem:\n        return true;",
         "    case CommandType::GiveItem:\n    case CommandType::TakeItem:\n        return true;",
-    ),
-    Mutant(
-        "a shot is kept whoever its archer",
-        "src/core/Rules.cpp",
-        "    key.archer = archer;",
-        "    key.archer = archer & 0U;",
-    ),
-    Mutant(
-        "a shot is the last one's, not a mean",
-        "src/core/Rules.cpp",
-        "    if ((key.style == WeaponStyle::Dual || key.style == WeaponStyle::Ranged) && read.before > 0.0f)",
-        "    if ((key.style == WeaponStyle::Dual) && read.before > 0.0f)",
     ),
     Mutant(
         "a creature that falls still owes the time it was held",

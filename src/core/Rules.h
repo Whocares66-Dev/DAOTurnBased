@@ -583,15 +583,14 @@ struct Foe
 // with a shield or none, 1.5 s dual, 2.5 s two-handed) plus the weapon's
 // dspeed (itemstats: a dagger -0.5, a longsword -0.1, a maul 0.05), times the
 // attack speed modifier (creature property 31, at rest 1.0; Haste -0.25),
-// clamped to 0.5 to 1.5 and taken as 1.0 below 0.5. A bow's and a creature's
-// that is not a humanoid's are their animations', 0 here: a stand-in is used.
+// clamped to 0.5 to 1.5 and taken as 1.0 below 0.5. (A shot is not this
+// formula's: ShotFacts, below.)
 enum class WeaponStyle : std::uint8_t
 {
     None,      // a humanoid unarmed: timed as one weapon
     Single,    // one weapon, with a shield or not
     Dual,      // a weapon in each hand
     TwoHanded, // a greatsword, a maul, a battleaxe
-    Ranged,    // a bow, a crossbow, a staff: its animation's
 };
 [[nodiscard]] float SwingSeconds(WeaponStyle style, float weaponSpeed, float attackSpeedModifier);
 
@@ -609,9 +608,9 @@ enum class WeaponStyle : std::uint8_t
 // fights, the same in turns and in real time):
 // - a humanoid with a melee weapon: the scripts' formula, which the engine
 //   plays the swing to exactly (daggers' 1.000 s took 1.02 s, 46 times);
-// - a bow, a crossbow or a staff: a shot, 1.4 s for a follower and 1.6 s
-//   for the player's own character (the scripts' draw is shorter for
-//   followers), which no animation's length gives;
+// - a bow, a crossbow or a staff: a shot, the engine's three parts of it
+//   by the times the scripts will set (`shot`; DrawSeconds and HoldSeconds,
+//   below);
 // - anything else (a creature that is not a humanoid, a humanoid unarmed):
 //   its attack animation's length less the blend, 0.81 of it (a giant
 //   spider's 1.833 s took 1.49 s); the attack speed modifier does not
@@ -622,12 +621,48 @@ struct AttackFacts
     bool humanoid = false;
     bool armed = false;  // a weapon in the main hand
     bool ranged = false; // and it is a bow, a crossbow or a staff
-    bool hero = false;   // the player's own character
     WeaponStyle style = WeaponStyle::None;
     float weaponSpeed = 0.0f;         // the weapon's dspeed
     float attackSpeedModifier = 1.0f; // creature property 31
     std::optional<float> animation;   // its attack animation's length, seconds
+    std::optional<float> shot;        // a shot's whole time, by the engine's parts of it, seconds
 };
+
+// A shot's time is made by the scripts as it begins, and by a rule short
+// enough to reckon beforehand (combat_h.nss, HandleCommandAttack, and
+// core_h.nss, GetCreatureRangedDrawSpeed, read 2026-10-10; issue 101). The
+// engine plays three parts: raising the weapon, the Aim animation made to
+// take the draw the scripts set; holding the aim, as long as they set; and
+// the loose, the Fire animation at its own length (DAOLib's
+// dao::animation::OfShot puts the three together).
+// - The draw is five numbers written in the script and nowhere else: 0.3 s
+//   with a staff; with a bow or a crossbow 0.8 s for a follower and 1.5 s
+//   for anyone else, or 2.0 and 2.5 s in heavy or massive armour, which
+//   Master Archer lifts for heavy armour and not for massive. The user,
+//   2026-10-10, of carrying them here against charging a shot as it begins:
+//   "just hard code these then. Better than changing the mechanics of
+//   holding off an attack".
+// - The hold is the game's own data, read for each shot: the creature's
+//   ranged aim speed (property 24, which Aim, Rapid Shot, Haste, a salve and
+//   an item's properties all move) and its weapon type's BaseAimDelay in the
+//   item stats, neither under nothing.
+// Until this a shot was charged a flat 1.4 s (1.6 s for the hero) and then
+// its archer's last, which is wrong whenever the hold changes between shots:
+// one cultist archer's were 2.57, 3.34, 4.07 and 4.84 s in a morning.
+struct ShotFacts
+{
+    bool staff = false;        // the weapon is a staff
+    bool heavy = false;        // heavy armour on its chest
+    bool massive = false;      // massive armour, or the heaviest
+    bool masterArcher = false; // it has the Master Archer talent
+    bool follower = false;     // the engine's IsFollower
+};
+[[nodiscard]] float DrawSeconds(const ShotFacts &facts);
+[[nodiscard]] float HoldSeconds(float aimSpeed, float weaponAimDelay);
+// And what the scripts hold the aim for an ability that shoots (the
+// abilities table's ranged weapon flag; ability_core.nss), with no draw set:
+// its Aim animation runs at its own length.
+inline constexpr float kAbilityHoldSeconds = 1.5f;
 // What the game's own scripts set for a swing, kept as it is read, so that
 // a swing costs what the scripts in the game make it and not what this
 // file's copy of their formula says. The user, 2026-10-02, of a mod that
@@ -648,25 +683,13 @@ class LearnedSwings
         WeaponStyle style = WeaponStyle::None;
         std::int32_t weaponSpeedMs = 0; // the main hand's dspeed
         std::int32_t modifierMilli = 0; // the attack speed modifier
-        ObjectId archer = kNoObject;    // a shot's: its archer's own
         auto operator<=>(const Key &) const = default;
     };
     [[nodiscard]] static Key KeyOf(WeaponStyle style, float weaponSpeed, float attackSpeedModifier);
-    // A bow's shot, kept by its archer and its attack speed: its time is the
-    // game's draw and aim for that archer (combat_h.nss: 0.8 s drawing for a
-    // follower, 1.5 s for the player's own character, 2 to 2.5 s in heavy
-    // armour, 0.3 s with a staff; then an aim by the bow and the archer's
-    // talents and speed), set by the scripts as each shot begins and not
-    // before: so what a shot took, by the engine's own count of its parts
-    // (src/game/Gate.cpp, LearnShot), is what the next costs (the user,
-    // 2026-10-02, of the flat 1.4 and 1.6 s: "we should read these").
-    [[nodiscard]] static Key ShotOf(ObjectId archer, float attackSpeedModifier);
     // Kept if it is a time a swing could take (kLeast to kMost): true then.
     bool Learn(const Key &key, float seconds);
     // The last one set; for a weapon in each hand the mean of the last two,
-    // since the hands take turns and each has its own time; for a shot the
-    // mean of the last two too, measured shots differing by a tenth of a
-    // second (Tamlen's 1.59 to 1.72 s, a run with no hands, 2026-10-02).
+    // since the hands take turns and each has its own time.
     [[nodiscard]] std::optional<float> Seconds(const Key &key) const;
     static constexpr float kLeast = 0.25f;
     static constexpr float kMost = 10.0f;
@@ -680,8 +703,6 @@ class LearnedSwings
     std::map<Key, Read> reads_;
 };
 
-inline constexpr float kShotSecondsFollower = 1.4f;
-inline constexpr float kShotSecondsHero = 1.6f;
 inline constexpr float kSwingShareOfAnimation = 0.81f;
 [[nodiscard]] float AttackSeconds(const AttackFacts &facts);
 
@@ -690,8 +711,9 @@ inline constexpr float kSwingShareOfAnimation = 0.81f;
 // 2.433 s took 2.07 s), and before it its conjuring, the start and so many
 // passes of the loop, by the creature's own animations where they are read
 // (ConjureSeconds' table otherwise). One with no cast animation plays
-// nothing of its own: an archery talent fires a shot (Pinning Shot's 1.7 s);
-// a monster's special is its script's business, and the stand-in's. 0
+// nothing of its own: an archery talent fires a shot, whose parts the game
+// layer puts together (`shot`); a monster's special is its script's
+// business, and the stand-in's. 0
 // where nothing is known. An item's is its drink (kDrinkSeconds), not this.
 struct AbilityFacts
 {
@@ -699,9 +721,7 @@ struct AbilityFacts
     std::optional<float> conjure;     // the conjure's start
     std::optional<float> conjureLoop; // one pass of its loop
     int loops = 0;                    // the conjuring speed's count
-    bool ranged = false;              // its user holds a bow, a crossbow or a staff
-    bool hero = false;
-    bool talent = false; // AbilityType talent: with no cast and a bow, a shot
+    std::optional<float> shot;        // one that shoots: the shot's whole time, by the engine's parts
 };
 inline constexpr float kCastShareOfAnimation = 0.84f;
 [[nodiscard]] float AbilitySeconds(const AbilityFacts &facts);

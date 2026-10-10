@@ -538,8 +538,6 @@ float SwingSeconds(WeaponStyle style, float weaponSpeed, float attackSpeedModifi
     case WeaponStyle::TwoHanded:
         base = 2.5f;
         break;
-    case WeaponStyle::Ranged:
-        return 0.0f;
     }
     const bool sensible = std::isfinite(attackSpeedModifier) && attackSpeedModifier >= 0.5f;
     const float modifier = sensible ? std::min(1.5f, attackSpeedModifier) : 1.0f;
@@ -554,14 +552,7 @@ LearnedSwings::Key LearnedSwings::KeyOf(WeaponStyle style, float weaponSpeed, fl
                    ? static_cast<std::int32_t>(std::lround(std::clamp(value, -100.0f, 100.0f) * 1000.0f))
                    : 0;
     };
-    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier), kNoObject};
-}
-
-LearnedSwings::Key LearnedSwings::ShotOf(ObjectId archer, float attackSpeedModifier)
-{
-    Key key = KeyOf(WeaponStyle::Ranged, 0.0f, attackSpeedModifier);
-    key.archer = archer;
-    return key;
+    return Key{style, milli(weaponSpeed), milli(attackSpeedModifier)};
 }
 
 bool LearnedSwings::Learn(const Key &key, float seconds)
@@ -584,7 +575,7 @@ std::optional<float> LearnedSwings::Seconds(const Key &key) const
         return std::nullopt;
     }
     const Read &read = found->second;
-    if ((key.style == WeaponStyle::Dual || key.style == WeaponStyle::Ranged) && read.before > 0.0f)
+    if (key.style == WeaponStyle::Dual && read.before > 0.0f)
     {
         return (read.last + read.before) / 2.0f;
     }
@@ -614,13 +605,34 @@ float ConjureSeconds(std::int32_t conjureAnim, int loops, bool staff)
     return start + (loop * static_cast<float>(loops));
 }
 
+float DrawSeconds(const ShotFacts &facts)
+{
+    if (facts.staff)
+    {
+        return 0.3f;
+    }
+    const bool slowed = facts.massive || (facts.heavy && !facts.masterArcher);
+    if (slowed)
+    {
+        return facts.follower ? 2.0f : 2.5f;
+    }
+    return facts.follower ? 0.8f : 1.5f;
+}
+
+float HoldSeconds(float aimSpeed, float weaponAimDelay)
+{
+    const float weapon = std::isfinite(weaponAimDelay) ? std::max(weaponAimDelay, 0.0f) : 0.0f;
+    const float hold = (std::isfinite(aimSpeed) ? aimSpeed : 0.0f) + weapon;
+    return std::max(hold, 0.0f);
+}
+
 float AttackSeconds(const AttackFacts &facts)
 {
     if (facts.humanoid && facts.armed)
     {
         if (facts.ranged)
         {
-            return facts.hero ? kShotSecondsHero : kShotSecondsFollower;
+            return facts.shot && std::isfinite(*facts.shot) && *facts.shot > 0.0f ? *facts.shot : 0.0f;
         }
         return SwingSeconds(facts.style, facts.weaponSpeed, facts.attackSpeedModifier);
     }
@@ -641,9 +653,9 @@ float AbilitySeconds(const AbilityFacts &facts)
     {
         cast = *facts.cast * kCastShareOfAnimation;
     }
-    else if (facts.talent && facts.ranged)
+    else if (known(facts.shot))
     {
-        cast = facts.hero ? kShotSecondsHero : kShotSecondsFollower;
+        cast = *facts.shot;
     }
     else
     {
