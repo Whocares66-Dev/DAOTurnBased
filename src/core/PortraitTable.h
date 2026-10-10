@@ -369,9 +369,12 @@ inline constexpr std::array kPortraitTable{
     Row(20015, "20015 (GXA) The Architect", 1.1f, 23.5f, -7.5f, 0.0f, 0.15f,
         "by eye in the Silverite Mine, 2026-10-09: his face and crown whole over his chest, at a person's pitch "
         "and rotation; at 1 m and 0.05 up the crown was cut; seen as it is"),
-    Row(20016, "20016 (GXA) The Mother", 1.6f, 23.5f, -7.5f, 0.15f, -0.05f,
-        "by eye in the Silverite Mine, 2026-10-09: her face, at a person's pitch and rotation; from a search of "
-        "asides 0 to 0.6 and ups -0.65 to -0.05, then between the two best; seen as it is"),
+    Row(20016, "20016 (GXA) The Mother", 1.6f, 23.5f, -7.5f, 0.05f, -0.18f,
+        "by eye in her own fight in the Nest, 2026-10-10, on the creature that fights: her face in the middle, at a "
+        "person's pitch and rotation. The row of 2026-10-09 (0.15 aside, -0.05 up) was found on the sweep's creature "
+        "standing in the Silverite Mine, and on her card in the fight her face was at its lower edge with her hair "
+        "over it (the user: \"mother portrait camera is too high\"); of ups -0.05 to -0.65 and then -0.14 to -0.26 "
+        "about the best; seen as it is"),
     FromRoot(Row(20017, "20017 (GXA) The Mother - Tentacle", 2.8f, 35.0f, 0.0f, -0.3f, 3.4f,
                  "by eye in the Silverite Mine, 2026-10-09, from its root: its length, the broodmother's "
                  "tentacle's row (73); it has no head node; seen as it is")),
