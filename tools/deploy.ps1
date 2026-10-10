@@ -51,7 +51,7 @@
     recursive delete goes through one and empties what it points at.
 
     Neither is done while another agent's claim on the game stands (game.claim.json
-    beside the logs, Eluvian's README.md, "The claim"); -Owner is who deploys.
+    beside the logs, Eluvian's dev/DESIGN.md, "Outside the game"); -Owner is who deploys.
 
     -Game is another bin_ship folder, and -Documents the game's folder in Documents that
     goes with it (its override folder, the settings, the logs and the claim): another
@@ -94,7 +94,7 @@ foreach ($running in @(Get-Process -Name DAOrigins -ErrorAction SilentlyContinue
 
 # Several agents share the game and its folder, and a test may leave a loader and plugins of
 # its own in place between two runs. game.claim.json says who holds them, the one claim every
-# agent's scripts honour (the user's decision, 2026-10-02; Eluvian's README.md, "The claim"):
+# agent's scripts honour (the user's decision, 2026-10-02; Eluvian's dev/DESIGN.md, "Outside the game"):
 # while one stands that is not this caller's, nothing is copied or taken out. -Owner says who
 # is deploying. The old name too, which a bridge started before the shared name still writes.
 $claimFolder = Join-Path $Documents 'daolib'
