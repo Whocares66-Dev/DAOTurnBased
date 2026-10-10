@@ -544,6 +544,12 @@ namespace
 // wolf, 09 and 68 bears, 59 and 57 spiders, 14 the swarm, 06 the golem, 12,
 // 28 and 37 forms of the Fade, textures in gui.erf, as the party bar shows
 // a ranger's summons). Read once: the table does not change in a game.
+// Every row of it, by the row's own number, which the engine gives for its
+// place (the scripts' GetM2DARowIdFromRowIndex): the table is every file
+// whose name begins with "portraits", and a row of another file's has
+// whatever number its maker gave it. The mod's own is 1,000,000, a Veil
+// Tear's picture (issue 103, ui\portraits); read by counting from 0, as this
+// was until then, it was passed over and the Tear's card kept its initials.
 // Which picture a creature gets from it is core's (ChoosePortrait), and so
 // is how a render is framed (FramePortrait, which looks the creature up in
 // core/PortraitTable.h's table): a person's body by this table's Default row.
@@ -570,8 +576,9 @@ const PortraitTable &Table()
     const auto number = [](std::int32_t row, std::string_view column) {
         return dao::gda::GetFloat(kPortraitsTable, row, dao::core::GdaColumnHash(column)).value_or(0.0f);
     };
-    for (std::int32_t row = 0; row < count; ++row)
+    for (std::int32_t place = 0; place < count; ++place)
     {
+        const std::int32_t row = dao::script::api::GetM2DARowIdFromRowIndex(kPortraitsTable, place);
         PortraitRow r;
         r.appearance = dao::gda::GetInt(kPortraitsTable, row, dao::core::GdaColumnHash("Appearance")).value_or(0);
         r.label = text(row, "Label");

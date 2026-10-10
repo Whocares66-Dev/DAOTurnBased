@@ -209,6 +209,14 @@ include("${TB_DAOLIB}/cmake/Quality.cmake")
 # folder is (DAOLib's issue 43, 7bedb3b; seen in play 2026-10-09). They
 # follow as the movies do; what the tool makes and what is copied here are
 # held together by tools/test_reticles.py.
+#
+# And a Veil Tear's picture for its card (issue 103), which are in the
+# repository, in ui\portraits: the engine's portrait camera draws nothing of
+# a creature that is all visual effect, so its card has a ready-made picture
+# as the game's own shapes have (portraits.gda's Override), cut from the
+# game's own frame; and the one row of the game's portraits table that names
+# it for its appearance, a table file of its own that the game reads with
+# portraits.gda (dev/UI.md, "A picture where no camera has one").
 # ---------------------------------------------------------------------------
 add_daolib_plugin(
     turnbased
@@ -245,6 +253,8 @@ add_daolib_plugin(
         build/art/tb_red_l.mmh
         build/art/tb_mov.mmh
         build/art/vfx_base_turnbased.gda
+        ui/portraits/tb_portrait_fade_tear.dds
+        ui/portraits/portraits_turnbased.gda
 )
 tb_apply_warnings(turnbased)
 target_link_libraries(turnbased PRIVATE tb_core)

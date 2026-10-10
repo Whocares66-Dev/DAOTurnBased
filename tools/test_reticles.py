@@ -595,10 +595,14 @@ class HeldToTheRest(unittest.TestCase):
         files, override = re.search(
             r"^    FILES(.*?)^    OVERRIDE(.*?)^\)", cmake, re.MULTILINE | re.DOTALL
         ).groups()
-        self.assertEqual(
-            override.split(), [f"build/art/{name}" for name in reticles.outputs()]
-        )
+        made = [name for name in override.split() if name.startswith("build/art/")]
+        self.assertEqual(made, [f"build/art/{name}" for name in reticles.outputs()])
         self.assertNotIn("build/art/", files)
+        # What else goes there is in the repository (a Veil Tear's picture
+        # and its row of the portraits table, issue 103), and is there.
+        for name in override.split():
+            if name not in made:
+                self.assertTrue((REPO / name).is_file(), name)
 
     def test_the_plugin_looks_for_every_file_and_places_the_three_rows(self) -> None:
         plugin = (REPO / "src" / "game" / "Preview.cpp").read_text(encoding="utf-8")
