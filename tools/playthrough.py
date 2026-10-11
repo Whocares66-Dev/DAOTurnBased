@@ -4,11 +4,10 @@ GitHub issue 3: play the game from the Dalish ruins on, turn-based, to find
 what breaks. An agent runs this a verb at a time and decides what comes next
 from what each prints; the fights it plays itself. Everything goes through
 Eluvian (the sibling checkout ..\\DAOEluvianMCP): its bridge for the game's
-process and the claim, its tools over HTTP in the game, as tools/timeplay.py
-does. Unlike timeplay's scenarios nothing here is staged: no health set, no
+process, its tools over HTTP in the game, as tools/timeplay.py does. Unlike timeplay's scenarios nothing here is staged: no health set, no
 creature spawned or killed, since the point is the game as a player meets it.
 
-    python tools\\playthrough.py launch [auto:2 | manual:5]   claim, start, load
+    python tools\\playthrough.py launch [auto:2 | manual:5]   start, load
     python tools\\playthrough.py status                       mode, area, party, quest, the fight
     python tools\\playthrough.py look [radius]                creatures, things to use, exits
     python tools\\playthrough.py go 0x1f0 | x,y,z | area:<tag> | exit:<id> | map:<pin's tag>
@@ -166,10 +165,6 @@ def where(c: dict) -> str:
 
 def launch(save: str) -> int:
     kind, _, number = save.partition(":")
-    claim = bridge(
-        "game_claim", {"owner": OWNER, "note": "gh-3 playthrough", "minutes": 240}
-    )
-    say("claim:", json.dumps(claim.get("answer")))
     answer = bridge(
         "game_launch",
         {

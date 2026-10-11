@@ -1,8 +1,8 @@
 """A fight played in turns, with no hands on the game.
 
 Through Eluvian, the development bench's MCP server (the sibling checkout
-..\\DAOEluvianMCP), as tools/sweep.py does: its bridge claims and launches
-the game into a save, and its tools are called over HTTP in the game.
+..\\DAOEluvianMCP), as tools/sweep.py does: its bridge launches the game
+into a save, and its tools are called over HTTP in the game.
 
 What it plays is a scenario by name, each a small script over the same
 helpers: the player's orders go through Eluvian's `order` (the engine's own
@@ -17,8 +17,8 @@ turnbased.log beside the build for the write-up (dev/PLAYTEST-*.md).
     python tools\\timeplay.py --keep            # leave the game running at the end
 
 It LAUNCHES THE GAME (Lyna's autosave 2, loaded only: nothing is saved) and
-quits it at the end; it refuses to go on under another's claim or in a game
-it did not launch. The object ids are that save's.
+quits it at the end; it refuses to go on in a game it did not launch. The
+object ids are that save's.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def stamp() -> str:
 
 
 class Game:
-    """Eluvian: the bridge for the game's process and the claim, HTTP for the game."""
+    """Eluvian: the bridge for the game's process, HTTP for the game."""
 
     def __init__(self, eluvian: Path, owner: str) -> None:
         self.bridge_script = eluvian / "tools" / "eluvian_bridge.py"
@@ -1863,17 +1863,6 @@ def main() -> int:
     game = Game(eluvian, args.owner)
     game.off = args.off
 
-    claim = game.bridge(
-        "game_claim",
-        {
-            "owner": args.owner,
-            "note": f"timeplay {args.scenario}: a turn as a bar of time",
-            "minutes": 30,
-        },
-    )
-    if claim.get("isError"):
-        print("not claimed:", json.dumps(claim)[:400])
-        return 2
     launched = False
     put_back: list[tuple[str, str, str]] = []
     try:
@@ -1926,10 +1915,6 @@ def main() -> int:
                 f"{stamp()} quit:",
                 json.dumps(game.bridge("game_quit", {"owner": args.owner}))[:200],
             )
-        print(
-            f"{stamp()} release:",
-            json.dumps(game.bridge("game_release", {"owner": args.owner}))[:200],
-        )
     return 0
 
 

@@ -27,12 +27,10 @@ stricter of the two to write for. The script ran the same under both,
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -366,16 +364,6 @@ class Deploy(unittest.TestCase):
         self.assertEqual(files(self.elsewhere), ["precious.txt"])
         self.assertTrue((self.plugins / "turnbased.dll").exists())
         self.assertTrue((self.override / "turnorder.swf").exists())
-
-    def test_anothers_claim_on_the_game_stops_it(self) -> None:
-        claim = {
-            "owner": "another-agent",
-            "note": "a play test",
-            "since": time.time(),
-            "until": time.time() + 600,
-        }
-        write(self.documents / "daolib" / "game.claim.json", json.dumps(claim))
-        self.assertIn("claimed by another-agent", self.refused())
 
 
 if __name__ == "__main__":

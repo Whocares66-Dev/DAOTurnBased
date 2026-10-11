@@ -50,11 +50,8 @@
     is a link, or has one anywhere in it (a junction, a symbolic link), is not deleted: a
     recursive delete goes through one and empties what it points at.
 
-    Neither is done while another agent's claim on the game stands (game.claim.json
-    beside the logs, Eluvian's dev/DESIGN.md, "Outside the game"); -Owner is who deploys.
-
     -Game is another bin_ship folder, and -Documents the game's folder in Documents that
-    goes with it (its override folder, the settings, the logs and the claim): another
+    goes with it (its override folder, the settings and the logs): another
     install's, or a test's throwaway pair (tools\test_deploy.py).
 
 .EXAMPLE
@@ -69,7 +66,6 @@ param(
     [switch] $Remove,
     [string] $Game = 'C:\Program Files (x86)\GOG Galaxy\Games\Dragon Age Origins\bin_ship',
     [string] $Documents = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'BioWare\Dragon Age'),
-    [string] $Owner = 'turn-based-agent',
     [switch] $StaleMovie
 )
 
@@ -90,25 +86,6 @@ foreach ($running in @(Get-Process -Name DAOrigins -ErrorAction SilentlyContinue
         throw "DAOrigins.exe is running from $where (process $($running.Id)); close it first"
     }
     Show-Info "a game is running from $from (process $($running.Id)); it does not hold this folder's files"
-}
-
-# Several agents share the game and its folder, and a test may leave a loader and plugins of
-# its own in place between two runs. game.claim.json says who holds them, the one claim every
-# agent's scripts honour (the user's decision, 2026-10-02; Eluvian's dev/DESIGN.md, "Outside the game"):
-# while one stands that is not this caller's, nothing is copied or taken out. -Owner says who
-# is deploying. The old name too, which a bridge started before the shared name still writes.
-$claimFolder = Join-Path $Documents 'daolib'
-foreach ($claimFile in @(Join-Path $claimFolder 'game.claim.json')) {
-    if (Test-Path $claimFile) {
-        try {
-            $claim = Get-Content $claimFile -Raw | ConvertFrom-Json
-            $left = [double]$claim.until - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-            if ($left -gt 0 -and $claim.owner -ne $Owner) {
-                throw "the game and its folder are claimed by $($claim.owner) for another $([math]::Round($left / 60, 1)) minutes ($($claim.note)); nothing deployed"
-            }
-        }
-        catch [System.ArgumentException] { Show-Info "$claimFile is not readable; taken as no claim" }
-    }
 }
 
 $plugins = Join-Path $Game 'daolib\plugins'
