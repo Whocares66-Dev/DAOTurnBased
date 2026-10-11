@@ -37,6 +37,7 @@
 #include "core/TurnMachine.h"
 #include "core/Types.h"
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -74,7 +75,9 @@ class Preview
     void ShowCost(const OrderCost &cost);
     void Search(ObjectId walker, const Vec3 &from, const Vec3 &to, ObjectId toward, std::uint32_t nowMs);
     void Compare(std::uint32_t nowMs);
-    // Effects placed along the path, and where each lies.
+    // Effects placed for a path's marks, kept from path to path: the first
+    // `at.size()` of them lie along the path shown, each where `at` says,
+    // and the rest are out of sight (Lay).
     struct Marks
     {
         std::vector<ObjectId> ids;
@@ -85,6 +88,7 @@ class Preview
     void HideMarker();
     static void Lay(Marks &marks, std::int32_t row, const std::vector<Vec3> &at);
     void HideMarks();
+    void RemoveMarks();
 
     std::mutex mutex_;
     std::wstring encoded_; // what the movie is given
@@ -115,10 +119,14 @@ class Preview
     std::int32_t markerRow_ = 0;
     ObjectId markerArea_ = kNoObject;
 
-    // The path's marks on the ground, in reach and beyond: effects placed
-    // once and moved, of the marker's area.
+    // The path's marks on the ground, in reach and beyond, and the area
+    // they were placed in. A game loaded makes them another world's, whose
+    // ids may be other effects' in this one: `loaded_` is set by DAOLib's
+    // callback, and the next frame forgets them and the marker unasked.
     Marks reachMarks_;
     Marks beyondMarks_;
+    ObjectId marksArea_ = kNoObject;
+    std::atomic<bool> loaded_{false};
 
     // The path last shown, kept a moment after: if its creature then
     // walks, where it goes is measured against it (Compare).

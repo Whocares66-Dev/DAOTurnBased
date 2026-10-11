@@ -12,6 +12,7 @@
 #include "dao/Gui.h"
 #include "dao/Log.h"
 #include "dao/Resources.h"
+#include "dao/Saves.h"
 #include "dao/Script.h"
 #include "dao/Vfx.h"
 #include "dao/World.h"
@@ -148,6 +149,14 @@ constexpr float kMarkEvery = 0.2f;
 constexpr float kMarksFrom = 0.7f;    // meters along: clear of the walker's ring
 constexpr float kMarksShortOf = 0.4f; // of the end: clear of the marker there
 constexpr std::size_t kMostMarks = 150;
+// Placing a mark costs the engine 130 to 230 microseconds and moving one
+// under 1 (measured 2026-10-10, issue 109: a path's 150 placed in one frame
+// were 20 to 25 ms, a frame dropped each time a path came back from
+// nothing). So a mark is placed once and kept, moved this far under its
+// place while no path needs it, and no more than these are placed in one
+// frame: a first path is whole a sixth of a second after it begins.
+constexpr float kOutOfSight = 1000.0f;
+constexpr int kPlacedAFrame = 15;
 
 // The movie's line begins at the edge of the walker's own selection ring,
 // not at its feet: drawn over the scene it lay across the walker's shin
@@ -272,6 +281,7 @@ void Preview::Install()
     }
     installed_ = true;
     encoded_ = EncodeNoPreview();
+    dao::saves::OnGameLoaded([this](const std::optional<dao::saves::Slot> & /*save*/) { loaded_ = true; });
     dao::gui::OnExternalInterface("TB_GetPreview", [this](const dao::gui::Call &call) {
         // Called from the game's UI code, which cannot take an exception.
         try
@@ -335,63 +345,96 @@ void Preview::HideMarker()
     marker_ = kNoObject;
 }
 
-// `marks` made to lie at `at`: those there are moved if their place has
-// changed, more are placed, the rest are taken away.
+// `marks` made to lie at `at`: those kept are moved to it, more are placed
+// where there are too few (kPlacedAFrame of them a frame, the rest with
+// the frames that follow, a path being laid every frame it shows), and
+// those the path does not need go out of sight, kept for the next.
 void Preview::Lay(Marks &marks, std::int32_t row, const std::vector<Vec3> &at)
 {
-    if (marks.ids.empty() && !at.empty())
-    {
-        spdlog::debug("the preview lays {} mark(s) of vfx_base's row {}, {}", at.size(), row,
-                      row == kRedRing ? "the party's ring in red: beyond reach" : "the party's ring in gold");
-    }
+    std::size_t laid = at.size();
+    int placed = 0;
     for (std::size_t i = 0; i < at.size(); ++i)
     {
-        if (i < marks.ids.size())
+        // Most frames nothing has moved: the cursor rests.
+        if (i < marks.at.size() && Distance(marks.at[i], at[i]) < 0.005f)
         {
-            // Most frames nothing has moved: the cursor rests.
-            if (Distance(marks.at[i], at[i]) < 0.005f)
+            continue;
+        }
+        if (i >= marks.ids.size() || !dao::vfx::Move(marks.ids[i], Of(at[i])))
+        {
+            if (placed == kPlacedAFrame)
             {
-                continue;
+                laid = i;
+                break;
             }
-            if (dao::vfx::Move(marks.ids[i], Of(at[i])))
+            ++placed;
+            const ObjectId mark = dao::vfx::Place(row, Of(at[i]), kMarkScale);
+            if (mark != kNoObject)
             {
-                marks.at[i] = at[i];
-                continue;
+                dao::vfx::SetPickable(mark, false);
+            }
+            if (i < marks.ids.size())
+            {
+                marks.ids[i] = mark;
+            }
+            else
+            {
+                marks.ids.push_back(mark);
             }
         }
-        const ObjectId placed = dao::vfx::Place(row, Of(at[i]), kMarkScale);
-        if (placed != kNoObject)
+        if (i < marks.at.size())
         {
-            dao::vfx::SetPickable(placed, false);
-        }
-        if (i < marks.ids.size())
-        {
-            marks.ids[i] = placed;
             marks.at[i] = at[i];
         }
         else
         {
-            marks.ids.push_back(placed);
             marks.at.push_back(at[i]);
         }
     }
-    while (marks.ids.size() > at.size())
+    if (placed > 0)
     {
-        dao::vfx::Remove(marks.ids.back());
-        marks.ids.pop_back();
-        marks.at.pop_back();
+        spdlog::debug("the preview places {} mark(s) of vfx_base's row {}, {}: {} are kept", placed, row,
+                      row == kRedRing ? "the party's ring in red: beyond reach" : "the party's ring in gold",
+                      marks.ids.size());
     }
+    for (std::size_t i = at.size(); i < marks.at.size(); ++i)
+    {
+        Vec3 under = marks.at[i];
+        under.z -= kOutOfSight;
+        dao::vfx::Move(marks.ids[i], Of(under));
+    }
+    marks.at.resize(std::min({marks.at.size(), at.size(), laid}));
 }
 
+// No path to mark: the marks go out of sight, kept.
 void Preview::HideMarks()
+{
+    if (reachMarks_.at.empty() && beyondMarks_.at.empty())
+    {
+        return;
+    }
+    // In their own area only: in another they are gone with the first, and
+    // their ids may be other effects'.
+    const dao::CCArea *area = dao::world::CurrentArea();
+    if (area == nullptr || marksArea_ != area->Id())
+    {
+        reachMarks_ = {};
+        beyondMarks_ = {};
+        return;
+    }
+    Lay(reachMarks_, kGoldRing, {});
+    Lay(beyondMarks_, kRedRing, {});
+}
+
+// The fight is over: the marks kept through it are taken out of the world.
+void Preview::RemoveMarks()
 {
     if (reachMarks_.ids.empty() && beyondMarks_.ids.empty())
     {
         return;
     }
-    // As the marker: in their own area only.
     const dao::CCArea *area = dao::world::CurrentArea();
-    const bool here = area != nullptr && markerArea_ == area->Id();
+    const bool here = area != nullptr && marksArea_ == area->Id();
     for (Marks *marks : {&reachMarks_, &beyondMarks_})
     {
         if (here)
@@ -401,8 +444,7 @@ void Preview::HideMarks()
                 dao::vfx::Remove(mark);
             }
         }
-        marks->ids.clear();
-        marks->at.clear();
+        *marks = {};
     }
 }
 
@@ -606,15 +648,12 @@ bool LivingCreature(ObjectId object)
 // turn, and red ones on from where they end.
 void Preview::MarkOnGround(ObjectId area, const PathSplit &split, bool attack)
 {
-    if (markerArea_ != area)
+    if (marksArea_ != area)
     {
-        // Another area than the marks were laid in: they went with it.
-        for (Marks *marks : {&reachMarks_, &beyondMarks_})
-        {
-            marks->ids.clear();
-            marks->at.clear();
-        }
-        markerArea_ = area;
+        // Another area than the marks were placed in: they went with it.
+        reachMarks_ = {};
+        beyondMarks_ = {};
+        marksArea_ = area;
     }
     const float reachEnd = PathLength(split.reach);
     const float beyondEnd = PathLength(split.beyond);
@@ -744,6 +783,16 @@ void Preview::Update(const TurnView &view, std::uint32_t nowMs)
     if (!installed_)
     {
         return;
+    }
+    if (loaded_.exchange(false))
+    {
+        reachMarks_ = {};
+        beyondMarks_ = {};
+        marker_ = kNoObject;
+    }
+    if (!view.active)
+    {
+        RemoveMarks(); // nothing of the mod's is left in the world after a fight
     }
     // Once there is an area, so a game loaded and its tables read.
     if (!art_.has_value() && dao::world::CurrentArea() != nullptr)
