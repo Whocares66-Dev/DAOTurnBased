@@ -3,7 +3,7 @@
     Make the release zip the mod is installed from.
 
 .DESCRIPTION
-    After `.\tools\build.ps1 -Preset release`, writes build\package\DAOTurnBased-<version>.zip,
+    After `.\tools\build.ps1 -Preset release`, writes dist\DAOTurnBased-<version>.zip,
     laid out as the game's install folder, so it is extracted there (beside bin_ship) as
     DAOLib's own zip is. It holds the plugin's folder and nothing else:
 
@@ -99,7 +99,7 @@ else {
     Show-Warn 'extern\DAOLib is at no release''s tag; a release of the mod holds it at one'
 }
 
-$out = Join-Path $repo 'build\package'
+$out = Join-Path $repo 'dist'
 $stage = Join-Path $out $name
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 $plugin = Join-Path $stage 'bin_ship\daolib\plugins\turnbased'
