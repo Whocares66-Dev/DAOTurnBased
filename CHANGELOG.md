@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1
+
+Fixes to the portrait bar, with [DAOLib 0.1.0](https://github.com/Whocares66-Dev/DAOLib/releases/tag/v0.1.0) or later. Rules, settings and saves are as in 0.1.0.
+
+- **The portrait bar at every resolution:** at 16:9 (1920x1080 and the like) the bar lay over the game's buttons along the top of the screen and was a fifth too large. It now keeps one size and one place at every resolution, as the game's own interface does, and stays clear of the minimap on a narrow screen.
+- **Stamina and mana as the party portraits show them:** a card's arc now shows what sustained abilities hold back, with the game's own mark, and both arcs fill the way the party portraits' do. A character with a sustained ability on showed full stamina on its card when it was not.
+- **End and Delay:** evenly spaced beside the portraits, and the bar's lettering is the paler colour of the place name under the minimap.
+- **No dropped frame when a path appears:** the rings of the path to the cursor are kept and moved where they were placed anew each time a path came back.
+
+To install: extract DAOLib's zip into the game's folder, then this one. Over 0.1.0, this zip alone.
+
 ## 0.1.0
 
 The first release: turn-based combat for Dragon Age: Origins, Awakening and Witch Hunt, version 1.05.13263.0, with [DAOLib 0.1.0](https://github.com/Whocares66-Dev/DAOLib/releases/tag/v0.1.0) or later. The [guide](https://whocares66-dev.github.io/DAOTurnBased/) has how to install it and how it plays.

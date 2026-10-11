@@ -27,15 +27,15 @@ The bar shows up to ten portraits. With more, arrows at its ends scroll it.
 
 On a party member's turn, the bar under the portraits shows the turn's time, one segment per second. The text below it shows the time left and the distance that time covers.
 
-![The time bar: 3 seconds left, 13.8 m of movement]({{ "/assets/img/time-bar.jpg" | relative_url }}){: .screenshot loading="lazy"}
+![The time bar: 3 seconds left, 14.9 m of movement]({{ "/assets/img/time-bar.jpg" | relative_url }}){: .screenshot loading="lazy"}
 
 [Rollover]({{ '/turns/' | relative_url }}#rollover) and [Combat Tactics]({{ '/turns/' | relative_url }}#combat-tactics) make the bar longer.
 
 ## Cost estimation
 
-Hover over an enemy to see what attacking it would cost. The cost is highlighted on the time bar, and the text reads, for example, **Costs 2.9 s, leaving 0.1 s**. If the enemy is out of reach, the cost includes the movement to it.
+Hover over an enemy to see what attacking it would cost. The cost is highlighted on the time bar, and the text reads, for example, **Costs 1.4 s, leaving 1.6 s**. If the enemy is out of reach, the cost includes the movement to it.
 
-![Hovering over an enemy: the walk to it and the attack cost 2.9 seconds]({{ "/assets/img/cost-preview.jpg" | relative_url }}){: .screenshot loading="lazy"}
+![Hovering over an enemy: the attack costs 1.4 seconds]({{ "/assets/img/cost-preview.jpg" | relative_url }}){: .screenshot loading="lazy"}
 
 If the cost is more than the time left, the text says the action will complete next turn. See [Actions that do not fit]({{ '/turns/' | relative_url }}#actions-that-do-not-fit).
 
