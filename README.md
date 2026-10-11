@@ -15,7 +15,7 @@ Turn-based combat for **Dragon Age: Origins**, Awakening and Witch Hunt: a [DAOL
 
 Version 1.05 of the game. The mod is developed and tested on the GOG version. The Steam and EA versions need a large-address-aware (LAA) `DAOrigins.exe`; GOG's is large-address-aware already.
 
-Extract [DAOLib](https://github.com/Whocares66-Dev/DAOLib/releases)'s zip into the game's folder, the one that contains `bin_ship`, and then [this mod's](https://github.com/Whocares66-Dev/DAOTurnBased/releases). Saves are not modified. To uninstall, delete `bin_ship\daolib\plugins\turnbased`.
+Extract [DAOLib](https://github.com/Whocares66-Dev/DAOLib/releases)'s zip into the game's folder, the one that contains `bin_ship`, and then this mod's, from [Nexus Mods](https://www.nexusmods.com/dragonage/mods/7053) or the [releases page](https://github.com/Whocares66-Dev/DAOTurnBased/releases). Saves are not modified. To uninstall, delete `bin_ship\daolib\plugins\turnbased`.
 
 The [getting started guide](https://whocares66-dev.github.io/DAOTurnBased/getting-started/) has the details.
 

@@ -16,7 +16,7 @@ That is one version of the guide, and the header's selector reads "Current". Eve
 
 ## Looks
 
-Gold on black, the game's own: `_sass/turnbased_palette.scss` has the colours, each measured from the game's interface (its menus' warm black, its buttons' brown, the pale gold of its lettering, the gilt of a card's ring), `_sass/color_schemes/turnbased.scss` gives them to the theme, and `_sass/custom/custom.scss` has the rest: no line round a picture or round code, a table with no boxes and no rules, every other row shaded, the scrollbar in the text's colour, the code blocks' copy button (`_includes/icons/code_copy.html`), and the header's right (`_includes/components/aux_nav.html`: the version selector and GitHub's mark, as DAOEluvianMCP's guide has them).
+Gold on black, the game's own: `_sass/turnbased_palette.scss` has the colours, each measured from the game's interface (its menus' warm black, its buttons' brown, the pale gold of its lettering, the gilt of a card's ring), `_sass/color_schemes/turnbased.scss` gives them to the theme, and `_sass/custom/custom.scss` has the rest: no line round a picture or round code, a table with no boxes and no rules, every other row shaded, the scrollbar in the text's colour, the code blocks' copy button (`_includes/icons/code_copy.html`), and the header's right (`_includes/components/aux_nav.html`: the version selector, Nexus Mods' mark and GitHub's, as DAOEluvianMCP's guide has them).
 
 ## Editing
 

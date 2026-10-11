@@ -18,7 +18,7 @@ The mod needs [DAOLib](https://github.com/Whocares66-Dev/DAOLib), which loads it
 
 1. Close the game.
 2. Download `DAOLib-x.y.z.zip` from [DAOLib's releases](https://github.com/Whocares66-Dev/DAOLib/releases) and extract it into the game's folder, the one that contains `bin_ship`. For GOG this is usually `C:\Program Files (x86)\GOG Galaxy\Games\Dragon Age Origins`.
-3. Download `DAOTurnBased-x.y.z.zip` from the [releases page](https://github.com/Whocares66-Dev/DAOTurnBased/releases) and extract it into the same folder.
+3. Download `DAOTurnBased-x.y.z.zip` from [Nexus Mods](https://www.nexusmods.com/dragonage/mods/7053) or the [releases page](https://github.com/Whocares66-Dev/DAOTurnBased/releases) and extract it into the same folder.
 
 `bin_ship` then has `version.dll` next to `DAOrigins.exe`, and `daolib\plugins\turnbased\turnbased.dll`.
 
@@ -44,7 +44,7 @@ Close the game and delete `bin_ship\daolib\plugins\turnbased`. To remove DAOLib 
 
 ## Reporting problems
 
-[Open an issue on GitHub](https://github.com/Whocares66-Dev/DAOTurnBased/issues). Describe what happened and where in the game, and attach these files from `Documents\BioWare\Dragon Age\daolib`:
+[Open an issue on GitHub](https://github.com/Whocares66-Dev/DAOTurnBased/issues) or [file a bug on Nexus Mods](https://www.nexusmods.com/dragonage/mods/7053?tab=bugs). Describe what happened and where in the game, and attach these files from `Documents\BioWare\Dragon Age\daolib`:
 
 - `turnbased.log`: the last session.
 - `turnbased.previous.log`: the session before, if you have restarted the game since.
