@@ -374,7 +374,7 @@ void BarLink::KeepSheet(const TurnView &view, std::uint32_t nowMs)
     const auto card = std::ranges::find(view.upcoming, asked, &CardView::id);
     if (asked != kNoObject && card != view.upcoming.end())
     {
-        const CreatureSheet sheet = BuildSheet(ReadSheet(asked, card->name, card->mana));
+        const CreatureSheet sheet = BuildSheet(ReadSheet(asked, card->name, card->mana, asked != inspected_));
         if (sheet.id != kNoObject)
         {
             encoded = EncodeSheet(sheet);

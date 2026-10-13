@@ -5031,8 +5031,14 @@ MUTANTS = [
     Mutant(
         "sheet: damage is shown where the engine has no figure",
         SHEET,
-        "    if (TotalOf(facts, kMainHandDamage) != 0.0f)\n",
+        "    if (TotalOf(facts, kMainHandDamage) > 0.0f)\n",
         "    if (true)\n",
+    ),
+    Mutant(
+        "sheet: the script's mark for no weapon is a figure",
+        SHEET,
+        "        if (TotalOf(facts, kOffHandDamage) > 0.0f)",
+        "        if (TotalOf(facts, kOffHandDamage) != 0.0f)",
     ),
     Mutant(
         "sheet: the off hand's weapon is the main hand's",

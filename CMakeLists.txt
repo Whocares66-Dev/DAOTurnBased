@@ -296,6 +296,7 @@ target_compile_definitions(
 # daolib depends on them itself (DAOLib 8ecb9ac), so linking it makes them.
 
 # `cmake --build --preset debug` builds the loader too, so build\<preset>\
-# is a game folder's worth of files: version.dll, daolib\addresses and the
+# is a game folder's worth of files: dinput8.dll (DAOLib's loader, its
+# target `loader`, version.dll until its issue 93), daolib\addresses and the
 # plugin's folder, daolib\plugins\turnbased.
-add_custom_target(game_folder ALL DEPENDS version turnbased)
+add_custom_target(game_folder ALL DEPENDS loader turnbased)

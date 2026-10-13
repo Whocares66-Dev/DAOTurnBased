@@ -1,5 +1,6 @@
 #include "game/Sheet.h"
 
+#include "dao/Damage.h"
 #include "dao/Gda.h"
 #include "dao/Log.h"
 #include "dao/Tlk.h"
@@ -8,6 +9,8 @@
 #include "dao/generated/ScriptConstants.h"
 
 #include <cstdint>
+#include <format>
+#include <string>
 #include <vector>
 
 namespace tb::game
@@ -133,11 +136,32 @@ WeaponFacts Hand(ObjectId creature, std::int32_t slot)
 
 } // namespace
 
-SheetFacts ReadSheet(ObjectId id, const std::wstring &name, bool mage)
+SheetFacts ReadSheet(ObjectId id, const std::wstring &name, bool mage, bool fresh)
 {
     if (id == kNoObject || api::IsObjectValid(id) == 0)
     {
         return {};
+    }
+    // The engine keeps a hand's damage (properties 50 and 49) for the party
+    // alone, by rules_core as it equips; an enemy's read 0 (seen 2026-10-13:
+    // an armed cultist's and a dragonling's). The figure is the game's
+    // script's (core_h.nss, RecalculateDisplayDamage), which module_core runs
+    // for any creature as the character record opens, and DAOLib's PerHand
+    // has it run. Once as the pointer comes to a card, not at each read: the
+    // same event rewrites the hero's play-time stat and recounts the
+    // achievements had. The properties are read below with the rest, so a
+    // figure the script writes a frame late is on the next read. It is the
+    // script's estimate, an average hit scaled by attack speed and rank, with
+    // no dice, armour or resistance: the figure the game's own record shows
+    // for the party, not what a blow will do.
+    if (fresh)
+    {
+        if (const auto damage = dao::damage::PerHand(id))
+        {
+            spdlog::debug("the game's script reckons object {}'s damage: main hand {:.1f}, off hand {}", id,
+                          damage->mainHand,
+                          damage->offHand ? std::format("{:.1f}", *damage->offHand) : std::string{"none"});
+        }
     }
     const Tables &tables = GameTables();
     SheetFacts facts;

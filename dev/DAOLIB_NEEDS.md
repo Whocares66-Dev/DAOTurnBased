@@ -224,4 +224,6 @@ What has come of these so far (2026-10-02). DAOLib's order, agreed with its sess
 
 ## A creature's weapon damage, as the character record shows it (issue 112, 2026-10-13)
 
+**Had, DAOLib `fe6373d` (its issue 108, branch `gh-108-calculate-damage`): `dao::damage::PerHand`, taken by issue 113; not yet seen in play.** It has the game's script reckon the two properties for any creature, by the character record's own event; `dev/UI.md`, "A creature's sheet", has how the mod calls it. As it was asked:
+
 The turn bar's sheet of a creature shows its damage per hand from the engine's own figure, the properties `Damage_MainHand` (50) and `Damage_OffHand` (49), which the character record reads. The engine keeps them for the party alone: an armed cultist's and a dragonling's read 0 in play, so the sheet leaves damage out for anyone else. Wanted: the engine's function that fills those two properties for a party member, callable for any creature (or the figure it computes), so that an enemy's sheet can show its damage as the party's does. The address library names no such function; the scripts reckon a hit's damage themselves as it lands (`combat_damage_h.nss`, `Combat_Damage_GetAttackDamage`), which the mod would rather not copy.

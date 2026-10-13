@@ -239,9 +239,9 @@ TEST_CASE("a modifier that rounds away at the table's precision is no colour", "
 TEST_CASE("two weapons: each hand's damage, critical chance and armor penetration side by side, then attack", "[sheet]")
 {
     const SheetSection offense = Section(BuildSheet(Lyna()), L"Offense");
-    CHECK(Labels(offense) == std::vector<std::wstring>{L"Damage (main hand)", L"Critical chance",
-                                                       L"Armor penetration", L"Attack", L"Damage (offhand)",
-                                                       L"Critical chance", L"Armor penetration"});
+    CHECK(Labels(offense) == std::vector<std::wstring>{L"Damage (main hand)", L"Critical chance", L"Armor penetration",
+                                                       L"Attack", L"Damage (offhand)", L"Critical chance",
+                                                       L"Armor penetration"});
     CHECK(Values(offense) == std::vector<std::wstring>{L"12.5", L"6.00%", L"9", L"85", L"8.3", L"5.00%", L"7"});
     // The main hand's and the attack on the left, the off hand's on the right.
     CHECK(offense.left == 4);
@@ -271,7 +271,8 @@ TEST_CASE("one weapon: one hand's of each, and nothing in the right column", "[s
     CHECK(offense.left == 4);
 }
 
-TEST_CASE("an enemy's damage, which the engine keeps no figure of, is left out, and its second weapon's figures stay",
+TEST_CASE("an enemy's damage, where the game's script has reckoned none, is left out, and its second weapon's figures "
+          "stay",
           "[sheet]")
 {
     SheetFacts cultist = Lyna();
@@ -284,6 +285,18 @@ TEST_CASE("an enemy's damage, which the engine keeps no figure of, is left out, 
     CHECK(offense.left == 3);
 }
 
+TEST_CASE("the script's mark for a hand with no weapon to dual wield is no damage", "[sheet]")
+{
+    // RecalculateDisplayDamage writes -99 for an off hand not dual wielded
+    // and -97 for an empty one (core_h.nss), where the table's floor leaves
+    // it below 0.
+    SheetFacts facts = Lyna();
+    Set(facts, 49, -99);
+    const SheetSection offense = Section(BuildSheet(facts), L"Offense");
+    CHECK(Labels(offense) == std::vector<std::wstring>{L"Damage (main hand)", L"Critical chance", L"Armor penetration",
+                                                       L"Attack", L"Critical chance", L"Armor penetration"});
+}
+
 TEST_CASE("a shield in the off hand is no second weapon", "[sheet]")
 {
     SheetFacts guard = Lyna();
@@ -293,7 +306,8 @@ TEST_CASE("a shield in the off hand is no second weapon", "[sheet]")
     CHECK(offense.rows.size() == offense.left);
 }
 
-TEST_CASE("a bow's critical chance is the ranged one, an empty hand's the melee one, both called critical chance", "[sheet]")
+TEST_CASE("a bow's critical chance is the ranged one, an empty hand's the melee one, both called critical chance",
+          "[sheet]")
 {
     SheetFacts archer = Lyna();
     Set(archer, 49, 0);

@@ -15,7 +15,10 @@ namespace tb::game
 
 // What core's BuildSheet is made from. `name` and `mage` are the bar's card's
 // (the machine's view has them already). An id of kNoObject for a creature
-// the engine does not have.
-[[nodiscard]] SheetFacts ReadSheet(ObjectId id, const std::wstring &name, bool mage);
+// the engine does not have. `fresh` is the first read since the pointer came
+// to the card: the game's script works out the creature's damage per hand
+// then (dao::damage::PerHand; issue 113), as it does when the character
+// record opens.
+[[nodiscard]] SheetFacts ReadSheet(ObjectId id, const std::wstring &name, bool mage, bool fresh);
 
 } // namespace tb::game

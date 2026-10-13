@@ -100,8 +100,8 @@ struct SheetFacts
 {
     ObjectId id = kNoObject;
     std::wstring name;
-    bool mage = false;               // its core class a mage's (the bar's card says)
-    std::wstring energyWord;         // "Mana" or "Stamina", as the record calls its property 8 by class
+    bool mage = false;       // its core class a mage's (the bar's card says)
+    std::wstring energyWord; // "Mana" or "Stamina", as the record calls its property 8 by class
     // A hand's critical chance and armor penetration in the item card's words
     // (the item stats table's NameStrRef, rows 5 and 6: "Critical chance:
     // <percent/>" and "Armor penetration"), the melee and the ranged chance

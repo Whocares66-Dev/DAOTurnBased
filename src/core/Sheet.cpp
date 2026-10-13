@@ -108,9 +108,9 @@ SheetSection Attributes(const SheetFacts &facts)
 SheetSection Offense(const SheetFacts &facts)
 {
     // The off hand's where it holds a weapon. The record goes by its damage
-    // (UpdateHandDamageTooltip), which the engine keeps for the party alone
-    // (seen 2026-10-13: an armed cultist's and a dragonling's both nothing),
-    // so for anyone else that would hide its second weapon's figures too.
+    // (UpdateHandDamageTooltip), which is there only once the game's script
+    // has reckoned it (game/Sheet.cpp), so going by it would hide a second
+    // weapon's figures where the script has not.
     const bool dual = facts.offHand.kind != WeaponKind::None;
     // By the main hand's weapon, for both hands as the record has it: none
     // for a staff, whose magic the record gives no critical chance; the
@@ -120,12 +120,14 @@ SheetSection Offense(const SheetFacts &facts)
     const std::int32_t crit = facts.mainHand.kind == WeaponKind::Ranged ? kRangedCrit : kMeleeCrit;
     std::vector<SheetRow> main;
     std::vector<SheetRow> off;
-    // Damage only where the engine has a figure for it: the party's (the
-    // user, 2026-10-13: "if there's no damage number to pull for enemies, we
-    // can skip that for them"). A hit's damage is the scripts' own reckoning
-    // as it lands (combat_damage_h.nss, Combat_Damage_GetAttackDamage), and
-    // the record's figure is the engine's for its own screen.
-    if (TotalOf(facts, kMainHandDamage) != 0.0f)
+    // Damage only where the game's script has a figure for it (the user,
+    // 2026-10-13: "if there's no damage number to pull for enemies, we can
+    // skip that for them"): the script reckons it for anyone as the sheet is
+    // first asked for (issue 113), and a module whose script does not pass
+    // the character record's event on leaves an enemy's at 0. The script
+    // marks a hand with no weapon below 0 (-99, -97), which the table's floor
+    // may make 0: a figure not above 0 is none.
+    if (TotalOf(facts, kMainHandDamage) > 0.0f)
     {
         AddStat(main, facts, kMainHandDamage);
     }
@@ -136,7 +138,7 @@ SheetSection Offense(const SheetFacts &facts)
     AddForHand(main, facts, kPenetration, facts.mainHand.penetration, facts.penetrationWord, L"");
     if (dual)
     {
-        if (TotalOf(facts, kOffHandDamage) != 0.0f)
+        if (TotalOf(facts, kOffHandDamage) > 0.0f)
         {
             AddStat(off, facts, kOffHandDamage);
         }
