@@ -71,6 +71,9 @@ var MINIMAP_PIXELS = 200;
 var barTop = 0;    // the bar's top on the stage, as the view was last measured (measureView)
 var barScale = 1;  // and its size against the stage's own
 var barRight = 0;  // and how far right it may reach on the stage
+var viewRight = STAGE_W;  // the view's right edge and its foot, on the stage
+var viewBottom = STAGE_H;
+var viewPixel = 1;        // and a pixel of the view, in stage units
 // The current card, the size of the party bar's portraits, selector and all
 // (the user): in play their arcs measure 59 px against a card's 41 at 100,
 // so the frame 72 against 50 (play test 5's capture, 2026-09-30).
@@ -670,6 +673,25 @@ function shoulderIcon(clip, icon, called)
     centre(letter, badgeY, badge);
 }
 
+// A medallion's arcs, at a card's size, between its picture and its gold
+// ring (depths 6 to 13): the card's, and the sheet's portrait's (drawSheet).
+function cardArcs(clip, card)
+{
+    // Health: the party bar's red arc, swept from the foot to the share left.
+    sweep(art(clip, "Portraits_I41", 6, 0, 0, CARD_W, CARD_H), clip, "level", 7, card.health, 1);
+    // Mana (a mage's, blue) or stamina (gold): the party bar's right arc, as the
+    // party bar draws it (portraits.gfx's ManaBar and ManaStaminaBarReserve): a
+    // dark track (Portraits_I58 and I55), the arc swept over it (I52 and I5B), and
+    // where sustained abilities hold some of it back, a mark that far from the top.
+    art(clip, card.mana ? "Portraits_I58" : "Portraits_I55", 10, 0, 0, CARD_W, CARD_H);
+    sweep(art(clip, card.mana ? "Portraits_I52" : "Portraits_I5B", 11, 0, 0, CARD_W, CARD_H), clip, "energyLevel", 12,
+          card.energy, -1);
+    if (card.reserved > 0)
+    {
+        reserveMark(clip, 13, card);
+    }
+}
+
 function drawCard(bar, card, index, x)
 {
     var clip = bar.createEmptyMovieClip("card" + index, 100 + index);
@@ -719,25 +741,14 @@ function drawCard(bar, card, index, x)
         var text = label(clip, "initials", 5, 0, mid - 13, CARD_W, 26, 17, PARCHMENT, "center", true);
         text.text = initials(card.name);
     }
-    // Health: the party bar's red arc, swept from the foot to the share left.
-    sweep(art(clip, "Portraits_I41", 6, 0, 0, CARD_W, CARD_H), clip, "level", 7, card.health, 1);
-    // Mana (a mage's, blue) or stamina (gold): the party bar's right arc, as the
-    // party bar draws it (portraits.gfx's ManaBar and ManaStaminaBarReserve): a
-    // dark track (Portraits_I58 and I55), the arc swept over it (I52 and I5B), and
-    // where sustained abilities hold some of it back, a mark that far from the top.
-    art(clip, card.mana ? "Portraits_I58" : "Portraits_I55", 10, 0, 0, CARD_W, CARD_H);
-    sweep(art(clip, card.mana ? "Portraits_I52" : "Portraits_I5B", 11, 0, 0, CARD_W, CARD_H), clip, "energyLevel", 12,
-          card.energy, -1);
-    if (card.reserved > 0)
-    {
-        reserveMark(clip, 13, card);
-    }
+    cardArcs(clip, card);
     art(clip, "Portraits_I3C", 16, 0, 0, CARD_W, CARD_H);
     // No rank gem at the foot: a dot of the game's rank colour (yellow, a
     // lieutenant's) asked what it was of the tester and of the user, who
     // took it out (2026-10-02: "let's remove the dot. later we'll add a card
     // on hover that shows stats of actor"). The caption under the pointer
-    // still says the rank.
+    // still says the rank, and that card is the creature's sheet (issue 112;
+    // drawSheet).
     // No arrow under the party's cards: until issue 25 a card the player
     // commands had the game's gold arrow (the inventory's sort button's,
     // inventory_I2F1) pointing up at it from under the ring. The party's
@@ -794,17 +805,25 @@ function drawCard(bar, card, index, x)
         }
         fscommand("TB_Focus", String(this.id));
     };
+    // Under the pointer its creature's sheet too (issue 112; drawSheet), as
+    // the caption says its name.
+    clip.tint = tint;
+    clip.portrait = portrait;
+    clip.card = card;
     clip.onRollOver = function()
     {
         _root.hovered = this.fullName;
         _root.hoveredColour = this.nameColour;
         caption();
+        inspect(this);
     };
     clip.onRollOut = function()
     {
         _root.hovered = "";
         caption();
+        inspect(null);
     };
+    clip.onDragOut = clip.onRollOut;
     return clip;
 }
 
@@ -1005,6 +1024,9 @@ function measureView()
     barScale = wanted / shown;
     barTop = (STAGE_H - units) / 2 + BAR_PIXELS / shown;
     barRight = STAGE_W / 2 + (across / 2 - MINIMAP_PIXELS) / shown;
+    viewPixel = 1 / shown;
+    viewRight = STAGE_W / 2 + across / 2 / shown;
+    viewBottom = (STAGE_H + units) / 2;
 }
 
 function build(state)
@@ -1143,6 +1165,31 @@ function build(state)
     var text = label(strip, "text", 2, barMiddle - CAPTION_W / 2, captionTop, CAPTION_W, CAPTION_H, 14, PARCHMENT,
                      "center", false);
     strip._visible = false;
+    pointedAgain(bar, state);
+}
+
+// A card under the pointer as the bar is built again (a blow on anyone in the
+// row changes its cards) stays under it: its new card is told so, and its
+// name and sheet stay up. With no roll-out from a card taken away, they had
+// stayed up for a whole turn (play test 30); with nothing more, they went at
+// every blow while the pointer stayed.
+function pointedAgain(bar, state)
+{
+    if (inspected == null)
+    {
+        return;
+    }
+    var id = inspectedId;
+    for (var i = 0; i < state.row.length; i++)
+    {
+        var card = bar["card" + i];
+        if (card.id == id && card.hitTest(_root._xmouse, _root._ymouse, true))
+        {
+            card.onRollOver();
+            return;
+        }
+    }
+    inspect(null);
 }
 
 // A turn's bar of time, the mod's own, under the medallions on the player's
@@ -1495,6 +1542,10 @@ function draw(view)
         _root.bar.removeMovieClip();
         lastCards = null;
         timeState = null;
+        if (inspected != null)
+        {
+            inspect(null);
+        }
         // The cards and their images are gone: the plugin may release the
         // portraits it rendered for them (core/Portraits.h).
         if (inGame)
@@ -1901,7 +1952,7 @@ function askShow()
 // background, the picture masked round, and the gold ring (drawCard's own
 // stack, without what a fight adds to it). The picture is asked for at the
 // size it is drawn, not a card's made larger.
-function medallion(clip, depth, x, y, size, texture)
+function medallion(clip, depth, x, y, size, texture, tint)
 {
     var holder = clip.createEmptyMovieClip("medallion" + depth, depth);
     holder._x = x;
@@ -1910,8 +1961,8 @@ function medallion(clip, depth, x, y, size, texture)
     var orb = 74 * unit;
     var orbAt = 20 * unit;
     art(holder, "Portraits_IC2", 1, 0, 0, size, size);
-    art(holder, backgroundTexture(1), 3, orbAt, orbAt, orb, orb);
-    if (texture.length > 0)
+    art(holder, backgroundTexture(tint == undefined ? 1 : tint), 3, orbAt, orbAt, orb, orb);
+    if (texture != null && texture.length > 0)
     {
         var picture = art(holder, texture, 4, 22 * unit, orbAt, 72 * unit, 72 * unit);
         var round = holder.createEmptyMovieClip("round", 5);
@@ -1970,6 +2021,304 @@ function drawShow(text)
     }
 }
 
+// A creature's sheet, under its card while the pointer is on it (issue 112;
+// src/core/Sheet.h). The user, 2026-10-13: its portrait where the item card
+// has its icon, without the arcs, its name, level, class and
+// specialisations, its attributes, what it strikes with, what it stands
+// behind and its resistances; and "we can re-use the item inspection card".
+// Its box is the one the game shows a party member's lines in as the pointer
+// is on its portrait (the user, of the item card's frame with thorns at the
+// corners: "the fancy box gets stretched weirdly. how about we use the same
+// box as the party portrait stats hover, the one w/ rounded corners"): the
+// tooltips' TooltipBackground (tooltips.gfx, read with FFDec, 2026-10-13).
+// Its words are the record's light gold, a raise in its green and a fall in
+// its red (ColorDefines), and a rule of the same gold between parts.
+//
+// The plugin reads the sheet when told whose card the pointer is on
+// (TB_Inspect) and again four times a second while it stays, and answers it
+// as one string (TB_GetSheet): the head (version, id, name, level), the
+// classes (name and icon, each), then a record a section (title, how many
+// rows stand in its left column, then label, value and tone each row).
+// Everything but the section titles is the game's own words, its tables'
+// and its talk table's. Not there for the mouse, as the preview is not.
+var SHEET_VERSION = 1;
+var SHEET_W = 360;
+var SHEET_PAD = 18; // inside the box's glow and corners
+var SHEET_GAP = 18; // between the columns
+var SHEET_ROW = 15;
+var SHEET_PORTRAIT = 64;
+var SHEET_ICON = 20;
+var SHEET_EVERY = 3; // frames between askings while the pointer stays
+var SHEET_TEXT = 0xCEB874; // ColorDefines.TEXT_DEFAULT_LIGHT, the item card's words
+var SHEET_TITLE = 0xFBFBC9; // the item card's name, measured in the game's frame
+var SHEET_TONES = [SHEET_TEXT, 0x55FF22, 0xCC0000]; // plain, ITEM_TEXT_GREEN_ON_DARK, ITEM_TEXT_RED_ON_DARK
+// The tooltips' box (TooltipBackground: the texture Tooltips_I26, 80 x 72,
+// stretched by its sprite's scaling grid, x 24.5 to 56.5 and y 24.25 to
+// 48.75) is a rounded black at 80%, 9 pixels in from the texture's edge with
+// corners of 13, and outside it a pale glow (247, 243, 181) fading from 22% to
+// nothing over those 9 pixels, as measured in the texture, 2026-10-13. Drawn
+// so, one shape, a pixel of the screen a pixel of the texture at the bar's
+// size (1 / LOOK) as the game draws its own: the texture stretched by masks
+// over nine parts, as the grid has it, left lines where the parts met at a
+// fraction of a pixel, a gap lighter and an overlap darker through the
+// translucent black. (The item card's frame came first, ItemExamine_I46 by
+// its own grid; its middle is two pixels of the texture, and stretched it
+// made a black band across the top and seams down the sides.)
+var BOX_UNIT = 1 / LOOK;
+var BOX_INSET = 9;
+var BOX_RADIUS = 13;
+var BOX_GLOW = 0xF7F3B5;
+var BOX_GLOW_ALPHAS = [22, 18, 13, 10, 7, 5, 3.5, 2, 1]; // outward from the black, a pixel each
+var inspected = null; // the card under the pointer
+// And whose it is, and its picture: a card's clip is gone once the bar is
+// built again, and what it held with it.
+var inspectedId = "";
+var inspectedPortrait = null;
+var sheetAsk = 0;
+var lastSheet = null;
+var sheetDepth = 0;
+
+function inspect(card)
+{
+    // The same creature's new card, its picture the same: the sheet up stays.
+    var same = card != null && card.id == inspectedId && card.portrait == inspectedPortrait;
+    inspected = card;
+    inspectedId = card == null ? "" : card.id;
+    inspectedPortrait = card == null ? null : card.portrait;
+    if (same)
+    {
+        return;
+    }
+    lastSheet = null;
+    sheetAsk = 0;
+    _root.sheet.removeMovieClip();
+    if (inGame)
+    {
+        fscommand("TB_Inspect", card == null ? "" : String(card.id));
+    }
+}
+
+// Outside the game: Alistair's (the sample's 257) and, for any other card, a
+// genlock's, whose class is no ability.
+function sampleSheet(id)
+{
+    var head = [SHEET_VERSION, id, "Alistair", "Level 12"];
+    var stats = ["Stats", 2, "Health", "166 / 254", 0, "Stamina", "112 / 125", 0];
+    var classes = ["Warrior", "classico_warrior", "Templar", "classico_templar"];
+    var offense = ["Offense", 4, "Damage (main hand)", "14.2", 1, "Critical chance", "5.30%", 0,
+                   "Armor penetration", "6", 0, "Attack", "78", 0];
+    var defense = ["Defense", 2, "Armor", "17", 1, "Defense", "41", 0];
+    var resistances = ["Resistances", 2, "Mental resistance check", "44", 0, "Physical resistance check", "58", 0,
+                       "Fire resistance", "10%", 1, "Cold resistance", "0%", 0, "Electrical resistance", "0%", 0,
+                       "Nature resistance", "0%", 0, "Spirit resistance", "-5%", 2];
+    var attributes = ["Attributes", 3, "Strength", "32", 1, "Dexterity", "16", 0, "Magic", "11", 2, "Constitution", "20", 0,
+                      "Cunning", "12", 0, "Willpower", "14", 0];
+    if (id != 257)
+    {
+        head = [SHEET_VERSION, id, "Genlock", "Level 9"];
+        stats = ["Stats", 2, "Health", "64 / 160", 0, "Stamina", "80 / 80", 0];
+        classes = ["Agile Monster", ""];
+        attributes = ["Attributes", 3, "Strength", "20", 0, "Dexterity", "24", 0, "Magic", "10", 0, "Constitution", "18", 0,
+                      "Cunning", "12", 0, "Willpower", "10", 0];
+        offense = ["Offense", 4, "Damage (main hand)", "7.5", 0, "Critical chance", "3.10%", 0,
+                   "Armor penetration", "4", 0, "Attack", "62", 0, "Damage (offhand)", "6.0", 0,
+                   "Critical chance", "2.60%", 0, "Armor penetration", "3", 0];
+        defense = ["Defense", 2, "Armor", "9", 0, "Defense", "30", 2];
+    }
+    return [head.join(FIELD), classes.join(FIELD), stats.join(FIELD), attributes.join(FIELD), offense.join(FIELD),
+            defense.join(FIELD), resistances.join(FIELD)].join(CARD);
+}
+
+function askSheet()
+{
+    if (!inGame)
+    {
+        return sampleSheet(inspectedId);
+    }
+    var sheet = flash.external.ExternalInterface.call("TB_GetSheet");
+    return sheet == undefined || sheet == null ? "" : String(sheet);
+}
+
+// Every frame: while a card is under the pointer, its sheet asked for every
+// few frames, and drawn when it changed.
+function followSheet()
+{
+    if (inspected == null || sheetAsk-- > 0)
+    {
+        return;
+    }
+    sheetAsk = SHEET_EVERY;
+    drawSheet(askSheet());
+}
+
+// The tooltips' box at any size, its glow within it: w by h.
+function tooltipBox(clip, w, h)
+{
+    var u = BOX_UNIT;
+    var inset = BOX_INSET * u;
+    for (var k = 0; k < BOX_GLOW_ALPHAS.length; k++)
+    {
+        var out = (k + 0.5) * u;
+        clip.lineStyle(u, BOX_GLOW, BOX_GLOW_ALPHAS[k]);
+        roundedBox(clip, inset - out, inset - out, w - 2 * (inset - out), h - 2 * (inset - out), BOX_RADIUS * u + out,
+                   0x000000, 0);
+    }
+    clip.lineStyle();
+    roundedBox(clip, inset, inset, w - 2 * inset, h - 2 * inset, BOX_RADIUS * u, 0x000000, 80);
+}
+
+function sheetText(clip, x, y, w, h, size, colour, align, title, text)
+{
+    var field = label(clip, "text" + sheetDepth, 100 + sheetDepth, x, y, w, h, size, colour, align, title);
+    sheetDepth++;
+    field.text = text;
+    field.hitTestDisable = true;
+    return field;
+}
+
+// The classes, each its icon and its name, along from `x`, onto another line
+// where the next does not fit: where the next line would begin.
+function sheetClasses(clip, record, x, y, right)
+{
+    var f = record == undefined ? [] : record.split(FIELD);
+    var at = x;
+    for (var i = 0; i + 1 < f.length; i += 2)
+    {
+        var field = sheetText(clip, 0, 0, 200, SHEET_ICON, 12, SHEET_TEXT, "left", false, f[i]);
+        var wide = (f[i + 1].length > 0 ? SHEET_ICON + 4 : 0) + field.textWidth + 6;
+        if (at > x && at + wide > right)
+        {
+            at = x;
+            y += SHEET_ICON + 4;
+        }
+        if (f[i + 1].length > 0)
+        {
+            art(clip, f[i + 1], 100 + sheetDepth, at, y, SHEET_ICON, SHEET_ICON);
+            sheetDepth++;
+            at += SHEET_ICON + 4;
+        }
+        field._x = at;
+        field._width = field.textWidth + 6;
+        centre(field, y, SHEET_ICON);
+        at += field.textWidth + 14;
+    }
+    return f.length >= 2 ? y + SHEET_ICON : y;
+}
+
+// A part of the sheet: a rule, its title, and its rows in two columns, each
+// its words on the left and its value on the right. The left column is as
+// wide as its widest row needs, at least half: a critical chance for each
+// hand ("3.10% / 2.60%") lay over its words in half. Where the next begins.
+function sheetSection(clip, f, y)
+{
+    var inner = SHEET_W - 2 * SHEET_PAD;
+    clip.rules.lineStyle(1, SHEET_TEXT, 60);
+    clip.rules.moveTo(SHEET_PAD, y);
+    clip.rules.lineTo(SHEET_W - SHEET_PAD, y);
+    sheetText(clip, SHEET_PAD, y + 4, inner, 20, 14, SHEET_TITLE, "left", true, f[0]);
+    y += 25;
+    var left = Number(f[1]);
+    var count = Math.floor((f.length - 2) / 3);
+    var rows = [];
+    var leftWide = (inner - SHEET_GAP) / 2;
+    for (var i = 0; i < count; i++)
+    {
+        var right = i >= left;
+        var at = y + (right ? i - left : i) * SHEET_ROW;
+        var tone = SHEET_TONES[Number(f[4 + 3 * i])];
+        var words = sheetText(clip, 0, at, inner, SHEET_ROW + 3, 11, SHEET_TEXT, "left", false, f[2 + 3 * i]);
+        var value = sheetText(clip, 0, at, inner, SHEET_ROW + 3, 11, tone == undefined ? SHEET_TEXT : tone, "right",
+                              false, f[3 + 3 * i]);
+        rows.push({right: right, words: words, value: value});
+        if (!right)
+        {
+            leftWide = Math.max(leftWide, words.textWidth + value.textWidth + 16);
+        }
+    }
+    for (var r = 0; r < rows.length; r++)
+    {
+        var x = SHEET_PAD + (rows[r].right ? leftWide + SHEET_GAP : 0);
+        var wide = rows[r].right ? inner - leftWide - SHEET_GAP : leftWide;
+        rows[r].words._x = rows[r].value._x = x;
+        rows[r].words._width = rows[r].value._width = wide;
+    }
+    return y + Math.max(left, count - left) * SHEET_ROW + 8;
+}
+
+// Where the game anchors its fixed tooltip, the party portrait's lines
+// (tooltips.gfx, read 2026-10-13: Tooltips.UpdateFixedTooltip): its bottom
+// right corner on FixedTooltipAnchor_mc, which stands 5 pixels in from the
+// view's bottom right (1019, 763 of a 1024 x 768 stage, kept to the bottom
+// right by its AlignedLayout), and 48 pixels higher where the quickbar
+// reaches under a box that wide (GUI.QuickbarXMax, in the view's pixels).
+var SHEET_CORNER = 5;
+var SHEET_ABOVE_QUICKBAR = 48;
+function sheetCorner(wide)
+{
+    var x = viewRight - SHEET_CORNER * viewPixel;
+    var y = viewBottom - SHEET_CORNER * viewPixel;
+    if (inGame)
+    {
+        var reach = Number(flash.external.ExternalInterface.call("GetValue", "GUI.QuickbarXMax"));
+        var viewLeft = STAGE_W - viewRight;
+        if (reach > (x - viewLeft - wide) / viewPixel)
+        {
+            y -= SHEET_ABOVE_QUICKBAR * viewPixel;
+        }
+    }
+    return {x: x, y: y};
+}
+
+function drawSheet(text)
+{
+    if (text == lastSheet)
+    {
+        return;
+    }
+    lastSheet = text;
+    _root.sheet.removeMovieClip();
+    var records = text.split(CARD);
+    var head = records[0].split(FIELD);
+    if (inspected == null || Number(head[0]) != SHEET_VERSION || head[1] != String(inspectedId))
+    {
+        return;
+    }
+    var clip = _root.createEmptyMovieClip("sheet", 15);
+    clip.createEmptyMovieClip("rules", 50);
+    sheetDepth = 0;
+    // The head: the card's medallion with its arcs, where the item card has
+    // its icon (without them at first, as the user asked; then, 2026-10-13:
+    // "let's have the portrait show health / stamina levels as well, right
+    // now they're empty"), and beside it the name in its rank's colour, the
+    // level and the classes.
+    var portrait = medallion(clip, 40, SHEET_PAD, SHEET_PAD, CARD_W, inspected.portrait, inspected.tint);
+    cardArcs(portrait, inspected.card);
+    portrait._xscale = portrait._yscale = 100 * SHEET_PORTRAIT / CARD_W;
+    var x = SHEET_PAD + SHEET_PORTRAIT + 12;
+    var right = SHEET_W - SHEET_PAD;
+    sheetText(clip, x, SHEET_PAD - 2, right - x, 26, 18, inspected.nameColour, "left", true, head[2]);
+    sheetText(clip, x, SHEET_PAD + 22, right - x, 18, 12, SHEET_TEXT, "left", false, head[3]);
+    var y = sheetClasses(clip, records[1], x, SHEET_PAD + 42, right);
+    y = Math.max(y, SHEET_PAD + SHEET_PORTRAIT) + 10;
+    for (var r = 2; r < records.length; r++)
+    {
+        y = sheetSection(clip, records[r].split(FIELD), y);
+    }
+    var high = y + SHEET_PAD;
+    tooltipBox(clip.createEmptyMovieClip("frame", 1), SHEET_W, high);
+    // In the screen's bottom right corner, where the game shows a party
+    // member's few lines as the pointer is on its portrait (the user,
+    // 2026-10-13: "bottom right ... as that's where party member details
+    // are"), at the bar's size whatever the resolution, as the game's own
+    // interface is.
+    clip._xscale = clip._yscale = 100 * barScale;
+    var place = sheetCorner(SHEET_W * barScale);
+    clip._x = Math.round(place.x - SHEET_W * barScale);
+    clip._y = Math.round(place.y - high * barScale);
+    _global.gfxExtensions = true;
+    clip.hitTestDisable = true;
+}
+
 Stage.scaleMode = "showAll";
 _root.onEnterFrame = function()
 {
@@ -2007,6 +2356,7 @@ _root.onEnterFrame = function()
         }
     }
     drawPreview(askPreview());
+    followSheet();
 };
 draw(ask());
 drawShow(askShow());

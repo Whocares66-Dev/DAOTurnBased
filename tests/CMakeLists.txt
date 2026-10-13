@@ -53,6 +53,7 @@ add_executable(
     test_rotation.cpp
     test_rules.cpp
     test_settings.cpp
+    test_sheet.cpp
     test_text.cpp
     test_time.cpp
     test_turnorder.cpp

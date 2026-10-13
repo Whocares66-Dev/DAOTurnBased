@@ -504,6 +504,7 @@ void ServeBar(std::uint32_t now)
     // on one of its arrows is published at once: the movie asks every frame
     // for a few after one (ui/turnorder: hurry).
     const bool arrowClicked = g.bar.FollowRow(view);
+    g.bar.KeepSheet(view, now);
     if (arrowClicked || now - g.lastBarPublish >= 100)
     {
         g.lastBarPublish = now;

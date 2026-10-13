@@ -130,6 +130,7 @@ FACING = "src/core/Facing.cpp"
 TIMEDSTEP = "src/core/TimedStep.cpp"
 TEXT = "src/core/Text.h"
 STATE = "src/core/State.cpp"
+SHEET = "src/core/Sheet.cpp"
 
 MUTANTS = [
     Mutant(
@@ -4984,6 +4985,150 @@ MUTANTS = [
         MACHINE,
         "    const std::uint32_t notCounted = StepTimeNotCounted(actor);\n",
         "    const std::uint32_t notCounted = actor.busy ? StepTimeNotCounted(actor) : 0;\n",
+    ),
+    Mutant(
+        "sheet: a value is coloured by its total, not by what raises it",
+        SHEET,
+        "                                .tone = ToneOf(row->modifier, row->precision)});",
+        "                                .tone = ToneOf(row->total, row->precision)});",
+    ),
+    Mutant(
+        "sheet: a modifier that rounds away is coloured",
+        SHEET,
+        "std::round(static_cast<double>(value) * std::pow(10.0, std::max(0, precision)))",
+        "(static_cast<double>(value) * std::pow(10.0, std::max(0, precision)))",
+    ),
+    Mutant(
+        "sheet: the attributes stand in the table's order",
+        SHEET,
+        "{kStrength, kDexterity, kMagic, kConstitution, kCunning, kWillpower}",
+        "{kStrength, kDexterity, kWillpower, kMagic, kCunning, kConstitution}",
+    ),
+    Mutant(
+        "sheet: health and stamina show their whole as what is left",
+        SHEET,
+        '.value = FormatStat(row->current, row->precision) + L" / " +',
+        '.value = FormatStat(row->total, row->precision) + L" / " +',
+    ),
+    Mutant(
+        "sheet: health and stamina stand side by side",
+        SHEET,
+        "    AddDepletable(section.rows, facts, kManaStamina, facts.energyWord);\n    section.left = section.rows.size();",
+        "    AddDepletable(section.rows, facts, kManaStamina, facts.energyWord);\n    section.left = 1;",
+    ),
+    Mutant(
+        "sheet: the off hand's figures are never shown",
+        SHEET,
+        "    const bool dual = facts.offHand.kind != WeaponKind::None;",
+        "    const bool dual = false;",
+    ),
+    Mutant(
+        "sheet: a shield is a second weapon",
+        SHEET,
+        "    const bool dual = facts.offHand.kind != WeaponKind::None;",
+        "    const bool dual = true;",
+    ),
+    Mutant(
+        "sheet: damage is shown where the engine has no figure",
+        SHEET,
+        "    if (TotalOf(facts, kMainHandDamage) != 0.0f)\n",
+        "    if (true)\n",
+    ),
+    Mutant(
+        "sheet: the off hand's weapon is the main hand's",
+        SHEET,
+        '        AddForHand(off, facts, kPenetration, facts.offHand.penetration, facts.penetrationWord, L"");',
+        '        AddForHand(off, facts, kPenetration, facts.mainHand.penetration, facts.penetrationWord, L"");',
+    ),
+    Mutant(
+        "sheet: a weapon adds nothing to the creature's own",
+        SHEET,
+        ".value = FormatStat(row->total + added, row->precision)",
+        ".value = FormatStat(row->total, row->precision)",
+    ),
+    Mutant(
+        "sheet: a mage's attack is its attack",
+        SHEET,
+        "    AddStat(main, facts, facts.mage ? kSpellpower : kAttack);",
+        "    AddStat(main, facts, kAttack);",
+    ),
+    Mutant(
+        "sheet: a staff has a critical chance",
+        SHEET,
+        "    const bool crits = facts.mainHand.kind != WeaponKind::Magic;",
+        "    const bool crits = true;",
+    ),
+    Mutant(
+        "sheet: a bow's critical chance is the melee one",
+        SHEET,
+        "facts.mainHand.kind == WeaponKind::Ranged ? kRangedCrit : kMeleeCrit;",
+        "facts.mainHand.kind == WeaponKind::None ? kRangedCrit : kMeleeCrit;",
+    ),
+    Mutant(
+        "sheet: the off hand's stand in the left column",
+        SHEET,
+        '{.title = L"Offense", .left = main.size(),',
+        '{.title = L"Offense", .left = 0,',
+    ),
+    Mutant(
+        "sheet: the attack stands with the off hand's",
+        SHEET,
+        "    // A mage's is spellpower, where the record shows it in attack's place.\n    AddStat(main,",
+        "    // A mage's is spellpower, where the record shows it in attack's place.\n    AddStat(off,",
+    ),
+    Mutant(
+        "sheet: the defenses stand side by side",
+        SHEET,
+        "    AddStat(section.rows, facts, kDefense);\n    section.left = section.rows.size();",
+        "    AddStat(section.rows, facts, kDefense);\n    section.left = 1;",
+    ),
+    Mutant(
+        "sheet: the elements come before the checks",
+        SHEET,
+        "    for (const int mapping : {kResistanceChecks, kElementalResistances})",
+        "    for (const int mapping : {kElementalResistances, kResistanceChecks})",
+    ),
+    Mutant(
+        "sheet: the checks and the elements share their columns by halves",
+        SHEET,
+        "            section.left = section.rows.size();\n        }",
+        "            section.left = (section.rows.size() + 1) / 2;\n        }",
+    ),
+    Mutant(
+        "sheet: an element's resistance is no share",
+        SHEET,
+        '(element ? L"%" : L"")',
+        'L""',
+    ),
+    Mutant(
+        "sheet: a check is coloured as an element is",
+        SHEET,
+        ".tone = element ? ToneOf(row.total, row.precision) : Tone::Plain});",
+        ".tone = ToneOf(row.total, row.precision)});",
+    ),
+    Mutant(
+        "sheet: a creature with no class by ability has none",
+        SHEET,
+        "    if (sheet.classes.empty() && !facts.currentClass.empty())",
+        "    if (false)",
+    ),
+    Mutant(
+        "sheet: a negative that rounds away is written -0",
+        SHEET,
+        "    if (out.starts_with(L'-') && out.find_first_not_of(L\"-0.\") == std::wstring::npos)",
+        "    if (false)",
+    ),
+    Mutant(
+        "sheet: the game's placeholder is kept in a label",
+        SHEET,
+        "    std::wstring out{text.substr(0, text.find(kPercent))};",
+        "    std::wstring out{text};",
+    ),
+    Mutant(
+        "sheet: a separator in a name is kept",
+        SHEET,
+        "            if (c >= 0x20)\n            {\n                out += c;",
+        "            if (true)\n            {\n                out += c;",
     ),
 ]
 

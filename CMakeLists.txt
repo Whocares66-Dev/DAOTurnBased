@@ -121,6 +121,7 @@ add_library(
     src/core/Preview.cpp
     src/core/Rules.cpp
     src/core/Settings.cpp
+    src/core/Sheet.cpp
     src/core/State.cpp
     src/core/TimedStep.cpp
     src/core/TurnMachine.cpp
@@ -229,6 +230,7 @@ add_daolib_plugin(
         src/game/Gate.cpp
         src/game/Preview.cpp
         src/game/SettingsFile.cpp
+        src/game/Sheet.cpp
         src/game/TacticsBox.cpp
         src/game/Targeting.cpp
         src/plugin/Plugin.cpp

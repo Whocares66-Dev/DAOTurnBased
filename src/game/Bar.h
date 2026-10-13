@@ -9,6 +9,8 @@
 //   fscommand("TB_Cleared")               it has dropped its cards and their images
 //   ExternalInterface.call("TB_GetShow")  a portrait to put up large, as core/Portraits.h encodes it
 //   fscommand("TB_ShowCleared", "<n>")    it has drawn that one's serial, and let the one before go
+//   fscommand("TB_Inspect", "<id>")       the pointer is on that combatant's card ("" when off every card)
+//   ExternalInterface.call("TB_GetSheet") that combatant's sheet, as core/Sheet.h encodes it
 //
 // The handlers only read the view the frame callback last published and
 // leave their requests for it; the frame callback acts on them, where
@@ -100,6 +102,13 @@ class BarLink
     // On the scripts' thread, as the frame callback is.
     [[nodiscard]] PortraitReport TryPortrait(const PortraitAsk &ask, const TurnView &view, std::uint32_t nowMs);
 
+    // Every frame: the sheet of the combatant whose card is under the pointer
+    // (TB_Inspect; core/Sheet.h, issue 112), read from the engine as it is
+    // asked for and again four times a second while it is, so that what an
+    // effect raises or lowers shows under the pointer. Nothing for a card
+    // the view does not have.
+    void KeepSheet(const TurnView &view, std::uint32_t nowMs);
+
     // What the movie asked for since the last frame, each once.
     [[nodiscard]] bool TakeEndTurn();
     [[nodiscard]] bool TakeDelay();
@@ -169,6 +178,10 @@ class BarLink
     std::unordered_map<std::int32_t, AbilityArt> abilityArt_;
     std::mutex mutex_;
     std::wstring encoded_;
+    ObjectId inspectAsked_ = kNoObject; // under mutex_: whose card is under the pointer
+    std::wstring sheetEncoded_;         // under mutex_: what TB_GetSheet answers
+    ObjectId inspected_ = kNoObject;    // the frame's: whose sheet was read last, and when
+    std::uint32_t sheetReadMs_ = 0;
     bool endTurn_ = false;
     bool delay_ = false;
     int scroll_ = 0; // the arrows' clicks not yet taken: later ones less earlier ones

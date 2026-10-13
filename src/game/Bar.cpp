@@ -1,8 +1,10 @@
 #include "game/Bar.h"
 
 #include "core/Bar.h"
+#include "core/Sheet.h"
 #include "core/Text.h"
 #include "game/Camera.h"
+#include "game/Sheet.h"
 
 #include "dao/Abilities.h"
 #include "dao/ClientExoApp.h"
@@ -127,8 +129,32 @@ void BarLink::Install()
         const std::lock_guard lock(mutex_);
         showDrawn_ = std::max(showDrawn_, serial);
     });
+    // A card under the pointer (issue 112): whose sheet to read, and the
+    // sheet as last read. An empty argument, or anything not an id, is the
+    // pointer off every card.
+    dao::gui::OnFSCommand("TB_Inspect", [this](void *, std::string_view args) {
+        ObjectId id = kNoObject;
+        const auto [end, error] = std::from_chars(args.data(), args.data() + args.size(), id);
+        const std::lock_guard lock(mutex_);
+        inspectAsked_ = error == std::errc{} && end == args.data() + args.size() ? id : kNoObject;
+    });
+    dao::gui::OnExternalInterface("TB_GetSheet", [this](const dao::gui::Call &call) {
+        try
+        {
+            std::wstring sheet;
+            {
+                const std::lock_guard lock(mutex_);
+                sheet = sheetEncoded_;
+            }
+            call.Return(dao::gui::Value::WString(sheet.c_str()));
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("TB_GetSheet: {}", e.what());
+        }
+    });
     spdlog::info("the turn bar's calls are answered: TB_GetView, TB_EndTurn, TB_Delay, TB_Focus, TB_Scroll, "
-                 "TB_Cleared, TB_GetShow, TB_ShowCleared");
+                 "TB_Cleared, TB_GetShow, TB_ShowCleared, TB_Inspect, TB_GetSheet");
 }
 
 bool BarLink::FollowRow(const TurnView &view)
@@ -330,6 +356,39 @@ void BarLink::Publish(const TurnView &view)
     std::wstring encoded = EncodeBar(shown, portraits_, row_);
     const std::lock_guard lock(mutex_);
     encoded_ = std::move(encoded);
+}
+
+void BarLink::KeepSheet(const TurnView &view, std::uint32_t nowMs)
+{
+    ObjectId asked = kNoObject;
+    {
+        const std::lock_guard lock(mutex_);
+        asked = inspectAsked_;
+    }
+    constexpr std::uint32_t kSheetEveryMs = 250;
+    if (asked == inspected_ && (asked == kNoObject || nowMs - sheetReadMs_ < kSheetEveryMs))
+    {
+        return;
+    }
+    std::wstring encoded;
+    const auto card = std::ranges::find(view.upcoming, asked, &CardView::id);
+    if (asked != kNoObject && card != view.upcoming.end())
+    {
+        const CreatureSheet sheet = BuildSheet(ReadSheet(asked, card->name, card->mana));
+        if (sheet.id != kNoObject)
+        {
+            encoded = EncodeSheet(sheet);
+        }
+        if (asked != inspected_)
+        {
+            spdlog::debug("{}'s sheet is asked for: {}", Utf8(card->name),
+                          sheet.id != kNoObject ? Utf8(sheet.level) : std::string{"the engine has no such creature"});
+        }
+    }
+    inspected_ = asked;
+    sheetReadMs_ = nowMs;
+    const std::lock_guard lock(mutex_);
+    sheetEncoded_ = std::move(encoded);
 }
 
 // The game writes "Paused" across the top of the screen when it is paused

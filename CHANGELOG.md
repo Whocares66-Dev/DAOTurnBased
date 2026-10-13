@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **A creature's sheet:** the pointer on a card of the portrait bar shows that creature's level, class and specialisations, attributes, damage, attack, critical chance, armor penetration, armor, defense and resistances in the bottom right corner, drawn like the game's item card. Every number and word is the game's own, read as its character record reads them, so a mod's changes show.
+
 ## 0.1.1
 
 Fixes to the portrait bar, with [DAOLib 0.1.0](https://github.com/Whocares66-Dev/DAOLib/releases/tag/v0.1.0) or later. Rules, settings and saves are as in 0.1.0.
