@@ -34,6 +34,7 @@ The guide says what a player sees and does, in plain words. How a rule came to b
 | `portrait-bar.jpg` | The portrait bar alone | the same frame |
 | `your-turn.jpg`, `time-bar.jpg` | A party member's turn: the bar, the time bar and its caption | the same frame, cropped |
 | `cost-preview.jpg` | The pointer on an enemy: "Costs 1.4 s, leaving 1.6 s" | the same turn, the pointer held on a dragonling |
+| `sheet.jpg` | The character sheet in the bottom right corner, the pointer on a card: Lyna's | the user's picture in issue 112, cropped to the sheet (427x641) |
 | `move-preview.jpg` | The pointer on the ground: the path's rings and "4.6 m, 0.8 s" | The Dead Trenches, Leliana's turn |
 | `move-preview-red.jpg` | The pointer on ground out of reach: gold rings, then red, and "12.7 m of 6.6" | The Dragonbone Wastes, the hero's turn after a walk, the camera zoomed out |
 | `options.jpg`, `controls.jpg` | The game's Options: the Turn-based section and its keys | out of a fight |

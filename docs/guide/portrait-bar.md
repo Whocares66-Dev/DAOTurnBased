@@ -19,9 +19,24 @@ The portrait bar at the top of the screen shows everyone in the fight in the ord
 - **Icon at the corner**: a pending action that completes next turn, or movement that ran out of time.
 - **Greyed portrait**: a fallen party member. Dead enemies are removed.
 
-Hover over a portrait to see the name, colored by rank: white for normal, yellow for lieutenant, orange for boss. Click a portrait to move the camera to that combatant.
+Hover over a portrait to see the name, colored by rank: white for normal, yellow for lieutenant, orange for boss, and the combatant's [character sheet](#character-sheet). Click a portrait to move the camera to that combatant.
 
 The bar shows up to ten portraits. With more, arrows at its ends scroll it.
+
+## Character sheet
+
+Hovering over a portrait also shows that combatant's sheet in the bottom right corner of the screen, for party members, allies and enemies alike.
+
+![The character sheet of a party member]({{ "/assets/img/sheet.jpg" | relative_url }}){: .screenshot loading="lazy"}
+
+- **Header**: portrait with health and stamina or mana, name, level, class and specializations. A monster shows its class without an icon.
+- **Stats**: health and stamina or mana, current and maximum.
+- **Attributes**: Strength, Dexterity, Magic, Constitution, Cunning, Willpower.
+- **Offense**: damage, critical chance and armor penetration for the main hand, and for the off hand when it deals damage; attack, or spellpower for a mage.
+- **Defense**: armor and defense.
+- **Resistances**: the mental and physical resistance checks, and the elemental resistances.
+
+A value in green is raised by equipment or effects, and one in red is lowered. The sheet updates while the pointer stays on the portrait, so a spell cast meanwhile shows. The values are the game's own, so changes made by other mods show too.
 
 ## Time bar
 
