@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(DAOTurnBased VERSION 0.1.1 LANGUAGES CXX)
+project(DAOTurnBased VERSION 0.2.0 LANGUAGES CXX)
 
 option(
     TB_BUILD_PLUGIN

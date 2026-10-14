@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
-- **A creature's sheet:** the pointer on a card of the portrait bar shows that creature's level, class and specialisations, attributes, damage, attack, critical chance, armor penetration, armor, defense and resistances in the bottom right corner, drawn like the game's item card. Every number and word is the game's own, read as its character record reads them, so a mod's changes show.
+A character sheet on the portrait bar, with [DAOLib 0.2.0](https://github.com/Whocares66-Dev/DAOLib/releases/tag/v0.2.0) or later. Rules, settings and saves are as in 0.1.1.
+
+- **Character sheet:** hovering over a portrait on the portrait bar shows that combatant's sheet in the bottom right corner of the screen, in the box the game uses for a party member's details: level, class and specializations, health and stamina or mana, attributes, damage, critical chance and armor penetration for each hand, attack, armor, defense and resistances. It works for enemies and allies as well as the party. Every number and word is the game's own, read as its character record reads them, so other mods' changes show. The [guide](https://whocares66-dev.github.io/DAOTurnBased/portrait-bar/#character-sheet) has a picture.
+- **DAOLib 0.2.0:** its loader is now `dinput8.dll`, where 0.1.x's was `version.dll`. DAOLib 0.2.0 also brings faster loading screens, off until ticked under Options, Game, Performance.
+
+To install: extract DAOLib's zip into the game's folder, then this one. Over 0.1.x, first delete `bin_ship\version.dll` and `bin_ship\version.pdb`, the old loader, then extract both zips: with both loaders in the game, the mod is loaded twice and the game crashes.
 
 ## 0.1.1
 
