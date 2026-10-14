@@ -1,15 +1,22 @@
 <#
 .SYNOPSIS
-    Copy a build's plugin, a folder of its own, and DAOLib's loader into the game; or take the plugin out.
+    Copy a build's plugin, a folder of its own, into the game; or take the plugin out.
 
 .DESCRIPTION
     After `.\tools\build.ps1 -Preset <preset>`, puts the plugin's folder,
     build\<preset>\daolib\plugins\turnbased\ (turnbased.dll, its .pdb, so a crash log names
-    our frames, and the mod's two movies), under bin_ship\daolib\plugins, and
-    build\<preset>\version.dll -- DAOLib's loader, built from extern\DAOLib -- beside
-    DAOrigins.exe, where the game loads it, with the address library's files under
-    bin_ship\daolib\addresses. The game must not be running from that folder: it holds
-    those files open.
+    our frames, and the mod's two movies), under bin_ship\daolib\plugins, with the address
+    library's files the plugin reads under bin_ship\daolib\addresses. The game must not be
+    running from that folder: it holds those files open.
+
+    DAOLib's loader is not this deploy's: it is DAOLib's own deploy's or its release's
+    (dinput8.dll since DAOLib's issue 93). Until 2026-10-13 this deploy put
+    build\<preset>\version.dll in beside DAOrigins.exe, the loader before that issue, and with
+    DAOLib's dinput8.dll there too the game had two loaders, each loading every plugin: the
+    mod's DAOLib_Load ran twice, the second machine replaced the first that the first run's
+    callbacks held, and the game crashed in them (2026-10-13, 02:04 and 02:05; the two taken
+    out of the GOG game by hand that day). A version.dll there now is left alone, since
+    another mod may be the one that put it there; the deploy warns where no dinput8.dll is.
 
     A plugin is a folder since DAOLib's issue 26 (its d892f71; issue 47 here, 2026-10-05):
     the loader loads plugins\turnbased\turnbased.dll, and a DLL loose in plugins\ is not
@@ -156,17 +163,14 @@ if ($Remove) {
         Show-Ok "removed $pluginFolder"
     }
     Clear-Leftover
-    Show-Info 'the loader (version.dll) and the address files stay; DAOLib''s deploy.ps1 -Remove takes them out'
+    Show-Info 'the loader (dinput8.dll) and the address files stay; DAOLib''s deploy.ps1 -Remove takes them out'
     return
 }
 
 $build = Join-Path $repo "build\$Preset"
 $builtFolder = Join-Path $build 'daolib\plugins\turnbased'
 $builtPlugin = Join-Path $builtFolder 'turnbased.dll'
-$builtLoader = Join-Path $build 'version.dll'
-foreach ($f in @($builtPlugin, $builtLoader)) {
-    if (-not (Test-Path $f)) { throw "No $f; run .\tools\build.ps1 -Preset $Preset first" }
-}
+if (-not (Test-Path $builtPlugin)) { throw "No $builtPlugin; run .\tools\build.ps1 -Preset $Preset first" }
 # DAOLib's address library, one file per build of the game (DAOLib 8b027c6 on): the loader
 # and the plugin read the one for the game they are in, and the loader loads nothing
 # without it. Looked for before anything is copied, with the rest of what a build makes.
@@ -219,10 +223,6 @@ foreach ($m in $movies) {
 }
 
 New-Item -ItemType Directory -Force $pluginFolder | Out-Null
-Copy-Item -Force $builtLoader (Join-Path $Game 'version.dll')
-$loaderPdb = Join-Path $build 'version.pdb'
-if (Test-Path $loaderPdb) { Copy-Item -Force $loaderPdb (Join-Path $Game 'version.pdb') }
-Show-Ok "loader  -> $(Join-Path $Game 'version.dll')"
 # The plugin and its files, not the linker's leftovers (the incremental link's .ilk beside
 # a debug dll), as DAOLib's own deploy.ps1 copies a plugin's folder.
 Copy-Item -Force -Recurse (Join-Path $builtFolder '*') $pluginFolder -Exclude '*.ilk', '*.exp', '*.lib'
@@ -269,25 +269,20 @@ foreach ($f in @($loose)) {
     Show-Ok "removed $($f.FullName) (loose beside the dll: the layout before override\)"
 }
 Clear-Leftover
-# The address files beside the loader, as DAOLib's own deploy.ps1 puts them.
+# The address files the plugin reads, where DAOLib's own deploy.ps1 puts them.
 $addresses = Join-Path $Game 'daolib\addresses'
 New-Item -ItemType Directory -Force $addresses | Out-Null
 $built = @(Get-ChildItem -Path $builtAddresses -Filter '*.bin' | ForEach-Object { $_.Name })
 foreach ($name in $built) {
     Copy-Item -Force (Join-Path $builtAddresses $name) (Join-Path $addresses $name)
 }
-# The folder holds what this build has and nothing else, as DAOLib's own deploy leaves it: a
-# file the address library no longer writes (the names by link stamp alone, before its
-# ae992b3) would be stale here. This deploy puts the loader in, so the files are its to keep
-# current; Eluvian's reads the same four-field names and adds only what is missing
-# (eluvian-agent, 2026-10-02).
-foreach ($file in Get-ChildItem -Path $addresses -Filter 'daoaddresses-*.bin') {
-    if ($built -notcontains $file.Name) {
-        Remove-Item -Force $file.FullName
-        Show-Info "removed $($file.Name): the build has no such file"
-    }
-}
+# Only added and brought up to date: the folder is the loader's, and the loader DAOLib's
+# deploy's, so what else is there is its to keep or take out (as Eluvian's deploy does,
+# eluvian-agent, 2026-10-02).
 Show-Ok "addresses -> $addresses"
+if (-not (Test-Path (Join-Path $Game 'dinput8.dll'))) {
+    Show-Warn "no dinput8.dll in $Game`: without DAOLib's loader nothing loads the plugin (DAOLib's deploy.ps1 or its release puts it there)"
+}
 $docs = Join-Path $Documents 'daolib'
 Show-Info "settings: $(Join-Path $docs 'turnbased.ini') (written on first run)"
 Show-Info "log:      $(Join-Path $docs 'turnbased.log')"

@@ -13,8 +13,8 @@ override subfolder, are missed aloud, and are left loose nowhere.
 
 Nothing of the real game is touched: the script takes its repository from
 where it stands, so a copy of it runs in a made-up one (a built plugin's
-folder with the movie beside the dll as a build leaves it, a loader, address
-files, the movie and its sources, each a few bytes), with -Game and -Documents
+folder with the movie beside the dll as a build leaves it, address files,
+the movie and its sources, each a few bytes), with -Game and -Documents
 naming a made-up game beside it, in the layout a deploy before 2026-10-05
 left.
 
@@ -48,6 +48,8 @@ LEFT = [
     "DAOrigins.exe",
     "daolib/plugins/eluvian/eluvian.dll",
     "daolib/plugins/probe.dll",
+    "dinput8.dll",
+    "version.dll",
 ]
 KEPT = ["daolib/turnbased.ini", "packages/core/override/another.swf"]
 # The plugin's own folder after a deploy, the red ring's subfolder apart.
@@ -101,8 +103,6 @@ class Deploy(unittest.TestCase):
             write(self.repo / "ui" / folder / "frame_1" / "DoAction.as", "")
         build = self.repo / "build" / "debug"
         self.built = build / "daolib" / "plugins" / "turnbased"
-        write(build / "version.dll", "the loader")
-        write(build / "version.pdb", "the loader's symbols")
         write(build / "daolib" / "addresses" / ADDRESSES, "addresses")
         write(self.built / "turnbased.dll", "the plugin")
         write(self.built / "turnbased.pdb", "the plugin's symbols")
@@ -119,6 +119,11 @@ class Deploy(unittest.TestCase):
         self.there = self.plugins / "turnbased"
         self.override = self.documents / "packages" / "core" / "override"
         write(self.game / "DAOrigins.exe", "")
+        # DAOLib's loader, its deploy's (dinput8.dll since its issue 93), and a
+        # version.dll, which this deploy put in until 2026-10-13 and which may
+        # now be another mod's: neither is the deploy's to put in or take out.
+        write(self.game / "dinput8.dll", "DAOLib's loader")
+        write(self.game / "version.dll", "another mod's")
         write(self.plugins / "turnbased.dll", "the plugin before")
         write(self.plugins / "turnbased.pdb", "its symbols before")
         write(self.plugins / "probe.dll", "another plugin, loose")
@@ -222,10 +227,11 @@ class Deploy(unittest.TestCase):
                 "daolib/plugins/turnbased/turnbased.pdb",
                 "daolib/plugins/turnbased/turnbased_tactics.swf",
                 "daolib/plugins/turnbased/turnorder.swf",
+                "dinput8.dll",
                 "version.dll",
-                "version.pdb",
             ],
         )
+        self.assertEqual((self.game / "version.dll").read_text(), "another mod's")
         self.assertEqual((self.there / "turnbased.dll").read_text(), "the plugin")
         self.assertEqual((self.there / BAR).read_text(), "the movie")
         self.assertEqual((self.there / BOX).read_text(), "the box's movie")
@@ -326,6 +332,10 @@ class Deploy(unittest.TestCase):
             sorted([*(f"override/{name}" for name in art), *PLUGIN]),
         )
 
+    def test_with_no_daolib_loader_in_the_game_the_deploy_says_so(self) -> None:
+        (self.game / "dinput8.dll").unlink()
+        self.assertIn("no dinput8.dll", self.done())
+
     def test_with_no_plugin_built_nothing_is_taken_out(self) -> None:
         (self.built / "turnbased.dll").unlink()
         self.assertIn("build.ps1", self.refused())
@@ -352,7 +362,7 @@ class Deploy(unittest.TestCase):
         os.rmdir(self.there / "linked")
         self.done("-Remove")
         self.assertFalse(self.there.exists())
-        stay = [f"daolib/addresses/{ADDRESSES}", "version.dll", "version.pdb"]
+        stay = [f"daolib/addresses/{ADDRESSES}"]
         self.assertEqual(files(self.game), sorted(LEFT + stay))
         self.assertEqual(files(self.documents), KEPT)
         self.assertEqual(files(self.elsewhere), ["precious.txt"])
