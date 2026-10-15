@@ -473,16 +473,15 @@ def template_of(row: int) -> tuple[str, str, str] | None:
 def spawn_point(hero: dict, ahead: float) -> dict:
     """A place `ahead` metres before the creature the player controls.
 
-    `hero` is Eluvian's `creature`: its `position` {x, y, z} and
-    its `facing` in degrees, taken here as from +x toward +y. Should that be
-    another way round in the game, the place is still `ahead` metres from the
-    party, to another side of it.
+    `hero` is Eluvian's `creature`: its `position` {x, y, z} and its
+    `facingDegrees`, the game's own measure (Eluvian #143, 2026-10-15): 0 looks
+    along -y, -90 along +x, 90 along -x, 180 along +y.
     """
     at = hero["position"]
-    facing = math.radians(float(hero.get("facing") or 0.0))
+    facing = math.radians(float(hero.get("facingDegrees") or 0.0))
     return {
-        "x": at["x"] + ahead * math.cos(facing),
-        "y": at["y"] + ahead * math.sin(facing),
+        "x": at["x"] - ahead * math.sin(facing),
+        "y": at["y"] - ahead * math.cos(facing),
         "z": at["z"],
     }
 

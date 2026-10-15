@@ -332,13 +332,18 @@ class Options(unittest.TestCase):
         )
 
     def test_the_place_to_spawn_is_ahead_of_the_party(self) -> None:
-        hero = {"position": {"x": 10.0, "y": 20.0, "z": 3.0}, "facing": 90.0}
+        hero = {"position": {"x": 10.0, "y": 20.0, "z": 3.0}, "facingDegrees": 90.0}
         point = portraits.spawn_point(hero, 4.0)
-        self.assertAlmostEqual(point["x"], 10.0, places=4)
-        self.assertAlmostEqual(point["y"], 24.0, places=4)
+        self.assertAlmostEqual(point["x"], 6.0, places=4)  # 90 looks along -x
+        self.assertAlmostEqual(point["y"], 20.0, places=4)
         self.assertEqual(point["z"], 3.0)
+        east = portraits.spawn_point(
+            {"position": {"x": 0.0, "y": 0.0, "z": 0.0}, "facingDegrees": -90.0}, 4.0
+        )
+        self.assertAlmostEqual(east["x"], 4.0, places=4)
         still = portraits.spawn_point({"position": {"x": 1.0, "y": 2.0, "z": 0.0}}, 4.0)
-        self.assertAlmostEqual(still["x"], 5.0)
+        self.assertAlmostEqual(still["x"], 1.0, places=4)  # 0 looks along -y
+        self.assertAlmostEqual(still["y"], -2.0, places=4)
 
 
 ANSWER = {

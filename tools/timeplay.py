@@ -815,8 +815,8 @@ def point_at(game: Game, where: dict, name: str) -> None:
             if turn == 0:
                 game.tool("camera", {"action": "face", "target": where["target"]})
             else:
-                yaw = (game.tool("camera", {}).get("yawDegrees") or 0.0) + 60.0
-                game.tool("camera", {"action": "turn", "yawDegrees": yaw % 360.0})
+                facing = (game.tool("camera", {}).get("facingDegrees") or 0.0) + 60.0
+                game.tool("camera", {"action": "turn", "facingDegrees": facing % 360.0})
             time.sleep(0.4)
         answer = game.tool("pointer", {**where, "seconds": 20})
         if not answer.get("error"):
