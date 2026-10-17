@@ -31,6 +31,9 @@
 .EXAMPLE
     .\tools\package.ps1                 # from build\release
     .\tools\package.ps1 -Preset debug   # a debug build's, for a trial
+
+    A build made with tools\build.ps1 -Suffix has the suffix in its zip's name and
+    VERSION.txt, as in the version its log says.
 #>
 [CmdletBinding()]
 param(
@@ -83,6 +86,13 @@ if ($extra) { throw "In $override and not in CMakeLists.txt: $($extra.Name -join
 
 if ($cmake -notmatch 'project\((\w+) VERSION (\d+\.\d+\.\d+)') { throw 'No version in CMakeLists.txt' }
 $version = $Matches[2]
+# A trial build's mark, as the build was configured with it (tools\build.ps1 -Suffix).
+$cache = Get-Content (Join-Path $repo "build\$Preset\CMakeCache.txt") -ErrorAction SilentlyContinue
+$suffix = ($cache | Select-String -Pattern '^TB_VERSION_SUFFIX:STRING=(.*)$' | Select-Object -First 1).Matches.Groups[1].Value
+if ($suffix) {
+    $version += $suffix
+    Show-Warn "a trial build: $version (tools\build.ps1 -Suffix), which tools\release.ps1 does not release"
+}
 $name = "$($Matches[1])-$version"
 
 # The loader and the address files a game has are a DAOLib release's, so VERSION.txt

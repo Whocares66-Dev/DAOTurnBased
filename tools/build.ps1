@@ -53,6 +53,11 @@
     environment this script has imported. The ones a branch added or changed,
     before a merge.
 
+.PARAMETER Suffix
+    A trial build's mark, appended to the version: -Suffix -ultrawide makes the
+    log say 0.2.0-ultrawide, and tools\package.ps1 names the zip so. Set at
+    every configure, empty without it, so a later build is the plain version.
+
 .PARAMETER Jobs
     How many compilations to run at once. The default leaves two of the
     machine's cores to everything else.
@@ -62,6 +67,7 @@
     .\tools\build.ps1 -Preset debug -Test -Format -Lint
     .\tools\build.ps1 -Preset debug-asan -Test
     .\tools\build.ps1 -Preset release
+    .\tools\build.ps1 -Preset release -Suffix -ultrawide   # a trial for a player
     .\tools\build.ps1 -Preset core -Test
     .\tools\build.ps1 -Preset core -LongFights -Mutants 'rules: a shot', 'a staff draws'
     .\tools\build.ps1 -Preset core-cov -Coverage
@@ -77,7 +83,8 @@ param(
     [switch] $Fresh,
     [switch] $LongFights,
     [string[]] $Mutants = @(),
-    [int] $Jobs = 0
+    [int] $Jobs = 0,
+    [string] $Suffix = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -184,7 +191,7 @@ Show-Line "  jobs   $parallel of $cores cores, below normal priority"
 Push-Location $repo
 try {
     Show-Line "`n== configure ($Preset) ==" -Colour Cyan
-    cmake --preset $Preset
+    cmake --preset $Preset "-DTB_VERSION_SUFFIX=$Suffix"
     if ($LASTEXITCODE -ne 0) { throw "configure failed ($LASTEXITCODE)" }
 
     Show-Line "`n== build ($Preset) ==" -Colour Cyan

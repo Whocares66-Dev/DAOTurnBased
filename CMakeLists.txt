@@ -10,6 +10,15 @@ option(
 option(TB_BUILD_TESTS "Build the unit tests (no game required)" ON)
 option(TB_SANITIZE "Build with AddressSanitizer (for the tests)" OFF)
 option(TB_ANALYZE "MSVC static analysis (/analyze) on our own targets" OFF)
+# A trial build's mark, for a player who tries a fix before it is released (issue
+# 118's "-ultrawide"): the version the log says, and the zip's name. tools\build.ps1
+# sets it at every configure, empty unless -Suffix is given, so that it never stays
+# in a build tree; tools\package.ps1 reads it from the cache.
+set(TB_VERSION_SUFFIX
+    ""
+    CACHE STRING
+    "Appended to the version for a trial build, such as -ultrawide"
+)
 option(
     TB_COVERAGE
     "Instrument for test coverage (clang-cl only; the core-cov preset)"
@@ -288,7 +297,7 @@ if(MSVC)
 endif()
 target_compile_definitions(
     turnbased
-    PRIVATE TB_VERSION_STRING="${PROJECT_VERSION}"
+    PRIVATE TB_VERSION_STRING="${PROJECT_VERSION}${TB_VERSION_SUFFIX}"
 )
 # DAOLib's address library packs its files, one per build of the game, into
 # build\<preset>\daolib\addresses: the loader and the plugin read the one

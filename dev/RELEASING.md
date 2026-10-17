@@ -45,3 +45,7 @@ All of it is the plugin's folder, `bin_ship\daolib\plugins\turnbased\`, which is
 The DLL in the zip is `release.ps1`'s own link, made in the main tree, and the one seen in step 3 was the work branch's where that was another tree: the same sources, two links.
 
 If the build, the tests or the zip fail, nothing was tagged or pushed. If `gh release create` fails after the push, run it alone on the tag that is there: `gh release create vX.Y.Z --repo Whocares66-Dev/DAOTurnBased --verify-tag --title "DAOTurnBased X.Y.Z" --notes-file build\release-notes-X.Y.Z.md dist\DAOTurnBased-X.Y.Z.zip` (`--prerelease` below 1.0).
+
+## A trial build for a player
+
+A fix a player is to try before it is released (issue 118's, for a 5120 x 2160 monitor): `.\tools\build.ps1 -Preset release -Test -Suffix -ultrawide`, then `.\tools\package.ps1`, gives `dist\DAOTurnBased-0.2.0-ultrawide.zip`. The suffix is in the version the log says at start (`turnbased 0.2.0-ultrawide on DAOLib 0.2.0`), in `VERSION.txt` and in the zip's name, so a log sent back says which build it came from. The build sets the suffix at every configure, empty without `-Suffix`, so the next build is the plain version again; and `release.ps1` looks for the plain name, so a trial zip is never released by mistake. Nothing is tagged or put on GitHub's releases for a trial: the user hands the zip over.
