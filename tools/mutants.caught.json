@@ -559,6 +559,7 @@
 "the bar shows each combatant twice": "a fight of fourteen: the row is moved, kept as turns pass, and brought down for the fallen",
 "the bar's row holds twelve again, its buttons under the minimap": "with more than ten the row is ten from the beginning, and only the right arrow shows",
 "the bar's string does not say how many come after the row": "the bar's string says where the row stands, and carries every turn to come",
+"the bar's string gives the view's width for its height": "the bar's string carries the game's view in pixels, last in its head",
 "the bar's string keeps a name's separators": "a name cannot break the bar's string apart",
 "the bar's string leaves out what sustained abilities hold back": "a name cannot break the bar's string apart",
 "the bar's string leaves out whether it is mana": "a name cannot break the bar's string apart",

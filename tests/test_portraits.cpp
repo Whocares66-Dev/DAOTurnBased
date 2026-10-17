@@ -148,7 +148,7 @@ TEST_CASE("the bar's string carries each card's portrait, empty for none yet", "
     w.StartFight();
     PortraitBook book;
     book.Got(kGenlock, L"img://portrait_7", true);
-    const auto records = Split(EncodeBar(w.machine.View(), book, Row(w.machine.View())), kBarCard);
+    const auto records = Split(EncodeBar(w.machine.View(), book, Row(w.machine.View()), ViewPixels{}), kBarCard);
     REQUIRE(records.size() >= 3);
     const auto hero = Split(records[1], kBarField);
     const auto genlock = Split(records[2], kBarField);

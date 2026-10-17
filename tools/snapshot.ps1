@@ -33,7 +33,8 @@ param(
     # place, with -Sample more), turn=ai (somebody else's turn: no End, no Delay),
     # point=later or point=earlier (the pointer on that arrow), click=later or
     # click=earlier (one click on it), point=card4 (the pointer on the row's
-    # fifth card: the caption says what its card says).
+    # fifth card: the caption says what its card says). The window's size goes to
+    # the movie as width and height, the game's view in pixels as the plugin gives it.
     [string[]] $Set = @()
 )
 
@@ -85,7 +86,7 @@ function Test-Blank([System.Drawing.Bitmap] $Image) {
 
 $process = Start-Process -FilePath $Ruffle -PassThru -ArgumentList (@(
         '--width', $Width, '--height', $Height, '--storage', 'memory', '--filesystem-access-mode', 'allow',
-        "-Psample=$Sample") + @($Set | ForEach-Object { "-P$_" }) + @($Movie))
+        "-Psample=$Sample", "-Pwidth=$Width", "-Pheight=$Height") + @($Set | ForEach-Object { "-P$_" }) + @($Movie))
 try {
     $title = "Ruffle - $(Split-Path -Leaf $Movie)"
     $window = [IntPtr]::Zero

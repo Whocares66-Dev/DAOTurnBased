@@ -2895,6 +2895,12 @@ MUTANTS = [
         "    Field(out, std::wstring_view{});\n",
     ),
     Mutant(
+        "the bar's string gives the view's width for its height",
+        BAR,
+        "    Field(out, static_cast<long long>(screen.height));\n",
+        "    Field(out, static_cast<long long>(screen.width));\n",
+    ),
+    Mutant(
         "the state a tool reads leaves the caption's line out",
         "src/core/State.cpp",
         "    Text(out, Utf8(view.notice));\n",

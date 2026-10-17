@@ -15,7 +15,9 @@
 //              (version 10) a line for the caption to say for a while, an
 //              action given back and why (core/GivenBack.h), empty for none.
 //              Version 11 (issue 50) took two fields out, the actions left
-//              and whether a turn is a bar of time: it always is.
+//              and whether a turn is a bar of time: it always is. After it
+//              (version 14, issue 118) the game's view in pixels, its width
+//              and its height, 0 where the engine had none to say.
 //   each card: id, side (0 party, 1 ally, 2 enemy), rank, health (0-100),
 //              down, current, yours (the player commands it), round, name,
 //              tag, portrait (its texture's name, "portrait_player0.dds",
@@ -45,12 +47,24 @@ namespace tb
 
 inline constexpr wchar_t kBarCard = 0x1E;
 inline constexpr wchar_t kBarField = 0x1F;
-inline constexpr int kBarVersion = 13;
+inline constexpr int kBarVersion = 14;
 
-// The portraits and the row come from the game's side, the rest from the
-// machine.
-[[nodiscard]] std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits, const BarSpan &row);
-// With no portraits, the row at the list's beginning.
+// The game's view in pixels, as the engine has it (DAOLib's
+// dao::world::ScreenSize, the window's client area). The movie lays the bar
+// out by it, and again when it changes (issue 118): its stage is scaled to
+// the view, and the bar is kept at its own size in pixels whatever the
+// resolution (issue 107).
+struct ViewPixels
+{
+    int width = 0;
+    int height = 0;
+};
+
+// The portraits, the row and the view's size come from the game's side, the
+// rest from the machine.
+[[nodiscard]] std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits, const BarSpan &row,
+                                     const ViewPixels &screen);
+// With no portraits, the row at the list's beginning, and no view's size.
 [[nodiscard]] std::wstring EncodeBar(const TurnView &view);
 
 } // namespace tb

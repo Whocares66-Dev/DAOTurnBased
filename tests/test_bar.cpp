@@ -61,7 +61,7 @@ TEST_CASE("the bar's string says whose turn it is and who comes after", "[bar]")
     World w;
     w.StartFight();
     const Decoded bar = Decode(EncodeBar(w.machine.View()));
-    REQUIRE(bar.head.size() == 18);
+    REQUIRE(bar.head.size() == 20);
     CHECK(bar.head[0] == std::to_wstring(kBarVersion));
     CHECK(bar.head[1] == L"1");                   // active
     CHECK(bar.head[2] == L"1");                   // round
@@ -125,9 +125,28 @@ TEST_CASE("a name cannot break the bar's string apart", "[bar]")
 TEST_CASE("outside a fight the bar's string says so and has no cards", "[bar]")
 {
     const Decoded bar = Decode(EncodeBar(TurnView{}));
-    REQUIRE(bar.head.size() == 18);
+    REQUIRE(bar.head.size() == 20);
     CHECK(bar.head[1] == L"0");
     CHECK(bar.cards.empty());
+}
+
+TEST_CASE("the bar's string carries the game's view in pixels, last in its head", "[bar][screen]")
+{
+    // The movie lays the bar out by it (issue 118): at 5120 x 2160 its own
+    // measure of the view had put the bar three times its size and off the
+    // top of the screen.
+    World w;
+    w.StartFight();
+    const TurnView view = w.machine.View();
+    const Decoded bar = Decode(EncodeBar(view, PortraitBook{}, SpanOf(view.upcoming.size(), 0), {5120, 2160}));
+    REQUIRE(bar.head.size() == 20);
+    CHECK(bar.head[18] == L"5120");
+    CHECK(bar.head[19] == L"2160");
+    CHECK(bar.cards.size() == view.upcoming.size());
+    // With no size from the engine, 0 and 0: the movie keeps the layout it has.
+    const Decoded none = Decode(EncodeBar(view));
+    CHECK(none.head[18] == L"0");
+    CHECK(none.head[19] == L"0");
 }
 
 TEST_CASE("a creature's mana or stamina reaches its card as the statuses read it", "[bar]")
@@ -177,7 +196,7 @@ TEST_CASE("with a turn a bar of time, the bar's string has the bar and what is l
     World w;
     w.StartFight();
     const Decoded bar = Decode(EncodeBar(w.machine.View()));
-    REQUIRE(bar.head.size() == 18);
+    REQUIRE(bar.head.size() == 20);
     CHECK(bar.head[7] == L"4.0"); // what is left of the bar
     CHECK(bar.head[8] == L"4.0"); // the bar
     CHECK(bar.head[9] == L"4.0"); // a turn's own seconds

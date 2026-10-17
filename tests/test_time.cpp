@@ -3298,9 +3298,11 @@ TEST_CASE("an action given back is said on the bar's caption, for long enough to
     w.Finish(kHero);
     const std::wstring line = L"No room at the target: Hero's attack is given back";
     CHECK(w.machine.View().notice == line);
-    // In the bar's string, the head's last field, and in the state a tool reads.
+    // In the bar's string, the head's field before the view's size (none
+    // here), and in the state a tool reads.
+    const std::wstring noSize = std::wstring{kBarField} + L"0" + kBarField + L"0";
     const std::wstring bar = EncodeBar(w.machine.View());
-    CHECK(bar.substr(0, bar.find(kBarCard)).ends_with(std::wstring{kBarField} + line));
+    CHECK(bar.substr(0, bar.find(kBarCard)).ends_with(std::wstring{kBarField} + line + noSize));
     CHECK(ToJson(w.machine.State()).find(R"("notice":"No room at the target: Hero's attack is given back")") !=
           std::string::npos);
     // The turn goes on and waits for an order, the world standing still:
@@ -3312,7 +3314,7 @@ TEST_CASE("an action given back is said on the bar's caption, for long enough to
     CHECK(w.machine.View().notice.empty());
     CHECK(ToJson(w.machine.State()).find(R"("notice":"")") != std::string::npos);
     const std::wstring after = EncodeBar(w.machine.View());
-    CHECK(after.substr(0, after.find(kBarCard)).ends_with(std::wstring{kBarField}));
+    CHECK(after.substr(0, after.find(kBarCard)).ends_with(std::wstring{kBarField} + noSize));
 }
 
 TEST_CASE("the caption's line of an action given back goes when the player's next order is let through",

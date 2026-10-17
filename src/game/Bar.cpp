@@ -14,12 +14,14 @@
 #include "dao/Objects.h"
 #include "dao/Portraits.h"
 #include "dao/Resources.h"
+#include "dao/World.h"
 #include "dao/core/GdaHash.h"
 #include "dao/generated/ScriptApi.h"
 
 #include <algorithm>
 #include <charconv>
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -353,7 +355,15 @@ void BarLink::Publish(const TurnView &view)
         card.pendingName = known->second.name;
     }
     fightShown_.store(view.active);
-    std::wstring encoded = EncodeBar(shown, portraits_, row_);
+    // The view's size, by which the movie lays the bar out (issue 118): the
+    // engine's own word, read with each view, so that a window resized or a
+    // device reset reaches the bar as new numbers.
+    ViewPixels screen;
+    if (const std::optional<dao::world::ViewSize> size = dao::world::ScreenSize())
+    {
+        screen = {.width = size->width, .height = size->height};
+    }
+    std::wstring encoded = EncodeBar(shown, portraits_, row_, screen);
     const std::lock_guard lock(mutex_);
     encoded_ = std::move(encoded);
 }

@@ -358,7 +358,7 @@ TEST_CASE("the bar's string and the state say whether the turn may be put off", 
         }
         return last;
     };
-    REQUIRE(head().size() == 18);
+    REQUIRE(head().size() == 20);
     CHECK(head()[11] == L"1"); // to be had
     CHECK(waits() == std::vector<std::wstring>{L"0", L"0", L"0", L"0"});
     CHECK(ToJson(w.machine.State()).find(R"("can_delay":true)") != std::string::npos);
@@ -389,11 +389,11 @@ TEST_CASE("with time, the view says what of the bar rolled over", "[delay][time]
     CHECK(view.timeMs == 5000);
     CHECK(view.rolledMs == 1000);
     const std::wstring bar = EncodeBar(view);
-    // What rolled over and the pause, before the row's three and the
-    // caption's line, which is none.
+    // What rolled over and the pause, before the row's three, the
+    // caption's line, which is none, and the view's size, none here.
     CHECK(bar.substr(0, bar.find(kBarCard))
               .ends_with(std::wstring{kBarField} + L"1.0" + kBarField + L"0" + kBarField + L"0" + kBarField + L"4" +
-                         kBarField + L"0" + kBarField));
+                         kBarField + L"0" + kBarField + kBarField + L"0" + kBarField + L"0"));
     CHECK(ToJson(w.machine.State()).find(R"("rolled_ms":1000)") != std::string::npos);
     // A turn that spends its bar rolls nothing over.
     CommandRequest swing;

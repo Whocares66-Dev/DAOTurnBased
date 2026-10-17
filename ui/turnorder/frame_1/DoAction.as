@@ -19,7 +19,7 @@
 // Outside the game there is no plugin to ask, and it draws a sample fight,
 // so the look can be checked in any Flash player.
 
-var BAR_VERSION = 13;
+var BAR_VERSION = 14;
 var CARD = String.fromCharCode(30);
 var FIELD = String.fromCharCode(31);
 
@@ -298,6 +298,10 @@ function sampleView()
     // What the caption says for a while of an action given back (version 10;
     // the parameter notice=1): a spell at a target behind a shut door.
     head.push(_root.notice == "1" ? "A door is in the way: Morrigan's ability is given back" : "");
+    // The view's size in pixels (version 14): Ruffle's, which tools/snapshot.ps1
+    // gives as width and height, or the stage's.
+    head.push(Number(_root.width) > 0 ? Number(_root.width) : STAGE_W,
+              Number(_root.height) > 0 ? Number(_root.height) : STAGE_H);
     var text = head.join(FIELD);
     for (var i = 0; i < cards.length; i++)
     {
@@ -343,7 +347,8 @@ function parse(text)
             playerTurn: head[4] == "1", movementLeft: head[5], movementMax: head[6], timeLeft: head[7],
             time: head[8], turn: head[9], paid: Number(head[10]), delay: Number(head[11]),
             rolled: Number(head[12]), paused: head[13] == "1", before: before, shown: shown,
-            after: Number(head[16]), notice: head[17] == undefined ? "" : head[17], cards: cards,
+            after: Number(head[16]), notice: head[17] == undefined ? "" : head[17],
+            width: Number(head[18]), height: Number(head[19]), cards: cards,
             row: cards.slice(before, before + shown),
             rowText: records.slice(1 + before, 1 + before + shown).join(CARD)};
 }
@@ -1008,34 +1013,35 @@ function drawArrow(bar, later, x, count)
 
 // The cards, the dividers and the button, laid out left to right and
 // centred on the stage.
-function measureView()
+// By the game's view in pixels as the engine has it, which comes with the bar's view
+// (version 14, issue 118). The stage is laid over the view whole and centred
+// (showAll), at the scale that fits it, as the preview places its points
+// (drawPreview); where the view is taller than 16:9 its top is above the stage's.
+// Until issue 118 the movie measured the view itself: Stage.height in showAll, the
+// view's height in stage units, then in noScale, its height in pixels, the scale
+// being their ratio. With the stage found at noScale both were pixels, and on a
+// 5120 x 2160 monitor the bar was drawn three times its size and 670 units above the
+// top of the view, with its caption, while the path's label, scaled by the same
+// number, stood three times its size at the cursor (a player's report on Nexus).
+function measureView(width, height)
 {
-    // With showAll, Stage.width and Stage.height are the view's in stage units (800
-    // high for a 1600 x 1000 view, the stage being 720), so the view's top is that far
-    // above the stage's where the stage is letterboxed. With noScale they are the
-    // view's in pixels, which gives the scale the stage is shown at.
-    var units = Stage.height;
-    Stage.scaleMode = "noScale";
-    var pixels = Stage.height;
-    var across = Stage.width;
+    // The scale mode this lays out for, whatever had left it otherwise.
     Stage.scaleMode = "showAll";
-    var shown = pixels > 0 && units > 0 ? pixels / units : LOOK;
-    var wanted = across > 0 ? Math.min(LOOK, across / STAGE_W) : LOOK;
-    barScale = wanted / shown;
+    var shown = Math.min(width / STAGE_W, height / STAGE_H);
+    var units = height / shown;
+    barScale = Math.min(LOOK, width / STAGE_W) / shown;
     barTop = (STAGE_H - units) / 2 + BAR_PIXELS / shown;
-    barRight = STAGE_W / 2 + (across / 2 - MINIMAP_PIXELS) / shown;
+    barRight = STAGE_W / 2 + (width / 2 - MINIMAP_PIXELS) / shown;
     viewPixel = 1 / shown;
-    viewRight = STAGE_W / 2 + across / 2 / shown;
+    viewRight = STAGE_W / 2 + width / 2 / shown;
     viewBottom = (STAGE_H + units) / 2;
 }
 
 function build(state)
 {
-    // As a fight's bar is first made: the resolution does not change under a fight.
-    if (_root.bar == undefined)
-    {
-        measureView();
-    }
+    // At every build, which a new size of the view brings (draw): a window resized or
+    // a mode changed in a fight lays the bar out again.
+    measureView(state.width, state.height);
     // A card taken from under the pointer has no roll-out: its name stayed
     // in the caption through a whole turn (play test 30).
     _root.hovered = "";
@@ -1118,8 +1124,8 @@ function build(state)
         drawButton(bar, "endTurn", 501, "End", "TB_EndTurn", buttonsAt,
                    offered ? middle + room / 2 : middle - shows / 2, true);
     }
-    // On the stage's own middle, which showAll puts at the view's: Stage.width is the
-    // view's width in stage units, wider than the stage on a view wider than 16:9.
+    // On the stage's own middle, which showAll puts at the view's: the view is wider
+    // than the stage in stage units where it is wider than 16:9.
     bar._xscale = bar._yscale = 100 * barScale;
     // And left of the minimap by where End and Delay stand, on a turn that shows
     // them or not, so that the row keeps its place from turn to turn.
@@ -1554,13 +1560,19 @@ function draw(view)
         }
         return;
     }
+    // Laid out by the view's size, which the engine has whenever it draws the
+    // world: until it is said, nothing to lay out by.
+    if (!(state.width > 0 && state.height > 0))
+    {
+        return;
+    }
     // Rebuilt when the row's cards change, or whose turn it is, or whether
     // Delay is to be had (it goes as soon as anything of the turn is spent),
-    // or which arrows there are and what they count. Not for a card the row
-    // does not show: every turn to come is in the string, and a blow on one
-    // out of sight would load the row's portraits again.
+    // or which arrows there are and what they count, or the view's size. Not
+    // for a card the row does not show: every turn to come is in the string,
+    // and a blow on one out of sight would load the row's portraits again.
     var cards = state.rowText + (state.playerTurn ? "+" : "-") + state.delay + state.round + "<" + state.before +
-                ">" + state.after;
+                ">" + state.after + "@" + state.width + "x" + state.height;
     if (cards != lastCards)
     {
         lastCards = cards;

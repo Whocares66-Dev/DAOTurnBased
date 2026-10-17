@@ -45,10 +45,11 @@ void Meters(std::wstring &out, float meters)
 
 std::wstring EncodeBar(const TurnView &view)
 {
-    return EncodeBar(view, PortraitBook{}, SpanOf(view.upcoming.size(), 0));
+    return EncodeBar(view, PortraitBook{}, SpanOf(view.upcoming.size(), 0), ViewPixels{});
 }
 
-std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits, const BarSpan &row)
+std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits, const BarSpan &row,
+                       const ViewPixels &screen)
 {
     std::wstring out = std::to_wstring(kBarVersion);
     Field(out, view.active);
@@ -84,6 +85,14 @@ std::wstring EncodeBar(const TurnView &view, const PortraitBook &portraits, cons
     // What the caption says for a while in place of what the turn has left
     // (version 10): an action given back, and why (core/GivenBack.h).
     Field(out, std::wstring_view{view.notice});
+    // The game's view in pixels (version 14, issue 118), by which the movie
+    // lays the bar out. It had measured the view itself, by switching its
+    // stage's scale mode and reading the stage's height before and after:
+    // with the mode found at noScale both were pixels, and at 5120 x 2160
+    // the bar was drawn three times its size and 670 stage units above the
+    // top of the view.
+    Field(out, static_cast<long long>(screen.width));
+    Field(out, static_cast<long long>(screen.height));
     for (const CardView &card : view.upcoming)
     {
         out += kBarCard;

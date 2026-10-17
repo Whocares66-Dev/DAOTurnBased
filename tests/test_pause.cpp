@@ -35,7 +35,8 @@ TEST_CASE("the pause key pauses an enemy's turn, and the turn waits until it is 
     // which the movie turns into the word. Nothing else on the screen did
     // (play test 29).
     CHECK(w.machine.View().playerPaused);
-    const std::wstring row = std::wstring{kBarField} + L"0" + kBarField + L"4" + kBarField + L"0" + kBarField;
+    const std::wstring row = std::wstring{kBarField} + L"0" + kBarField + L"4" + kBarField + L"0" + kBarField +
+                             kBarField + L"0" + kBarField + L"0"; // the row, no caption's line, no view's size
     const std::wstring bar = EncodeBar(w.machine.View());
     CHECK(bar.substr(0, bar.find(kBarCard)).ends_with(std::wstring{kBarField} + L"1" + row));
     // The genlock chooses nothing, and its turn would be over in a second

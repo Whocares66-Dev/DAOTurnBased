@@ -383,7 +383,7 @@ TEST_CASE("the bar's string says where the row stands, and carries every turn to
     };
     // As it begins: ten of fourteen, four after.
     auto [head, cards] = fields(EncodeBar(view));
-    REQUIRE(head.size() == 18);
+    REQUIRE(head.size() == 20);
     CHECK(head[14] == L"0");
     CHECK(head[15] == L"10");
     CHECK(head[16] == L"4");
@@ -392,8 +392,8 @@ TEST_CASE("the bar's string says where the row stands, and carries every turn to
     BarWindow window;
     (void)window.Follow(view);
     window.Scroll(1);
-    std::tie(head, cards) = fields(EncodeBar(view, PortraitBook{}, window.Follow(view)));
-    REQUIRE(head.size() == 18);
+    std::tie(head, cards) = fields(EncodeBar(view, PortraitBook{}, window.Follow(view), ViewPixels{}));
+    REQUIRE(head.size() == 20);
     CHECK(head[14] == L"1");
     CHECK(head[15] == L"10");
     CHECK(head[16] == L"3");
