@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+Grabs that can be broken, with [DAOLib 0.5.0](https://github.com/Whocares66-Dev/DAOLib/releases/tag/v0.5.0) or later. Settings and saves are as in 0.2.0.
+
+- **Grabs and Overwhelms across turns:** an ogre's grab, a high dragon's or the Broodmother's, and the Overwhelm of bears, spiders, drakes, deep stalkers and werewolves used to play out whole in their attacker's turn, every blow landing before anyone could answer. Now they run on the attacker's turn like any action. If one lasts longer, attacker and victim freeze where they are until the attacker's next turn, and then it goes on. The victim's turns in between are skipped. Anyone acting meanwhile can break it as in the real-time game: a stun, knockdown, paralysis or slip on the attacker ends it at once, and so does either one dying.
+- **The portrait bar on very large screens:** on a 5120x2160 monitor the bar sometimes vanished. It is now laid out from the game's own screen size.
+
+To install: extract DAOLib's zip into the game's folder, then this one. Over 0.2.x, both zips.
+
 ## 0.2.0
 
 A character sheet on the portrait bar, with [DAOLib 0.2.0](https://github.com/Whocares66-Dev/DAOLib/releases/tag/v0.2.0) or later. Rules, settings and saves are as in 0.1.1.

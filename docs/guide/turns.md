@@ -78,6 +78,7 @@ Cooldowns and effects keep their normal lengths. Each combatant's cooldowns and 
 - A 20-second cooldown is ready after five of its user's turns.
 - A 20-second effect lasts five of its target's turns. Damage over time is applied on the target's turns.
 - A stun or knockdown costs the target its duration. One that lasts 4 seconds or more costs a whole turn.
+- A grab or Overwhelm (an ogre, a bear, a spider, a high dragon) runs on its attacker's turn. If it lasts longer, attacker and victim freeze until the attacker's next turn, and then it goes on. The victim's turns in between are skipped. A stun, knockdown, paralysis or slip on the attacker breaks it, and so does either one dying.
 - Health, mana and stamina regenerate each turn at their normal rates.
 
 No timers run while a turn is waiting for your order.
