@@ -3062,8 +3062,7 @@ MUTANTS = [
         "                // its fifth round (no hands, 2026-10-02).\n                budget_.agedOwnMs += ran;",
         "                // its fifth round (no hands, 2026-10-02).\n                budget_.agedOwnMs += ran;\n"
         "                Effect shared = Effect::Of(EffectKind::AgeTime);\n"
-        "                shared.b = static_cast<std::int32_t>(ran);\n                fx.push_back(shared);\n"
-        "                roundAgedMs_ += ran;",
+        "                shared.b = static_cast<std::int32_t>(ran);\n                fx.push_back(shared);",
     ),
     # A picture for every card (issue 32): which creatures are rendered, the
     # kind of body each is, the one table of framings and how a creature is
@@ -5008,7 +5007,7 @@ MUTANTS = [
         "sheet: a weapon adds nothing to the creature's own",
         SHEET,
         ".value = FormatStat(row->total + added, row->precision)",
-        ".value = FormatStat(row->total, row->precision)",
+        ".value = FormatStat(row->total + added * 0.0f, row->precision)",
     ),
     Mutant(
         "sheet: a mage's attack is its attack",
