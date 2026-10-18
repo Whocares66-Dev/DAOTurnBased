@@ -206,6 +206,7 @@ struct Task
     bool held = false;      // a condition's command: it lasts as long as the condition
     bool conjuring = false; // the engine's own spell, held in its conjure until released
     bool grab = false;      // an ability whose own effect holds its creature and its target, after it
+    bool grabbing = false;  // that effect's hold, on its target (Finished)
     // A script's move that is done where its creature stands, let through as
     // its creature's own on the turn the arena had then (23; issue 59).
     std::optional<std::pair<int, ObjectId>> nowhere = std::nullopt;
@@ -269,6 +270,8 @@ struct Coverage
     int landed = 0;          // kept actions given again and let through
     int conjured = 0;        // spells given to the engine to conjure, held
     int grabs = 0;           // abilities whose own effect held their creature and their target
+    int frozen = 0;          // of those, frozen at their creature's bar until its next turn (issue 119)
+    int frozenBroken = 0;    // frozen grabs ended between their creature's turns: a fall, a stun
     int conjureLanded = 0;   // of them, let complete as their time was paid
     int conjureCleared = 0;  // of them, cleared by the game before (rules_core, a knockdown)
     int wholeTurns = 0;      // turns spent whole on what a kept action owed
@@ -1625,6 +1628,13 @@ class Arena
             break;
         case EffectKind::ReleaseCast:
             break; // with time, kept actions (World's onReleased); nothing charges as built
+        case EffectKind::Freeze:
+            Must(timeHeld_ || e.a == 0, "a grab frozen while effects' time runs anyway");
+            if (e.a != 0 && e.target == world_.Current())
+            {
+                ++coverage_.frozen;
+            }
+            break;
         case EffectKind::DropCast:
             // A spell held in its conjure that the machine drops (the fight
             // over, say) has its command cleared (World's DropKept), and the
@@ -1798,6 +1808,29 @@ class Arena
 
     // What happens in the world before the machine looks: commands run, AIs
     // react, the player acts, menus and conversations come and go.
+    // A frozen grab whose grabber or target has fallen ends, as the game's
+    // effects_h ends a grab whose target dies, and now and then a stun on its
+    // grabber breaks it ("Knockdown and stun end grab"): the grabber's command
+    // ends, which the game layer tells the machine (OnFrozenActionEnded).
+    void BreakFrozen(const std::map<ObjectId, Task>::iterator &found)
+    {
+        const ObjectId id = found->first;
+        const Task &task = found->second;
+        if (!task.grabbing)
+        {
+            return;
+        }
+        const bool fell = world_.Get(id).down || (task.target != kNoObject && world_.Get(task.target).down);
+        if (!fell && !Chance(rng_, 0.002))
+        {
+            return;
+        }
+        tasks_.erase(found);
+        world_.Finish(id);
+        Must(world_.machine.OnFrozenActionEnded(id), "a frozen grab ended that the machine did not know");
+        ++coverage_.frozenBroken;
+    }
+
     void Tick()
     {
         FollowTurn();
@@ -2516,6 +2549,13 @@ class Arena
             }
             return;
         }
+        // Frozen at a grab between its grabber's turns: its clip stands, and
+        // with it the grab (issue 119).
+        if (world_.frozen.contains(id))
+        {
+            BreakFrozen(found);
+            return;
+        }
         task.workMs -= static_cast<std::int32_t>(kFrameMs);
         if (Timed(task))
         {
@@ -2644,6 +2684,8 @@ class Arena
         {
             Task held{CommandType::ExecuteEffect};
             held.workMs = static_cast<std::int32_t>(Between(rng_, 1000.0f, 9000.0f));
+            held.target = done.target;
+            held.grabbing = true;
             tasks_[id] = held;
             world_.Get(id).busy = true;
             world_.Get(id).current = CommandType::ExecuteEffect;
@@ -3339,6 +3381,7 @@ class Arena
         lastCurrent_ = world_.Current(); // a turn closed by the fight's end, next frame, has no event of its own
         FollowTurn();
         const Phase phase = world_.machine.GetPhase();
+        Must(phase != Phase::Idle || world_.frozen.empty(), "a creature left frozen with no fight");
         if (phase == Phase::Idle || phase == Phase::Suspended)
         {
             // Dropped with the world, or a conversation's: a turn may be
@@ -3978,8 +4021,10 @@ TEST_CASE("random fights keep every promise the design makes", "[fights]")
     // paid, some cleared by the game before.
     // (2026-10-02: 65 given to the engine to conjure, 14 let complete as
     // their time was paid, 32 cleared by the game before.)
-    // Grabs, their targets owing the time (2026-10-02: see the run's count).
+    // Grabs, and of those, grabs frozen at their bar and grabs ended while frozen (issue 119).
     CHECK(coverage.grabs > 0);
+    CHECK(coverage.frozen > 0);
+    CHECK(coverage.frozenBroken > 0);
     CHECK(coverage.conjured > 22);
     CHECK(coverage.conjureLanded > 4);
     CHECK(coverage.conjureCleared > 10);

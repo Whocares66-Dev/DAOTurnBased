@@ -1175,6 +1175,7 @@ class World
     std::unordered_map<ObjectId, CommandRequest> heldCasts; // casts the game layer keeps while they charge
     std::unordered_map<ObjectId, CommandRequest> running;   // each creature's last command let through (Fail)
     std::unordered_set<ObjectId> heldConjures;              // the engine's casts, held in their conjure
+    std::unordered_set<ObjectId> frozen;                    // stood still at a grab between its grabber's turns
     // The stand-in's ability table: each ability's cooldown in seconds
     // (UseAbility and Cast write theirs here), and the tag of the item an
     // item's ability comes from. The ability each creature's command under
@@ -1339,6 +1340,16 @@ class World
                 break;
             case EffectKind::DropCast:
                 DropKept(e);
+                break;
+            case EffectKind::Freeze:
+                if (e.a != 0)
+                {
+                    frozen.insert(e.target);
+                }
+                else
+                {
+                    frozen.erase(e.target);
+                }
                 break;
             default:
                 break;

@@ -1834,22 +1834,16 @@ TEST_CASE("with time, an action whose own effect holds its creature is charged t
     w.RunFor(200);
     REQUIRE(w.Current() == kGenlock);
     REQUIRE(w.machine.View().timeLeftMs == 2000);
-    // Its ability's own effect then holds it for 7 s more (an Overwhelm).
+    // Its ability's own effect then holds it (an Overwhelm): the 2 s charged
+    // cover the first of it, the 2 s left of its bar the next, and there it
+    // stands frozen until its next turn (issue 119), owing nothing.
     w.Get(kGenlock).current = CommandType::ExecuteEffect;
-    w.RunFor(7000);
-    // The 2 s charged covered the first of it, the 2 s left of its bar the
-    // next, and 3 s are owed to its next turns.
-    CHECK(w.machine.View().timeLeftMs == 0);
-    const auto charging = w.machine.State().charging;
-    const auto debt = std::ranges::find(charging, kGenlock, &ChargeView::id);
-    REQUIRE(debt != charging.end());
-    CHECK(debt->owedMs >= 2700);
-    CHECK(debt->owedMs <= 3300);
-    // The card says so.
-    const TurnView view = w.machine.View();
-    const auto card = std::ranges::find(view.upcoming, kGenlock, &CardView::id);
-    REQUIRE(card != view.upcoming.end());
-    CHECK(card->owedMs == debt->owedMs);
+    w.RunFor(3500);
+    CHECK(w.Current() == kGenlock);
+    w.RunFor(1000);
+    CHECK(w.Current() != kGenlock);
+    CHECK(w.frozen.contains(kGenlock));
+    CHECK(w.machine.State().charging.empty());
 }
 
 TEST_CASE("with time, a turn that began by paying for a pending action says what it paid", "[time]")
@@ -3929,36 +3923,52 @@ std::vector<Creature> GenlockFirst()
 }
 } // namespace
 
-TEST_CASE("a creature held by another's action owes that time of its next turn's bar", "[time]")
+TEST_CASE("a grab over within its grabber's bar costs its victim nothing of its own turn", "[time]")
 {
-    // The user, 2026-10-02: "yeah your proposal on grab makes sense" (in real
-    // time it could do nothing while held).
+    // Until issue 119 the victim owed what the grab held it of its next bar.
+    // A grab now runs on its grabber's bar alone, and what holds its victim
+    // past it is the grabber's next turn (below).
     World w(Timed(), GenlockFirst());
     Grab(w, 2400);
     UntilTurnOf(w, kHero);
-    REQUIRE(w.Current() == kHero);
-    // About 2.4 s of its 4 s bar gone; the grab's steps are a quarter second.
-    CHECK(w.machine.View().timeLeftMs <= 1700);
-    CHECK(w.machine.View().timeLeftMs >= 1300);
-    CHECK(std::ranges::any_of(w.log, [](const std::string &line) {
-        return line.find("Hero was held") != std::string::npos && line.find("by another's action") != std::string::npos;
-    }));
-    // Its effects moved with the grab, and not again: a turn's seconds in all
-    // for the grab's span and this, its first turn.
-    (void)w.machine.OnEndTurn();
-    w.RunFor(300);
-    CHECK(w.agedOwn[kHero] <= 4300);
-    CHECK(w.agedOwn[kHero] >= 3700);
+    CHECK(w.machine.View().timeLeftMs == 4000);
+    CHECK(w.frozen.empty());
 }
 
-TEST_CASE("held by another's action for more than a turn: the turn is lost, the rest of the next is owed", "[time]")
+namespace
 {
-    // A spider's Overwhelm, 9.3 s.
+// The genlock's grab, past its bar: it and the hero stand frozen.
+void FrozenGrab(World &w)
+{
+    Grab(w, 60000); // never lets go by itself
+    REQUIRE(w.Current() != kGenlock);
+    REQUIRE(w.frozen.contains(kGenlock));
+}
+} // namespace
+
+TEST_CASE("a grab past its grabber's bar stands frozen with its victim until the grabber's next turn", "[time]")
+{
+    // The user, 2026-10-17 (issue 119): the grab runs on its grabber's bar,
+    // and goes on at its next turn if it is not interrupted.
+    World w(Timed(), GenlockFirst());
+    FrozenGrab(w);
+    CHECK(w.frozen.contains(kHero));
+    CHECK(Logged(w, "Genlock's use ability runs past its bar: it stands frozen, and Hero with it,"));
+    CHECK(w.machine.State().charging.empty()); // nothing owed of its next turn
+}
+
+TEST_CASE("a frozen grab's victim loses its turn at once, and owes nothing after", "[time]")
+{
+    // The user, 2026-10-17, of the victim's turn in it: "I think it's
+    // probably skip right".
     World w(Timed(), GenlockFirst());
     std::vector<TurnEvent> events;
     w.machine.SetEventSink([&](const TurnEvent &e) { events.push_back(e); });
-    Grab(w, 5000);
-    for (int i = 0; i < 4000 && w.Current() != kHero; ++i)
+    FrozenGrab(w);
+    for (int i = 0;
+         i < 4000 && !std::ranges::any_of(
+                         events, [](const TurnEvent &e) { return e.kind == EventKind::TurnLost && e.who == kHero; });
+         ++i)
     {
         if (w.machine.GetPhase() == Phase::AwaitingOrder)
         {
@@ -3966,16 +3976,65 @@ TEST_CASE("held by another's action for more than a turn: the turn is lost, the 
         }
         w.Frame();
     }
-    // Its turn this round lost.
-    w.RunFor(100);
-    CHECK(std::ranges::any_of(events,
-                              [](const TurnEvent &e) { return e.kind == EventKind::TurnLost && e.who == kHero; }));
     CHECK(w.Said(L"Hero loses the turn"));
-    // The next: a turn's bar less the second over.
-    UntilTurnOf(w, kHero);
-    REQUIRE(w.Current() == kHero);
-    CHECK(w.machine.View().timeLeftMs <= 3200);
+    CHECK(Logged(w, "Hero's turn is lost: held by Genlock's action, frozen until its turn"));
+    CHECK(w.frozen.contains(kHero)); // still held: it is the genlock's to go on
+}
+
+TEST_CASE("a frozen grab goes on at its grabber's next turn, on that turn's bar", "[time]")
+{
+    World w(Timed(), GenlockFirst());
+    FrozenGrab(w);
+    UntilTurnOf(w, kGenlock);
+    CHECK(w.frozen.empty()); // let go, the pair together
+    CHECK(Logged(w, "Genlock is let go: its frozen action goes on"));
+    CHECK(w.machine.GetPhase() == Phase::Executing);
+    // The grab runs a second more of this bar and lets go.
+    w.RunFor(1000);
+    w.Finish(kGenlock);
+    w.RunFor(600);
+    CHECK(w.Current() == kGenlock);
+    CHECK(w.machine.View().timeLeftMs <= 3300); // its steps are a quarter second
     CHECK(w.machine.View().timeLeftMs >= 2700);
+    // And its victim's next turn is whole.
+    UntilTurnOf(w, kHero);
+    CHECK(w.machine.View().timeLeftMs == 4000);
+}
+
+TEST_CASE("a frozen grab broken between its grabber's turns lets the pair go, and its victim has its turn", "[time]")
+{
+    // A stun on the grabber ends the grab (effects_h.nss: "Knockdown and stun
+    // end grab"), and with it the grabber's command.
+    World w(Timed(), GenlockFirst());
+    FrozenGrab(w);
+    // A blow on its victim ends no command of the grabber's: still frozen.
+    CHECK_FALSE(w.machine.OnFrozenActionEnded(kHero));
+    w.Frame();
+    CHECK(w.frozen.contains(kGenlock));
+    CHECK(w.machine.OnFrozenActionEnded(kGenlock));
+    w.Frame();
+    CHECK(w.frozen.empty());
+    CHECK_FALSE(w.machine.OnFrozenActionEnded(kGenlock)); // once
+    UntilTurnOf(w, kHero);
+    CHECK(w.machine.View().timeLeftMs == 4000);
+}
+
+TEST_CASE("a fight over with a grab frozen lets the pair go", "[time]")
+{
+    World w(Timed(), GenlockFirst());
+    FrozenGrab(w);
+    w.Get(kGenlock).down = true;
+    w.Get(kHurlock).down = true;
+    for (int i = 0; i < 4000 && w.machine.GetPhase() != Phase::Idle; ++i)
+    {
+        if (w.machine.GetPhase() == Phase::AwaitingOrder)
+        {
+            (void)w.machine.OnEndTurn();
+        }
+        w.Frame();
+    }
+    REQUIRE(w.machine.GetPhase() == Phase::Idle);
+    CHECK(w.frozen.empty());
 }
 
 TEST_CASE("a creature's own action's effect owes nobody else's time when it has no target in the fight", "[time]")
@@ -4002,37 +4061,6 @@ TEST_CASE("a creature's own action's effect owes nobody else's time when it has 
     w.Finish(kGenlock);
     w.onPoke = nullptr;
     UntilTurnOf(w, kHero);
-    CHECK(w.machine.View().timeLeftMs == 4000);
-}
-
-TEST_CASE("an action's own effect stopped as too long leaves its target owing nothing of it", "[time]")
-{
-    // Play test 33: a spider's Overwhelm never ended, was stopped after
-    // 36 s, and its victim then owed 31.8 s, its turns lost.
-    Settings s = Timed();
-    s.maxActionMs = 3000; // its patience 9 s
-    World w(s, GenlockFirst());
-    Grab(w, 60000); // never lets go
-    UntilTurnOf(w, kHero);
-    REQUIRE(w.Current() == kHero);
-    CHECK(std::ranges::any_of(
-        w.log, [](const std::string &line) { return line.find("still at a execute effect") != std::string::npos; }));
-    CHECK(w.machine.View().timeLeftMs == 4000);
-}
-
-TEST_CASE("an action's own effect ended with its turn at max_turn_ms leaves its target owing nothing of it",
-          "[time][limit]")
-{
-    // The same stall, where the turn's limit comes before the action's (at
-    // the defaults it does: thirty seconds, and three times twelve).
-    Settings s = Timed();
-    s.maxTurnMs = 5000; // and max_action_ms 12 s, its patience 36
-    World w(s, GenlockFirst());
-    Grab(w, 60000); // never lets go
-    UntilTurnOf(w, kHero);
-    REQUIRE(w.Current() == kHero);
-    CHECK(Logged(w, "Genlock's turn is still going after 5000 ms, "));
-    CHECK_FALSE(Logged(w, "still at a execute effect"));
     CHECK(w.machine.View().timeLeftMs == 4000);
 }
 
@@ -4463,22 +4491,6 @@ TEST_CASE("with time, a door used with no time left is owed of the next turn", "
     w.RunFor(600);
     REQUIRE(w.machine.State().charging.size() == 1);
     CHECK(w.machine.State().charging.front().owedMs == 300);
-}
-
-TEST_CASE("a creature that falls while it owes time held owes nothing when it is up again", "[time]")
-{
-    // Play test 34: fallen in an ogre's grab, up again, Lyna then lost four
-    // turns to a spider's Overwhelm, 9.9 s of them the grab's.
-    World w(Timed(), GenlockFirst());
-    Grab(w, 6000); // more than a turn owed
-    w.Get(kHero).down = true;
-    w.RunFor(1500); // seen fallen
-    w.Get(kHero).down = false;
-    w.RunFor(1500); // up again
-    UntilTurnOf(w, kHero);
-    REQUIRE(w.Current() == kHero);
-    CHECK(w.machine.View().timeLeftMs == 4000);
-    CHECK_FALSE(w.Said(L"Hero loses the turn"));
 }
 
 TEST_CASE("with own clocks, a turn's end gives what its creature's clock brought due a beat to land, the world running",

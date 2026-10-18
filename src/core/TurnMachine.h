@@ -306,6 +306,8 @@ enum class EffectKind : std::uint8_t
     Approach,      // target walks to where it can do the action kept for it (within reach of its target)
     FaceTarget,    // target is faced exactly at whom its command is aimed (others' first), by the engine: a is the
                    // command's type; what came of it comes back as Observation::faced (core/Facing.h; issue 40)
+    Freeze,        // target's animation stood still where it is (a 1), or let go on from there (a 0): a grab held
+                   // between its grabber's turns, its grabber and its victim alike (issue 119)
 };
 
 [[nodiscard]] const char *Name(EffectKind kind);
@@ -789,6 +791,15 @@ class TurnMachine
     // Answers whether there was one.
     bool OnConjureCleared(ObjectId caster);
 
+    // The command of a creature frozen at its own action's effect (a grab:
+    // Effect::Freeze) has ended: the action is over, whether run out or
+    // broken (a stun on the grabber, a death of either), and the pair is let
+    // go with the next frame's effects. A blow or a knockdown on its victim
+    // ends no command of the grabber's, and leaves the pair frozen. Answers
+    // whether it was one so frozen. Counts only: called inside the engine's
+    // command step.
+    bool OnFrozenActionEnded(ObjectId who);
+
     // Typed events, as they happen (core/Events.h): called under the same
     // lock as everything else, from inside Step and the gate's calls.
     void SetEventSink(EventSink sink)
@@ -842,11 +853,6 @@ class TurnMachine
     // its time is given back (OverAtOnce).
     static constexpr std::uint32_t kLeastToldMs = 1000;
     static constexpr std::uint32_t kOverAtOnce = 4;
-    // An action running on its own effect's time ends when that time has
-    // run, and has this many times max_action_ms to do it in: the pounce
-    // took 9.7 s of the 12 (seen in play, 2026-10-01), and a longer one
-    // would have been cut short.
-    static constexpr std::uint32_t kOwnEffectPatience = 3;
     // The time the engine has an action at a timed step that advances is
     // not counted by the limits (issue 28; core/TimedStep.h). Not without
     // end: a step that is renewed as it runs (a looping animation, its
@@ -940,9 +946,6 @@ class TurnMachine
         // A spell let through to conjure (Verdict::Conjure): the turn ends
         // as its caster reaches the conjure the game layer holds.
         bool conjureWaiting = false;
-        // What this turn's own-effect steps added to its target's debt
-        // (grabbedMs_): taken back if the action is stopped as too long.
-        std::uint32_t grabbedNowMs = 0;
         bool refunded = false; // an action given back once already this turn
         int givenBack = 0;     // how many times this turn
         bool retried = false;  // an AI told to choose again, its failed action given back
@@ -1098,8 +1101,6 @@ class TurnMachine
     // What the player is told of an order refused a creature at its own
     // mode's command (Judge): over the character and on the bar's caption.
     static constexpr std::wstring_view kModeFirst = L"Turn its mode off first";
-    // What an action stopped as too long added to its target's debt.
-    void ForgiveGrab();
     [[nodiscard]] static bool EngineConjures(const CommandRequest &request);
 
   public:
@@ -1127,7 +1128,12 @@ class TurnMachine
     [[nodiscard]] float TurnSpeed() const;
     void SpendRound(std::vector<Effect> &fx);
     void HoldAtTurnStart(const Combatant &who, std::vector<Effect> &fx);
-    void GrabAtTurnStart(const Combatant &who, std::vector<Effect> &fx);
+    // An action's own effect that outlasts its creature's bar, stood still
+    // with its target until that creature's next turn (frozen_; issue 119).
+    void FreezeOwnEffect(const Combatant &acting, ObjectId victim, std::vector<Effect> &fx);
+    static void Freeze(ObjectId actor, ObjectId victim, bool on, std::vector<Effect> &fx);
+    [[nodiscard]] bool FrozenTurn(const Combatant &who, std::vector<Effect> &fx);
+    [[nodiscard]] ObjectId FrozenBy(ObjectId victim) const;
 
     void StartFight(std::vector<Combatant> roster, std::vector<Effect> &fx);
     // The exchange with the game once a turn: what is read of it then, and
@@ -1409,10 +1415,17 @@ class TurnMachine
         bool walkCut = false;
     };
     std::unordered_map<ObjectId, LastTurn> lastTurn_;
-    // With time: how long each creature was held by another's action
-    // while that action ran (a grab, Overwhelm), owed of its own turns
-    // (GrabAtTurnStart, LoseTurn).
-    std::unordered_map<ObjectId, std::uint32_t> grabbedMs_;
+    // Who stands frozen at its own action's effect until its next turn (a
+    // grab, Overwhelm, past its bar): whom it holds (none: nobody), and the
+    // action, which its next turn goes on at as it was let through:
+    // FreezeOwnEffect, FrozenTurn, OnFrozenActionEnded (issue 119).
+    struct Frozen
+    {
+        ObjectId victim = kNoObject;
+        CommandType type = CommandType::Invalid;
+        std::int32_t ability = 0;
+    };
+    std::unordered_map<ObjectId, Frozen> frozen_;
     // What each creature's movement rate effects came to when its pace was
     // last said, where that was not 1: as its last turn began, or, with
     // time, as they changed in it. Its pace is said as it changes, and once

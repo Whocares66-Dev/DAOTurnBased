@@ -3087,37 +3087,6 @@ TEST_CASE("the walk to a door is movement: out of it, the walk is stopped", "[ma
     CHECK(walked < 18.5f + TurnMachine::kOvershoot + 0.5f);
 }
 
-TEST_CASE("an action on its own effect's time may outlast max_action_ms, not three times it", "[machine]")
-{
-    Settings s = Fixed();
-    s.maxActionMs = 3000;
-    World w{s};
-    w.StartFight();
-    (void)w.machine.OnEndTurn();
-    bool poked = false;
-    w.onPoke = [&](ObjectId id) {
-        poked = true;
-        CHECK(w.UseAbility(id, Source::Script, 90133, 60.0f) == Verdict::Allow);
-    };
-    for (int i = 0; i < 40 && !poked; ++i)
-    {
-        w.Frame();
-    }
-    REQUIRE(poked);
-    w.RunFor(200);
-    REQUIRE(w.Current() == kGenlock);
-    w.Get(kGenlock).busy = true;
-    w.Get(kGenlock).current = CommandType::ExecuteEffect;
-    w.RunFor(5000); // past max_action_ms: its effect's time is running
-    CHECK(w.Current() == kGenlock);
-    CHECK(std::ranges::none_of(
-        w.log, [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
-    w.RunFor(5000); // past three times it: stopped
-    CHECK(w.Current() != kGenlock);
-    CHECK(std::ranges::any_of(w.log,
-                              [](const std::string &line) { return line.find("took too long") != std::string::npos; }));
-}
-
 TEST_CASE("a door opened shows a room: who fights there joins as the order ends, not the turn", "[machine][engaged]")
 {
     // The eighth play test: the room's spiders joined 2.2 s after the door
@@ -3785,7 +3754,7 @@ TEST_CASE("held by an effect on the fight's first turn, a creature loses it at a
     own.Get(kGenlock).busy = true;
     own.Get(kGenlock).current = CommandType::ExecuteEffect;
     own.RunFor(7000);
-    CHECK(own.Current() == kGenlock);
+    CHECK(own.frozen.contains(kGenlock)); // past its bar: frozen (issue 119), not held
     CHECK_FALSE(own.machine.State().heldByEffect);
     CHECK(std::ranges::none_of(own.log, [](const std::string &line) {
         return line.find("is held by an effect's command") != std::string::npos;

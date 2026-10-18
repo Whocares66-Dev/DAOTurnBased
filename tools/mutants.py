@@ -341,20 +341,14 @@ MUTANTS = [
     Mutant(
         "limit: a turn ended at max_turn_ms leaves its creature at what it was doing",
         MACHINE,
-        "        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));\n        ForgiveGrab();",
-        "        ForgiveGrab();",
+        '        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));\n    }\n    EndTurn(fx, "took too long");\n    return true;',
+        '    }\n    EndTurn(fx, "took too long");\n    return true;',
     ),
     Mutant(
         "limit: a turn ended at max_turn_ms clears an effect's command that holds its creature",
         MACHINE,
-        "    if (!heldByEffect_)\n    {\n        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));\n        ForgiveGrab();",
-        "    if (true)\n    {\n        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));\n        ForgiveGrab();",
-    ),
-    Mutant(
-        "limit: an action's own effect ended with its turn at max_turn_ms leaves its target owing it",
-        MACHINE,
-        "        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));\n        ForgiveGrab();",
-        "        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));",
+        "    if (!heldByEffect_)\n    {\n        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));\n    }",
+        "    if (true)\n    {\n        fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));\n    }",
     ),
     Mutant(
         "the fight's clock runs through the player's pause: a hold is charged for the pause, and a turn's limit runs under it",
@@ -974,18 +968,6 @@ MUTANTS = [
         "timeHeld_ &&",
     ),
     Mutant(
-        "an action on its own effect's time is stopped at max_action_ms",
-        MACHINE,
-        "(ownEffectSince_ ? kOwnEffectPatience : 1);",
-        "(ownEffectSince_ ? 1 : 1);",
-    ),
-    Mutant(
-        "an action on its own effect's time is never stopped",
-        MACHINE,
-        "(ownEffectSince_ ? kOwnEffectPatience : 1);",
-        "(ownEffectSince_ ? 1000 : 1);",
-    ),
-    Mutant(
         "a room shown by an order is looked into only at the turn's end",
         MACHINE,
         '    wantScan_ = true;\n    AwaitOrder("after its action");\n}',
@@ -1404,8 +1386,8 @@ MUTANTS = [
     Mutant(
         "held cooldowns stay held after the fight",
         MACHINE,
-        "    approach_ = false;\n    ReleaseCooldowns(fx);",
-        "    approach_ = false;",
+        "        Freeze(actor, frozen.victim, false, fx);\n    }\n    ReleaseCooldowns(fx);",
+        "        Freeze(actor, frozen.victim, false, fx);\n    }",
     ),
     Mutant(
         "a character's own AI changes its weapons on the player's turn",
@@ -1443,8 +1425,8 @@ MUTANTS = [
     Mutant(
         "an action that never ends is given the fast clock's patience, not the wall's",
         MACHINE,
-        "Patience(static_cast<std::uint32_t>(settings_.maxActionMs)) * (ownEffectSince_ ? kOwnEffectPatience : 1);",
-        "static_cast<std::uint32_t>(settings_.maxActionMs) * (ownEffectSince_ ? kOwnEffectPatience : 1);",
+        "const std::uint32_t limit = Patience(static_cast<std::uint32_t>(settings_.maxActionMs));",
+        "const std::uint32_t limit = static_cast<std::uint32_t>(settings_.maxActionMs);",
     ),
     Mutant(
         "the toggle has Ctrl+T again before the player gives it a key",
@@ -3075,24 +3057,6 @@ MUTANTS = [
         "    if (budget_.conjureWaiting && kind == CommandKind::Involuntary)",
     ),
     Mutant(
-        "a creature held by another's action owes nothing",
-        MACHINE,
-        "                grabbedMs_[victim] += ran;\n                budget_.grabbedNowMs += ran;",
-        "                grabbedMs_[victim] += 0;\n                budget_.grabbedNowMs += ran;",
-    ),
-    Mutant(
-        "held by another's action, a turn's worth or more is not a lost turn",
-        MACHINE,
-        "grabbed != grabbedMs_.end() && grabbed->second >= TurnMs())",
-        "grabbed != grabbedMs_.end() && grabbed->second >= TurnMs() * 100)",
-    ),
-    Mutant(
-        "held by another's action, its effects are moved again at its turn",
-        MACHINE,
-        "    clockSeenMs_ = budget_.spend.ClockElapsedMs();\n    budget_.agedOwnMs += clock;",
-        "    budget_.agedOwnMs += 0;",
-    ),
-    Mutant(
         "own clocks: an action's own effect moves the shared clock, areas' with it",
         MACHINE,
         "                // its fifth round (no hands, 2026-10-02).\n                budget_.agedOwnMs += ran;",
@@ -3100,12 +3064,6 @@ MUTANTS = [
         "                Effect shared = Effect::Of(EffectKind::AgeTime);\n"
         "                shared.b = static_cast<std::int32_t>(ran);\n                fx.push_back(shared);\n"
         "                roundAgedMs_ += ran;",
-    ),
-    Mutant(
-        "an action stopped as too long leaves its target owing it",
-        MACHINE,
-        "    debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0));",
-        "    debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0) * 0);",
     ),
     # A picture for every card (issue 32): which creatures are rendered, the
     # kind of body each is, the one table of framings and how a creature is
@@ -3667,12 +3625,6 @@ MUTANTS = [
         "src/core/Rules.cpp",
         "    case CommandType::GiveItem:\n    case CommandType::TakeItem:\n    case CommandType::PickupItem:\n        return true;",
         "    case CommandType::GiveItem:\n    case CommandType::TakeItem:\n        return true;",
-    ),
-    Mutant(
-        "a creature that falls still owes the time it was held",
-        MACHINE,
-        "            grabbedMs_.erase(c->id);\n",
-        "",
     ),
     Mutant(
         "a turn's end gives what its creature's clock brought due no beat",
@@ -5141,6 +5093,36 @@ MUTANTS = [
         SHEET,
         "            if (c >= 0x20)\n            {\n                out += c;",
         "            if (true)\n            {\n                out += c;",
+    ),
+    Mutant(
+        "an action's own effect past its bar runs on in its turn, not frozen",
+        MACHINE,
+        "                    barSpent = budget_.spend.SpendAction(over) > 0;",
+        "                    barSpent = budget_.spend.SpendAction(over) > 0 && false;",
+    ),
+    Mutant(
+        "a frozen grab's victim takes its turn",
+        MACHINE,
+        "    if (const ObjectId by = FrozenBy(who.id); by != kNoObject)",
+        "    if (const ObjectId by = FrozenBy(who.id); false)",
+    ),
+    Mutant(
+        "a frozen action is not let go at its creature's next turn",
+        MACHINE,
+        "    if (FrozenTurn(who, fx) || LandCast(who, fx))",
+        "    if (LandCast(who, fx))",
+    ),
+    Mutant(
+        "a pair whose grab is broken while frozen stays frozen",
+        MACHINE,
+        "    Freeze(who, victim, false, pending_);",
+        "    Freeze(who, victim, true, pending_);",
+    ),
+    Mutant(
+        "the fight's end leaves a frozen pair frozen",
+        MACHINE,
+        "        Freeze(actor, frozen.victim, false, fx);\n    }\n    ReleaseCooldowns(fx);",
+        "    }\n    ReleaseCooldowns(fx);",
     ),
 ]
 

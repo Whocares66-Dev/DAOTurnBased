@@ -33,6 +33,9 @@ constexpr std::array kTurnEnds{
     TurnEnd{"charging", true},
     TurnEnd{"its spell conjuring", true},
     TurnEnd{"its spell cast at once", true},
+    // An action whose own effect holds its creature (a grab, Overwhelm) run
+    // past the bar: stood still until its next turn (issue 119).
+    TurnEnd{"its action frozen", true},
     // And a turn spent on a mode of its creature's own that keeps it at a
     // command while it is on (Captivating Song; issue 51): the player pressed
     // End and the song goes on, or its tactics have the mode on. Its actor's

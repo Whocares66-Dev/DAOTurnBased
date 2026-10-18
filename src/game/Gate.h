@@ -56,5 +56,9 @@ void DropHeldCast(ObjectId creature);
 // their command cleared (kNoObject: every one, let run on, the fight over).
 bool ReleaseEngineConjure(ObjectId caster); // true: it was one
 bool DropEngineConjure(ObjectId caster);
+// One creature's animation stood still, or let go on (core: EffectKind::Freeze;
+// DAOLib's dao::animation::Pause): a grab between its grabber's turns. Its end
+// is the grabber's command's (TurnMachine::OnFrozenActionEnded).
+void FreezeAnimation(ObjectId creature, bool frozen);
 
 } // namespace tb::game

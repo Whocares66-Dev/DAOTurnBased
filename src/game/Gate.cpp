@@ -1256,6 +1256,18 @@ void WatchCommandEnds(TurnMachine &machine, std::mutex &mutex)
     // counts, and queues or clears nothing.
     dao::commands::OnEnd([&machine, &mutex](ObjectId object, const dao::Command &command, std::int32_t result) {
         const auto type = static_cast<CommandType>(static_cast<int>(command.Type()));
+        // A grabber frozen at its grab whose command ends: the grab is over,
+        // run out or broken (a stun on it, a death), and the pair is let go
+        // (issue 119). Stonefist on a frozen ogre ended its grab, the
+        // knockdown not taking, and nothing began on it (2026-10-17).
+        {
+            const std::lock_guard lock(mutex);
+            if (machine.OnFrozenActionEnded(object))
+            {
+                spdlog::info("{:#x}: its frozen action's command ended {}: let go", object,
+                             dao::commands::ResultName(result));
+            }
+        }
         if (result == dao::commands::kSuccess && type == CommandType::Attack)
         {
             LearnSwing(object);
@@ -1424,6 +1436,16 @@ bool InstallGate(TurnMachine &machine, std::mutex &mutex)
         spdlog::error("could not intercept the scripts' ToggleGamePause");
     }
     return queue && pauseKey && autoPause;
+}
+
+void FreezeAnimation(ObjectId creature, bool frozen)
+{
+    if (!dao::animation::Pause(creature, frozen))
+    {
+        spdlog::warn("{:#x}: its animation could not be {}: not loaded", creature, frozen ? "frozen" : "let go");
+        return;
+    }
+    spdlog::info("{:#x}: its animation {}", creature, frozen ? "frozen" : "let go");
 }
 
 } // namespace tb::game

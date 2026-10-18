@@ -173,6 +173,8 @@ const char *Name(EffectKind kind)
         return "approach";
     case EffectKind::FaceTarget:
         return "face target";
+    case EffectKind::Freeze:
+        return "freeze";
     }
     return "?";
 }
@@ -388,7 +390,7 @@ std::vector<Effect> TurnMachine::Step(const Observation &obs)
         const bool charging = !charges_.empty() || landing_.has_value();
         charges_.clear();
         lastTurn_.clear();
-        grabbedMs_.clear();
+        frozen_.clear(); // its objects gone with the world: nobody to let go
         landing_.reset();
         chargeBegan_ = false;
         approach_ = false;
@@ -749,7 +751,7 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     left_.clear();
     charges_.clear();
     lastTurn_.clear();
-    grabbedMs_.clear();
+    frozen_.clear();
     paceRates_.clear(); // what was said of a creature's Haste in the last fight is not this one's
     landing_.reset();
     chargeBegan_ = false;
@@ -1026,7 +1028,6 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     turnSince_ = clock_;
 
     HoldAtTurnStart(who, fx);
-    GrabAtTurnStart(who, fx);
 
     Log(LogLevel::Info, std::format("round {}: {}'s turn ({}, {}), a bar of {:.2f} s{}: {}", order_.Round(),
                                     Utf8(who.name), Name(who.side), PlayerControls(who) ? "yours" : "AI",
@@ -1055,7 +1056,7 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
         // Handover.)
         Floaty(fx, who.id, who.name, who.side == Side::Enemy ? kRed : kGrey);
     }
-    if (LandCast(who, fx))
+    if (FrozenTurn(who, fx) || LandCast(who, fx))
     {
         return;
     }
@@ -1813,22 +1814,18 @@ void TurnMachine::ResumeTurn(const Combatant &who, std::vector<Effect> &fx)
 // condition's own time is the turns (dev/DESIGN.md, "Conditions in turns").
 bool TurnMachine::LoseTurn(const Combatant &who, std::vector<Effect> &fx)
 {
-    // Held by another's action a turn's worth or more (a spider's Overwhelm,
-    // 9.3 s): this turn is lost, the rest owed of the next.
-    if (const auto grabbed = grabbedMs_.find(who.id); grabbed != grabbedMs_.end() && grabbed->second >= TurnMs())
+    // Held by another's action that stands frozen until that one's next turn
+    // (a grab past its grabber's bar, FreezeOwnEffect): this turn is lost,
+    // and nothing is owed of the next. The user, 2026-10-17, of a grab's
+    // victim whose turn comes in it: "I think it's probably skip right".
+    if (const ObjectId by = FrozenBy(who.id); by != kNoObject)
     {
-        grabbed->second -= TurnMs();
-        const std::uint32_t more = grabbed->second;
-        if (more == 0)
-        {
-            grabbedMs_.erase(grabbed);
-        }
         budget_ = Budget{};
         budget_.spend.SpendAllActions();
-        budget_.agedOwnMs = TurnMs(); // its effects ran with the action that held it
-        Log(LogLevel::Info, std::format("round {}: {}'s turn is lost: held by another's action ({:.1f} s more)",
-                                        order_.Round(), Utf8(who.name), static_cast<float>(more) / 1000.0f));
-        Emit(EventKind::TurnLost, who.id, {}, static_cast<std::int32_t>(more));
+        const Combatant *holder = order_.Find(by);
+        Log(LogLevel::Info, std::format("round {}: {}'s turn is lost: held by {}'s action, frozen until its turn",
+                                        order_.Round(), Utf8(who.name), holder != nullptr ? Utf8(holder->name) : "?"));
+        Emit(EventKind::TurnLost, who.id);
         TellTurnStart(who, fx);
         clockSeenMs_ = 0;
         clockRuns_ = true;
@@ -1873,34 +1870,91 @@ bool TurnMachine::LoseTurn(const Combatant &who, std::vector<Effect> &fx)
     return true;
 }
 
-// At the start of a turn that is taken: what another's action held it for,
-// less than a turn (LoseTurn takes the whole turns), comes off its bar as a
-// hold's share does. Its clock's cooldowns move with it; its effects already
-// moved, with the steps of the action that held it (ObserveExecuting).
-void TurnMachine::GrabAtTurnStart(const Combatant &who, std::vector<Effect> &fx)
+// An action's own effect past its creature's bar (an ogre's grab, a spider's
+// Overwhelm): the creature and its victim stand still where they are, by the
+// engine's own pause of one creature's animation, until its next turn, where
+// it goes on (FrozenTurn). Its effect's time is on its own clock, which only
+// its turns move, so it does not run out meanwhile. Until issue 119 it ran to
+// its end in the one turn, what was over the bar owed of its next and the
+// victim's time held owed of hers: an ogre's grab of 12 s, five punches, in
+// one turn and nobody able to break it, where in real time a stun on the
+// ogre does (effects_h.nss: "Knockdown and stun end grab"). The user,
+// 2026-10-17: the grab runs on its grabber's bar, and goes on at its next
+// turn if it is not interrupted. The pause stops the pair's clips, so no
+// blow lands meanwhile, and both are paused and let go in the same frames,
+// which keeps them in step (DAOLib's issue 159, seen in play that day).
+void TurnMachine::FreezeOwnEffect(const Combatant &acting, ObjectId victim, std::vector<Effect> &fx)
 {
-    const auto found = grabbedMs_.find(who.id);
-    if (found == grabbedMs_.end())
-    {
-        return;
-    }
-    const std::uint32_t owed = std::min(found->second, TurnMs());
-    grabbedMs_.erase(found);
-    if (owed == 0)
-    {
-        return;
-    }
-    MoveClock(fx); // a hold's share first, its effects with it
-    const std::uint32_t before = budget_.spend.CapacityLeftMs();
-    const std::uint32_t clock = budget_.spend.HoldClock(owed);
-    AgeCooldowns(who.id, clock, fx);
-    clockSeenMs_ = budget_.spend.ClockElapsedMs();
-    budget_.agedOwnMs += clock;
+    frozen_[acting.id] = Frozen{victim, budget_.lastType, budget_.lastAbility};
+    ownEffectSince_.reset();
+    Freeze(acting.id, victim, true, fx);
+    const Combatant *held = victim != kNoObject ? order_.Find(victim) : nullptr;
     Log(LogLevel::Info,
-        std::format("{} was held {:.2f} s by another's action: {:.2f} s of its turn's clock, {:.2f} s "
-                    "of its bar",
-                    Utf8(who.name), static_cast<float>(owed) / 1000.0f, static_cast<float>(clock) / 1000.0f,
-                    static_cast<float>(before - budget_.spend.CapacityLeftMs()) / 1000.0f));
+        std::format("{}'s {} runs past its bar: it stands frozen{} until its next turn", Utf8(acting.name),
+                    Name(budget_.lastType), held != nullptr ? std::format(", and {} with it,", Utf8(held->name)) : ""));
+    Emit(EventKind::ActionPending, acting.id, "frozen", budget_.lastAbility, Name(budget_.lastType));
+    EndTurn(fx, "its action frozen");
+}
+
+void TurnMachine::Freeze(ObjectId actor, ObjectId victim, bool on, std::vector<Effect> &fx)
+{
+    for (const ObjectId who : {actor, victim})
+    {
+        if (who != kNoObject)
+        {
+            Effect freeze = Effect::Of(EffectKind::Freeze, who);
+            freeze.a = on ? 1 : 0;
+            fx.push_back(freeze);
+        }
+    }
+}
+
+// The turn of one frozen at its own action's effect (FreezeOwnEffect): let go
+// with its victim, the turn goes on at that action, as it was let through in
+// it, and the whole of what it runs now comes off this bar.
+bool TurnMachine::FrozenTurn(const Combatant &who, std::vector<Effect> &fx)
+{
+    const auto found = frozen_.find(who.id);
+    if (found == frozen_.end())
+    {
+        return false;
+    }
+    const Frozen frozen = found->second;
+    frozen_.erase(found);
+    const ObjectId victim = frozen.victim;
+    Freeze(who.id, victim, false, fx);
+    Log(LogLevel::Info, std::format("{} is let go: its frozen action goes on, {}", Utf8(who.name), BudgetLeft()));
+    budget_.commands = 1;
+    budget_.lastTarget = victim;
+    budget_.lastType = frozen.type;
+    budget_.lastAbility = frozen.ability;
+    phase_ = Phase::Executing;
+    executingSince_ = clock_;
+    idleTicks_ = 0;
+    return true;
+}
+
+ObjectId TurnMachine::FrozenBy(ObjectId victim) const
+{
+    const auto found =
+        std::ranges::find_if(frozen_, [victim](const auto &entry) { return entry.second.victim == victim; });
+    return victim != kNoObject && found != frozen_.end() ? found->first : kNoObject;
+}
+
+bool TurnMachine::OnFrozenActionEnded(ObjectId who)
+{
+    const auto found = frozen_.find(who);
+    if (found == frozen_.end())
+    {
+        return false;
+    }
+    const ObjectId victim = found->second.victim;
+    frozen_.erase(found);
+    Freeze(who, victim, false, pending_);
+    const Combatant *holder = order_.Find(who);
+    Log(LogLevel::Info, std::format("{}'s frozen action is over, its command ended: the pair is let go",
+                                    holder != nullptr ? Utf8(holder->name) : "?"));
+    return true;
 }
 
 // At the start of a turn that is taken: a condition whose turns are spent
@@ -2969,10 +3023,10 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         if (const std::uint32_t ran = clock_ - *ownEffectSince_; ran >= kOwnEffectStepMs)
         {
             // With time, the action costs the time it runs: its own cost
-            // covers the first of it, the bar the next, and what is over
-            // the bar is owed to its creature's next turns. A spider's
-            // Overwhelm ran 9.3 s for the 2 s it was charged (play test 27:
-            // "the one moment the fight stopped feeling like turns").
+            // covers the first of it, the bar the next. A spider's Overwhelm
+            // ran 9.3 s for the 2 s it was charged (play test 27: "the one
+            // moment the fight stopped feeling like turns").
+            bool barSpent = false;
             if (const Combatant *current = order_.Current(); current != nullptr)
             {
                 if (!budget_.ownEffectCover)
@@ -2983,10 +3037,7 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
                 *budget_.ownEffectCover -= free;
                 if (const std::uint32_t over = ran - free; over > 0)
                 {
-                    if (const std::uint32_t owed = budget_.spend.SpendAction(over); owed > 0)
-                    {
-                        Owe(current->id, owed, budget_.lastType, budget_.lastAbility);
-                    }
+                    barSpent = budget_.spend.SpendAction(over) > 0;
                     MoveClock(fx);
                 }
             }
@@ -2994,25 +3045,14 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
             // The effect is on its creature, whose clock this moves; the
             // rest of the fight's stands.
             const Combatant *acting = order_.Current();
+            // Its target held by it (a grab, Overwhelm: an effect on each).
+            const ObjectId victim = acting != nullptr ? budget_.lastTarget : kNoObject;
+            const bool held = victim != kNoObject && victim != acting->id && order_.Find(victim) != nullptr;
             if (acting != nullptr)
             {
                 Effect age = Effect::Of(EffectKind::AgeTime, acting->id);
                 age.b = static_cast<std::int32_t>(ran);
                 fx.push_back(age);
-            }
-            // Its target held by it (a grab, Overwhelm: an effect on each)
-            // owes that time of its own turns, as it would in real time,
-            // where it could do nothing while held (the user, 2026-10-02:
-            // "yeah your proposal on grab makes sense").
-            const ObjectId victim = acting != nullptr ? budget_.lastTarget : kNoObject;
-            const bool held = victim != kNoObject && victim != acting->id && order_.Find(victim) != nullptr;
-            if (held)
-            {
-                grabbedMs_[victim] += ran;
-                budget_.grabbedNowMs += ran;
-            }
-            if (acting != nullptr)
-            {
                 // Not the shared clock, which is areas' and moves 4 s as each
                 // round begins. It moved here too for an evening, since a
                 // spider's Overwhelm, both creatures' clocks moved by its
@@ -3035,6 +3075,14 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
                 }
             }
             agedAtNow_ = lastNow_;
+            // Past its bar, it stands still where it is, its victim with it,
+            // until its next turn: the others act between, and may break it
+            // (issue 119).
+            if (barSpent && acting != nullptr)
+            {
+                FreezeOwnEffect(*acting, held ? victim : kNoObject, fx);
+                return;
+            }
         }
     }
     else
@@ -3224,8 +3272,9 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         }
         // (A hold is not the creature's own to be stopped at: its bound is
         // the bar, above, and the effect is the engine's to end.)
-        const std::uint32_t limit =
-            Patience(static_cast<std::uint32_t>(settings_.maxActionMs)) * (ownEffectSince_ ? kOwnEffectPatience : 1);
+        // (An action on its own effect's time had three times it until issue
+        // 119: such an action now stands frozen at its bar's end.)
+        const std::uint32_t limit = Patience(static_cast<std::uint32_t>(settings_.maxActionMs));
         // The time the engine has the action at a timed step that is
         // advancing is not counted by the limit (issue 28; core/TimedStep.h:
         // an ogre's death blow, a step of 12.5 s by the engine's own count,
@@ -3273,7 +3322,6 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
         {
             fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
             Log(LogLevel::Warn, std::format("still at a {} after {} ms: stopped", Name(actor.current), limit));
-            ForgiveGrab();
             EndTurn(fx, "took too long");
         }
         return;
@@ -3745,6 +3793,11 @@ void TurnMachine::End(std::vector<Effect> &fx, std::string_view why)
     }
     chargeBegan_ = false;
     approach_ = false;
+    // Whoever stands frozen at a grab goes on with it, the world's again.
+    for (const auto &[actor, frozen] : std::exchange(frozen_, {}))
+    {
+        Freeze(actor, frozen.victim, false, fx);
+    }
     ReleaseCooldowns(fx);
     HoldTime(false, fx);
     SetSpeed(1.0f, fx);
@@ -4235,12 +4288,6 @@ void TurnMachine::ApplyStatuses(const std::vector<CombatantStatus> &statuses, st
         // play test, 2026-09-30).
         if (c->down != wasDown)
         {
-            // Fallen, it owes nothing of what held it before: its turns are
-            // passed over while it is down, and the debt outlived it. Lyna,
-            // fallen in an ogre's grab and up again, lost four turns to a
-            // spider's Overwhelm of 9.3 s, 9.9 s of them the grab's (play test
-            // 34).
-            grabbedMs_.erase(c->id);
             Log(LogLevel::Info, std::format("{} falls", Utf8(c->name)));
             Emit(EventKind::Fell, c->id);
         }
@@ -4468,27 +4515,9 @@ bool TurnMachine::TurnTooLong(std::vector<Effect> &fx)
     if (!heldByEffect_)
     {
         fx.push_back(Effect::Of(EffectKind::ClearCommands, current->id));
-        ForgiveGrab();
     }
     EndTurn(fx, "took too long");
     return true;
-}
-
-// Its target did not wait so long for anything the game meant: what the
-// action's steps added to its debt is not owed (play test 33: a victim owing
-// 31.8 s of a stall, its turns lost while an ogre killed it).
-void TurnMachine::ForgiveGrab()
-{
-    const auto debt = grabbedMs_.find(budget_.lastTarget);
-    if (budget_.grabbedNowMs == 0 || debt == grabbedMs_.end())
-    {
-        return;
-    }
-    debt->second -= std::min(debt->second, std::exchange(budget_.grabbedNowMs, 0));
-    if (debt->second == 0)
-    {
-        grabbedMs_.erase(debt);
-    }
 }
 
 bool TurnMachine::TurnSpent() const
