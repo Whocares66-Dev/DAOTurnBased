@@ -6,7 +6,7 @@
 // else in front; with no such place it is not gone to, and the camera stays
 // with the party and turns to it (issue 33; core/Portraits.h, ChooseStand).
 //
-// Through DAOLib's camera moves (dao/CameraMoves.h, f046605): PanTo follows
+// Through DAOLib's camera moves (dao/Camera.h, f046605): PanTo follows
 // a creature and eases the tactical focus onto it; EaseYaw turns the camera
 // the short way round from wherever it is; YawBehind is the way the
 // creature faces, from GetOrientation, turned round. A move stops as soon
