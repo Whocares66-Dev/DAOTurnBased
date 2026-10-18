@@ -2108,6 +2108,9 @@ void Bridge::Apply(const std::vector<Effect> &effects)
         case EffectKind::CenterCamera:
             camera_.TurnTo(e.target, PlayersOwn());
             break;
+        case EffectKind::Freeze:
+            FreezeAnimation(e.target, e.a != 0);
+            break;
         }
     }
 }
