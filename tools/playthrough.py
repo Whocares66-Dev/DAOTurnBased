@@ -36,7 +36,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BASE = "http://127.0.0.1:8930"
+BASE = os.environ.get("PLAYTHROUGH_BASE", "http://127.0.0.1:8930")
 BRIDGE = ROOT.parent / "DAOEluvianMCP" / "tools" / "eluvian_bridge.py"
 OWNER = "turn-based-agent"
 # The one the player controls: the hero, but for stretches the story gives to others (Fort Drakon's rescue).
