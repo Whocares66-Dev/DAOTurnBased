@@ -554,7 +554,7 @@ struct CloseDistance
 //   behind it was the far side of a wall: the frame was of the wall, the
 //   ogre's name floating in the middle of it and the ogre not in the picture.
 //   The engine's orbit tests no wall and no ground (DAOLib's
-//   dao/CameraMoves.h);
+//   dao/Camera.h);
 // - the three places behind, each as far as its line was clear (commits
 //   aa280db and 96d6445). In a built hall that works. The Broodmother's cave
 //   has no collision in any group: all three lines were clear to the whole

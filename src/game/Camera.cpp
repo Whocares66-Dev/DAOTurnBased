@@ -3,7 +3,6 @@
 #include "core/Portraits.h"
 #include "core/Text.h"
 #include "dao/Camera.h"
-#include "dao/CameraMoves.h"
 #include "dao/ClientExoApp.h"
 #include "dao/GameModes.h"
 #include "dao/Log.h"
@@ -211,7 +210,7 @@ void LookAtAnEnemy(Going &going, ObjectId id, ObjectId own, const dao::SceneCame
 {
     const dao::Vector feet = dao::script::api::GetPosition(id);
     const dao::Vector head = dao::portraits::HeadPosition(id).value_or(dao::Vector{feet.x, feet.y, feet.z + 1.5f});
-    // Where the orbit puts the camera (dao/CameraMoves.h): at its
+    // Where the orbit puts the camera (dao/Camera.h): at its
     // distance (core: OrbitDistance) about the focus, by the yaw and the
     // pitch from straight above.
     const float zoom = scene.Zoom();
