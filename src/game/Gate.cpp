@@ -324,9 +324,10 @@ bool WalkByPath(Reached &reached, ObjectId attacker, ObjectId target, const dao:
             // does arrive is one the engine would give up on the way, no
             // line of sight to be had along it (Walk follows the move
             // update's own tests); anything else is no path there. With
-            // the search's own account of itself: nobody has yet read
-            // why a creature had no path from where it stood (issue 27's
-            // second case).
+            // the search's own account of itself, by which issue 27's
+            // second case was read (a random encounter's walls, which the
+            // engine's coarse route does not see: dev/DAOLIB_NEEDS.md,
+            // item 6).
             const bool shot = approach.ranged && search.path.has_value();
             reached.none = shot ? NoAttack::NoLine : NoAttack::NoPath;
             reached.walk.reset();
