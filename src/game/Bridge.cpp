@@ -642,13 +642,14 @@ float FromTheParty(ObjectId id, const std::vector<ObjectId> &living)
 // - It or a party member is the other's attack target.
 // - Else, it stands in a room the game shows (dao::world::RoomOf, DAOLib
 //   1d99f54). An area is made of rooms, and the game hides every room no
-//   party member has yet seen, its creatures inactive, even through an
-//   open door: in lib-agent's play test the room behind a door stayed
-//   black, door open, until the hero walked in. What is seen goes by the
-//   party, not the camera, so the mod's camera going there shows nothing.
-//   A line of sight alone, the first rule here, is clear through that
-//   door. The room's `seen` is read from the function that hides rooms,
-//   not yet watched in play.
+//   party member has yet seen, even through an open door (its creatures
+//   only not drawn: their AI runs, DAOLib's reading of 2026-10-20): in
+//   lib-agent's play test the room behind a door stayed black, door open,
+//   until the hero walked in. What is seen goes by the party, not the
+//   camera, so the mod's camera going there shows nothing. A line of
+//   sight alone, the first rule here, is clear through that door. The
+//   room's `seen` is read from the function that hides rooms, not yet
+//   watched in play.
 // - Where the area has no room for it, a party member's line of sight to
 //   it (CheckLineOfSightObject's question: walls and doors block).
 // And how far it is from the nearest party member: seen is not enough out
