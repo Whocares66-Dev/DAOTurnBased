@@ -913,6 +913,19 @@ bool LetThrough(dao::CCObject &self, dao::Command &command, const Caller &caller
     const auto type = static_cast<CommandType>(static_cast<int>(command.Type()));
     const Source source = SourceOf(command, caller);
     NoteCaller(caller, from, type);
+    // No fight in turns: the machine allows everything (core: Judge), so
+    // nothing below is asked. Its questions are the engine's own code run
+    // for an answer (an approach fills and empties a ring, a path is
+    // searched for up to 40 ms), and with the mode off the game is to be
+    // the game alone (issue 121: a peer's fights with the mode off were
+    // compared as the unmodded game's). A swing is learnt in fights only.
+    {
+        const std::lock_guard lock(*g_mutex);
+        if (!g_machine->Active())
+        {
+            return true;
+        }
+    }
     const dao::CCCreature *creature = self.AsCreature();
     // The walk to an attack's target: the player's, to refuse one
     // out of reach; and an AI's, with a turn a bar of time, so that
