@@ -6,8 +6,8 @@
 // changes `enabled`; WithValue keeps the rest of the player's file as it
 // was, comments included.
 //
-// Seven settings are the file's: whether fights are in turns, who plays the
-// companions, the fight's speed, the turn camera and three keys. The rest of
+// Eight settings are the file's: whether fights are in turns, who plays the
+// companions, damage scaling, the fight's speed, the turn camera and three keys. The rest of
 // the struct is the rules' numbers, built in and in no file (the user,
 // 2026-10-10, of a file of 43: "strip it down to only essential configs.
 // stuff like initiative are built-in, don't need to be configured"; issue
@@ -44,6 +44,8 @@ struct Settings
     bool enabled = true;
     // [turns] party.
     PartyControl partyControl = PartyControl::Manual;
+    // [turns] damage_scale: damage to every creature during turn-based fights.
+    float damageScale = 1.0f;
     // [turns] speed: the game's speed through a turn-based fight, everyone's
     // turns alike (the user, 2026-10-02: "a setting to change game speed,
     // from 0.5x to 1X to 2x"; then, having played: "default fight speed

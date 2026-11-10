@@ -134,6 +134,30 @@ SHEET = "src/core/Sheet.cpp"
 
 MUTANTS = [
     Mutant(
+        "damage scaling leaks outside turn-based fights",
+        RULES,
+        "if (!active || multiplier == 1.0f)",
+        "if (active && multiplier == 1.0f)",
+    ),
+    Mutant(
+        "damage scaling replaces the game's vulnerability",
+        RULES,
+        "return std::max(1.0f, gameScale) * multiplier;",
+        "return std::max(gameScale, multiplier);",
+    ),
+    Mutant(
+        "damage scaling still clamps the three-times stop to two",
+        SETTINGS,
+        '{"turns", "damage_scale", Float(&Settings::damageScale, 1.0f, 3.0f)}',
+        '{"turns", "damage_scale", Float(&Settings::damageScale, 1.0f, 2.0f)}',
+    ),
+    Mutant(
+        "settings allow non-finite slider values",
+        SETTINGS,
+        " || !std::isfinite(value)",
+        "",
+    ),
+    Mutant(
         "actiontime pays through an unresolved event",
         "src/core/ActionTime.cpp",
         "if (state_ == ActionTimeState::Pending)",

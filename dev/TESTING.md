@@ -4,6 +4,8 @@ Two kinds. The rules and the state machine are tested without the game, on every
 
 ## Without the game
 
+Issue 125: seen in play through Eluvian on 2026-11-10, with the normal Performance controls restored, Turn-based on the left, Damage scaling above Fight speed, both initially 1x, and the lower slider clear of the panel edge (build/issue125-layout/fixed-options.jpg). The remaining in-game checks: Change each slider, close and reopen, restart and check persistence; Cancel must restore its prior value and Restore Defaults must return damage to 1x and speed to 1x. Compare a repeatable weapon hit, spell and DoT on a party member and on an enemy at 1x and 2x, with and without Mark of Death. Check a lethal hit and a damage shield through the game's normal handling; healing must stay unchanged. End the fight or disable turn-based outside combat and check ordinary damage again. No game files or saved creature properties should retain the multiplier.
+
 `src/core` has no engine in it, so it is tested whole, in `tests/`, by `tb_tests` (Catch2):
 
 - **Scripted cases**, one behaviour each: the rules (`test_rules.cpp`), the order of turns (`test_turnorder.cpp`), the settings file (`test_settings.cpp`), keys, text, the bar's string (`test_bar.cpp`), whose portrait to get next (`test_portraits.cpp`), and the machine through short fights in a stand-in for the game (`test_machine.cpp` over `World.h`: creatures, a pause flag, a mode, and the machine's effects applied the way `src/game/Bridge.cpp` applies them).

@@ -1485,7 +1485,37 @@ bool InstallGate(TurnMachine &machine, std::mutex &mutex)
     {
         spdlog::error("could not intercept the scripts' ToggleGamePause");
     }
-    return queue && pauseKey && autoPause;
+    // effect_damage_h.nss:435 reads property 12 once per hit, after mana
+    // shield and friendly fire, before damage shields and resistance. It is
+    // shared by attacks, spells and DoT. No property is written, so saves
+    // and the engine's vulnerability effects keep their own values.
+    const bool damage = dao::script::InterceptCommand(
+        dao::script::id::GetCreatureProperty, [&machine, &mutex](dao::script::CommandCall &call) {
+            constexpr std::int32_t kDamageScale = 12; // PROPERTY_ATTRIBUTE_DAMAGE_SCALE
+            const bool vulnerability =
+                call.Int(1) == kDamageScale && call.Int(2).value_or(k::PROPERTY_VALUE_TOTAL) == k::PROPERTY_VALUE_TOTAL;
+            const int result = call.Proceed();
+            if (vulnerability && result == dao::script::kOk)
+            {
+                if (const auto scale = call.FloatAnswer())
+                {
+                    float multiplier = 1.0f;
+                    bool active = false;
+                    {
+                        const std::lock_guard lock(mutex);
+                        multiplier = machine.GetSettings().damageScale;
+                        active = machine.Active();
+                    }
+                    call.SetFloatAnswer(DamageVulnerability(*scale, multiplier, active));
+                }
+            }
+            return result;
+        });
+    if (!damage)
+    {
+        spdlog::error("could not intercept the scripts' damage vulnerability");
+    }
+    return queue && pauseKey && autoPause && damage;
 }
 
 void FreezeAnimation(ObjectId creature, bool frozen)
