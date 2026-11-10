@@ -10,6 +10,7 @@
 #include "dao/Clock.h"
 #include "dao/CommandEvents.h"
 #include "dao/Conjure.h"
+#include "dao/Effects.h"
 #include "dao/Events.h"
 #include "dao/Gda.h"
 #include "dao/Hook.h"
@@ -29,6 +30,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <mutex>
@@ -70,8 +72,8 @@ constexpr std::array kKnownCallers{
     dao::AddressId{14452},
     dao::AddressId{14453},
     dao::AddressId{14488},
-    dao::AddressId{13252},                               // ScriptCommand::SETACTIVE, two sites
-    dao::addr::kCClientVirtualMachineCommands_SetActive, // two sites
+    dao::AddressId{13252},                           // ScriptCommand::SETACTIVE, two sites
+    dao::addr::kClientScriptCommand_SETOBJECTACTIVE, // two sites
 };
 
 // The function QueueCommand was called from, or nothing for a return
@@ -1229,6 +1231,40 @@ float AbilitySecondsOf(ObjectId user, std::int32_t ability)
 namespace
 {
 
+// The engine creates a spell's conjure VFX as a temporary effect, but its
+// duration belongs to the conjure, not the fighter's turn clock. Action time
+// is paid before this effect exists, and bonus time changes the turn-clock
+// ratio. Follow the engine's actual conjure progress, including HoldConjure's
+// feed, and let AddElapsed expire it normally when that step finishes.
+void WatchConjureEffects()
+{
+    dao::effects::OnAgeing([](const dao::CGameEffect &effect, ObjectId owner, std::int32_t ms) {
+        if (!dao::clock::Held() || effect.Type() != dao::script::EffectType::VisualEffect ||
+            effect.Creator() != owner || effect.AbilityId() <= 0)
+        {
+            return ms;
+        }
+        const auto row = dao::gda::GetInt(dao::script::Table::AbilitiesTalents, effect.AbilityId(), "ConjureVFX");
+        if (!row || *row <= 0 || effect.EngineParameters().Integer(k::EFFECT_INTEGER_VFX) != *row)
+        {
+            return ms;
+        }
+        std::int32_t elapsed = effect.DurationMs();
+        if (const auto conjure = dao::commands::Conjure(owner); conjure && conjure->duration > 0.0f)
+        {
+            const float progress = std::clamp(conjure->elapsed / conjure->duration, 0.0f, 1.0f);
+            elapsed = static_cast<std::int32_t>(std::lround(static_cast<float>(elapsed) * progress));
+        }
+        else if (dao::commands::RunningSubAction(owner) == 7)
+        {
+            // The first observation installs DAOLib's conjure observer; its
+            // first sample comes on the next engine update.
+            return 0;
+        }
+        return std::max(0, elapsed - effect.ElapsedMs());
+    });
+}
+
 // A command that failed without acting gives its action back (DAOLib's
 // command events, 38eea39, not yet seen in play): the failures that did
 // nothing. A target destroyed or a timeout may have acted, and a creature
@@ -1436,6 +1472,7 @@ void WatchCooldowns(TurnMachine &machine, std::mutex &mutex)
 
 bool InstallGate(TurnMachine &machine, std::mutex &mutex)
 {
+    WatchConjureEffects();
     WatchCommandEnds(machine, mutex);
     WatchCooldowns(machine, mutex);
     WatchAttacksBegin();
