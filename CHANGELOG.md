@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+Requires [DAOLib 0.11.0](https://github.com/Whocares66-Dev/DAOLib/releases/tag/v0.11.0) or later with plugin API 2.
+
+- **Damage scaling:** a slider above Fight speed in Options, Game, with 1x (default), 1.25x, 1.5x, 2x and 3x. It increases damage to party members and enemies during turn-based fights. Healing stays the same.
+- **Game options:** the Turn-based section fits on the left with Performance on the right.
+- **Casting visuals:** held spells follow their native conjure progress, fixing lingering casting effects.
+- **Commands outside combat:** the turn-based gate leaves commands alone when no turn-based fight is active.
+- **Unseen rooms:** creatures in unexplored rooms stay outside the turn order without being made inactive.
+
 ## 0.3.0
 
 Grabs that can be broken, with [DAOLib 0.5.0](https://github.com/Whocares66-Dev/DAOLib/releases/tag/v0.5.0) or later. Settings and saves are as in 0.2.0.
