@@ -17,6 +17,10 @@
 namespace tb
 {
 
+// The game's damage routine ignores vulnerability at or below 1. Preserve
+// that rule, then multiply it during active turn-based combat (issue 125).
+[[nodiscard]] float DamageVulnerability(float gameScale, float multiplier, bool active);
+
 // What a command is worth in a turn.
 enum class CommandKind : std::uint8_t
 {

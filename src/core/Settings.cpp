@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <format>
 #include <functional>
 #include <optional>
@@ -63,7 +64,7 @@ std::optional<float> ToFloat(std::string_view text)
 {
     float value = 0;
     const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-    if (error != std::errc{} || end != text.data() + text.size())
+    if (error != std::errc{} || end != text.data() + text.size() || !std::isfinite(value))
     {
         return std::nullopt;
     }
@@ -150,6 +151,7 @@ const std::vector<Entry> &Entries()
     static const std::vector<Entry> entries{
         {"turnbased", "enabled", Bool(&Settings::enabled)},
         {"turns", "party", PartyPlay},
+        {"turns", "damage_scale", Float(&Settings::damageScale, 1.0f, 3.0f)},
         {"turns", "speed", Float(&Settings::fightSpeed, 0.25f, 4.0f)},
         {"feedback", "camera_follow", Bool(&Settings::cameraFollow)},
         {"keys", "toggle", Chord(&Settings::toggleKey, "not a key (None, Ctrl+T, F9, ...)")},
@@ -277,6 +279,10 @@ enabled = true
 ; choice for a companion (the box on its Tactics page, kept with its saves),
 ; that choice wins over this.
 party = manual
+; Damage to creatures during turn-based fights, your party and enemies alike.
+; Damage scaling in the game's Options: 1x, 1.25x, 1.5x, 2x, 3x (1 to 3).
+; Multiplies the game's damage vulnerability; healing is unchanged.
+damage_scale = 1
 ; How fast the game runs through a turn-based fight, your turns and theirs
 ; alike: 0.5 half speed, 1 as ever, 2 twice as fast (0.25 to 4). It is the
 ; Fight speed slider in the game's Options (0.5x, 1x, 2x, 3x). Conversations

@@ -2,6 +2,12 @@
 
 Written while building the mod (2026-09-30), for DAOLib's work list. Each item: what the mod wants it for, what is already known (leads read while building this: addresses, class names, strings), what the mod does meanwhile, and how a session in play would show it works. Most urgent first within each section.
 
+## Issue 125: room for two fight sliders
+
+Seen in the user's review session on 2026-11-10: the Turn-based section with its checkbox and Damage scaling above Fight speed takes six rows. DAOLib's loader registers Performance first, explicitly in the right column (`src/perf/Options.cpp`, `Column::Right`); its heading and two checkboxes use four of that column's six rows. That leaves five contiguous rows on the left and two on the right, so the whole Turn-based section disappears. `turnbased.log`: `the section "Turn-based" is left out: it takes 6 rows ... Game tab, which has 7 left in its two`. The plugin itself loads successfully. This blocks the normal configuration even though the plugin builds and its core tests pass.
+
+The user's screenshot showed physical room on the left. Reading the actual movie identified the boundary error: the Game tab's clip is at stage y=200, Restore Defaults starts at y=628.5 only on the right, and the bottom buttons start at y=674.5. Both columns were given the right's shorter limit. The correction in this tree's DAOLib source permits a final left row at clip y=438; a checkbox there ends at stage y=668, and the two-slider section's last slider plus its full pitch ends at y=650. Control sizes and spacing stay unchanged. An earlier suspicion that slider pitch rounding itself was the cause was not borne out by the full symbol bounds. The 51 layout and movie tests pass, including Performance patched on the right first and Turn-based patched on the left afterward; seen in play through Eluvian with both Performance controls present and Turn-based on the left (build/issue125-layout/fixed-options.jpg), the lower slider clear of the panel edge. The initial review session temporarily used `DAOLIB_DYNAMIC_OCCLUSION=0` and `DAOLIB_FAST_LOAD=0` to omit Performance, and that workaround is removed from the replacement session.
+
 ## Already done
 
 - **DAOLib as an extern.** Built into this repository from the `extern/DAOLib` submodule through `add_subdirectory` and `add_daolib_plugin`, as Skyrim plugins build CommonLibSSE: DAOLib `eb20478`, "DAOLib can be built inside a plugin's own repository".

@@ -26,7 +26,7 @@ The guide says what a player sees and does, in plain words. How a rule came to b
 
 ## Pictures
 
-`assets/img/` holds the pictures, each cropped from the game's own window as Eluvian's `screenshot` tool takes it (never the desktop), at 1600x1000:
+`assets/img/` holds the pictures, each cropped from the game's own window as Eluvian's `screenshot` tool takes it (never the desktop):
 
 | Picture | What it shows | Taken in |
 |---|---|---|

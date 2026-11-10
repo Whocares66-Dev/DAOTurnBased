@@ -16,6 +16,7 @@ TEST_CASE("the default file parses to the defaults, with nothing to warn of", "[
     const Settings defaults;
     CHECK(parsed.settings.enabled == defaults.enabled);
     CHECK(parsed.settings.partyControl == defaults.partyControl);
+    CHECK(parsed.settings.damageScale == defaults.damageScale);
     CHECK(parsed.settings.fightSpeed == defaults.fightSpeed);
     CHECK(parsed.settings.cameraFollow == defaults.cameraFollow);
     CHECK(parsed.settings.toggleKey == defaults.toggleKey);
@@ -23,7 +24,7 @@ TEST_CASE("the default file parses to the defaults, with nothing to warn of", "[
     CHECK(parsed.settings.delayKey == defaults.delayKey);
 }
 
-TEST_CASE("the file has the seven settings a player sets, and none of the rules' numbers", "[settings]")
+TEST_CASE("the file has the eight settings a player sets, and none of the rules' numbers", "[settings]")
 {
     // The user, 2026-10-10, of a file of 43: "strip it down to only
     // essential configs. stuff like initiative are built-in, don't need to
@@ -38,7 +39,7 @@ TEST_CASE("the file has the seven settings a player sets, and none of the rules'
         keys += !line.empty() && line.front() != ';' && line.front() != '[' ? 1 : 0;
         at = end == std::string::npos ? written.size() : end + 1;
     }
-    CHECK(keys == 7);
+    CHECK(keys == 8);
     // One that was a setting is a key the mod does not know: said so, by its
     // line and its name, and the rest of the file is read.
     const tb::ParsedSettings old = ParseSettings("[initiative]\n"
@@ -131,8 +132,10 @@ TEST_CASE("a file that lacks a setting gets it, with its comment, its own values
     const std::string whole = tb::WithMissingSettings(older);
     const auto parsed = tb::ParseSettings(whole);
     CHECK(parsed.warnings.empty());
-    CHECK_FALSE(parsed.settings.enabled);                               // the player's
-    CHECK(parsed.settings.fightSpeed == 2.0f);                          // the player's
+    CHECK_FALSE(parsed.settings.enabled);       // the player's
+    CHECK(parsed.settings.fightSpeed == 2.0f);  // the player's
+    CHECK(parsed.settings.damageScale == 1.0f); // added
+    CHECK(whole.find("damage_scale = 1") != std::string::npos);
     CHECK(parsed.settings.cameraFollow == tb::Settings{}.cameraFollow); // added
     CHECK(whole.find("camera_follow = ") != std::string::npos);
     CHECK(whole.find("; Centre the camera on whoever's turn it is.") != std::string::npos); // its comment
@@ -162,6 +165,29 @@ TEST_CASE("the fight's speed is read, and kept within what the game takes", "[se
     CHECK(fast.warnings.size() == 1);
     CHECK(fast.settings.fightSpeed == 4.0f); // kept within what the game takes
     CHECK(tb::ParseSettings(tb::DefaultSettingsFile()).settings.fightSpeed == 1.0f);
+}
+
+TEST_CASE("damage scaling defaults to one and accepts the slider's stops", "[settings]")
+{
+    CHECK(Settings{}.damageScale == 1.0f);
+    for (const std::string value : {"1", "1.25", "1.5", "2", "3"})
+    {
+        const auto parsed = ParseSettings("[turns]\ndamage_scale = " + value + "\n");
+        CHECK(parsed.warnings.empty());
+        CHECK(parsed.settings.damageScale == std::stof(value));
+    }
+    const auto low = ParseSettings("[turns]\ndamage_scale = 0.5\n");
+    CHECK(low.settings.damageScale == 1.0f);
+    CHECK(low.warnings.size() == 1);
+    const auto high = ParseSettings("[turns]\ndamage_scale = 5\n");
+    CHECK(high.settings.damageScale == 3.0f);
+    CHECK(high.warnings.size() == 1);
+    for (const std::string value : {"nan", "inf", "-inf", "lots"})
+    {
+        const auto parsed = ParseSettings("[turns]\ndamage_scale = " + value + "\n");
+        CHECK(parsed.settings.damageScale == 1.0f);
+        CHECK(parsed.warnings.size() == 1);
+    }
 }
 
 TEST_CASE("the turn camera is on until the file turns it off", "[settings]")

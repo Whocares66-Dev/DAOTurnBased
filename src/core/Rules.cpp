@@ -8,6 +8,15 @@
 namespace tb
 {
 
+float DamageVulnerability(float gameScale, float multiplier, bool active)
+{
+    if (!active || multiplier == 1.0f)
+    {
+        return gameScale;
+    }
+    return std::max(1.0f, gameScale) * multiplier;
+}
+
 CommandKind Classify(CommandType type)
 {
     switch (type)

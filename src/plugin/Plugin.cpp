@@ -144,25 +144,74 @@ constexpr wchar_t kOptionsSection[] = L"Turn-based";
 // (The user, having played at them, 2026-10-02: "make the options 0.5x, 1x,
 // 2x, 3x"; they were 0.5, 1, 1.5 and 2.)
 constexpr std::array<float, 4> kSpeedStops{0.5f, 1.0f, 2.0f, 3.0f};
+constexpr std::array<float, 5> kDamageStops{1.0f, 1.25f, 1.5f, 2.0f, 3.0f};
 
 void ReloadIfChanged(std::uint32_t now);
 
-std::int32_t SpeedStop()
+template <std::size_t N> std::int32_t SettingStop(const std::array<float, N> &stops, float tb::Settings::*field)
 {
-    float speed = 1.0f;
+    float value = 1.0f;
     {
         const std::lock_guard lock(g.mutex);
-        speed = g.machine->GetSettings().fightSpeed;
+        value = g.machine->GetSettings().*field;
     }
     std::size_t nearest = 0;
-    for (std::size_t i = 1; i < kSpeedStops.size(); ++i)
+    for (std::size_t i = 1; i < stops.size(); ++i)
     {
-        if (std::abs(kSpeedStops.at(i) - speed) < std::abs(kSpeedStops.at(nearest) - speed))
+        if (std::abs(stops.at(i) - value) < std::abs(stops.at(nearest) - value))
         {
             nearest = i;
         }
     }
     return static_cast<std::int32_t>(nearest);
+}
+
+// Both fight sliders write through the same settings path as an INI edit.
+template <std::size_t N>
+dao::options::Choice FightChoice(const wchar_t *name, const wchar_t *label, const wchar_t *tooltip,
+                                 std::string_view key, const std::array<float, N> &stops, float tb::Settings::*field,
+                                 std::int32_t defaultStop)
+{
+    dao::options::Choice choice;
+    choice.name = name;
+    choice.label = label;
+    choice.tooltip = tooltip;
+    choice.defaultValue = defaultStop;
+    for (const float stop : stops)
+    {
+        choice.values.push_back(std::format(L"{}x", stop));
+    }
+    choice.get = [&stops, field, key, defaultStop] {
+        try
+        {
+            return SettingStop(stops, field);
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("the options' {}, asked: {}", key, e.what());
+            return defaultStop;
+        }
+    };
+    choice.set = [&stops, field, key, defaultStop](std::int32_t wanted) {
+        try
+        {
+            const std::size_t stop = static_cast<std::size_t>(
+                std::clamp<std::int32_t>(wanted, 0, static_cast<std::int32_t>(stops.size()) - 1));
+            for (const std::string &warning : tb::game::SaveSetting("turns", key, std::format("{}", stops.at(stop))))
+            {
+                spdlog::warn("the options' {}: {}", key, warning);
+            }
+            g.lastSettingsCheck = 0;
+            ReloadIfChanged(static_cast<std::uint32_t>(GetTickCount64()) + 2000);
+            return SettingStop(stops, field);
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("the options' {}, set: {}", key, e.what());
+            return defaultStop;
+        }
+    };
+    return choice;
 }
 
 // The switch in the game's own options: a section "Turn-based" on the Game
@@ -205,52 +254,12 @@ bool AddOptions()
     };
     std::vector<dao::options::Toggle> toggles;
     toggles.push_back(std::move(toggle));
-    // The fight's speed (the user, 2026-10-02: "a setting to change game
-    // speed, from 0.5x to 1X to 2x"): the game's own slider with named
-    // stops (DAOLib's dao::options::Choice), kept in turnbased.ini as
-    // [turns] speed. `set` is called once a stop passed in a drag: it writes
-    // the file and reads it back, which is cheap and the same each time.
-    dao::options::Choice speed;
-    speed.name = L"TurnBasedSpeed";
-    speed.label = L"Fight speed";
-    speed.tooltip = L"How fast a turn-based fight runs";
-    for (const float stop : kSpeedStops)
-    {
-        speed.values.push_back(std::format(L"{}x", stop));
-    }
-    speed.get = [] {
-        try
-        {
-            return SpeedStop();
-        }
-        catch (const std::exception &e)
-        {
-            spdlog::error("the options' speed, asked: {}", e.what());
-            return std::int32_t{1};
-        }
-    };
-    speed.set = [](std::int32_t wanted) {
-        try
-        {
-            const std::size_t stop = static_cast<std::size_t>(
-                std::clamp<std::int32_t>(wanted, 0, static_cast<std::int32_t>(kSpeedStops.size()) - 1));
-            for (const std::string &warning :
-                 tb::game::SaveSetting("turns", "speed", std::format("{}", kSpeedStops.at(stop))))
-            {
-                spdlog::warn("the options' speed: {}", warning);
-            }
-            g.lastSettingsCheck = 0;
-            ReloadIfChanged(static_cast<std::uint32_t>(GetTickCount64()) + 2000);
-            return SpeedStop();
-        }
-        catch (const std::exception &e)
-        {
-            spdlog::error("the options' speed, set: {}", e.what());
-            return std::int32_t{1};
-        }
-    };
     std::vector<dao::options::Choice> choices;
-    choices.push_back(std::move(speed));
+    choices.push_back(FightChoice(L"TurnBasedDamageScale", L"Damage scaling",
+                                  L"Damage to your party and enemies during turn-based fights", "damage_scale",
+                                  kDamageStops, &tb::Settings::damageScale, 0));
+    choices.push_back(FightChoice(L"TurnBasedSpeed", L"Fight speed", L"How fast a turn-based fight runs", "speed",
+                                  kSpeedStops, &tb::Settings::fightSpeed, 1));
     return dao::options::AddSection(kOptionsSection, std::move(toggles), std::move(choices));
 }
 
@@ -1033,10 +1042,10 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     spdlog::info("turnbased {} on DAOLib {}", TB_VERSION_STRING, DAO_VERSION_STRING);
 
     const tb::Settings settings = tb::game::LoadSettings();
-    spdlog::info("settings from {}: turn-based {}, a turn {} s at {} m a second, party {}, toggle key {}",
+    spdlog::info("settings from {}: turn-based {}, a turn {} s at {} m a second, party {}, damage {}x, toggle key {}",
                  tb::game::SettingsPath().string(), settings.enabled ? "on" : "off", settings.secondsPerTurn,
                  settings.paceMps, settings.partyControl == tb::PartyControl::Manual ? "manual" : "tactics",
-                 tb::FormatKeyChord(settings.toggleKey));
+                 settings.damageScale, tb::FormatKeyChord(settings.toggleKey));
 
     const std::uint64_t seed = GetTickCount64() ^ (static_cast<std::uint64_t>(GetCurrentProcessId()) << 32);
     g.machine = std::make_unique<tb::TurnMachine>(settings, seed, &Log);

@@ -18,6 +18,19 @@ using tb::CommandKind;
 using tb::CommandType;
 using tb::Settings;
 
+TEST_CASE("damage scaling composes with vulnerability only during turn-based combat", "[rules][damage]")
+{
+    // The scripts ignore vulnerability <= 1. A Mark of Death at 1.2 must
+    // still give its own bonus when the player doubles everyone's damage.
+    CHECK(tb::DamageVulnerability(1.0f, 2.0f, true) == 2.0f);
+    CHECK(tb::DamageVulnerability(1.2f, 2.0f, true) == Approx(2.4f));
+    CHECK(tb::DamageVulnerability(1.2f, 3.0f, true) == Approx(3.6f));
+    CHECK(tb::DamageVulnerability(0.8f, 1.5f, true) == 1.5f);
+    CHECK(tb::DamageVulnerability(0.8f, 1.0f, true) == 0.8f);
+    CHECK(tb::DamageVulnerability(1.2f, 2.0f, false) == 1.2f);
+    CHECK(tb::DamageVulnerability(1.2f, 1.0f, true) == 1.2f);
+}
+
 TEST_CASE("commands cost what the design says", "[rules]")
 {
     CHECK(Classify(CommandType::Attack) == CommandKind::Action);
