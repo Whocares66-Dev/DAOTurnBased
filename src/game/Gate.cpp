@@ -1257,8 +1257,7 @@ void WatchConjureEffects()
         }
         else if (dao::commands::RunningSubAction(owner) == 7)
         {
-            // The first observation installs DAOLib's conjure observer; its
-            // first sample comes on the next engine update.
+            // The conjure has not acquired its native duration yet.
             return 0;
         }
         return std::max(0, elapsed - effect.ElapsedMs());
