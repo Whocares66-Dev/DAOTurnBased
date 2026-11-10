@@ -205,7 +205,7 @@ struct Going
 // followed, from behind, as close as its size asks) and is changed to where
 // the camera stands, or to its staying with the party (`own`: whom the
 // player acts as).
-void LookAtAnEnemy(Going &going, ObjectId id, ObjectId own, const dao::SceneCamera &scene, float behind,
+void LookAtAnEnemy(Going &going, ObjectId id, ObjectId own, const dao::CameraRig &scene, float behind,
                    std::optional<float> asked)
 {
     const dao::Vector feet = dao::script::api::GetPosition(id);
@@ -352,7 +352,7 @@ void CameraDirector::TurnTo(ObjectId id, ObjectId own)
     // turned.
     const std::optional<float> asked = SizeAsks(id);
     const std::optional<float> behind = dao::camera::YawBehind(id);
-    dao::SceneCamera *scene = camera->Scene();
+    dao::CameraRig *scene = camera->Rig();
     const bool party = dao::script::api::IsHero(id) != 0 || dao::script::api::IsFollower(id) != 0;
     Going going{id, asked, behind, "behind", false};
     // An enemy is looked at from where the camera has ground to stand over and

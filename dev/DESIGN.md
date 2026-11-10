@@ -158,6 +158,8 @@ Action points will put a price on them. Two of them take their user's every othe
 
 ### Everything in turns: the overhaul still to do
 
+**A spell's conjure visual follows its conjure** (issue 123). The engine makes it a temporary visual effect on the caster, identified by the ability's own `ConjureVFX` row. Its lifetime follows the engine's conjure progress, including a conjure held and fed across turns; once that step has finished, the engine's normal effect expiry ends it. It does not use the creature's gameplay-effect clock: action time is paid before the visual exists, and tactics bonuses change that clock's ratio to an action's animation time. Buffs, debuffs, their visuals, regeneration and delayed effect events keep their existing turn clocks. No separate spell timer or forced animation reset is introduced.
+
 The user's rule (2026-09-30): in turn-based mode everything runs on turns (or, later, action points), nothing on time. Built so far: conditions (stun, paralysis, sleep, pins) and cooldowns. Still on the game's clock, running whenever the world runs:
 
 - **Effect durations**: buffs, debuffs, damage and healing over time (burning, poison, bleeding, regeneration potions, auras), each a duration in seconds on a `CGameEffect`.
