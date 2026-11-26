@@ -24,6 +24,8 @@ DAOLib's `CLAUDE.md` has the game, the one exe build every address is from, the 
 
 ## Layout
 
+The mod's own words are marked in the source and kept in catalogs, `assets/Translations/<locale>.json`: `dev/I18N.md`. A new line the player reads is `Tr(L"...")`, `TrFormat(L"...", ...)` or `N_(L"...")` in C++, `tr("...")` or `trf("...", ...)` in a movie, and `python tools/i18n.py` brings the catalogs in step (`--check` in the gate's tests).
+
 ```
 src/core/     the rules and the turn state machine: no <Windows.h>, no DAOLib, no dao:: type. Tested.
 src/game/     every call into the engine, through DAOLib: Bridge (observe, apply), Gate (the hooks),

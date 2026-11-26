@@ -2,6 +2,7 @@
 
 #include "core/Facing.h"
 #include "core/GivenBack.h"
+#include "core/I18n.h"
 #include "core/Text.h"
 #include "core/TurnEnd.h"
 
@@ -15,6 +16,13 @@ namespace tb
 
 namespace
 {
+
+// What a floaty or the caption says, in the language: the machine thinks in English (what it logs and
+// compares), and a line is put into the player's words as it is shown (core/I18n.h).
+std::wstring Said(std::wstring_view english)
+{
+    return std::wstring{i18n::Tr(english)};
+}
 
 // Modes in which there is no world to fight in: whatever fight there was is
 // gone, objects and all.
@@ -179,8 +187,8 @@ const char *Name(EffectKind kind)
     return "?";
 }
 
-TurnMachine::TurnMachine(const Settings &settings, std::uint64_t seed, LogSink log)
-    : settings_(settings), rng_(seed), log_(std::move(log))
+TurnMachine::TurnMachine(Settings settings, std::uint64_t seed, LogSink log)
+    : settings_(std::move(settings)), rng_(seed), log_(std::move(log))
 {
 }
 
@@ -822,7 +830,7 @@ void TurnMachine::StartFight(std::vector<Combatant> roster, std::vector<Effect> 
     // Over the hero, while standing; over another of the party where a fight
     // begins with the hero down (hostiles fighting again in a combat the
     // game has not ended), and not over a body the fight has left behind.
-    Floaty(fx, PartysOwn(), L"Turn-based combat", kGold);
+    Floaty(fx, PartysOwn(), Said(N_(L"Turn-based combat")), kGold);
     roundPending_ = false;
     // The first turn begins with the next frame, which reads everyone's
     // conditions first: one pinned or stunned as the fight began is held.
@@ -1048,7 +1056,7 @@ void TurnMachine::BeginTurn(const Combatant &who, std::vector<Effect> &fx)
     }
     if (PlayerControls(who))
     {
-        Floaty(fx, who.id, who.name + L"'s turn", kGold);
+        Floaty(fx, who.id, i18n::TrFormat(L"{}'s turn", who.name), kGold);
     }
     else if (!UnawareNow(who))
     {
@@ -1384,7 +1392,7 @@ std::optional<Verdict> TurnMachine::PayAction(const Combatant &who, const Comman
         // round was noise (play test 25).
         if (PlayerControls(who))
         {
-            Floaty(pending_, who.id, L"Lands next turn", kGold);
+            Floaty(pending_, who.id, Said(N_(L"Lands next turn")), kGold);
         }
         MoveClock(pending_);
         return engine ? Verdict::Conjure : Verdict::Hold;
@@ -1624,7 +1632,7 @@ bool TurnMachine::ChargingTurn(const Combatant &who, std::vector<Effect> &fx)
     TellTurnStart(who, fx);
     clockSeenMs_ = 0;
     clockRuns_ = true;
-    Floaty(fx, who.id, L"Casting", kGold);
+    Floaty(fx, who.id, Said(N_(L"Casting")), kGold);
     EndTurn(fx, "charging");
     return true;
 }
@@ -1744,7 +1752,7 @@ void TurnMachine::Interrupt(ObjectId who, std::string_view why, std::vector<Effe
         // over the ogre's pale body only because the log said when to look
         // (play test 29), and in red, under the game's own red number for
         // the blow, it read worse (play test 30).
-        Floaty(fx, who, spell ? L"Spell lost" : L"Action lost", kGold);
+        Floaty(fx, who, spell ? Said(N_(L"Spell lost")) : Said(N_(L"Action lost")), kGold);
     }
 }
 
@@ -1829,7 +1837,7 @@ bool TurnMachine::LoseTurn(const Combatant &who, std::vector<Effect> &fx)
         TellTurnStart(who, fx);
         clockSeenMs_ = 0;
         clockRuns_ = true;
-        Floaty(fx, who.id, who.name + L" loses the turn", who.side == Side::Party ? kGold : kGrey);
+        Floaty(fx, who.id, i18n::TrFormat(L"{} loses the turn", who.name), who.side == Side::Party ? kGold : kGrey);
         EndTurn(fx, "held by another's action");
         return true;
     }
@@ -1865,7 +1873,7 @@ bool TurnMachine::LoseTurn(const Combatant &who, std::vector<Effect> &fx)
     TellTurnStart(who, fx);
     clockSeenMs_ = 0;
     clockRuns_ = true;
-    Floaty(fx, who.id, who.name + L" loses the turn", who.side == Side::Party ? kGold : kGrey);
+    Floaty(fx, who.id, i18n::TrFormat(L"{} loses the turn", who.name), who.side == Side::Party ? kGold : kGrey);
     EndTurn(fx, "held by its condition");
     return true;
 }
@@ -2478,7 +2486,8 @@ bool TurnMachine::HoldRuns(const ActorObservation &actor, std::vector<Effect> &f
     Log(LogLevel::Info,
         std::format("{} is held by {} past its bar ({:.2f} s held this turn): its turn is lost{}", Utf8(current->name),
                     HeldBy(actor.current, "a"), static_cast<float>(budget_.heldMs) / 1000.0f, effects));
-    Floaty(fx, current->id, current->name + L" loses the turn", current->side == Side::Party ? kGold : kGrey);
+    Floaty(fx, current->id, i18n::TrFormat(L"{} loses the turn", current->name),
+           current->side == Side::Party ? kGold : kGrey);
     EndTurn(fx, "held by an effect");
     return true;
 }
@@ -2736,7 +2745,7 @@ void TurnMachine::Handover(const Combatant &who, std::vector<Effect> &fx)
             std::format("{} is passed: {} (not in combat, and it perceives nobody to fight): unaware, its AI is not "
                         "told, and its turn is skipped in {:.1f} s",
                         Utf8(who.name), Why(Rotation::Unaware, who.side), static_cast<float>(kUnawareMs) / 1000.0f));
-        Floaty(fx, who.id, L"Unaware", kGrey);
+        Floaty(fx, who.id, Said(N_(L"Unaware")), kGrey);
         deadline_ = clock_ + kUnawareMs;
         phase_ = Phase::AiThinking;
         return;
@@ -3195,7 +3204,7 @@ void TurnMachine::StepExecuting(const Observation &obs, std::vector<Effect> &fx)
                 ++budget_.givenBack;
                 if (current != nullptr && PlayerControls(*current))
                 {
-                    SayGivenBack(fx, *current, budget_.lastType, L"No way through");
+                    SayGivenBack(fx, *current, budget_.lastType, N_(L"No way through"));
                 }
             }
             fx.push_back(Effect::Of(EffectKind::ClearCommands, actor.id));
@@ -3592,7 +3601,7 @@ void TurnMachine::TrackMovement(const ActorObservation &actor, std::vector<Effec
         }
         return;
     }
-    Floaty(fx, actor.id, L"Out of movement", kGrey);
+    Floaty(fx, actor.id, Said(N_(L"Out of movement")), kGrey);
     Log(LogLevel::Info,
         std::format("{} is out of movement ({:.1f} of {:.1f} m){}",
                     current != nullptr ? Utf8(current->name) : std::string{"?"}, budget_.spend.Walked(),
@@ -3754,7 +3763,7 @@ void TurnMachine::DelayTurn(std::vector<Effect> &fx)
     }
     Log(LogLevel::Info, std::format("{}'s turn is put off to the round's end, nothing of it spent", Utf8(name)));
     Emit(EventKind::TurnDelayed, who);
-    Floaty(fx, who, name + L" waits", kGrey);
+    Floaty(fx, who, i18n::TrFormat(L"{} waits", name), kGrey);
     clockRuns_ = false; // not this turn's end: its clock stays where it is
     clockSeenMs_ = 0;
     LeaveTurn();
@@ -4544,7 +4553,7 @@ void TurnMachine::Floaty(std::vector<Effect> &fx, ObjectId target, std::wstring 
 
 void TurnMachine::SayGivenBack(std::vector<Effect> &fx, const Combatant &who, CommandType type, std::wstring_view words)
 {
-    Floaty(fx, who.id, std::wstring{words}, kGold);
+    Floaty(fx, who.id, Said(words), kGold);
     notice_ = Notice{GivenBackLine(words, who.name, type), lastNow_};
 }
 
@@ -4557,7 +4566,8 @@ void TurnMachine::Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId o
     fx.push_back(std::move(effect));
 }
 
-void TurnMachine::Refuse(ObjectId target, std::wstring text, CommandType command, std::string note)
+void TurnMachine::Refuse(ObjectId target, const std::wstring &text, CommandType command, std::string note,
+                         std::wstring shown)
 {
     lastPlayerRefusal_ = std::format("{} ({}{}{})", Utf8(text), Name(command), note.empty() ? "" : ": ", note);
     // The same refusal again within a second is the same event.
@@ -4575,7 +4585,7 @@ void TurnMachine::Refuse(ObjectId target, std::wstring text, CommandType command
     }
     anyRefusal_ = true;
     lastRefusalNow_ = lastNow_;
-    Floaty(pending_, target, std::move(text), kGrey);
+    Floaty(pending_, target, shown.empty() ? Said(text) : std::move(shown), kGrey);
 }
 
 // An attack the engine itself has no way to make (issue 27, 2026-10-04). The
@@ -4720,7 +4730,7 @@ void TurnMachine::KeptAttackNotMade(const Combatant &who, const CommandRequest &
     if (player)
     {
         const std::wstring_view words = WhyNoAttack(request.noAttack);
-        Floaty(pending_, who.id, std::wstring{words}, kGrey);
+        Floaty(pending_, who.id, Said(words), kGrey);
         notice_ = Notice{NotMadeLine(words, who.name, request.type), lastNow_};
     }
     else
@@ -4957,7 +4967,8 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     {
         if (request.source == Source::Player)
         {
-            Refuse(who->id, L"Not " + who->name + L"'s turn", request.type);
+            Refuse(who->id, L"Not " + who->name + L"'s turn", request.type, {},
+                   i18n::TrFormat(L"Not {}'s turn", who->name));
         }
         if (Logs(refusals))
         {
@@ -5056,7 +5067,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     {
         if (player && asked)
         {
-            Refuse(who->id, L"Casting", request.type);
+            Refuse(who->id, N_(L"Casting"), request.type);
         }
         if (Logs(refusals))
         {
@@ -5071,7 +5082,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
     {
         if (player && asked)
         {
-            Refuse(who->id, L"Held", request.type);
+            Refuse(who->id, N_(L"Held"), request.type);
         }
         if (Logs(refusals))
         {
@@ -5185,7 +5196,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
                               lastNow_ - budget_.lastAt < kEchoMs;
             if (player && asked && !echo)
             {
-                Refuse(who->id, L"No action left", request.type);
+                Refuse(who->id, N_(L"No action left"), request.type);
             }
             if (const LogLevel level = echo ? LogLevel::Debug : refusals; Logs(level))
             {
@@ -5198,7 +5209,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         // (CommandRequest::doorInTheWay): refused, with why.
         if (player && asked && request.doorInTheWay)
         {
-            Refuse(who->id, L"A door is in the way", request.type, "open it first");
+            Refuse(who->id, N_(L"A door is in the way"), request.type, "open it first");
             Log(LogLevel::Info,
                 std::format("{}: {} refused, a door is in the way of the walk", Utf8(who->name), Name(request.type)));
             return Verdict::Block;
@@ -5214,7 +5225,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         // AI's goes on and walks what it can: closing in is its turn.
         if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + kReachSlack)
         {
-            Refuse(who->id, L"Too far", request.type,
+            Refuse(who->id, N_(L"Too far"), request.type,
                    std::format("{:.1f} m to walk, {:.1f} m left", *request.walk, budget_.MovementLeft()));
             Log(LogLevel::Info, std::format("{}: {} refused, {:.1f} m to walk with {:.1f} m left", Utf8(who->name),
                                             Name(request.type), *request.walk, budget_.MovementLeft()));
@@ -5230,7 +5241,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         {
             if (player && asked)
             {
-                Refuse(who->id, L"No movement left", request.type,
+                Refuse(who->id, N_(L"No movement left"), request.type,
                        std::format("{:.1f} m left", budget_.MovementLeft()));
             }
             if (Logs(refusals))
@@ -5245,7 +5256,7 @@ Verdict TurnMachine::Judge(const CommandRequest &request)
         // walk cut short where it ran out.
         if (player && asked && request.walk && *request.walk > budget_.MovementLeft() + kReachSlack)
         {
-            Refuse(who->id, L"Too far", request.type,
+            Refuse(who->id, N_(L"Too far"), request.type,
                    std::format("{:.1f} m to walk, {:.1f} m left", *request.walk, budget_.MovementLeft()));
             Log(LogLevel::Info, std::format("{}: {} refused, {:.1f} m of path with {:.1f} m left", Utf8(who->name),
                                             Name(request.type), *request.walk, budget_.MovementLeft()));

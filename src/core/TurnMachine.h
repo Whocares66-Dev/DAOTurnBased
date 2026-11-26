@@ -19,6 +19,7 @@
 
 #include "core/Events.h"
 #include "core/Facing.h"
+#include "core/I18n.h"
 #include "core/PartyTactics.h"
 #include "core/Rules.h"
 #include "core/Settings.h"
@@ -603,7 +604,7 @@ using LogSink = std::function<void(LogLevel, std::string_view)>;
 class TurnMachine
 {
   public:
-    TurnMachine(const Settings &settings, std::uint64_t seed, LogSink log = {});
+    TurnMachine(Settings settings, std::uint64_t seed, LogSink log = {});
 
     [[nodiscard]] const Settings &GetSettings() const
     {
@@ -1100,7 +1101,7 @@ class TurnMachine
     void EndedByThePlayer(const Observation &obs, std::vector<Effect> &fx);
     // What the player is told of an order refused a creature at its own
     // mode's command (Judge): over the character and on the bar's caption.
-    static constexpr std::wstring_view kModeFirst = L"Turn its mode off first";
+    static constexpr std::wstring_view kModeFirst = N_(L"Turn its mode off first");
     [[nodiscard]] static bool EngineConjures(const CommandRequest &request);
 
   public:
@@ -1185,7 +1186,8 @@ class TurnMachine
     static bool ActorGone(const Observation &obs);
     static void Floaty(std::vector<Effect> &fx, ObjectId target, std::wstring text, std::uint32_t colour);
     static void Signal(std::vector<Effect> &fx, std::int32_t event, ObjectId object, std::int32_t a, std::int32_t b);
-    void Refuse(ObjectId target, std::wstring text, CommandType command, std::string note = {});
+    void Refuse(ObjectId target, const std::wstring &text, CommandType command, std::string note = {},
+                std::wstring shown = {});
     // An attack the engine itself has no way to make as the two stand:
     // refused before a step (issue 27). True if it is.
     [[nodiscard]] bool NoAttackToMake(const Combatant &who, const CommandRequest &request, bool player);

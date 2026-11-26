@@ -1,6 +1,7 @@
 #include "game/Bar.h"
 
 #include "core/Bar.h"
+#include "core/I18n.h"
 #include "core/Sheet.h"
 #include "core/Text.h"
 #include "game/Camera.h"
@@ -38,6 +39,19 @@ void BarLink::Install()
         return;
     }
     installed_ = true;
+    // The words of the catalog in force, once, for the movies to put in their own (core/I18n.h, Words): the
+    // tactics page's box asks too, which is why it is answered here and not by either.
+    dao::gui::OnExternalInterface("TB_GetWords", [](const dao::gui::Call &call) {
+        try
+        {
+            const std::wstring words = tb::i18n::Words();
+            call.Return(dao::gui::Value::WString(words.c_str()));
+        }
+        catch (const std::exception &e)
+        {
+            spdlog::error("TB_GetWords: {}", e.what());
+        }
+    });
     dao::gui::OnExternalInterface("TB_GetView", [this](const dao::gui::Call &call) {
         // Called from the game's UI code, which cannot take an exception.
         try
@@ -331,7 +345,7 @@ void BarLink::Publish(const TurnView &view)
             // round, that should also indicate in the top right hand corner
             // of the portrait, as with a pending talent" (issue 15).
             card.icon = std::wstring{kAttackIcon};
-            card.pendingName = L"Attack";
+            card.pendingName = std::wstring{tb::i18n::Tr(L"Attack")};
             continue;
         }
         auto known = abilityArt_.find(card.pendingAbility);

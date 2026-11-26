@@ -1,5 +1,7 @@
 #include "core/GivenBack.h"
 
+#include "core/I18n.h"
+
 #include <format>
 
 namespace tb
@@ -11,7 +13,9 @@ namespace
 // "attack", "ability", or "action" for anything else that costs one.
 std::wstring_view Named(CommandType type)
 {
-    return type == CommandType::Attack ? L"attack" : type == CommandType::UseAbility ? L"ability" : L"action";
+    return type == CommandType::Attack       ? N_(L"attack")
+           : type == CommandType::UseAbility ? N_(L"ability")
+                                             : N_(L"action");
 }
 
 } // namespace
@@ -22,27 +26,27 @@ std::wstring_view WhyGivenBack(std::string_view why)
     // line that carries more than the name (a log's) is read the same.
     if (why.find("PATH_ACTION_REQUIRED") != std::string_view::npos)
     {
-        return L"A door is in the way";
+        return N_(L"A door is in the way");
     }
     if (why.find("MELEE_RING") != std::string_view::npos)
     {
-        return L"No room at the target";
+        return N_(L"No room at the target");
     }
     if (why.find("INVALID_PATH") != std::string_view::npos)
     {
-        return L"No way through";
+        return N_(L"No way through");
     }
     if (why.find("LINE_OF_SIGHT") != std::string_view::npos)
     {
-        return L"No line of sight";
+        return N_(L"No line of sight");
     }
-    return L"Nothing happened";
+    return N_(L"Nothing happened");
 }
 
 std::wstring GivenBackLine(std::wstring_view words, std::wstring_view name, CommandType type)
 {
     const std::wstring_view what = Named(type);
-    return std::format(L"{}: {}'s {} is given back", words, name, what);
+    return i18n::TrFormat(L"{}: {}'s {} is given back", i18n::Tr(words), name, i18n::Tr(what));
 }
 
 std::wstring_view WhyNoAttack(NoAttack why)
@@ -50,15 +54,15 @@ std::wstring_view WhyNoAttack(NoAttack why)
     switch (why)
     {
     case NoAttack::NoPlace:
-        return L"No room at the target";
+        return N_(L"No room at the target");
     case NoAttack::NoPath:
-        return L"No way through";
+        return N_(L"No way through");
     case NoAttack::NoLine:
-        return L"No line of sight";
+        return N_(L"No line of sight");
     case NoAttack::None:
         break;
     }
-    return L"Nothing happened";
+    return N_(L"Nothing happened");
 }
 
 std::string_view NoAttackNote(NoAttack why)
@@ -79,12 +83,12 @@ std::string_view NoAttackNote(NoAttack why)
 
 std::wstring RefusedLine(std::wstring_view words, std::wstring_view name, CommandType type)
 {
-    return std::format(L"{}: {}'s {} is refused", words, name, Named(type));
+    return i18n::TrFormat(L"{}: {}'s {} is refused", i18n::Tr(words), name, i18n::Tr(Named(type)));
 }
 
 std::wstring NotMadeLine(std::wstring_view words, std::wstring_view name, CommandType type)
 {
-    return std::format(L"{}: {}'s {} is not made", words, name, Named(type));
+    return i18n::TrFormat(L"{}: {}'s {} is not made", i18n::Tr(words), name, i18n::Tr(Named(type)));
 }
 
 } // namespace tb

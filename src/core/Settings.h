@@ -53,6 +53,10 @@ struct Settings
     float fightSpeed = 1.0f;
     // [feedback] camera_follow: the camera goes to whoever's turn it is.
     bool cameraFollow = true;
+    // [interface] language: "auto" (the game's own language) or the
+    // name of a catalog in Translations\ beside the dll ("es-ES"). Read once
+    // at load (game/I18n.h, dev/I18N.md).
+    std::string language = "auto";
     // [keys] toggle: none until the player binds one. It was Ctrl+T until
     // 2026-10-03; the user then: "I don't think we necessarily need one for
     // toggling turn-based on / off. There's already a checkbox in game

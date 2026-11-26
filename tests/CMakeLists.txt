@@ -36,6 +36,7 @@ add_executable(
     test_facing.cpp
     test_fights.cpp
     test_givenback.cpp
+    test_i18n.cpp
     test_inactive.cpp
     test_json.cpp
     test_keys.cpp

@@ -11,7 +11,8 @@
         bin_ship\daolib\plugins\turnbased\turnbased.pdb          so a crash log names the mod's frames
         bin_ship\daolib\plugins\turnbased\turnorder.swf          the portrait bar's movie
         bin_ship\daolib\plugins\turnbased\turnbased_tactics.swf  the tactics page's box's
-        bin_ship\daolib\plugins\turnbased\override\              the movement preview's rings and red marker,
+        bin_ship\daolib\plugins\turnbased\Translations\            the mod's words in other languages, a .json each
+bin_ship\daolib\plugins\turnbased\override\              the movement preview's rings and red marker,
                                                                  and a Veil Tear's portrait
         bin_ship\daolib\plugins\turnbased\README.md, LICENSE.txt, VERSION.txt
 
@@ -119,6 +120,10 @@ New-Item -ItemType Directory -Force (Join-Path $plugin 'override') | Out-Null
 Copy-Item -Force $builtPlugin, $builtPdb $plugin
 foreach ($movie in $movies) { Copy-Item -Force (Join-Path $built $movie) $plugin }
 foreach ($file in $named) { Copy-Item -Force (Join-Path $override $file) (Join-Path $plugin 'override') }
+# The catalogs (issue 127), as the build copied them: what the game reads is what is given out.
+$catalogs = Join-Path $built 'Translations'
+if (-not (Test-Path (Join-Path $catalogs 'en-US.json'))) { throw "No catalogs in $catalogs; run .\tools\build.ps1 -Preset $Preset again" }
+Copy-Item -Force -Recurse $catalogs $plugin
 Copy-Item -Force (Join-Path $repo 'README.md') $plugin
 Copy-Item -Force (Join-Path $repo 'LICENSE') (Join-Path $plugin 'LICENSE.txt')
 

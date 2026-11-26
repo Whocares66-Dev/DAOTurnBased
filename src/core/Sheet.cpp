@@ -1,6 +1,7 @@
 #include "core/Sheet.h"
 
 #include "core/Bar.h"
+#include "core/I18n.h"
 
 #include <algorithm>
 #include <cmath>
@@ -90,7 +91,7 @@ SheetSection Attributes(const SheetFacts &facts)
     // The record's six, three to a column, in the user's order (2026-10-13:
     // "Strength, Constitution / Dexterity, Cunning / Magic, Willpower", row by
     // row), where the record lists them by their numbers.
-    SheetSection section{.title = L"Attributes", .left = 3, .rows = {}};
+    SheetSection section{.title = std::wstring{i18n::Tr(L"Attributes")}, .left = 3, .rows = {}};
     for (const std::int32_t id : {kStrength, kDexterity, kMagic, kConstitution, kCunning, kWillpower})
     {
         AddStat(section.rows, facts, id);
@@ -150,7 +151,7 @@ SheetSection Offense(const SheetFacts &facts)
     }
     // A mage's is spellpower, where the record shows it in attack's place.
     AddStat(main, facts, facts.mage ? kSpellpower : kAttack);
-    SheetSection section{.title = L"Offense", .left = main.size(), .rows = std::move(main)};
+    SheetSection section{.title = std::wstring{i18n::Tr(L"Offense")}, .left = main.size(), .rows = std::move(main)};
     section.rows.insert(section.rows.end(), off.begin(), off.end());
     return section;
 }
@@ -158,7 +159,7 @@ SheetSection Offense(const SheetFacts &facts)
 // What it stands behind, in one column.
 SheetSection Defense(const SheetFacts &facts)
 {
-    SheetSection section{.title = L"Defense", .left = 0, .rows = {}};
+    SheetSection section{.title = std::wstring{i18n::Tr(L"Defense")}, .left = 0, .rows = {}};
     AddStat(section.rows, facts, kArmor);
     AddStat(section.rows, facts, kDefense);
     section.left = section.rows.size();
@@ -167,7 +168,7 @@ SheetSection Defense(const SheetFacts &facts)
 
 SheetSection Resistances(const SheetFacts &facts)
 {
-    SheetSection section{.title = L"Resistances", .left = 0, .rows = {}};
+    SheetSection section{.title = std::wstring{i18n::Tr(L"Resistances")}, .left = 0, .rows = {}};
     for (const int mapping : {kResistanceChecks, kElementalResistances})
     {
         for (const PropertyRow &row : facts.table)
@@ -215,7 +216,7 @@ void AddDepletable(std::vector<SheetRow> &rows, const SheetFacts &facts, std::in
 // attributes"), in one column ("put health / stamina in one column").
 SheetSection Stats(const SheetFacts &facts)
 {
-    SheetSection section{.title = L"Stats", .left = 0, .rows = {}};
+    SheetSection section{.title = std::wstring{i18n::Tr(L"Stats")}, .left = 0, .rows = {}};
     if (const PropertyRow *row = RowOf(facts, kHealth))
     {
         AddDepletable(section.rows, facts, kHealth, StatLabel(row->label));

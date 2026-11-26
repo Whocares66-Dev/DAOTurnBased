@@ -23,6 +23,54 @@ var BAR_VERSION = 14;
 var CARD = String.fromCharCode(30);
 var FIELD = String.fromCharCode(31);
 
+// The words in the player's language (core/I18n.h, dev/I18N.md). English is
+// the key: tr("Delay") is "Delay" until the plugin's catalog has another
+// word for it, and trf("{0} s left", n) fills {0}, {1}, ... after the
+// translation, so that a language may put them in any order. Asked of the
+// plugin once, the first time a word is wanted; outside the game, English.
+// tools/i18n.py extracts every tr("...") and trf("...") of this file.
+var WORDS = null;
+function loadWords()
+{
+    WORDS = {};
+    if (!inGame)
+    {
+        return;
+    }
+    var all = flash.external.ExternalInterface.call("TB_GetWords");
+    if (all == undefined || all == null)
+    {
+        return;
+    }
+    var lines = String(all).split(String.fromCharCode(30));
+    for (var i = 0; i < lines.length; i++)
+    {
+        var pair = lines[i].split(String.fromCharCode(31));
+        if (pair.length == 2 && pair[1].length > 0)
+        {
+            WORDS["w_" + pair[0]] = pair[1];
+        }
+    }
+}
+function tr(english)
+{
+    if (WORDS == null)
+    {
+        loadWords();
+    }
+    var said = WORDS["w_" + english];
+    return said == undefined ? english : said;
+}
+function trf(english)
+{
+    var out = tr(english);
+    for (var i = 1; i < arguments.length; i++)
+    {
+        out = out.split("{" + (i - 1) + "}").join(String(arguments[i]));
+    }
+    return out;
+}
+
 // A card is a medallion, the party bar's own (portraits.gfx, Portrait1_mc,
 // drawn at 114 px; here at CARD_W): its backplate, a painted background, the
 // portrait, the red health arc and the gold ring, all the game's textures
@@ -785,7 +833,7 @@ function drawCard(bar, card, index, x)
         // camera in the frame it was shown (play test 28).
         // Close under the ring, where the party's arrow stood until issue 25.
         var waits = label(clip, "waits", 22, -10, CARD_H + 4, CARD_W + 20, 16, 11, PARCHMENT, "center", false);
-        waits.text = "waits";
+        waits.text = tr("waits");
         clip.fullName = card.name + " waits: its turn comes at the round's end";
     }
     if (card.down)
@@ -964,7 +1012,8 @@ function drawArrow(bar, later, x, count)
     box(hand, later ? x - 3 : x - 5, clip._y + look.top - 1, ARROW_W + 8, ARROW_H + 2, 0xFFFFFF, 1);
     hand.arrow = clip;
     hand.step = later ? 1 : -1;
-    hand.words = count + (count == 1 ? " turn " : " turns ") + (later ? "after these" : "before these");
+    hand.words = later ? (count == 1 ? tr("1 turn after these") : trf("{0} turns after these", count))
+                       : (count == 1 ? tr("1 turn before these") : trf("{0} turns before these", count));
     hand.onRollOver = function()
     {
         this.arrow.art2._visible = true;
@@ -1119,9 +1168,9 @@ function build(state)
         // End over Delay's shadow, which reaches under End's face: a click there is End's.
         if (offered)
         {
-            drawButton(bar, "delay", 500, "Delay", "TB_Delay", buttonsAt, middle - room / 2 - shows, state.delay == 1);
+            drawButton(bar, "delay", 500, tr("Delay"), "TB_Delay", buttonsAt, middle - room / 2 - shows, state.delay == 1);
         }
-        drawButton(bar, "endTurn", 501, "End", "TB_EndTurn", buttonsAt,
+        drawButton(bar, "endTurn", 501, tr("End"), "TB_EndTurn", buttonsAt,
                    offered ? middle + room / 2 : middle - shows / 2, true);
     }
     // On the stage's own middle, which showAll puts at the view's: the view is wider
@@ -1316,8 +1365,8 @@ function drawTime(state)
 // a second read: play test 28.)
 function pendingWords(card)
 {
-    var what = card.ability.length > 0 ? card.ability : (card.icon.length > 0 ? "an ability" : "an attack");
-    return card.name + ": " + what + " lands " + tenths(card.owed) + " s into its next turn";
+    var what = card.ability.length > 0 ? card.ability : (card.icon.length > 0 ? tr("an ability") : tr("an attack"));
+    return trf("{0}: {1} lands {2} s into its next turn", card.name, what, tenths(card.owed));
 }
 
 // And what a walk cut short's says, on its card: in the words that floated
@@ -1325,7 +1374,7 @@ function pendingWords(card)
 // still so.
 function walkWords(card)
 {
-    return card.name + ": out of movement, its walk cut short";
+    return trf("{0}: out of movement, its walk cut short", card.name);
 }
 
 var timeCost = 0;
@@ -1459,7 +1508,7 @@ function words(state)
     {
         return state.notice;
     }
-    return state.paused ? "Paused: Space runs the game again" : describe(state);
+    return state.paused ? tr("Paused: Space runs the game again") : describe(state);
 }
 
 function describe(state)
@@ -1477,8 +1526,8 @@ function describe(state)
         // The cost alone: with the creature's pending action after it the
         // line was two thoughts and a third of the screen wide (play test
         // 28). That is said when no order is priced.
-        return timeSpills ? "Costs " + tenths(timeCost) + " s: lands next turn"
-                          : "Costs " + tenths(timeCost) + " s, leaving " + tenths(after) + " s";
+        return timeSpills ? trf("Costs {0} s: lands next turn", tenths(timeCost))
+                          : trf("Costs {0} s, leaving {1} s", tenths(timeCost), tenths(after));
     }
     if (pending.length > 0)
     {
@@ -1497,7 +1546,7 @@ function describe(state)
                 return "";
             }
         }
-        return "No time left: an action begun now lands next turn";
+        return tr("No time left: an action begun now lands next turn");
     }
     // A turn that began by paying for an action begun the turn before says
     // so, while nothing else has been spent.
@@ -1509,10 +1558,10 @@ function describe(state)
     // The note stands with the seconds it is about, before the walk (the
     // user, 2026-10-03, of "4.3 s left, 20.9 m to walk (0.3 s saved from last
     // turn)": 'Should say "4.3 s left (0.3 s rollover); 20.9 m to walk"').
-    var note = paid ? tenths(state.paid) + " s paid for last turn's action"
-                    : saved ? tenths(state.rolled) + " s rollover" : "";
-    return note.length > 0 ? state.timeLeft + " s left (" + note + "); " + state.movementLeft + " m to walk"
-                           : state.timeLeft + " s left, " + state.movementLeft + " m to walk";
+    var note = paid ? trf("{0} s paid for last turn's action", tenths(state.paid))
+                    : saved ? trf("{0} s rollover", tenths(state.rolled)) : "";
+    return note.length > 0 ? trf("{0} s left ({1}); {2} m to walk", state.timeLeft, note, state.movementLeft)
+                           : trf("{0} s left, {1} m to walk", state.timeLeft, state.movementLeft);
 }
 
 // Outside the game: a dark, uneven backdrop like a scene's, so the bar's
@@ -1900,10 +1949,10 @@ function drawPreview(text)
     }
     if (end != undefined)
     {
-        var plate = tooFar ? head[4] + " m of " + head[5] : head[4] + " m";
+        var plate = tooFar ? trf("{0} m of {1}", head[4], head[5]) : trf("{0} m", head[4]);
         if (!tooFar && cost > 0)
         {
-            plate += spills ? ", " + tenths(cost) + " s: next turn" : ", " + tenths(cost) + " s";
+            plate += spills ? trf(", {0} s: next turn", tenths(cost)) : trf(", {0} s", tenths(cost));
         }
         previewLabel(clip, plate, tooFar ? RED_HEART : LETTER, end);
     }

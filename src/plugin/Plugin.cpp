@@ -9,6 +9,7 @@
 // dev/DESIGN.md is the design, dev/TESTING.md what to check in play and
 // read in turnbased.log (Documents\BioWare\Dragon Age\daolib\).
 #include "core/Events.h"
+#include "core/I18n.h"
 #include "core/Json.h"
 #include "core/Keys.h"
 #include "core/Settings.h"
@@ -19,6 +20,7 @@
 #include "game/Camera.h"
 #include "game/CoSave.h"
 #include "game/Gate.h"
+#include "game/I18n.h"
 #include "game/Preview.h"
 #include "game/SettingsFile.h"
 #include "game/TacticsBox.h"
@@ -50,6 +52,12 @@
 
 namespace
 {
+
+// The words of the catalog in force, for what the game is given as text.
+std::wstring Said(std::wstring_view english)
+{
+    return std::wstring{tb::i18n::Tr(english)};
+}
 
 // Who hears the toggle's key (BindToggle).
 enum class ToggleKey
@@ -122,15 +130,15 @@ bool Toggle()
     {
     case tb::ToggleResult::Enabled:
         tb::game::SaveEnabled(true);
-        tb::game::Bridge::Say(L"Turn-based combat on", tb::kGold);
+        tb::game::Bridge::Say(Said(N_(L"Turn-based combat on")), tb::kGold);
         return true;
     case tb::ToggleResult::Disabled:
         tb::game::SaveEnabled(false);
-        tb::game::Bridge::Say(L"Turn-based combat off", tb::kGrey);
+        tb::game::Bridge::Say(Said(N_(L"Turn-based combat off")), tb::kGrey);
         return false;
     case tb::ToggleResult::RefusedInCombat:
         spdlog::info("toggle refused: in combat");
-        tb::game::Bridge::Say(L"Turn-based combat can be changed only out of combat", tb::kRed);
+        tb::game::Bridge::Say(Said(N_(L"Turn-based combat can be changed only out of combat")), tb::kRed);
         break;
     }
     return TurnBasedOn();
@@ -138,7 +146,12 @@ bool Toggle()
 
 // The section's title in the game's options, and what dao::options knows
 // it by.
-constexpr wchar_t kOptionsSection[] = L"Turn-based";
+// The options' section and the controls' heading, in the language: read after the catalog is.
+const std::wstring &OptionsSection()
+{
+    static const std::wstring section = Said(N_(L"Turn-based"));
+    return section;
+}
 
 // The stops of the options' speed slider, and the one nearest the setting.
 // (The user, having played at them, 2026-10-02: "make the options 0.5x, 1x,
@@ -168,7 +181,7 @@ template <std::size_t N> std::int32_t SettingStop(const std::array<float, N> &st
 
 // Both fight sliders write through the same settings path as an INI edit.
 template <std::size_t N>
-dao::options::Choice FightChoice(const wchar_t *name, const wchar_t *label, const wchar_t *tooltip,
+dao::options::Choice FightChoice(const wchar_t *name, const std::wstring &label, const std::wstring &tooltip,
                                  std::string_view key, const std::array<float, N> &stops, float tb::Settings::*field,
                                  std::int32_t defaultStop)
 {
@@ -228,8 +241,8 @@ bool AddOptions()
 {
     dao::options::Toggle toggle;
     toggle.name = L"TurnBasedCombat";
-    toggle.label = L"Turn-based combat";
-    toggle.tooltip = L"Changes outside a fight only";
+    toggle.label = Said(N_(L"Turn-based combat"));
+    toggle.tooltip = Said(N_(L"Changes outside a fight only"));
     toggle.get = [] {
         try
         {
@@ -255,12 +268,13 @@ bool AddOptions()
     std::vector<dao::options::Toggle> toggles;
     toggles.push_back(std::move(toggle));
     std::vector<dao::options::Choice> choices;
-    choices.push_back(FightChoice(L"TurnBasedDamageScale", L"Damage scaling",
-                                  L"Damage to your party and enemies during turn-based fights", "damage_scale",
-                                  kDamageStops, &tb::Settings::damageScale, 0));
-    choices.push_back(FightChoice(L"TurnBasedSpeed", L"Fight speed", L"How fast a turn-based fight runs", "speed",
-                                  kSpeedStops, &tb::Settings::fightSpeed, 1));
-    return dao::options::AddSection(kOptionsSection, std::move(toggles), std::move(choices));
+    choices.push_back(FightChoice(L"TurnBasedDamageScale", Said(N_(L"Damage scaling")),
+                                  Said(N_(L"Damage to your party and enemies during turn-based fights")),
+                                  "damage_scale", kDamageStops, &tb::Settings::damageScale, 0));
+    choices.push_back(FightChoice(L"TurnBasedSpeed", Said(N_(L"Fight speed")),
+                                  Said(N_(L"How fast a turn-based fight runs")), "speed", kSpeedStops,
+                                  &tb::Settings::fightSpeed, 1));
+    return dao::options::AddSection(OptionsSection(), std::move(toggles), std::move(choices));
 }
 
 // What became of the section, said once: known when the game first opens
@@ -271,7 +285,7 @@ void WatchOptions()
     {
         return;
     }
-    switch (dao::options::StateOf(kOptionsSection))
+    switch (dao::options::StateOf(OptionsSection()))
     {
     case dao::options::SectionState::Waiting:
         return;
@@ -340,8 +354,8 @@ bool BindToggle(const tb::KeyChord &chord)
     }
     dao::input::Action action;
     action.name = kToggleAction;
-    action.label = L"Toggle turn-based combat"; // the row shrinks its text to fit, so short
-    action.section = kOptionsSection;           // its heading in the controls, as the options' section's
+    action.label = Said(N_(L"Toggle turn-based combat")); // the row shrinks its text to fit, so short
+    action.section = OptionsSection();                    // its heading in the controls, as the options' section's
     action.key = static_cast<dao::input::Key>(code);
     action.modifiers = (chord.ctrl ? dao::input::kControl : 0U) | (chord.shift ? dao::input::kShift : 0U) |
                        (chord.alt ? dao::input::kAlt : 0U);
@@ -363,7 +377,8 @@ bool BindToggle(const tb::KeyChord &chord)
 // controls under "Turn-based" with `chord` for its key until the player binds
 // another, or with none (dao::input::Key::None: listed, unbound). False for a
 // key the game's bindings are not known to take, or a registration refused.
-bool BindTurnKey(const wchar_t *name, const wchar_t *label, const tb::KeyChord &chord, std::function<void()> pressed)
+bool BindTurnKey(const wchar_t *name, const std::wstring &label, const tb::KeyChord &chord,
+                 std::function<void()> pressed)
 {
     const std::uint32_t code = tb::ScanCode(chord.key);
     if (chord.key != 0 && code == 0)
@@ -373,7 +388,7 @@ bool BindTurnKey(const wchar_t *name, const wchar_t *label, const tb::KeyChord &
     dao::input::Action action;
     action.name = name;
     action.label = label;
-    action.section = kOptionsSection;
+    action.section = OptionsSection();
     action.key = static_cast<dao::input::Key>(code);
     action.modifiers = (chord.ctrl ? dao::input::kControl : 0U) | (chord.shift ? dao::input::kShift : 0U) |
                        (chord.alt ? dao::input::kAlt : 0U);
@@ -388,7 +403,7 @@ bool BindTurnKey(const wchar_t *name, const wchar_t *label, const tb::KeyChord &
 constexpr wchar_t kEndTurnAction[] = L"TurnBasedEndTurn";
 bool BindEndTurn(const tb::KeyChord &chord)
 {
-    return BindTurnKey(kEndTurnAction, L"End turn", chord, [] {
+    return BindTurnKey(kEndTurnAction, Said(N_(L"End turn")), chord, [] {
         try
         {
             const std::lock_guard lock(g.mutex);
@@ -411,7 +426,7 @@ bool BindEndTurn(const tb::KeyChord &chord)
 constexpr wchar_t kDelayAction[] = L"TurnBasedDelay";
 bool BindDelay(const tb::KeyChord &chord)
 {
-    return BindTurnKey(kDelayAction, L"Delay turn", chord, [] {
+    return BindTurnKey(kDelayAction, Said(N_(L"Delay turn")), chord, [] {
         try
         {
             const std::lock_guard lock(g.mutex);
@@ -1042,6 +1057,8 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     spdlog::info("turnbased {} on DAOLib {}", TB_VERSION_STRING, DAO_VERSION_STRING);
 
     const tb::Settings settings = tb::game::LoadSettings();
+    // Before the options, the keys and the movies ask for their words.
+    tb::game::LoadLanguage(settings.language, info->pluginPath != nullptr ? info->pluginPath : L"");
     spdlog::info("settings from {}: turn-based {}, a turn {} s at {} m a second, party {}, damage {}x, toggle key {}",
                  tb::game::SettingsPath().string(), settings.enabled ? "on" : "off", settings.secondsPerTurn,
                  settings.paceMps, settings.partyControl == tb::PartyControl::Manual ? "manual" : "tactics",

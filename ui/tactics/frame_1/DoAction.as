@@ -72,7 +72,6 @@ var CAPTION_GAP = 1;           // from the box's art to its caption's words, as 
 var CAPTION_DY = 5;            // from the art's top down to the words' line, as the AI switch's own
 var CAPTION_SIZE = 16;         // the screen's own captions' size
 var CAPTION_COLOUR = 0xDFD3AA; // and their colour
-var CAPTION_TEXT = "Use when turn-based";
 // The caption's font is the one a field of the screen's own has, asked of it
 // as the movie runs (the character's name, _root.charSelect_mc.Name_mc). The
 // name here is used only if that field is not there to ask: it is the font
@@ -95,6 +94,54 @@ var POLL_FRAMES = 15;  // how often the page's character is asked for, beside th
 // Whether the game is there. In a Flash player on its own ExternalInterface is
 // not available, or the player is told to show the stand-in (sample=1).
 var inGame = flash.external.ExternalInterface.available && _root.sample != "1";
+
+// The words in the player's language (core/I18n.h, dev/I18N.md). English is
+// the key: tr("Delay") is "Delay" until the plugin's catalog has another
+// word for it, and trf("{0} s left", n) fills {0}, {1}, ... after the
+// translation, so that a language may put them in any order. Asked of the
+// plugin once, the first time a word is wanted; outside the game, English.
+// tools/i18n.py extracts every tr("...") and trf("...") of this movie.
+var WORDS = null;
+function loadWords()
+{
+    WORDS = {};
+    if (!inGame)
+    {
+        return;
+    }
+    var all = flash.external.ExternalInterface.call("TB_GetWords");
+    if (all == undefined || all == null)
+    {
+        return;
+    }
+    var lines = String(all).split(String.fromCharCode(30));
+    for (var i = 0; i < lines.length; i++)
+    {
+        var pair = lines[i].split(String.fromCharCode(31));
+        if (pair.length == 2 && pair[1].length > 0)
+        {
+            WORDS["w_" + pair[0]] = pair[1];
+        }
+    }
+}
+function tr(english)
+{
+    if (WORDS == null)
+    {
+        loadWords();
+    }
+    var said = WORDS["w_" + english];
+    return said == undefined ? english : said;
+}
+function trf(english)
+{
+    var out = tr(english);
+    for (var i = 1; i < arguments.length; i++)
+    {
+        out = out.split("{" + (i - 1) + "}").join(String(arguments[i]));
+    }
+    return out;
+}
 
 var host = this;     // this movie's clip: _root.TurnBasedTactics_mc in the game
 var box = null;      // the box, once attached
@@ -311,7 +358,7 @@ function makeCaption()
     field.embedFonts = inGame;
     field.autoSize = "left";
     field.setNewTextFormat(format);
-    field.text = CAPTION_TEXT;
+    field.text = tr("Use when turn-based");
     field._visible = false;
     return field;
 }

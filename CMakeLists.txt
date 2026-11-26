@@ -123,6 +123,7 @@ add_library(
     src/core/Events.cpp
     src/core/Facing.cpp
     src/core/GivenBack.cpp
+    src/core/I18n.cpp
     src/core/Json.cpp
     src/core/Keys.cpp
     src/core/PartyTactics.cpp
@@ -237,6 +238,7 @@ add_daolib_plugin(
         src/game/Camera.cpp
         src/game/CoSave.cpp
         src/game/Gate.cpp
+        src/game/I18n.cpp
         src/game/Preview.cpp
         src/game/SettingsFile.cpp
         src/game/Sheet.cpp
@@ -270,6 +272,19 @@ add_daolib_plugin(
 )
 tb_apply_warnings(turnbased)
 target_link_libraries(turnbased PRIVATE tb_core)
+# The mod's words in other languages (issue 127, dev/I18N.md): a catalog a
+# language, assets/Translations/<locale>.json, beside the dll in
+# Translations\, where game/I18n.cpp looks. A catalog is read by the game as
+# it is, so it is copied on every build, as FILES are.
+add_custom_command(
+    TARGET turnbased
+    POST_BUILD
+    COMMAND
+        ${CMAKE_COMMAND} -E copy_directory
+        "${PROJECT_SOURCE_DIR}/assets/Translations"
+        "$<TARGET_FILE_DIR:turnbased>/Translations"
+    VERBATIM
+)
 # What the game plays is what is released (issues 54 and 106). RelWithDebInfo
 # links incrementally unless told otherwise, which pads the DLL for the next
 # link and keeps every function nothing calls: 3.9 MB and a 72 MB PDB on

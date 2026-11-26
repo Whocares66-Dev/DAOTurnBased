@@ -1074,7 +1074,7 @@ MUTANTS = [
     Mutant(
         "the player's kept attack is not made with no word over the character",
         MACHINE,
-        "        Floaty(pending_, who.id, std::wstring{words}, kGrey);\n",
+        "        Floaty(pending_, who.id, Said(words), kGrey);\n",
         "",
     ),
     Mutant(
@@ -1694,8 +1694,8 @@ MUTANTS = [
     Mutant(
         "a fight's banner floats over the hero's body",
         MACHINE,
-        '    Floaty(fx, PartysOwn(), L"Turn-based combat", kGold);',
-        '    Floaty(fx, hero_, L"Turn-based combat", kGold);',
+        '    Floaty(fx, PartysOwn(), Said(N_(L"Turn-based combat")), kGold);',
+        '    Floaty(fx, hero_, Said(N_(L"Turn-based combat")), kGold);',
     ),
     Mutant(
         "the hero is selected for a companion's tactics whether she stands or not",
@@ -1727,7 +1727,7 @@ MUTANTS = [
     Mutant(
         "Unaware is not said over a hostile whose turn is skipped",
         MACHINE,
-        '        Floaty(fx, who.id, L"Unaware", kGrey);',
+        '        Floaty(fx, who.id, Said(N_(L"Unaware")), kGrey);',
         "",
     ),
     Mutant(
@@ -2279,8 +2279,8 @@ MUTANTS = [
     Mutant(
         "time: Next turn is said over every creature",
         MACHINE,
-        '        if (PlayerControls(who))\n        {\n            Floaty(pending_, who.id, L"Lands next turn", kGold);',
-        '        if (who.id != kNoObject)\n        {\n            Floaty(pending_, who.id, L"Lands next turn", kGold);',
+        '        if (PlayerControls(who))\n        {\n            Floaty(pending_, who.id, Said(N_(L"Lands next turn")), kGold);',
+        '        if (who.id != kNoObject)\n        {\n            Floaty(pending_, who.id, Said(N_(L"Lands next turn")), kGold);',
     ),
     Mutant(
         "time: Interrupted is said as a fight ends",
@@ -2604,8 +2604,8 @@ MUTANTS = [
     Mutant(
         "a spell lost is called an action, and an action a spell",
         MACHINE,
-        '        Floaty(fx, who, spell ? L"Spell lost" : L"Action lost", kGold);',
-        '        Floaty(fx, who, spell ? L"Action lost" : L"Spell lost", kGold);',
+        '        Floaty(fx, who, spell ? Said(N_(L"Spell lost")) : Said(N_(L"Action lost")), kGold);',
+        '        Floaty(fx, who, spell ? Said(N_(L"Action lost")) : Said(N_(L"Spell lost")), kGold);',
     ),
     Mutant(
         "bar: a card does not say which ability is pending",
@@ -2730,8 +2730,8 @@ MUTANTS = [
     Mutant(
         "a lost spell is said in grey",
         MACHINE,
-        '        Floaty(fx, who, spell ? L"Spell lost" : L"Action lost", kGold);',
-        '        Floaty(fx, who, spell ? L"Spell lost" : L"Action lost", kGrey);',
+        '        Floaty(fx, who, spell ? Said(N_(L"Spell lost")) : Said(N_(L"Action lost")), kGold);',
+        '        Floaty(fx, who, spell ? Said(N_(L"Spell lost")) : Said(N_(L"Action lost")), kGrey);',
     ),
     # Issue 11: an attack that stands still is judged by whether the engine
     # has its command still at its approach, as the game layer reads it each
@@ -2805,46 +2805,46 @@ MUTANTS = [
     Mutant(
         "the caption's line calls an ability an attack",
         GIVENBACK,
-        'type == CommandType::UseAbility ? L"ability"',
-        'type == CommandType::UseAbility ? L"attack"',
+        'type == CommandType::UseAbility ? N_(L"ability")',
+        'type == CommandType::UseAbility ? N_(L"attack")',
     ),
     Mutant(
         "the caption's line does not say whose action was given back",
         GIVENBACK,
-        'return std::format(L"{}: {}\'s {} is given back", words, name, what);',
-        'return std::format(L"{}: {}\'s {} is given back", words, name.substr(0, 0), what);',
+        'return i18n::TrFormat(L"{}: {}\'s {} is given back", i18n::Tr(words), name, i18n::Tr(what));',
+        'return i18n::TrFormat(L"{}: {}\'s {} is given back", i18n::Tr(words), name.substr(0, 0), i18n::Tr(what));',
     ),
     # And of an attack the engine has no way to make, refused before a step
     # (issue 27): the words its failure would have had, and "is refused".
     Mutant(
         "no place when asked is said as no way through",
         GIVENBACK,
-        'case NoAttack::NoPlace:\n        return L"No room at the target";',
-        'case NoAttack::NoPlace:\n        return L"No way through";',
+        'case NoAttack::NoPlace:\n        return N_(L"No room at the target");',
+        'case NoAttack::NoPlace:\n        return N_(L"No way through");',
     ),
     Mutant(
         "no path when asked is said as no room at the target",
         GIVENBACK,
-        'case NoAttack::NoPath:\n        return L"No way through";',
-        'case NoAttack::NoPath:\n        return L"No room at the target";',
+        'case NoAttack::NoPath:\n        return N_(L"No way through");',
+        'case NoAttack::NoPath:\n        return N_(L"No room at the target");',
     ),
     Mutant(
         "a shot with no line to be had is said as no way through",
         GIVENBACK,
-        'case NoAttack::NoLine:\n        return L"No line of sight";',
-        'case NoAttack::NoLine:\n        return L"No way through";',
+        'case NoAttack::NoLine:\n        return N_(L"No line of sight");',
+        'case NoAttack::NoLine:\n        return N_(L"No way through");',
     ),
     Mutant(
         "a kept attack not made is said on the caption as refused",
         GIVENBACK,
-        'return std::format(L"{}: {}\'s {} is not made", words, name, Named(type));',
-        'return std::format(L"{}: {}\'s {} is refused", words, name, Named(type));',
+        'return i18n::TrFormat(L"{}: {}\'s {} is not made", i18n::Tr(words), name, i18n::Tr(Named(type)));',
+        'return i18n::TrFormat(L"{}: {}\'s {} is refused", i18n::Tr(words), name, i18n::Tr(Named(type)));',
     ),
     Mutant(
         "an attack refused before a step is said on the caption as given back",
         GIVENBACK,
-        'return std::format(L"{}: {}\'s {} is refused", words, name, Named(type));',
-        'return std::format(L"{}: {}\'s {} is given back", words, name, Named(type));',
+        'return i18n::TrFormat(L"{}: {}\'s {} is refused", i18n::Tr(words), name, i18n::Tr(Named(type)));',
+        'return i18n::TrFormat(L"{}: {}\'s {} is given back", i18n::Tr(words), name, i18n::Tr(Named(type)));',
     ),
     Mutant(
         "an action given back is not said on the bar's caption: its line is past before it is seen",
@@ -2885,8 +2885,8 @@ MUTANTS = [
     Mutant(
         "a creature that cannot get to its target is stopped with no word on the caption",
         MACHINE,
-        '                    SayGivenBack(fx, *current, budget_.lastType, L"No way through");\n',
-        '                    Floaty(fx, actor.id, L"No way through", kGold);\n',
+        '                    SayGivenBack(fx, *current, budget_.lastType, N_(L"No way through"));\n',
+        '                    Floaty(fx, actor.id, Said(N_(L"No way through")), kGold);\n',
     ),
     Mutant(
         "a spell that failed before its conjure is given back with no word",
@@ -2939,8 +2939,8 @@ MUTANTS = [
     Mutant(
         "a party member's lost turn is said in grey",
         MACHINE,
-        '    Floaty(fx, who.id, who.name + L" loses the turn", who.side == Side::Party ? kGold : kGrey);\n    EndTurn(fx, "held by its condition");',
-        '    Floaty(fx, who.id, who.name + L" loses the turn", kGrey);\n    EndTurn(fx, "held by its condition");',
+        '    Floaty(fx, who.id, i18n::TrFormat(L"{} loses the turn", who.name), who.side == Side::Party ? kGold : kGrey);\n    EndTurn(fx, "held by its condition");',
+        '    Floaty(fx, who.id, i18n::TrFormat(L"{} loses the turn", who.name), kGrey);\n    EndTurn(fx, "held by its condition");',
     ),
     Mutant(
         "an elite boss's Combat Tactics stops at a player's ranks",
@@ -5054,8 +5054,8 @@ MUTANTS = [
     Mutant(
         "sheet: the off hand's stand in the left column",
         SHEET,
-        '{.title = L"Offense", .left = main.size(),',
-        '{.title = L"Offense", .left = 0,',
+        '{.title = std::wstring{i18n::Tr(L"Offense")}, .left = main.size(),',
+        '{.title = std::wstring{i18n::Tr(L"Offense")}, .left = 0,',
     ),
     Mutant(
         "sheet: the attack stands with the off hand's",

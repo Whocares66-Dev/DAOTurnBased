@@ -154,6 +154,15 @@ const std::vector<Entry> &Entries()
         {"turns", "damage_scale", Float(&Settings::damageScale, 1.0f, 3.0f)},
         {"turns", "speed", Float(&Settings::fightSpeed, 0.25f, 4.0f)},
         {"feedback", "camera_follow", Bool(&Settings::cameraFollow)},
+        {"interface", "language",
+         [](Settings &s, std::string_view text) -> std::string {
+             s.language = std::string{Trim(text)};
+             if (s.language.empty())
+             {
+                 s.language = "auto";
+             }
+             return {};
+         }},
         {"keys", "toggle", Chord(&Settings::toggleKey, "not a key (None, Ctrl+T, F9, ...)")},
         {"keys", "end_turn", Chord(&Settings::endTurnKey, "not a key (Enter, E, F9, None, ...)")},
         {"keys", "delay", Chord(&Settings::delayKey, "not a key (None, D, Ctrl+D, F9, ...)")},
@@ -292,6 +301,14 @@ speed = 1
 [feedback]
 ; Centre the camera on whoever's turn it is.
 camera_follow = true
+
+[interface]
+; The language of the mod's words (the turn bar, the messages over a
+; character, the options): auto, the language the game is in, or the name of
+; a file in Translations next to turnbased.dll without its .json: en-US,
+; es-ES, ... A language with no file is read in English. Read when the game
+; starts.
+language = auto
 
 [keys]
 ; Turn turn-based combat on or off, outside combat, as the box in the game's

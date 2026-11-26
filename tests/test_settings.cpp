@@ -39,7 +39,7 @@ TEST_CASE("the file has the eight settings a player sets, and none of the rules'
         keys += !line.empty() && line.front() != ';' && line.front() != '[' ? 1 : 0;
         at = end == std::string::npos ? written.size() : end + 1;
     }
-    CHECK(keys == 8);
+    CHECK(keys == 9);
     // One that was a setting is a key the mod does not know: said so, by its
     // line and its name, and the rest of the file is read.
     const tb::ParsedSettings old = ParseSettings("[initiative]\n"

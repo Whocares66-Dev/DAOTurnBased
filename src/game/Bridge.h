@@ -26,7 +26,7 @@ namespace tb::game
 class Bridge
 {
   public:
-    explicit Bridge(const Settings &settings) : settings_(settings)
+    explicit Bridge(Settings settings) : settings_(std::move(settings))
     {
     }
     void SetSettings(const Settings &settings)
