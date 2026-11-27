@@ -14,7 +14,7 @@ In **Options**, on the **Game** tab, under **Turn-based**:
 
 - **Turn-based combat**: turns the mod on or off. It can only be changed outside a fight.
 - **Damage scaling**: damage to your party and enemies during turn-based fights: 1x (default), 1.25x, 1.5x, 2x or 3x. Healing stays the same.
-- **Fight speed**: how fast turn-based fights play: 0.5x, 1x, 2x or 3x. It changes animation speed only, not the rules.
+- **Fight speed**: how fast turn-based fights play: 0.5x, 1x, 1.5x, 2x or 3x. It changes animation speed only, not the rules.
 
 ## Key bindings
 

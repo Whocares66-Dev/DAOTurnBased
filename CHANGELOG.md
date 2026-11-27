@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Translations (issue 127):** the mod's own words follow the game's language.
+- **Fight speed 1.5x (issue 128):** the Fight speed slider has 1.5x between 1x and 2x.
 
 ## 0.4.0
 

@@ -49,7 +49,8 @@ struct Settings
     // [turns] speed: the game's speed through a turn-based fight, everyone's
     // turns alike (the user, 2026-10-02: "a setting to change game speed,
     // from 0.5x to 1X to 2x"; then, having played: "default fight speed
-    // should be 1x, make the options 0.5x, 1x, 2x, 3x").
+    // should be 1x, make the options 0.5x, 1x, 2x, 3x"; 1.5x added back
+    // at a player's asking, issue 128).
     float fightSpeed = 1.0f;
     // [feedback] camera_follow: the camera goes to whoever's turn it is.
     bool cameraFollow = true;

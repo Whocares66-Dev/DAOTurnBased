@@ -294,7 +294,7 @@ party = manual
 damage_scale = 1
 ; How fast the game runs through a turn-based fight, your turns and theirs
 ; alike: 0.5 half speed, 1 as ever, 2 twice as fast (0.25 to 4). It is the
-; Fight speed slider in the game's Options (0.5x, 1x, 2x, 3x). Conversations
+; Fight speed slider in the game's Options (0.5x, 1x, 1.5x, 2x, 3x). Conversations
 ; and the world outside a fight run as ever.
 speed = 1
 
